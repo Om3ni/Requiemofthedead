@@ -13,9 +13,12 @@
 --              length, not by discipline. Buffered (<=25 lines or ~1s) because
 --              the traffic is continuous and replaceable.
 --
--- Durability model: there is NO shutdown hook on this server - the restart
--- scripts force-kill java and SaveWorldEveryMinutes=0, so nothing may depend
--- on a graceful exit. Chronicle lines are durable per line. Forensic loses at
+-- Durability model: nothing here may depend on a graceful exit. The restart
+-- scripts force-kill java (documented data-loss history), and while the
+-- production dedi saves every 30 minutes, the local/test setup runs with
+-- SaveWorldEveryMinutes=0 - so engine-save cadence is environment-dependent
+-- and these files never rely on it. Chronicle lines are durable per line.
+-- Forensic loses at
 -- most one buffer (<=25 lines / <=1s). head.txt is rewritten every 500 lines,
 -- so after a force-kill the line counter can be <=500 lines stale and a
 -- segment runs slightly long or short. THAT IS ACCEPTABLE - do not "fix" it

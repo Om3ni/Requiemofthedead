@@ -5,9 +5,11 @@
 -- elsewhere" - nothing migrates, nothing can clobber the previous season, and
 -- old seasons stay readable forever.
 --
--- The id comes from SandboxVars.RFTDCore.SeasonId. NOT global ModData (RAM-only
--- under SaveWorldEveryMinutes=0 with force-kill restarts - it would forget) and
--- NOT a hand-edited Lua constant (changing a server setting must not require a
+-- The id comes from SandboxVars.RFTDCore.SeasonId. NOT global ModData (its
+-- durability rides the engine-save cadence - 30-minute saves on the prod dedi,
+-- saves OFF locally - and a force-killed restart can hand back a stale value
+-- at exactly the moment a wipe makes staleness expensive) and NOT a
+-- hand-edited Lua constant (changing a server setting must not require a
 -- Workshop republish). Sandbox survives restarts and is admin-editable.
 --
 -- Boot sequence (first server tick after the world is up):
