@@ -9,6 +9,23 @@
 --
 -- FAILS OPEN: if we can't read a username or a clock we allow the command -
 -- a limiter glitch must never brick staff tooling.
+--
+-- FIXED WINDOW, not sliding or token-bucket - and the boundary burst that
+-- implies is accepted, not overlooked. The window resets wholesale on the
+-- first hit past windowMs, so `max` hits at windowStart+999ms followed by
+-- `max` hits at windowStart+1000ms serves 2*max inside about a millisecond.
+-- At the 20/1000ms default that is a 40-command burst, which is still an order
+-- of magnitude under anything that troubles a dispatcher, and since 42.16 the
+-- engine throttles client packets by type underneath us anyway. A ring of
+-- timestamps would cost per-player allocation on the tick thread to buy
+-- precision nothing here needs. Revisit only if a command is ever registered
+-- with a rate low enough that 2x matters (roughly: rate < 5).
+--
+-- Note also that b.count keeps incrementing while over-limit, so it is a tally
+-- within the window rather than a rate - harmless, but do not read it as one.
+-- And an over-limit command still costs a forensic write in RDNet's reject
+-- path, so a flooding client converts throttled commands into log lines;
+-- that volume is bounded by the ring, not by this limiter.
 
 if not isServer() then return end
 

@@ -14,6 +14,23 @@
 -- Output: envelope JSONL into the "guardian" forensic ring stream (bounded,
 -- rotating - volume control is the ring, not discipline).
 --
+-- COST DIMENSION (absorbed from OmenSpyNetwork, which is where the rest of the
+-- traffic telemetry now lives - see RDMeter). OSN registered its OWN
+-- OnClientCommand listener purely to estimate inbound payload size. That is a
+-- second listener on the hottest event in the game to walk a table this one has
+-- already got in hand, so the sizing is folded in here instead: every RD.CMD
+-- record carries `est` (approximate wire bytes, per RDWire) and feeds the same
+-- number to RDMeter's C2S bucket. Guardian answers "who sent what", RDMeter
+-- answers "what did it cost", and neither needs its own copy of the event.
+--
+-- This does walk args twice - once for serializeArgs, once for the size - and
+-- that is accepted rather than optimised away: both walks are independently
+-- bounded (400 nodes here, 20000 in RDWire), real command args are tiny, and
+-- fusing them would tangle a debug-string serializer with a wire-format model
+-- for a saving nobody can measure. `est` is emitted whether or not the RDMeter
+-- probe is armed, because it costs one bounded walk and makes every Guardian
+-- record self-describing.
+--
 -- sid_approx is NOT the real SteamID: getSteamID() returns a Java long that
 -- exceeds Lua's exact-integer range, so through Lua it is ALWAYS a lossy
 -- double and no server-side global returns the exact string. %.0f at least
@@ -24,6 +41,14 @@
 -- contributes.
 
 if not isServer() then return end
+
+-- Explicit: "RDGuardian.lua" sorts before both "RDMeter.lua" (same dir) and
+-- Core's shared tier on the client's alphabetical walk, so neither global exists
+-- at file scope here. Declared, not assumed - the family rule since the 42.19
+-- boot-log crashes. Safe below the isServer() guard, which has already returned
+-- on the client where these self-abort to nil.
+require "RDWire"
+require "RDMeter"
 
 RDGuardian = RDGuardian or {}
 
@@ -72,6 +97,7 @@ if not RDGuardian._hooked then
             pcall(function()
                 x = math.floor(player:getX()); y = math.floor(player:getY()); z = math.floor(player:getZ())
             end)
+            local est, partial = RDWire.commandEstimate(module, command, args)
             RDLog.forensic("guardian", "RD.CMD", player, {
                 access   = (player and player:getAccessLevel()) or "",
                 sid      = RDIdentity.sidApprox(player) or "0",
@@ -80,7 +106,10 @@ if not RDGuardian._hooked then
                 module   = tostring(module),
                 command  = tostring(command),
                 args     = RDGuardian.serializeArgs(args),
+                est      = est,
+                partial  = partial or nil,   -- omitted unless the size walk ran out of budget
             })
+            RDMeter.record("C2S", tostring(module) .. ":" .. tostring(command), est, partial)
         end)
     end)
 end

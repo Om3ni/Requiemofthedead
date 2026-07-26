@@ -43,3 +43,41 @@ option RFTDCore.ForensicSegmentLines
     page = RFTDCore,
     translation = RD_ForensicSegmentLines,
 }
+
+option RFTDCore.WireProbeEnabled
+{
+    type = boolean,
+    default = false,
+    page = RFTDCore,
+    translation = RD_WireProbeEnabled,
+}
+
+option RFTDCore.WireProbeDumpSeconds
+{
+    type = integer,
+    min = 5,
+    max = 600,
+    default = 30,
+    page = RFTDCore,
+    translation = RD_WireProbeDumpSeconds,
+}
+
+option RFTDCore.WireProbeTopN
+{
+    type = integer,
+    min = 1,
+    max = 50,
+    default = 12,
+    page = RFTDCore,
+    translation = RD_WireProbeTopN,
+}
+
+option RFTDCore.WireProbeOversizedKB
+{
+    type = integer,
+    min = 1,
+    max = 1024,
+    default = 8,
+    page = RFTDCore,
+    translation = RD_WireProbeOversizedKB,
+}

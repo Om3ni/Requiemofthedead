@@ -14,5 +14,17 @@
     "Sandbox_RD_ForensicRingSegments_tooltip": "How many segments each rotating forensic log stream keeps before the oldest is overwritten. Disk ceiling per stream is roughly segments x segment lines x 200 bytes; the default 8 x 20000 is ~40 MB.",
 
     "Sandbox_RD_ForensicSegmentLines": "Forensic log: lines per segment",
-    "Sandbox_RD_ForensicSegmentLines_tooltip": "How many lines a forensic segment holds before rolling to the next one. Line-counted rather than byte-counted; after an unclean restart the counter can be up to 500 lines stale, which is expected and harmless."
+    "Sandbox_RD_ForensicSegmentLines_tooltip": "How many lines a forensic segment holds before rolling to the next one. Line-counted rather than byte-counted; after an unclean restart the counter can be up to 500 lines stale, which is expected and harmless.",
+
+    "Sandbox_RD_WireProbeEnabled": "Network traffic probe",
+    "Sandbox_RD_WireProbeEnabled_tooltip": "Measures what the network actually costs: server-to-client sends, client-to-server commands, and global ModData broadcasts (weighted by player count, because one blob is sent to every connection). Writes a top-offenders report to the rotating 'wire' forensic log. OFF by default because arming it wraps engine send functions that every mod on the server uses - turn it on to hunt a bandwidth problem, then turn it back off. Sizes are estimates for ranking offenders, never exact byte counts.",
+
+    "Sandbox_RD_WireProbeDumpSeconds": "Traffic probe: report interval",
+    "Sandbox_RD_WireProbeDumpSeconds_tooltip": "Seconds between top-offender reports while the probe is armed. Shorter intervals catch brief spikes but write more log lines; the counters reset after each report.",
+
+    "Sandbox_RD_WireProbeTopN": "Traffic probe: offenders per report",
+    "Sandbox_RD_WireProbeTopN_tooltip": "How many of the heaviest traffic sources each report lists, ranked by total estimated bytes. Everything is still counted - this only limits how much is written down.",
+
+    "Sandbox_RD_WireProbeOversizedKB": "Traffic probe: oversized alert (KB)",
+    "Sandbox_RD_WireProbeOversizedKB_tooltip": "A single payload estimated above this size is reported immediately instead of waiting for the next interval. Capped at two alerts per source per interval so one misbehaving mod cannot flood the log."
 }

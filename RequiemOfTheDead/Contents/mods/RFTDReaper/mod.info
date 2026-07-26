@@ -2,5 +2,5 @@ name=Requiem of the Dead: Reaper
 id=RFTDReaper
 modversion=1.2.0
 require=RFTDCore
-description=Detects and culls vanilla PZPopMan64 twin-spawn blooms. Server-side, multi-layer detection: newborn watcher catches twins at spawn, tile+outfit scan catches co-located stacks, wandered scan catches separated twins, outfit-cluster scan catches dispersed blooms across a region. Removals are paced across ticks to avoid network bursts. Requires Requiem of the Dead: Core.
+description=Detects and culls vanilla PZPopMan64 twin-spawn blooms. Server-side, multi-layer detection: newborn watcher catches twins at spawn, tile+outfit scan catches co-located stacks, wandered scan catches separated twins, outfit-cluster scan catches dispersed blooms across a region. Removals are paced across ticks to avoid network bursts. Requires Requiem of the Dead: Core. STATUS - PENDING THE 42.20 VERDICT: 42.20's headline fix is MP zombie culling, the exact engine behaviour this mod exists to work around. If vanilla culling now holds up, Reaper retires and only its Necro tab survives, folded into Dirge. Enable it if twin-spawn blooms are hurting your server today, but do not build a dependency on this mod id.
 pzversion=42

@@ -7,12 +7,36 @@ release artifact: every RFTD mod id ships inside it and updates atomically, so v
 skew between family members is structurally impossible. Servers subscribe to one item
 and enable the mod ids they want via `Mods=`.
 
-**RFTDCore is the harness the rest of the family depends on.** It owns the shared
-infrastructure — unified two-tier server logging (permanent per-player *chronicle*
-streams + a bounded *forensic* ring), life-cycle instrumentation, season bookkeeping,
-networking, rate limiting, capability-based access gates, the DFRegistry/DFLog/DFFeedback
-framework, and the compat/anti-grief patch layer. Every other mod declares
-`require=RFTDCore`; the dependency is hard.
+**RFTDCore is the harness the rest of the family depends on.** Nine of the ten other mods
+declare `require=RFTDCore` and the dependency is hard (BBLibrary is the exception - it
+depends on `RFTDBanBox`). What Core *contains* and what the satellites have *migrated
+onto* are different lists, and the gap is deliberate: each satellite adopts at its own
+migration turn.
+
+- **Adopted family-wide.** `RDShared` (identity, version, clocks) and `RDEvents` (the
+  closed chronicle event enum), required by name from every satellite - plus season
+  bookkeeping, `RDLife` life-cycle instrumentation, and `RDGuardian`'s forensic record of
+  every client command, which hook engine events directly and so never waited on adoption.
+- **Opt-in.** `RDMeter` is the network-traffic probe absorbed from OmenSpyNetwork:
+  server→client sends, global ModData broadcasts weighted by connection count, and the
+  client→server sizes folded into Guardian's own records via `RDWire`. Guardian says what
+  arrived; this says what it cost, including the ModData fan-out nothing else can see.
+  **Default off** - arming it wraps engine send functions every mod on the server calls,
+  so it is a `RFTDCore.WireProbeEnabled` decision, not a standing posture.
+- **Partly adopted.** Two-tier server logging (permanent per-player *chronicle* streams +
+  a bounded *forensic* ring) works, but only Reclamation and a single Dirge event write to
+  it, and Reclamation's writes are transitional dual-writes kept alongside the legacy path
+  until a season has proven the new one. `RDRate` backs Reclamation's dispatcher and
+  RDNet's.
+- **Built, not yet consumed.** `RDNet` - one dispatcher per wire token, default-deny
+  registration, capability gates - holds exactly one registration bundle-wide: Core's own
+  self-test. Twenty-seven `Events.On*Command.Add` listeners still live outside Core, ten of
+  them server-side dispatchers. Its permission wall currently protects Core's token and
+  nothing else. `RDNet.lua`'s header is the authority on this, not the paragraph above it.
+
+Core also carries two things that are not harness and change at their own pace: the
+`DFRegistry`/`DFLog`/`DFFeedback` client UI framework, and the compat/anti-grief patch
+layer - fourteen patch files, nearly half of Core's file count and a third of its lines.
 
 ## Mods in the bundle
 
@@ -24,21 +48,21 @@ framework, and the compat/anti-grief patch layer. Every other mod declares
 | `RFTDMemoir` | Craftable character snapshot/restore journal | 0.7.0 |
 | `RFTDBanBox` | Item ban engine (loot-strip + login confiscation) | 0.7.0 |
 | `BBLibrary` | RotD default ban list for RFTDBanBox (opt-in) | 0.1.0 |
-| `RFTDReclamation` | Reclaimation — vehicle lifecycle: claims, permissions, fleet panel, dismantling, the Janitor | 0.7.0 |
+| `RFTDReclamation` | Reclaimation - vehicle lifecycle: claims, permissions, fleet panel, dismantling, the Janitor | 0.7.0 |
 | `RFTDDirge` | Special zombie variants: Screamers, Juggernauts, EMP, Gluttons, Scavengers, Bosses | 1.1.0 |
 | `RFTDHusbandry` | Animal taming, breeding, and management | 0.2.0 |
 | `RFTDLastRites` | Client QoL HUD: life-threat indicators (cold, heat, bleeding) | 0.2.0 |
-| `RFTDReaper` | Twin-spawn bloom detector/culler — **pending the 42.20 verdict**; may retire with the Necro tab folding into Dirge | 1.2.0 |
+| `RFTDReaper` | Twin-spawn bloom detector/culler - **pending the 42.20 verdict**; may retire with the Necro tab folding into Dirge | 1.2.0 |
 
 **The migration is complete.** `C:\VSCodeProjects\PZMod` (repo `Om3ni/PZMods`) is the
 frozen archive: history, tooling, the engine decompile, retired test forks, and the
-deliberately-left-behind mods (OmenSpyNetwork — standalone and frozen with its own
+deliberately-left-behind mods (OmenSpyNetwork - standalone and frozen with its own
 users; Cookbook, OddsAndEnds, Sector7). Legacy per-mod Workshop items freeze as
 superseded-by pointers per `docs/legacy-items/DEPRECATION.md` (October 1 sunset).
 
 ## Naming
 
-Display names are "Requiem of the Dead: X" — Season One (RFTDCore; the harness wears
+Display names are "Requiem of the Dead: X" - Season One (RFTDCore; the harness wears
 the season's name and rolls to Season Two at the next wipe, id never changes), Memoirs,
 Ban Box, Staffing Tools, Dragonfly, Dirge, Reclaimation, and at their turns Husbandry
 and Last Rites. Display names are free text; mod ids are frozen.
@@ -56,9 +80,14 @@ and Last Rites. Display names are free text; mod ids are frozen.
   2 = all staff).
 - Test forks are retired. Testing happens on git branches, not folder copies.
 - Every Lua edit goes through `tools\check-lua.bat` before upload (silence = clean).
+- `tools\run-tests.bat` runs behavioural tests under real Lua 5.1 for the modules that
+  need no engine stubs - RDJson today. Lua 5.1 specifically: Kahlua is 5.1, and 5.3+ added
+  an integer subtype that changes `math.floor` and `%.0f`, so a newer interpreter would
+  give confident but wrong answers about `RDJson.fmtNum`. A green run here covers those
+  modules only; it is not a statement about the bundle.
 - No mod-id renames of existing mods, ever.
-- The vehicle mod is spelled **Reclaimation** (reclaim + reclamation — intentional
+- The vehicle mod is spelled **Reclaimation** (reclaim + reclamation - intentional
   wordplay) everywhere human-facing; the mod id `RFTDReclamation` and derived
-  identifiers keep the id spelling — frozen, not prose.
+  identifiers keep the id spelling - frozen, not prose.
 - Core emits its event registry as `RFTD/schema.json` at boot; external tooling in
   `tools/` consumes that artifact rather than carrying its own copy of the contract.

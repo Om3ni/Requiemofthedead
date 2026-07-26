@@ -1,8 +1,8 @@
--- HBDebugPanel — admin developer tool for animal state inspection.
+-- HBDebugPanel - admin developer tool for animal state inspection.
 -- Dark theme, monospace columns, explicit refresh. Not player-facing.
 --
--- Step 1: skeleton with hardcoded test data. Proves the shell —
--- resizable, scrollable, log pane, refresh — before we wire in real
+-- Step 1: skeleton with hardcoded test data. Proves the shell -
+-- resizable, scrollable, log pane, refresh - before we wire in real
 -- scanning (step 2) or the probe (step 3).
 
 require "ISUI/ISCollapsableWindow"
@@ -26,7 +26,7 @@ local LOG_ROW_H  = 14
 -- Column layout. `align = "right"` right-justifies numeric cells.
 -- The dual hunger / thirst columns show the same value through two APIs
 -- (animal:getHunger() vs animal:getStats():get(CharacterStat.HUNGER)) so
--- divergence is visible — vanilla appears to use both interchangeably but
+-- divergence is visible - vanilla appears to use both interchangeably but
 -- we want eyes on it until the probe confirms.
 local COLS = {
     { key = "oid",     label = "OID",      w = 70                    },
@@ -93,7 +93,7 @@ local TRAILER_SCAN_RANGE = 20  -- ±squares around player for trailer search
 
 -- Scan for animals in two passes:
 --   1. Loose animals via cell:getObjectListForLua().
---   2. Trailer animals — animals stored in a vehicle's animal container don't
+--   2. Trailer animals - animals stored in a vehicle's animal container don't
 --      appear in the cell object list, so we walk grid squares around the
 --      player, look up the vehicle on each square via sq:getVehicleContainer()
 --      (vanilla pattern, ISVehicleMenu.lua:42, DebugContextMenu.lua:142),
@@ -146,7 +146,7 @@ local function scanCellAnimals()
     --   sq:getVehicleContainer() → BaseVehicle, then v:getAnimals() (ArrayList)
     --   sq:getObjects()          → IsoHutch, then getAnimalInside() (HashMap)
     --     (avoid getMaxAnimals()/getAnimal(i): they read the hutch def and NPE
-    --      inside the engine on a def==null hutch — pcall does not catch it)
+    --      inside the engine on a def==null hutch - pcall does not catch it)
     local seenVehicles = {}
     local seenHutches  = {}
     local player = getPlayer()
@@ -188,7 +188,7 @@ local function scanCellAnimals()
                         -- Use getAnimalInside() rather than getMaxAnimals()/
                         -- getAnimal(i): the latter read the hutch's script def
                         -- and NPE inside the engine on a broken (def==null)
-                        -- hutch — an exception pcall does NOT catch (it aborts
+                        -- hutch - an exception pcall does NOT catch (it aborts
                         -- the scan). getAnimalInside() returns the always-
                         -- initialised animalInside map and never touches def.
                         -- (See HBKeepAlive for the full rationale.)
@@ -266,7 +266,7 @@ local function cellColor(row, col)
 end
 
 -- Truncate `s` to fit `maxWidth` pixels at `font`, suffixed with "…" if cut.
--- Iterative tail trim — fast enough for per-cell per-frame use.
+-- Iterative tail trim - fast enough for per-cell per-frame use.
 local function truncateToWidth(font, s, maxWidth)
     local tm = getTextManager()
     if tm:MeasureStringX(font, s) <= maxWidth then return s end
@@ -359,7 +359,7 @@ function HBAnimalList:onRightMouseUp(x, y)
             --   2. Cheat-mode surfaces debug-only options (set acceptance,
             --      fertilize, set age, genetic-disorder editor) that are
             --      exactly the diagnostics this admin panel wants.
-            -- We restore the previous value after — but note that menu building
+            -- We restore the previous value after - but note that menu building
             -- is synchronous, so the option callbacks (clicked later) run with
             -- the original cheat flag.
             local prevCheat = AnimalContextMenu.cheat
@@ -436,7 +436,7 @@ function HBDebugPanel:createChildren()
     -- ─── Status strip rendered directly via prerender drawText ───────────
     -- Avoids ISLabel's width/clip quirks; gives full control over truncation.
     -- Initial values; updated by onRefresh / onSelectionChanged / clock tick.
-    self._statusText    = "ready — press Refresh"
+    self._statusText    = "ready - press Refresh"
     self._selectionText = "selection: (none)"
     self._clockText     = "clock: (pending)"
 
@@ -762,9 +762,9 @@ end
 -- both SP and MP without a server roundtrip.
 --
 -- Two-step coordinate resolution per location class:
---   1. Try the location-appropriate square — gives clean centered coords
+--   1. Try the location-appropriate square - gives clean centered coords
 --      and a fixed reference even for objects that move between frames.
---   2. Fall back to raw obj:getX/Y/Z — handles transient nil-square states
+--   2. Fall back to raw obj:getX/Y/Z - handles transient nil-square states
 --      (far-edge animals, just-spawned, vehicle in motion).
 --
 -- Dispatch on row.loc rather than calling getCurrentSquare() blindly, since
@@ -828,7 +828,7 @@ function HBDebugPanel:onTeleport()
 
     -- setX/Y/Z is the canonical position write. setLx/Ly/Lz update the
     -- "last position" used for movement interpolation so the engine doesn't
-    -- visually snap us back from the old spot — but those methods aren't
+    -- visually snap us back from the old spot - but those methods aren't
     -- present on IsoPlayer in every B42 build (verified absent here, was
     -- crashing with "tried to call nil"), so existence-guard each one.
     local fx, fy, fz = player:getX(), player:getY(), player:getZ()
@@ -958,8 +958,8 @@ end)
 -- next time the binding shifts (either way) it's visible in DebugLog.txt
 -- without waiting for a teleport click to crash.
 --
--- Per CLAUDE.md §10.3, every dependency on an unverified vanilla API gets a
--- probe entry. This is the player-side equivalent of HBAPIProbe.
+-- House rule: every dependency on an unverified vanilla API gets a probe entry.
+-- This is the player-side equivalent of HBAPIProbe.
 Events.OnGameStart.Add(function()
     local player = getPlayer()
     if not player then return end

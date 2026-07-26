@@ -1,6 +1,6 @@
 -- RQDirgeLog.lua - per-type diagnostic tracing for Dirge (RFTDCore-backed).
 --
--- Usage (unchanged; ~96 call sites depend on this exact signature):
+-- Usage (unchanged; 73 call sites depend on this exact signature):
 --   RQDirgeLog.write("Glutton", "[INFO] something happened")
 --
 -- HISTORY, so nobody resurrects the old plumbing: the 1.0.x version wrote
@@ -35,8 +35,5 @@ end
 -- Flushing is owned by RDLog's cadence now; kept as a no-op because call
 -- sites exist.
 function RQDirgeLog.flush() end
-
--- backward-compat shim so any lingering RQEatLog.write(...) calls don't crash
-RQEatLog = { write = function(msg) RQDirgeLog.write("System", msg) end }
 
 -- Copyright Project_Omen
