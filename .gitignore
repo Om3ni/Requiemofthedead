@@ -1,0 +1,27 @@
+# --- Live player/server data: never commit, never upload ---
+**/snapshot.txt
+
+# --- OS / editor ---
+Thumbs.db
+.DS_Store
+desktop.ini
+*.swp
+.idea/
+.claude/settings.local.json
+
+# --- Backups & scratch ---
+*.bak
+*.blend1
+*.session-backup
+__pycache__/
+*.pyc
+
+# --- Archives / pulled logs ---
+*.zip
+**/console.txt
+**/consoleserverlog.txt
+**/DebugLog-*.txt
+debuglog*.txt
+
+# --- Binary tooling (re-download; see tools/check-lua.bat header) ---
+tools/luacheck.exe
