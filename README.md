@@ -26,11 +26,15 @@ framework, and the compat/anti-grief patch layer. Every other mod declares
 | `BBLibrary` | RotD default ban list for RFTDBanBox (opt-in) | 0.1.0 |
 | `RFTDReclamation` | Reclaimation — vehicle lifecycle: claims, permissions, fleet panel, dismantling, the Janitor | 0.7.0 |
 | `RFTDDirge` | Special zombie variants: Screamers, Juggernauts, EMP, Gluttons, Scavengers, Bosses | 1.1.0 |
+| `RFTDHusbandry` | Animal taming, breeding, and management | 0.2.0 |
+| `RFTDLastRites` | Client QoL HUD: life-threat indicators (cold, heat, bleeding) | 0.2.0 |
+| `RFTDReaper` | Twin-spawn bloom detector/culler — **pending the 42.20 verdict**; may retire with the Necro tab folding into Dirge | 1.2.0 |
 
-Still to migrate from `C:\VSCodeProjects\PZMod` (repo `Om3ni/PZMods`, tag
-`pre-requiem-migration`): Husbandry, Last Rites, Reaper (pending the 42.20 culling
-verdict — may retire into Dirge's Necro tab). Legacy per-mod Workshop items freeze as
-superseded-by pointers at bundle publish; their assets live in `docs/legacy-items/`.
+**The migration is complete.** `C:\VSCodeProjects\PZMod` (repo `Om3ni/PZMods`) is the
+frozen archive: history, tooling, the engine decompile, retired test forks, and the
+deliberately-left-behind mods (OmenSpyNetwork — standalone and frozen with its own
+users; Cookbook, OddsAndEnds, Sector7). Legacy per-mod Workshop items freeze as
+superseded-by pointers per `docs/legacy-items/DEPRECATION.md` (October 1 sunset).
 
 ## Naming
 
