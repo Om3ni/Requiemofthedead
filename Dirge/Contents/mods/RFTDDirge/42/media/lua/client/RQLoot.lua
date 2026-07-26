@@ -1,0 +1,123 @@
+-- RQLoot - special zombie loot drops
+-- Adds items to the zombie's corpse inventory when it dies.
+-- Player picks them up by searching the body like normal.
+-- Using base game items for now, custom items need Blender
+-- work that hasn't happened yet.
+
+RQLoot = RQLoot or {}
+
+-- Loot pools per zombie type (base game items)
+local LOOT_POOLS = {
+    Screamer = {
+        "Base.Bandage",
+        "Base.AlcoholBandage",
+        "Base.Antibiotics",
+        "Base.PillsVitamins",
+        "Base.Bullets9mmBox",
+        "Base.ShotgunShellsBox",
+    },
+    Juggernaut = {
+        "Base.Axe",
+        "Base.BaseballBat",
+        "Base.Crowbar",
+        "Base.HuntingKnife",
+        "Base.Katana",
+        "Base.Pistol",
+        "Base.Shotgun",
+        "Base.ShotgunShellsBox",
+        "Base.Bullets9mmBox",
+    },
+    EMP = {
+        "Base.Battery",
+        "Base.ElectronicsScrap",
+        "Base.Screwdriver",
+        "Base.HandTorch",
+        "Base.WalkieTalkie1",
+        "Base.Bandage",
+        "Base.PillsVitamins",
+    },
+    Glutton = {
+        "Base.Bandage",
+        "Base.AlcoholBandage",
+        "Base.SutureNeedle",
+        "Base.WaterBottle",
+        "Base.TinnedBeans",
+        "Base.CannedCorn",
+    },
+    Scavenger = {
+        "Base.WaterBottle",
+        "Base.TinnedBeans",
+        "Base.CannedCorn",
+        "Base.CannedChili",
+        "Base.Bandage",
+    },
+    Boss = {
+        "Base.Katana",
+        "Base.Pistol",
+        "Base.Shotgun",
+        "Base.HuntingRifle",
+        "Base.Bullets9mmBox",
+        "Base.ShotgunShellsBox",
+        "Base.223Box",
+        "Base.Antibiotics",
+        "Base.SutureNeedle",
+        "Base.AlcoholBandage",
+    },
+}
+
+-- Number of items to drop per type
+local DROP_COUNTS = {
+    Screamer   = { min = 1, max = 2 },
+    Juggernaut = { min = 1, max = 3 },
+    EMP        = { min = 1, max = 2 },
+    Glutton    = { min = 1, max = 2 },
+    Scavenger  = { min = 1, max = 2 },
+    Boss       = { min = 3, max = 5 },
+}
+
+-- Pick a random item from a loot pool
+local function pickFromPool(pool)
+    if not pool or #pool == 0 then return nil end
+    return pool[ZombRand(#pool) + 1]
+end
+
+-- Trigger loot drop on special zombie death — adds items to zombie's inventory
+-- Player loots them by searching the corpse like any other zombie
+function RQLoot.dropForZombie(zombie)
+    if not zombie then return end
+
+    local ok, oid = pcall(zombie.getOnlineID, zombie)
+    if not ok or not oid then return end
+    local zType = RQRegistry.getType(oid)
+    if not zType then return end
+
+    local inv = zombie:getInventory()
+    if not inv then return end
+
+    local pool = LOOT_POOLS[zType]
+    if not pool then return end
+
+    local counts = DROP_COUNTS[zType] or { min = 1, max = 2 }
+    local dropCount = counts.min + ZombRand(counts.max - counts.min + 1)
+
+    local given = {}
+    for i = 1, dropCount do
+        local itemType = pickFromPool(pool)
+        if itemType then
+            -- Verify item script exists before adding (avoid Java NPE)
+            local sm = getScriptManager()
+            if sm and sm:getItem(itemType) then
+                local addOk, item = pcall(inv.AddItem, inv, itemType)
+                if addOk and item then
+                    given[#given + 1] = itemType
+                end
+            end
+        end
+    end
+
+    if #given > 0 then
+        RQDirgeLog.write(zType, "[INFO] corpse loaded with " .. #given .. " items: " .. table.concat(given, ", "))
+    end
+end
+
+-- Copyright Project_Omen

@@ -1,0 +1,14 @@
+module Base
+{
+    sound RQScreamerScream
+    {
+        category = Zombie,
+        is3D = true,
+        clip
+        {
+            file = media/sound/scream.ogg,
+            distanceMax = 70,
+            volume = 1.0,
+        }
+    }
+}
