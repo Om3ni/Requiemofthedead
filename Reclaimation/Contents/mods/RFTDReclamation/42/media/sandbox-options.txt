@@ -1,0 +1,197 @@
+VERSION = 1,
+
+/* =====================================================================
+   Reclamation sandbox options (claim system + dismantle/engine-lock)
+   ===================================================================== */
+
+option RFTDReclamation.Enabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_Enabled,
+}
+
+option RFTDReclamation.Debug
+{
+    type = boolean,
+    default = false,
+    page = RFTDReclamation,
+    translation = RC_Debug,
+}
+
+option RFTDReclamation.ClaimsEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_ClaimsEnabled,
+}
+
+option RFTDReclamation.MaxClaims
+{
+    type = integer,
+    min = 0,
+    max = 50,
+    default = 2,
+    page = RFTDReclamation,
+    translation = RC_MaxClaims,
+}
+
+option RFTDReclamation.MaxClaimTrailers
+{
+    type = integer,
+    min = 0,
+    max = 50,
+    default = 1,
+    page = RFTDReclamation,
+    translation = RC_MaxClaimTrailers,
+}
+
+option RFTDReclamation.MaxAllowed
+{
+    type = integer,
+    min = 0,
+    max = 50,
+    default = 8,
+    page = RFTDReclamation,
+    translation = RC_MaxAllowed,
+}
+
+option RFTDReclamation.ClaimInactivityDays
+{
+    type = integer,
+    min = 0,
+    max = 3650,
+    default = 14,
+    page = RFTDReclamation,
+    translation = RC_ClaimInactivityDays,
+}
+
+option RFTDReclamation.ClaimExemptUsers
+{
+    type = string,
+    default = ,
+    page = RFTDReclamation,
+    translation = RC_ClaimExemptUsers,
+}
+
+/* ------------------------- dismantle slice ------------------------- */
+
+option RFTDReclamation.AdminOnly
+{
+    type = boolean,
+    default = false,
+    page = RFTDReclamation,
+    translation = RC_AdminOnly,
+}
+
+option RFTDReclamation.EngineThreshold
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 40,
+    page = RFTDReclamation,
+    translation = RC_EngineThreshold,
+}
+
+option RFTDReclamation.EngineTooGoodText
+{
+    type = string,
+    default = ,
+    page = RFTDReclamation,
+    translation = RC_EngineTooGoodText,
+}
+
+option RFTDReclamation.DismantleTimePercent
+{
+    type = integer,
+    min = 10,
+    max = 1000,
+    default = 100,
+    page = RFTDReclamation,
+    translation = RC_DismantleTimePercent,
+}
+
+option RFTDReclamation.RespectClaims
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_RespectClaims,
+}
+
+option RFTDReclamation.RespectPhunZones
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_RespectPhunZones,
+}
+
+option RFTDReclamation.EngineLockEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_EngineLockEnabled,
+}
+
+/* --------------------------- janitor slice -------------------------- */
+
+option RFTDReclamation.JanitorEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_JanitorEnabled,
+}
+
+option RFTDReclamation.JanitorAbandonDays
+{
+    type = double,
+    min = 0,
+    max = 365,
+    default = 14,
+    page = RFTDReclamation,
+    translation = RC_JanitorAbandonDays,
+}
+
+option RFTDReclamation.JanitorFeedsBudget
+{
+    type = integer,
+    min = 1,
+    max = 50,
+    default = 3,
+    page = RFTDReclamation,
+    translation = RC_JanitorFeedsBudget,
+}
+
+option RFTDReclamation.SpawnerEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_SpawnerEnabled,
+}
+
+option RFTDReclamation.SpawnerAccess
+{
+    type = enum,
+    numValues = 3,
+    default = 2,
+    page = RFTDReclamation,
+    translation = RC_SpawnerAccess,
+    valueTranslation = RC_SpawnerAccessValues,
+}
+
+option RFTDReclamation.SpawnerMissingPartsMax
+{
+    type = integer,
+    min = 1,
+    max = 20,
+    default = 6,
+    page = RFTDReclamation,
+    translation = RC_SpawnerMissingPartsMax,
+}

@@ -1,0 +1,69 @@
+{
+    "Sandbox_RFTDReclamation": "Reclamation",
+
+    "Sandbox_RC_Enabled": "Enable Mod",
+    "Sandbox_RC_Enabled_tooltip": "Master toggle for the Reclamation mod.",
+
+    "Sandbox_RC_Debug": "Debug Mode",
+    "Sandbox_RC_Debug_tooltip": "Print [RC] debug traces to the log. Off for normal play.",
+
+    "Sandbox_RC_ClaimsEnabled": "Enable Vehicle Claiming",
+    "Sandbox_RC_ClaimsEnabled_tooltip": "Allow players to claim vehicles and lock out non-whitelisted players. When off, no vehicle is locked.",
+
+    "Sandbox_RC_MaxClaims": "Max Vehicle Claims Per Player",
+    "Sandbox_RC_MaxClaims_tooltip": "How many motor vehicles (cars, trucks, RVs - anything that isn't a trailer) one player may claim at once. Trailers have their own separate cap. 0 = unlimited. Staff are exempt.",
+
+    "Sandbox_RC_MaxClaimTrailers": "Max Trailer Claims Per Player",
+    "Sandbox_RC_MaxClaimTrailers_tooltip": "How many trailers one player may claim at once, separate from the vehicle cap - so hitching a camper never costs a car slot. Claimed trailers get the full lock (towing, loot, and RV-interior entry if an RV mod is installed). 0 = unlimited. Staff are exempt.",
+
+    "Sandbox_RC_MaxAllowed": "Max Whitelist Per Vehicle",
+    "Sandbox_RC_MaxAllowed_tooltip": "How many other players an owner may grant access to on a single vehicle.",
+
+    "Sandbox_RC_ClaimInactivityDays": "Claim Inactivity Days (real)",
+    "Sandbox_RC_ClaimInactivityDays_tooltip": "Real-time days a player can be absent before ALL their claims auto-release. 0 = never. Server downtime is credited back so an outage does not mass-expire claims.",
+
+    "Sandbox_RC_ClaimExemptUsers": "Expiry-Exempt Usernames",
+    "Sandbox_RC_ClaimExemptUsers_tooltip": "Comma-separated usernames whose claims never expire (e.g. vacations, deployments). Because the Janitor never touches claimed vehicles, these players' cars can never be reclaimed either - a true never-abandoned list. The max-claims cap still applies to them.",
+
+    "Sandbox_RC_AdminOnly": "Dismantle: Staff Only",
+    "Sandbox_RC_AdminOnly_tooltip": "When on, only staff can dismantle vehicles. Players keep the vanilla burnt-wreck removal.",
+
+    "Sandbox_RC_EngineThreshold": "Engine Condition Dismantle Threshold",
+    "Sandbox_RC_EngineThreshold_tooltip": "A non-wreck vehicle can only be dismantled while its Engine part condition is BELOW this value - good cars can't be scrapped. Wrecks and trailers are exempt.",
+
+    "Sandbox_RC_EngineTooGoodText": "Good-Engine Block Message",
+    "Sandbox_RC_EngineTooGoodText_tooltip": "The line players see when a good engine blocks dismantling - shown as their character's own thought. Leave blank for the built-in line. Write {threshold} anywhere to insert the threshold number. Capped at 120 characters.",
+
+    "Sandbox_RC_DismantleTimePercent": "Dismantle Time Percent",
+    "Sandbox_RC_DismantleTimePercent_tooltip": "Scales how long dismantling takes. 100 = vanilla burnt-vehicle removal time (still skill-scaled); 200 = twice as long.",
+
+    "Sandbox_RC_RespectClaims": "Dismantle Respects Claims",
+    "Sandbox_RC_RespectClaims_tooltip": "A claimed vehicle cannot be dismantled until it is released - including by its owner (release first, then scrap; prevents accidents). Staff override in the field.",
+
+    "Sandbox_RC_RespectPhunZones": "Respect PhunZones No-Dismantle",
+    "Sandbox_RC_RespectPhunZones_tooltip": "Honor the per-zone 'No Vehicle Dismantle' flag from PhunZones2, if that mod is installed. Does nothing without it.",
+
+    "Sandbox_RC_EngineLockEnabled": "Engine Salvage Lock",
+    "Sandbox_RC_EngineLockEnabled_tooltip": "Block non-staff players from taking or uninstalling the Engine part, so good vehicles aren't stripped for motor parts. Actual pulls are written to the ledger either way.",
+
+    "Sandbox_RC_JanitorEnabled": "Janitor: Reclaim Abandoned Vehicles",
+    "Sandbox_RC_JanitorEnabled_tooltip": "Truly abandoned vehicles are removed and converted into respawn tokens (contents drop to the ground first - loot is never destroyed). A vehicle is only ever abandoned when the PLAYER is gone: anyone who keeps logging in keeps every vehicle they last used, touched or not. Claimed vehicles, wrecks, and safehouse vehicles are never considered at all.",
+
+    "Sandbox_RC_JanitorAbandonDays": "Janitor: Abandonment Days (real)",
+    "Sandbox_RC_JanitorAbandonDays_tooltip": "REAL days. An unclaimed vehicle is reclaimed only when the last player known to have used it has NOT logged in for this long (logging in alone preserves it - no need to touch the car), or - for vehicles no player was ever seen with - when it has sat unused this long. Server downtime is credited back. Fractions work for testing (0.01 = about 15 minutes). 0 disables the Janitor.",
+
+    "Sandbox_RC_JanitorFeedsBudget": "Janitor: Max Reclaims Per Sweep",
+    "Sandbox_RC_JanitorFeedsBudget_tooltip": "Upper bound on vehicles reclaimed in one hourly sweep. Keeps a backlog (e.g. after long downtime) draining gradually instead of vanishing a parking lot at once, and caps the token mint rate.",
+
+    "Sandbox_RC_SpawnerEnabled": "Staff Vehicle Spawner",
+    "Sandbox_RC_SpawnerEnabled_tooltip": "Enable the staff vehicle spawner (configure in a window, then click the world to place). Every spawn - and every denied attempt - is written to the ledger.",
+
+    "Sandbox_RC_SpawnerAccess": "Spawner Access Level",
+    "Sandbox_RC_SpawnerAccess_tooltip": "Which staff ranks may use the vehicle spawner. The server checks the SENDER's access level on every spawn command - hiding the buttons is cosmetic, this setting is the real gate.",
+    "Sandbox_RC_SpawnerAccessValues_option1": "Admin only",
+    "Sandbox_RC_SpawnerAccessValues_option2": "Admin + Moderator",
+    "Sandbox_RC_SpawnerAccessValues_option3": "All staff (incl. Overseer / GM / Observer)",
+
+    "Sandbox_RC_SpawnerMissingPartsMax": "Spawner: Max Missing Parts",
+    "Sandbox_RC_SpawnerMissingPartsMax_tooltip": "Upper bound on how many parts the 'Missing parts' tick strips from a manually-spawned vehicle. Each spawn rolls a random 1..this many (capped at the parts the vehicle actually has). The engine is never eligible. Affects ONLY vehicles placed through the staff spawner - never world, player, or reclaimed vehicles."
+}
