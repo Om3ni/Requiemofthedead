@@ -12,86 +12,43 @@
 DFCore = DFCore or {}
 
 DFCore.MODULE  = "RFTDDragonfly"
-DFCore.VERSION = "0.6.2"   -- 0.6.2: panel gate falls back to getAccessLevel (isAdmin() flaky on dedi clients)
+DFCore.VERSION = "0.7.0"   -- 0.7.0: RFTDCore adoption (hard require) - RDAccess/RDRate/RDLife
+                           --        delegates, sandbox-tiered panel/debug gates. NOTE: this
+                           --        constant previously drifted against mod.info (0.6.2 vs
+                           --        0.6.3); keep the pair in sync - RD.HELLO now catches it.
+                           -- 0.6.2: panel gate falls back to getAccessLevel (isAdmin() flaky on dedi clients)
                            -- 0.6.1: admin gate on opening the panel (was ungated)
                            -- 0.6.0: command rate-limiter + auditOnly staff-gate; BanBox engine + login confiscation
 
--- Safe capability check. Roles can be nil during early load and in single
--- player; pcall keeps a bad role lookup from killing the whole gate.
+-- RFTDCore adoption (hard require - no guards, per family law). Registered
+-- under the WORKSHOP MOD ID ("Dragonfly"), not the wire token - the HELLO
+-- handshake compares what the server config loads.
+RDShared.registerMod("Dragonfly", DFCore.VERSION)
+
+-- Capability check: delegates to the family gate (RDAccess). Signature kept
+-- because ~20 call sites across the panel/scoreboard/tabs use it.
 function DFCore.roleHas(player, capability)
-    if not player or not capability then return false end
-    local ok, result = pcall(function()
-        local role = player:getRole()
-        return role and role:hasCapability(capability)
-    end)
-    return ok and result == true
+    return RDAccess.roleHas(player, capability)
 end
 
--- True if the player's role grants at least one capability of any kind - i.e.
--- they hold *some* admin privilege. Used to gate actions any staffer may
--- legitimately trigger but no ordinary player should (e.g. auditOnly, which
--- broadcasts a log line to every client). Iterating the capability list is
--- cheap and only happens on those gated paths, never per tick.
+-- Any-capability staff check: delegates to the family gate (RDAccess).
 function DFCore.hasAnyCapability(player)
-    if not player then return false end
-    local ok, result = pcall(function()
-        local role = player:getRole()
-        if not role then return false end
-        local caps = getCapabilities()
-        if not caps then return false end
-        for i = 0, caps:size() - 1 do
-            if role:hasCapability(caps:get(i)) then return true end
-        end
-        return false
-    end)
-    return ok and result == true
+    return RDAccess.hasAnyCapability(player)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
--- Per-player command rate limiter (server-side defense-in-depth).
---
--- Client commands are cheap to send but can be expensive to serve (some
--- broadcast to every client, some fan out a packet per item). A modded or
--- malicious client can flood the dispatcher, which feeds the engine's
--- "server too busy -> dropping packets" path. This is a fixed-window counter
--- keyed by username: at most `max` commands per `windowMs`. It FAILS OPEN -
--- if we can't read a username or a clock we allow the command, so a limiter
--- glitch can never brick the panel.
+-- Rate limiter: delegates to RDRate, the family's one fixed-window limiter
+-- (this file used to carry its own copy of the same algorithm; RCServer had
+-- another). RDRate is server-only; these shims are only ever called from
+-- DFServer's dispatcher, and fail open client-side by design.
 -- ─────────────────────────────────────────────────────────────────────────
-local rlBuckets = {}   -- username -> { count, windowStart }
-
-local function rlNow()
-    -- getTimestampMs (ms since launch) is the primary clock; getTimeInMillis is
-    -- the fallback. Mirrors LSTour's clock probe. nil = no usable clock.
-    local ok, v = pcall(getTimestampMs)
-    if ok and type(v) == "number" then return v end
-    ok, v = pcall(getTimeInMillis)
-    if ok and type(v) == "number" then return v end
-    return nil
-end
-
--- Returns true if the player is under the limit (and records this hit), false
--- if they've exceeded `max` commands inside the current `windowMs` window.
 function DFCore.allow(player, max, windowMs)
-    local name = player and player.getUsername and player:getUsername()
-    if not name then return true end       -- can't key it -> don't block
-    local now = rlNow()
-    if not now then return true end        -- no clock -> fail open
-    max = max or 20
-    windowMs = windowMs or 1000
-    local b = rlBuckets[name]
-    if not b or (now - b.windowStart) >= windowMs then
-        rlBuckets[name] = { count = 1, windowStart = now }
-        return true
-    end
-    b.count = b.count + 1
-    return b.count <= max
+    if RDRate then return RDRate.allow(player, max, windowMs) end
+    return true
 end
 
--- Drop a player's bucket (call on disconnect so the table doesn't accumulate
--- one entry per username ever seen over the server's lifetime).
 function DFCore.forgetRateLimit(name)
-    if name then rlBuckets[name] = nil end
+    if RDRate then RDRate.forget(name) end
 end
 
 -- Server-side audit line. Format matches Reaper's "[Reaper] forceScan

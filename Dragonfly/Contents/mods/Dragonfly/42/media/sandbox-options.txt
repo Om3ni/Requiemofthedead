@@ -8,6 +8,24 @@ option RFTDDragonfly.Enabled
     translation = DF_Enabled,
 }
 
+option RFTDDragonfly.PanelAccess
+{
+    type = enum,
+    numValues = 2,
+    default = 1,
+    page = RFTDDragonfly,
+    translation = DF_PanelAccess,
+}
+
+option RFTDDragonfly.DebugGateAccess
+{
+    type = enum,
+    numValues = 2,
+    default = 1,
+    page = RFTDDragonfly,
+    translation = DF_DebugGateAccess,
+}
+
 option RFTDDragonfly.OpenKeybind
 {
     type = integer,

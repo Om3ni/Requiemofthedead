@@ -65,6 +65,12 @@ end
 
 local function toggle()
     if not enabled() then return end
+    -- Who may REVEAL the debug options is a sandbox policy
+    -- (RFTDDragonfly.DebugGateAccess): 1 = Admin only (shipped default),
+    -- 2 = all staff. The engine decides who gets debug options at all; this
+    -- gate decides who can unhide them. Silent return: the gate's existence
+    -- isn't advertised to whoever doesn't clear the tier.
+    if not RDAccess.meetsTier(getPlayer(), cfg().DebugGateAccess) then return end
     DFDebugGate.hidden = not DFDebugGate.hidden
     setHidden(DFDebugGate.hidden)
     if DFFeedback then
