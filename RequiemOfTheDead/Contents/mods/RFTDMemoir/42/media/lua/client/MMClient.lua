@@ -1,7 +1,7 @@
--- MMClient.lua — owning-client half: send requests, mirror-apply results, feedback.
+-- MMClient.lua - owning-client half: send requests, mirror-apply results, feedback.
 -- The client NEVER mutates authoritatively; it only asks the server and then mirrors
 -- the server-sent result locally (dual-apply). Mirror-apply is SAFE because the
--- earnable merge is max() toward a target — idempotent, so server and client
+-- earnable merge is max() toward a target - idempotent, so server and client
 -- converge to the same values instead of stacking.
 
 if isServer() then return end
@@ -53,7 +53,7 @@ local function refreshInventorySoon()
 end
 
 -- =====================================================================
---  HOOK (future): record/recall presentation. No-op now — the mechanic is
+--  HOOK (future): record/recall presentation. No-op now - the mechanic is
 --  intentionally instant/OOC. This is the single seam to hang a crystal-ball
 --  animation / VFX / sound off later without touching the apply logic.
 --    kind = "saved"    (journal was just written)
@@ -71,7 +71,7 @@ local function onServerCommand(module, command, args)
         if args.ok and args.applyData then
             -- MIRROR-APPLY the same change the server made, on our local player.
             -- pcall-armored so a mirror failure is loud (MMwarn) instead of half-updating
-            -- the UI silently — server state is already applied; a broken mirror heals on
+            -- the UI silently - server state is already applied; a broken mirror heals on
             -- relog, but it must never die quietly.
             local p = getPlayer()
             if p and not p:isDead() then

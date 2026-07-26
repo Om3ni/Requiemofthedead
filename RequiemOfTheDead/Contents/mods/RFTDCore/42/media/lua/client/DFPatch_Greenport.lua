@@ -1,4 +1,4 @@
--- DFPatch_Greenport.lua — Dragonfly removable third-party patch (client trigger)
+-- DFPatch_Greenport.lua - Dragonfly removable third-party patch (client trigger)
 --
 -- Client half of the Greenport ground-item fix. Two jobs, both cheap:
 --
@@ -6,11 +6,11 @@
 --      re-spawns scripted world items (shotgun shells, candles, tarot deck, etc.)
 --      on every square load because both of its dedup guards compare the wrong
 --      thing, and in MP each spawn's transmit triggers a square re-sync that
---      re-fires the handler — so ammo visibly pours onto the ground while a player
+--      re-fires the handler - so ammo visibly pours onto the ground while a player
 --      just stands there. The handler is a `local` bound straight to the event
 --      with no module return, so there is nothing to require() or reassign (unlike
 --      DFPatch_RVInterior / DFPatch_Spongies). We disable it through the one shared
---      surface it reads every call — the global GroundItemSpawnerItems list — by
+--      surface it reads every call - the global GroundItemSpawnerItems list - by
 --      emptying it at boot: with an empty list its getGroundItemsToSpawnAtCoords()
 --      returns {}, so the handler becomes an inert no-op regardless of load order.
 --

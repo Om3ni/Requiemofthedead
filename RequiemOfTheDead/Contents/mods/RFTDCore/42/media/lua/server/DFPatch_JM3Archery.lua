@@ -1,4 +1,4 @@
--- DFPatch_JM3Archery.lua — Dragonfly removable third-party patch
+-- DFPatch_JM3Archery.lua - Dragonfly removable third-party patch
 --
 -- Restores JM3_ArcheryMP's bonus-yield crafting on the dedicated server.
 -- Same disease as DFPatch_SOTO: the recipe callback `Crear_Materiales`
@@ -9,14 +9,14 @@
 -- loads on a dedi, so every craft logs
 --   WARN CraftLogic: Could not find lua function: Crear_Materiales
 -- (54x in one live morning) and the bonus materials are never granted.
--- The recipes' scripted base outputs still work — only the bonus is lost.
+-- The recipes' scripted base outputs still work - only the bonus is lost.
 --
 -- Define-missing-global variant (file scope, `== nil` guard): we only fill
 -- the hole on a dedi; on a co-op host the real client definition loads
 -- first and we never clobber it.
 --
 -- Mirror of the original logic (bug-for-bug: substring match, so e.g.
--- Base.Brochure gets no bonus — only Card*/Photo* inputs do):
+-- Base.Brochure gets no bonus - only Card*/Photo* inputs do):
 --   input contains "Base.Card" or "Base.Photo"          -> +2 JM3.Arrow_fletching
 --   input contains "Base.LongStick"/"Base.PercedWood"/
 --                  "Base.Plank"/"Base.SpadeWood"        -> +4 JM3.Ashaft

@@ -1,4 +1,4 @@
--- HBHutchContextMenu — right-click "Add Hay Bedding" on a hutch.
+-- HBHutchContextMenu - right-click "Add Hay Bedding" on a hutch.
 --
 -- Player-facing diegetic path: if you have a HayTuft (gathered from hay), you
 -- can pour it into a coop/hutch as bedding. Runs HBAddHayAction, which consumes
@@ -20,7 +20,7 @@ local HAY_TYPE = "Base.HayTuft"
 
 -- Find the live MASTER hutch from the right-clicked objects: check the objects
 -- themselves, then their squares. Skips slave halves of multi-tile coops
--- (isSlave: linkedX>0 && linkedY>0) — the master holds the real bedding/dirt.
+-- (isSlave: linkedX>0 && linkedY>0) - the master holds the real bedding/dirt.
 local function findHutch(worldobjects)
     if not worldobjects then return nil end
     local function masterOrNil(o)

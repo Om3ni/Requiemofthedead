@@ -1,4 +1,4 @@
--- DFPatch_SOTO.lua — Dragonfly removable third-party patch
+-- DFPatch_SOTO.lua - Dragonfly removable third-party patch
 --
 -- Fixes a DEDICATED-SERVER crash in "Simple Overhaul: Traits and Occupations"
 -- (SOTO) that silently kills exercise for any player with the HIGH_SWEATY trait.
@@ -7,7 +7,7 @@
 --   * The exercise override lives in media/lua/SHARED/TimedActions/SOTOISFitnessAction.lua
 --     and therefore runs on the dedicated SERVER (via NetTimedAction.animEvent).
 --   * Its helpers SOAddThirst()/SOAddWetness() are defined only in
---     media/lua/CLIENT/SOTOMainFile.lua — and client Lua never loads on a dedicated
+--     media/lua/CLIENT/SOTOMainFile.lua - and client Lua never loads on a dedicated
 --     server. So server-side those globals are nil.
 --   * When a HIGH_SWEATY player exercises, the shared action calls SOAddThirst() ->
 --     "Object tried to call nil in exeLooped" (SOTOISFitnessAction.lua:29). The throw
@@ -22,7 +22,7 @@
 -- Trait lookups are nil-guarded (hasTraitSafe) so a missing SOTO-custom trait constant can
 -- never re-introduce the same nil-call crash on the server.
 --
--- REMOVABLE: delete this file to drop the patch — SOTO is untouched; nothing else in
+-- REMOVABLE: delete this file to drop the patch - SOTO is untouched; nothing else in
 -- Dragonfly depends on it. The `== nil` guards mean we NEVER clobber SOTO's real client-side
 -- definitions (e.g. on a co-op host where both this and SOTO's client Lua load).
 
@@ -30,7 +30,7 @@ if not isServer() then return end
 
 -- player:hasTrait throws on a nil trait (the exact bug we're fixing), so guard the lookup.
 -- CharacterTrait.OVERWEIGHT/OBESE are engine constants present server-side; SOTO's custom
--- HIGH_THIRST/LOW_THIRST may not resolve here — if so the multiplier just stays neutral.
+-- HIGH_THIRST/LOW_THIRST may not resolve here - if so the multiplier just stays neutral.
 local function hasTraitSafe(player, trait)
     return trait ~= nil and player:hasTrait(trait) == true
 end
@@ -87,5 +87,5 @@ if #defined > 0 then
     print("[Dragonfly] DFPatch_SOTO: defined missing server-side SOTO helper(s): "
         .. table.concat(defined, ", ") .. " (exercise crash fix for HIGH_SWEATY players).")
 else
-    print("[Dragonfly] DFPatch_SOTO: SOTO helpers already present — no patch needed.")
+    print("[Dragonfly] DFPatch_SOTO: SOTO helpers already present - no patch needed.")
 end

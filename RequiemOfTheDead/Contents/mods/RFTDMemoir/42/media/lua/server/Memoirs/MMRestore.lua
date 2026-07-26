@@ -1,4 +1,4 @@
--- MMRestore.lua — disaster-recovery character restore from the memoir archive.
+-- MMRestore.lua - disaster-recovery character restore from the memoir archive.
 -- Why: a mid-season wipe or corrupted players.db should cost players THINGS, not
 -- PROGRESSION. MMAudit's per-player archive (latest.json) carries the full
 -- MMSnapshotCodec snapshot; this feeds it back through the same battle-verified
@@ -6,17 +6,17 @@
 -- action -> DFServer handler), never automatic.
 --
 -- Design decisions (locked with the user):
---   * 100% restore — fullRestore=true bypasses the MemoirXPRestore knob. The
+--   * 100% restore - fullRestore=true bypasses the MemoirXPRestore knob. The
 --     knob is a DEATH tax; a wipe is the server's fault, players are made whole.
 --   * Once per life, same gate as memoir reads (modData.MMRecalled): the additive
 --     overwrite model double-counts if applied twice to one life (the second
 --     apply reads the first restore as "this life's earnings"). Death re-arms.
 --   * Target must be online and alive: the apply needs the live player object,
 --     and the owning client must mirror-apply (no reliable Lua server->client XP
---     push) — delivered over the EXISTING MMShared RESULT channel, so MMClient
+--     push) - delivered over the EXISTING MMShared RESULT channel, so MMClient
 --     needs no new command handling.
 --
--- JSON decoder: parses OUR OWN encoder's output only (MMAudit.jsonEncode —
+-- JSON decoder: parses OUR OWN encoder's output only (MMAudit.jsonEncode -
 -- objects, arrays, strings with \\ \" \r \n \t escapes, plain numbers,
 -- true/false/null). Not a general JSON library; don't feed it foreign files.
 
@@ -133,7 +133,7 @@ end
 MMRestore.decode = decode -- exposed for the future progression-sheet tooling
 
 -- ─────────────────────────────────────────────────────────────────────────
--- Archive read (nested layout preferred, flat fallback — mirrors MMAudit)
+-- Archive read (nested layout preferred, flat fallback - mirrors MMAudit)
 -- ─────────────────────────────────────────────────────────────────────────
 
 local function readAll(path)
@@ -187,7 +187,7 @@ function MMRestore.run(admin, targetUsername)
     local dead = false
     pcall(function() dead = target:isDead() end)
     if dead then
-        return { ok = false, reason = targetUsername .. " is dead — restore after they respawn." }
+        return { ok = false, reason = targetUsername .. " is dead - restore after they respawn." }
     end
 
     local content = readLatest(safeName(targetUsername))
@@ -197,10 +197,10 @@ function MMRestore.run(admin, targetUsername)
     local rec, derr = decode(content)
     if type(rec) ~= "table" or type(rec.snap) ~= "table" then
         MMwarn("RESTORE archive unreadable for " .. targetUsername .. ": " .. tostring(derr))
-        return { ok = false, reason = "Archive for " .. targetUsername .. " is unreadable — check server console." }
+        return { ok = false, reason = "Archive for " .. targetUsername .. " is unreadable - check server console." }
     end
     -- safeName collisions map two usernames onto one file; the envelope's user
-    -- field is the tiebreaker — never apply someone else's character.
+    -- field is the tiebreaker - never apply someone else's character.
     if rec.user and rec.user ~= targetUsername then
         return { ok = false, reason = "Archive belongs to '" .. tostring(rec.user) .. "', not " .. targetUsername .. "." }
     end
@@ -214,7 +214,7 @@ function MMRestore.run(admin, targetUsername)
         snap.recipes = set
     end
 
-    -- Same once-per-life gate as memoir reads — a second additive apply on one
+    -- Same once-per-life gate as memoir reads - a second additive apply on one
     -- life double-counts everything the first restore delivered. Death re-arms.
     local md = target:getModData()
     if md and md.MMRecalled then
@@ -232,14 +232,14 @@ function MMRestore.run(admin, targetUsername)
         if MMAudit then MMAudit.log(target, "RESTORE_FAIL", {
             admin = (admin and admin.getUsername and admin:getUsername()) or "?",
             err = tostring(err) }) end
-        return { ok = false, reason = "Restore failed for " .. targetUsername .. " — check server console." }
+        return { ok = false, reason = "Restore failed for " .. targetUsername .. " - check server console." }
     end
 
     if md then md.MMRecalled = true end
     if MMServer and MMServer.pushFields then MMServer.pushFields(target) end
 
     -- Mirror-apply on the target's client over the existing memoir RESULT
-    -- channel — MMClient already knows how to apply applyData and refresh.
+    -- channel - MMClient already knows how to apply applyData and refresh.
     sendServerCommand(target, MMShared.MODULE, MMShared.CMD.RESULT, {
         ok = true,
         say = "My life... it all comes back to me.",

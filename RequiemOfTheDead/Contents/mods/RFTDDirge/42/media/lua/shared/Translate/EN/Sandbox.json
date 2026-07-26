@@ -277,5 +277,5 @@
     "Sandbox_RQ_ScreamerBlurStrength_tooltip": "How strong the blur lens is when a Screamer howls (0=none, 100=full). Scales the blur for all trait variants (brave, normal, cowardly). Also applies to Boss Scream and raging Scavenger disorientation. Default 100.",
 
     "Sandbox_RQ_ScreamerDarkStrength": "Screamer Darkness Strength",
-    "Sandbox_RQ_ScreamerDarkStrength_tooltip": "How dark the screen gets when a Screamer howls (0=none, 100=full). Independent of blur — set to 0 for blur-only effect. Also applies to Boss Scream and raging Scavenger disorientation. Default 100."
+    "Sandbox_RQ_ScreamerDarkStrength_tooltip": "How dark the screen gets when a Screamer howls (0=none, 100=full). Independent of blur - set to 0 for blur-only effect. Also applies to Boss Scream and raging Scavenger disorientation. Default 100."
 }

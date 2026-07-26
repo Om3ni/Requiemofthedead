@@ -70,7 +70,7 @@ local function findNearestZombie(x, y, z, range)
     return bestZombie
 end
 
--- Separate halo text colors from RQConfig.COLORS — the world highlight colors
+-- Separate halo text colors from RQConfig.COLORS - the world highlight colors
 -- use a=0.3 for translucent overlays which reads dark as halo text.
 -- These are lightened versions tuned for readability at full opacity.
 local HALO_COLORS = {
@@ -117,7 +117,7 @@ local function convertZombie(zombie, zType)
     -- Always route through the server so svMarkZombie runs and svActiveZombies
     -- gets the entry. The host-direct path bypassed svActiveZombies, breaking
     -- all alive behaviors (buff aura, scream, regen, etc.) for admin-converted
-    -- zombies. sendClientCommand works on host too — routes to OnClientCommand.
+    -- zombies. sendClientCommand works on host too - routes to OnClientCommand.
     sendClientCommand(RQCommon.MODULE, "adminConvert", {
         onlineID = oid or 0,   -- 0 = no valid ID; server falls back to nearest-at-position
         x        = math.floor(zombie:getX()),

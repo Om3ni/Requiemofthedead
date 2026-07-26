@@ -28,7 +28,7 @@ end
 
 -- Always-confirm variant for single-target irreversible actions (e.g. memoir
 -- restore overwrites a character): plain yes/no modal regardless of who's
--- online — the online-count logic above is about SERVER-wide disruption, which
+-- online - the online-count logic above is about SERVER-wide disruption, which
 -- doesn't apply when the action rewrites one specific player.
 function DFConfirm.ask(message, onConfirm)
     local modal = ISModalDialog:new(

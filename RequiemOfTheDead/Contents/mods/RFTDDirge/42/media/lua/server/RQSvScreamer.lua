@@ -26,7 +26,7 @@ local function svDoScreamerScream(zombie, cfg)
     local zz = math.floor(zombie:getZ())
     local okSound = pcall(addSound, zombie, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
     if not okSound then
-        RQDirgeLog.write("Screamer", "[WARN] addSound failed — falling back to WorldSoundManager at (" .. zx .. "," .. zy .. "," .. zz .. ")")
+        RQDirgeLog.write("Screamer", "[WARN] addSound failed - falling back to WorldSoundManager at (" .. zx .. "," .. zy .. "," .. zz .. ")")
         pcall(function()
             getWorldSoundManager():addSound(zombie, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius, false)
         end)

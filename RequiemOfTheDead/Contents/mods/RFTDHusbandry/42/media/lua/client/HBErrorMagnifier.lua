@@ -1,4 +1,4 @@
--- HBErrorMagnifier — optional integration with the Error Magnifier mod.
+-- HBErrorMagnifier - optional integration with the Error Magnifier mod.
 --
 -- If Error Magnifier is loaded, registers a debug-report function so users
 -- can copy our diagnostic state alongside any errors via EM's UI ("Mods" tab).
@@ -16,7 +16,7 @@
 -- MP NOTE: this file is client-side because Error Magnifier itself is
 -- client-side. In MP, server-only state (HBKeepAlive instrumentation, the
 -- live HBData.seen set) lives on the server process and is not visible to
--- the client. The report will degrade gracefully — fields read as nil and
+-- the client. The report will degrade gracefully - fields read as nil and
 -- are reported as such. SP and host-and-play see full state.
 
 Events.OnGameStart.Add(function()
@@ -47,7 +47,7 @@ Events.OnGameStart.Add(function()
                 trailerOverrideCalls = HBKeepAlive.trailerOverrideCalls,
             }
         else
-            report.keepAlive = "(not visible — server-only state in MP, or module not loaded)"
+            report.keepAlive = "(not visible - server-only state in MP, or module not loaded)"
         end
 
         -- HBData state (counts of each map)
@@ -64,7 +64,7 @@ Events.OnGameStart.Add(function()
                 persistentIds = countTable(HBData.idMap),
             }
         else
-            report.data = "(not visible — server-only state in MP, or module not loaded)"
+            report.data = "(not visible - server-only state in MP, or module not loaded)"
         end
 
         -- Module presence detection

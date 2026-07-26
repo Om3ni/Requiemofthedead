@@ -1,4 +1,4 @@
--- HBAddHayAction — player times action: pour one HayTuft into a hutch as
+-- HBAddHayAction - player times action: pour one HayTuft into a hutch as
 -- bedding. Consumes the hay item on completion (client-side, the standard PZ
 -- inventory path) and tells the server to top up the hutch's bedding charge
 -- via HBCmd.ADD_BEDDING. Mirrors STA Better Hutches' "add woodchips" action.

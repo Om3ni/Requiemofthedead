@@ -81,7 +81,7 @@ local function pickFromPool(pool)
     return pool[ZombRand(#pool) + 1]
 end
 
--- Trigger loot drop on special zombie death — adds items to zombie's inventory
+-- Trigger loot drop on special zombie death - adds items to zombie's inventory
 -- Player loots them by searching the corpse like any other zombie
 function RQLoot.dropForZombie(zombie)
     if not zombie then return end

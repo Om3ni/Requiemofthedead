@@ -124,7 +124,7 @@ function RQSvBoss.tick(zombie)
                         RQSvShared.svDoSpawn(x, y, z, spawnCount)
                     else
                         RQDirgeLog.write("Boss", "[INFO] id=" .. tostring(bossID) .. " Scream executed"
-                            .. " nearby=" .. nearbyCount .. " >= threshold — no spawn")
+                            .. " nearby=" .. nearbyCount .. " >= threshold - no spawn")
                     end
                 elseif skill == "EMPulse" then
                     RQDirgeLog.write("Boss", "[INFO] id=" .. tostring(bossID) .. " EMPulse executed"

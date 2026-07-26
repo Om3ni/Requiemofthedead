@@ -207,7 +207,7 @@ local function onServerCommand(module, command, args)
         local onlineID = tonumber(args.onlineID)
         local zType    = args.zType
         if not onlineID or not zType then return end
-        -- Register by ID immediately — highlight will resolve the object at render time
+        -- Register by ID immediately - highlight will resolve the object at render time
         RQRegistry.register(onlineID, zType)
         -- Also update last known position
         if RQReconcile and args.x then
@@ -376,7 +376,7 @@ local function onServerCommand(module, command, args)
                 if eating then
                     if args.phase == "eating" then
                         -- server confirmed devour: lock zombie and set the body target NOW.
-                        -- do NOT call startEating here — it would reset arrivedSent=false and
+                        -- do NOT call startEating here - it would reset arrivedSent=false and
                         -- cause a second eaterArrived, letting the server find corpseGone=true.
                         pcall(zombie.clearAggroList, zombie)
                         pcall(zombie.setTarget,      zombie, nil)

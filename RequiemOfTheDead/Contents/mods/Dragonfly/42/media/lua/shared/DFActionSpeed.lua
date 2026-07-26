@@ -1,4 +1,4 @@
--- DFActionSpeed.lua — sandbox-tunable speed scaling for timed actions.
+-- DFActionSpeed.lua - sandbox-tunable speed scaling for timed actions.
 --
 -- THE LEVER IS maxTime (the field). create() does `self.maxTime = self:adjustMaxTime(...)`
 -- right before the engine captures the field, so we hook adjustMaxTime and scale its result.

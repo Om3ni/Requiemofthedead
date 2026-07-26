@@ -15,7 +15,7 @@ local BUFF_COLOR      = JUGG_RING_COLOR
 -- Aura weapon multiplier
 -- ========================
 -- While inside any Juggernaut's aura the player's weapon damage is
--- scaled by juggernautAuraMultiplier (0.01–1.0). The boolean flips
+-- scaled by juggernautAuraMultiplier (0.01-1.0). The boolean flips
 -- automatically each render tick so cleanup is self-contained:
 -- Jugg dies → no longer found in range → boolean flips → weapon restored.
 --

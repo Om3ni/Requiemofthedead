@@ -1,4 +1,4 @@
--- MMStatsView.lua — READ-ONLY character sheet (Shift+P), styled after the admin
+-- MMStatsView.lua - READ-ONLY character sheet (Shift+P), styled after the admin
 -- "Check Your Stats" panel (ISPlayerStatsUI) but DUPLICATED with zero edit widgets.
 -- Same look (header fields, trait icons, Perk/Level/XP/Boost/Multiplier table); no
 -- Change/Add/Remove/AddXP/Level buttons. Security: shipping no mutation affordance

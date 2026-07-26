@@ -1,4 +1,4 @@
--- DFPatch_AntiCheatLogNoise.lua — Dragonfly removable log-noise patch
+-- DFPatch_AntiCheatLogNoise.lua - Dragonfly removable log-noise patch
 --
 -- Silences the anti-cheat WARN flood on the Multiplayer debug channel.
 -- Every verdict is written THREE independent ways by the engine
@@ -9,7 +9,7 @@
 --
 -- This raises the Multiplayer channel floor from Warning to Error, the
 -- same technique as DFPatch_Turn180Noise. user.txt and admin chat are
--- untouched — that file remains the forensic record (and Guardian's
+-- untouched - that file remains the forensic record (and Guardian's
 -- harvest channel), which is exactly why the debug copy is redundant.
 --
 -- TRADE-OFF: channel-wide, not message-specific. Also muted from the

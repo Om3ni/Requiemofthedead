@@ -1,4 +1,4 @@
--- HBAPIProbe — runtime verification of IsoAnimal API surface.
+-- HBAPIProbe - runtime verification of IsoAnimal API surface.
 --
 -- Given an animal OID, the probe empirically confirms the API catalog's
 -- claims about animal hunger/thirst state:
@@ -7,7 +7,7 @@
 --      read, per vanilla ClientCommands.lua usage.
 --   2. `animal:getStats():set(CharacterStat.HUNGER, v)` is the authoritative write.
 --   3. `animal:getHunger()` is a separate getter that may or may not track
---      the authoritative value — the probe shows which, per-build.
+--      the authoritative value - the probe shows which, per-build.
 --   4. `animal:updateLastTimeSinceUpdate()` exists as documented.
 --
 -- Output streams back to the requesting client via DEBUG_PROBE_RESULT,
@@ -47,7 +47,7 @@ local function identity(animal)
     pcall(function() species = animal:getAnimalType() or "?" end)
     local sex = "?"
     pcall(function() sex = animal:isFemale() and "F" or "M" end)
-    -- isBaby() is the only lifecycle flag confirmed in vanilla Lua — isYoung()
+    -- isBaby() is the only lifecycle flag confirmed in vanilla Lua - isYoung()
     -- has zero grep hits and was removed as an unverified claim.
     local age = "?"
     pcall(function() age = animal:isBaby() and "Baby" or "Adult" end)
@@ -105,9 +105,9 @@ function HBAPIProbe.runOn(oid, player)
     -- Disagreement diagnostic
     if type(statHafter) == "number" and type(getHafter) == "number" then
         if math.abs(statHafter - getHafter) > 0.01 then
-            emit(player, "[probe] ⚠ getHunger() does NOT track stats:get(HUNGER) — they are different fields")
+            emit(player, "[probe] ⚠ getHunger() does NOT track stats:get(HUNGER) - they are different fields")
         else
-            emit(player, "[probe] ✓ getHunger() and stats:get(HUNGER) agree — same underlying value")
+            emit(player, "[probe] ✓ getHunger() and stats:get(HUNGER) agree - same underlying value")
         end
     end
 
@@ -115,7 +115,7 @@ function HBAPIProbe.runOn(oid, player)
 
     local okU, errU = pcall(function() animal:updateLastTimeSinceUpdate() end)
     if okU then
-        emit(player, "[probe] updateLastTimeSinceUpdate() ok — clock reset available")
+        emit(player, "[probe] updateLastTimeSinceUpdate() ok - clock reset available")
     else
         emit(player, "[probe] updateLastTimeSinceUpdate() ERROR: " .. tostring(errU))
     end

@@ -26,7 +26,7 @@ RQSvEating = RQSvEating or {}
 -- time rather than a quick power spike.
 local SOLO_EAT_SHARE = 0.125
 
--- injection points — RQSvGlutton and RQSvScavenger call these after they init
+-- injection points - RQSvGlutton and RQSvScavenger call these after they init
 local _gluttonState   = nil
 local _scavengerState = nil
 
@@ -43,7 +43,7 @@ end
 RQSvEating.svCorpseCast = {}  -- corpse -> { castDue, eaters, completed, shareEach, targetSq, zType }
 
 -- Sweep cast records whose corpse has been skeletonized without anyone finalizing
--- (defensive — happens if every eater dies mid-cast). Replaces the old reservation
+-- (defensive - happens if every eater dies mid-cast). Replaces the old reservation
 -- sweep since reservations are gone.
 function RQSvEating.svCleanReservations()
     local toRemove, count = {}, 0
@@ -60,7 +60,7 @@ end
 -- Remove a single eater from any cast they're part of. Used by death/rage cleanup
 -- so a quitting eater doesn't leave a stale entry in cast.eaters (which would skew
 -- the share calculation for survivors). If the cast goes empty, drop it entirely
--- without removing the corpse — body stays available for future seekers.
+-- without removing the corpse - body stays available for future seekers.
 function RQSvEating.svRemoveEaterFromCast(corpse, onlineID)
     if not corpse or not onlineID then return end
     local cast = RQSvEating.svCorpseCast[corpse]
@@ -372,7 +372,7 @@ end
 RQSvEating.svPendingEaterArrivals = {}
 
 -- process a single arrival entry; validate state then kick off the devour cast
--- server-side position check was removed — zombie movement is client-authoritative so we trust the report
+-- server-side position check was removed - zombie movement is client-authoritative so we trust the report
 local function svProcessEaterArrival(entry)
     if not entry or not entry.onlineID then return end
     local cfg = RQSvShared.getSvConfig()

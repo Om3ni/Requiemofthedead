@@ -19,7 +19,7 @@ option RFTDMemoir.MemoirXPRestore
 /* Memoir XP-restore mode: 1 = Global (the single % above applies to every skill),
    2 = Per Individual (each skill uses its own % on the "Memoir Skill XP" page; any skill
    without a knob there falls back to the Global % above). The per-skill knobs are always
-   visible — PZ can't hide them by mode — but only matter when this is set to Individual. */
+   visible - PZ can't hide them by mode - but only matter when this is set to Individual. */
 option RFTDMemoir.MemoirXPRestoreMode
 {
     type = enum,
@@ -29,7 +29,7 @@ option RFTDMemoir.MemoirXPRestoreMode
     translation = DF_MemoirXPRestoreMode,
 }
 /* ===== Per-skill Memoir XP restore % (only active when MemoirXPRestoreMode = Individual).
-   Option name keys on perk:getId() so the codec lookup matches exactly — note several ids
+   Option name keys on perk:getId() so the codec lookup matches exactly - note several ids
    differ from the in-game name (Woodwork=Carpentry, Sneak=Sneaking, Lightfoot=Lightfooted,
    PlantScavenging=Foraging, Small*=Short *). Generated from PerkFactory's vanilla leaf skills. */
 option RFTDMemoir.MemoirXPRestore_Axe

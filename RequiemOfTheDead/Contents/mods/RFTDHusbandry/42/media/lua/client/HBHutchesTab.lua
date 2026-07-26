@@ -1,9 +1,9 @@
--- HBHutchesTab — registers a Hutches tab on Dragonfly's admin panel.
+-- HBHutchesTab - registers a Hutches tab on Dragonfly's admin panel.
 --
 -- Lists hutches (chicken coops / rabbit hutches) loaded near the admin and
 -- lets them manage bedding: "spawn" hay into a hutch to keep it clean. Hay
 -- continuously eats hutch/nest-box dirt but decays over time, so it has to be
--- replenished — the cleaning + decay run server-side in HBBedding, driven from
+-- replenished - the cleaning + decay run server-side in HBBedding, driven from
 -- HBKeepAlive's hutch scan. This tab is just the reader + the spawn button.
 --
 -- Soft-depends on Dragonfly: bails inside OnGameStart if DFRegistry is absent.
@@ -127,7 +127,7 @@ end
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Scan: walk grid squares around the player and collect loaded hutches.
--- Mirrors HBDebugPanel.scanCell's hutch pass — def-free (getAnimal(pos), never
+-- Mirrors HBDebugPanel.scanCell's hutch pass - def-free (getAnimal(pos), never
 -- getMaxAnimals) and only loaded-square hutches (never the stale zone list).
 -- ─────────────────────────────────────────────────────────────────────────
 
@@ -213,7 +213,7 @@ local function selectedRow()
     return nil
 end
 
--- Send the server an "add hay" for one hutch (admin spawn — no item cost).
+-- Send the server an "add hay" for one hutch (admin spawn - no item cost).
 -- The server derives the per-add amount from the sandbox option.
 local function spawnHay(row)
     if not row then return end

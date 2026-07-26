@@ -1,4 +1,4 @@
--- HBCommands — command string constants and server dispatch shell.
+-- HBCommands - command string constants and server dispatch shell.
 -- Constants are shared; dispatch routes to HBData / HBAPIProbe.
 
 -- LOAD ORDER (landmine, verified 42.19): the CLIENT walks media/lua/shared
@@ -25,9 +25,9 @@ if not isServer() then return end
 
 print("[HB] server dispatch loaded (HBCommands)")
 
--- Admin gate. In SP, getAccessLevel() returns "" — treat as admin since the
+-- Admin gate. In SP, getAccessLevel() returns "" - treat as admin since the
 -- local player has full server control. In MP, only "None" is rejected.
--- Errors LOG — the old pcall-everywhere pattern hid silent failures.
+-- Errors LOG - the old pcall-everywhere pattern hid silent failures.
 -- Staff gate: RDAccess capability model (RFTDCore adoption). The old check
 -- admitted ANY non-None access level; family policy is "any role holding at
 -- least one capability". Debug-mode escape kept for SP/dev sessions.

@@ -1,14 +1,14 @@
--- MMServer.lua — Memoir authority (RFTD convention: <Px>Server single dispatcher).
+-- MMServer.lua - Memoir authority (RFTD convention: <Px>Server single dispatcher).
 -- The server is the ONLY place mutation happens. The client proposes; the server
 -- validates and disposes. Snapshot lives in the JOURNAL ITEM's modData, so the book
--- physically carries the save (and can be lost/stolen — hence the identity gate).
+-- physically carries the save (and can be lost/stolen - hence the identity gate).
 --
 -- Flow:
 --   WRITE_REQUEST -> stamp the character's life-id, capture live char into item modData,
 --                    stamp owner.
 --   READ_REQUEST  -> stale wipe-epoch: REFUSE, not consumed (voided books "fade";
 --                    the owner writes over the book for a fresh snapshot).
---                    same life that wrote it: REFUSE, not consumed (nothing to recall —
+--                    same life that wrote it: REFUSE, not consumed (nothing to recall -
 --                    and the additive XP model would double-count its own history).
 --                    already recalled this life: REFUSE, not consumed (one recall per
 --                    life; a second book from the same dead life would double-count).
@@ -37,7 +37,7 @@ local function findItem(player, itemID)
 end
 
 -- A memoir is SINGLE-USE: on read we consume it and hand back a plain notebook (the recipe's
--- primary input), so the player crafts a fresh one to save again — clearer than the old
+-- primary input), so the player crafts a fresh one to save again - clearer than the old
 -- empty-and-rename reuse, which players found confusing. Uses the canonical DFInventory
 -- add/remove sync (Remove + sendRemoveItemFromContainer, AddItem + sendAddItemToContainer)
 -- against the item's OWN container, so the swap lands where the book was and reaches the
@@ -63,7 +63,7 @@ local function reply(player, ok, reason, say, applyData)
 end
 
 -- ========================
--- Identity ownership gate (steamID/username) — kept; matters more now (read rebuilds you)
+-- Identity ownership gate (steamID/username) - kept; matters more now (read rebuilds you)
 -- ========================
 local function ownerMatches(player, snap)
     if not snap.owner then return true end
@@ -81,7 +81,7 @@ function MMServer.onWrite(player, args)
     local item = findItem(player, args.itemID)
     if not item then
         -- Not silent: the server only searches the PLAYER's inventory, so a memoir
-        -- lying in a crate/car "writes" as a no-op — without this message the player
+        -- lying in a crate/car "writes" as a no-op - without this message the player
         -- walks away believing the save landed (the faded-ink ticket generator).
         if MMAudit then MMAudit.log(player, "WRITE_NOITEM", { itemId = args.itemID }) end
         return reply(player, false, "noitem",
@@ -90,7 +90,7 @@ function MMServer.onWrite(player, args)
 
     local existing = getSnap(item)
     if existing and not ownerMatches(player, existing) then
-        MMlog("WRITE denied — owner mismatch for " .. MMname(player))
+        MMlog("WRITE denied - owner mismatch for " .. MMname(player))
         if MMAudit then MMAudit.log(player, "WRITE_OWNER", { itemId = args.itemID }) end
         return reply(player, false, "owner", "This memoir is bound to another character.")
     end
@@ -109,7 +109,7 @@ function MMServer.onWrite(player, args)
         username = player:getUsername(),
         steamID = (player.getSteamID and player:getSteamID()) or 0,
     }
-    -- WRITE TIMESTAMPS (optional fields, no schema bump — readers treat nil as
+    -- WRITE TIMESTAMPS (optional fields, no schema bump - readers treat nil as
     -- "pre-audit book"): writtenAt = this write; firstWrittenAt carries over from the
     -- previous snapshot, because a re-write is the same physical book.
     snap.writtenAt = (getTimestamp and getTimestamp()) or 0
@@ -145,20 +145,20 @@ function MMServer.onRead(player, args)
         return reply(player, false, "empty", "Nothing has been recorded in this memoir yet.")
     end
     if not ownerMatches(player, snap) then
-        MMlog("READ denied — owner mismatch for " .. MMname(player))
+        MMlog("READ denied - owner mismatch for " .. MMname(player))
         if MMAudit then MMAudit.log(player, "READ_OWNER", { itemId = args.itemID,
             bookOwner = snap.owner and snap.owner.username }) end
         return reply(player, false, "owner", "This memoir is bound to another character.")
     end
 
-    -- WIPE-EPOCH GATE: a book stamped with an older epoch (or none — every pre-epoch
+    -- WIPE-EPOCH GATE: a book stamped with an older epoch (or none - every pre-epoch
     -- book) is void. Refuse WITHOUT consuming: the owner writes over the same book
     -- for a fresh snapshot. Bump MMShared.WIPE_EPOCH to retire all outstanding books.
     if (snap.epoch or 0) < MMShared.WIPE_EPOCH then
-        MMlog("READ refused — stale epoch " .. tostring(snap.epoch or 0) .. " < "
+        MMlog("READ refused - stale epoch " .. tostring(snap.epoch or 0) .. " < "
             .. tostring(MMShared.WIPE_EPOCH) .. " for " .. MMname(player))
         -- writtenAt tells amnesty-wave fades (nil: pre-audit book) apart from a
-        -- post-update book that somehow lost its epoch — the open "faded" question.
+        -- post-update book that somehow lost its epoch - the open "faded" question.
         if MMAudit then MMAudit.log(player, "READ_FADED", { itemId = args.itemID,
             bookEpoch = snap.epoch or 0, serverEpoch = MMShared.WIPE_EPOCH,
             writtenAt = snap.writtenAt }) end
@@ -166,12 +166,12 @@ function MMServer.onRead(player, args)
             "The ink has faded beyond reading... I should write these memoirs anew.")
     end
 
-    -- SAME-LIFE GUARD: the life that wrote the book gets refused (and keeps the book) —
+    -- SAME-LIFE GUARD: the life that wrote the book gets refused (and keeps the book) -
     -- there is nothing to recall, and the additive XP model would double-count the
     -- book's own history. Death wipes player modData, so a respawn never matches.
     local md = player:getModData()
     if snap.lifeId and md and md.MMLifeId == snap.lifeId then
-        MMlog("READ refused — same life for " .. MMname(player))
+        MMlog("READ refused - same life for " .. MMname(player))
         if MMAudit then MMAudit.log(player, "READ_SAMELIFE", { itemId = args.itemID,
             lifeId = snap.lifeId }) end
         return reply(player, false, "samelife",
@@ -179,21 +179,21 @@ function MMServer.onRead(player, args)
     end
 
     -- ONE RECALL PER LIFE: each life gets a single read; death re-arms it. The
-    -- "eligible" flag is the death-wipe itself — player modData dies with the
+    -- "eligible" flag is the death-wipe itself - player modData dies with the
     -- character, so a fresh spawn has no MMRecalled and may read; a successful read
     -- stamps it (below) and every later read this life is refused, book kept.
     -- Without this gate, two memoirs written by the same DEAD life pass the
     -- same-life guard back-to-back, and the second read classifies everything the
-    -- first read restored as "this life's earnings" — doubling every kill and XP
+    -- first read restored as "this life's earnings" - doubling every kill and XP
     -- point the books share (the additive model; see the codec header).
     if md and md.MMRecalled then
-        MMlog("READ refused — already recalled this life for " .. MMname(player))
+        MMlog("READ refused - already recalled this life for " .. MMname(player))
         if MMAudit then MMAudit.log(player, "READ_RECALLED", { itemId = args.itemID }) end
         return reply(player, false, "recalled",
             "My mind is still settling from the last recall... I cannot take in another in this life.")
     end
 
-    -- Decide the apply shape. v4+ books: OVERWRITE, always — the memoir is the source
+    -- Decide the apply shape. v4+ books: OVERWRITE, always - the memoir is the source
     -- of truth. Legacy books (no life-id) can't prove which life is reading them, so
     -- they bridge on the old identity compare: match -> non-additive top-up (could be
     -- the same life); mismatch -> overwrite, with the diff warned for forensics.
@@ -214,7 +214,7 @@ function MMServer.onRead(player, args)
         end
     end
 
-    -- pcall-armored: a server-side failure must deny loudly and keep the memoir —
+    -- pcall-armored: a server-side failure must deny loudly and keep the memoir -
     -- never a silent no-op. The codec apply is idempotent, so retrying is safe.
     local preLevels = MMAudit and MMAudit.perkLevels(player) or nil
     local okApply, err = pcall(function() MMSnapshotCodec.applyToCharacter(player, snap, chosen, xpMode) end)
@@ -223,10 +223,10 @@ function MMServer.onRead(player, args)
         if MMAudit then MMAudit.log(player, "READ_APPLYFAIL", { itemId = args.itemID,
             xpMode = xpMode, err = tostring(err) }) end
         return reply(player, false, "applyfail",
-            "The pages blur... (recall failed, the memoir was not consumed — please tell an admin)")
+            "The pages blur... (recall failed, the memoir was not consumed - please tell an admin)")
     end
     -- Spend this life's single recall (see the gate above). Stamped only after a
-    -- successful apply — a failed apply must leave the player eligible to retry.
+    -- successful apply - a failed apply must leave the player eligible to retry.
     -- pushFields' transmitModData carries it to the client with the rest.
     if md then md.MMRecalled = true end
     consumeAndReplace(player, item)
@@ -241,17 +241,17 @@ function MMServer.onRead(player, args)
             -- bookAge only for books that carry writtenAt (post-audit writes)
             bookAgeS = snap.writtenAt and (now - snap.writtenAt) or nil,
             -- before/after proof: levels for the pipe timeline's compact diff,
-            -- full per-perk XP for the schema — the OUTCOME of the recall is on
+            -- full per-perk XP for the schema - the OUTCOME of the recall is on
             -- record, not just the book (progression sheet + hand-fix material)
             lvlsBefore = preLevels,
             lvlsAfter  = MMAudit.perkLevels(player),
             postXP     = MMAudit.perkXP(player),
-            -- the exact snapshot that was applied — pre-audit books never logged a
+            -- the exact snapshot that was applied - pre-audit books never logged a
             -- WRITE, so the read is the only place their contents get on record
             snap = snap,
         })
         -- ~2 min later a READ_RECHECK record reports per-perk XP drift vs this
-        -- moment — the only server-side window into the client mirror-apply
+        -- moment - the only server-side window into the client mirror-apply
         -- (big positive drift = double-add, big negative = mirror failed).
         MMAudit.scheduleRecheck(player, args.itemID)
     end

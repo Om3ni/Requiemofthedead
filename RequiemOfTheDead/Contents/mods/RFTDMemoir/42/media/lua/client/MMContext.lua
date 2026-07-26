@@ -1,4 +1,4 @@
--- MMContext.lua — right-click options on the journal: Write / Read / Dump.
+-- MMContext.lua - right-click options on the journal: Write / Read / Dump.
 -- All three just send a request to the server (the authority). Write is gated on a
 -- writing tool present (pen/pencil) so the book is "reusable as long as pen/pencil".
 

@@ -1,4 +1,4 @@
--- DFPatch_CleanUI.lua — Dragonfly removable third-party patch (CLIENT)
+-- DFPatch_CleanUI.lua - Dragonfly removable third-party patch (CLIENT)
 --
 -- Stops CleanUI's always-present loot window from auto-requesting server-side
 -- loot generation for every container a player walks past while the window is
@@ -16,9 +16,9 @@
 --         INetworkPacket.send(PacketTypes.PacketType.RequestItemsForContainer, this)
 -- which makes the server run procedural loot (ItemPicker) and transmit it back.
 --
--- It is NOT a packet flood — checkExplored gates on isExplored() and sets it true,
+-- It is NOT a packet flood - checkExplored gates on isExplored() and sets it true,
 -- so each container fires once. (The sibling requestSync() call IS a no-op on
--- 42.16.1 — its decompiled body sends nothing — so the hover collapse/expand
+-- 42.16.1 - its decompiled body sends nothing - so the hover collapse/expand
 -- churn costs nothing on the wire.) The real cost is timing: because the window
 -- is never closed, a player auto-explores EVERY container/corpse they step next
 -- to, even ones they never open, turning deliberate-on-open loot generation into

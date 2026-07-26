@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pzsurvey.py  —  Project Zomboid players.db  ->  self-contained HTML survey report.
+pzsurvey.py - Project Zomboid players.db  ->  self-contained HTML survey report.
 
 Decodes every character blob in a PZ (Build 42) players.db byte-exact from the raw
 IsoPlayer serialization, then writes a single self-contained .html file: a server-wide
@@ -479,7 +479,7 @@ a:focus-visible,summary:focus-visible,.fbtn:focus-visible,tr.rowmain:focus-visib
   <h1>__TITLE__</h1>
   <p class="lede">Every character in this <b>players.db</b> decoded byte-exact from the raw <b>IsoPlayer</b>
   serialization. Search, sort, and click any row for the full record. The dashboard shows what the whole
-  database is <b>actually made of</b> — and where the bloat lives.</p>
+  database is <b>actually made of</b> - and where the bloat lives.</p>
  </div>
  <div id="kpis" class="kpis"></div>
  <div class="dash">
@@ -533,7 +533,7 @@ return `<div class="detail"><div class="metrics">${mv('Profession',e(r.pr||'?'))
 <div class="grid2">
 <div class="block"><span class="eyebrow">Traits · ${(r.tr||[]).length}</span><div class="chips">${(r.tr||[]).map(t=>`<span class="chip">${e(t)}</span>`).join('')||'<span class="muted">none</span>'}</div><span class="eyebrow" style="display:block;margin-top:12px">Mods on record</span><div class="chips">${mods.map(m=>`<span class="chip mod">${e(m)}</span>`).join('')||'<span class="muted">-</span>'}</div></div>
 <div class="block"><span class="eyebrow">Skills · ${pk.length} trained</span><div class="skills">${sk}</div></div>
-<div class="block wide"><details><summary><span class="eyebrow">Full byte breakdown — ${nf(tot)} bytes across ${SEC.filter((k,i)=>r.sec[i]>0).length} sections</span></summary><div style="margin-top:8px;display:grid;gap:3px">${fb}</div><span class="eyebrow" style="display:block;margin-top:12px">Inside "mod data" — per-mod tables</span><div style="margin-top:6px;display:grid;gap:3px">${mrows||'<div class="muted">none</div>'}</div></details></div>
+<div class="block wide"><details><summary><span class="eyebrow">Full byte breakdown - ${nf(tot)} bytes across ${SEC.filter((k,i)=>r.sec[i]>0).length} sections</span></summary><div style="margin-top:8px;display:grid;gap:3px">${fb}</div><span class="eyebrow" style="display:block;margin-top:12px">Inside "mod data" - per-mod tables</span><div style="margin-top:6px;display:grid;gap:3px">${mrows||'<div class="muted">none</div>'}</div></details></div>
 <div class="block wide"><details><summary><span class="eyebrow">Inventory · ${nItems} items</span></summary><div class="inv" style="margin-top:8px">${inv||'<div class="muted">empty</div>'}</div></details></div>
 <div class="block"><span class="eyebrow">Worn / equipped</span><div class="worn">${wo||'<div class="muted">none</div>'}</div></div>
 <div class="block"><span class="eyebrow">SOTO adaptive-trait minutes</span><div class="kvlist">${atH}</div><span class="eyebrow" style="display:block;margin-top:12px">Craft history</span><div class="kvlist">${craft}</div></div>
@@ -572,7 +572,7 @@ def main():
     ap.add_argument("--strict", action="store_true", help="treat any trailing-byte mismatch as an error")
     a = ap.parse_args()
     if not os.path.exists(a.db): raise SystemExit(f"not found: {a.db}")
-    title = a.title or (os.path.splitext(os.path.basename(a.db))[0] + " — Player Database").replace("_", " ")
+    title = a.title or (os.path.splitext(os.path.basename(a.db))[0] + " - Player Database").replace("_", " ")
     out = a.out or (os.path.splitext(a.db)[0] + ".report.html")
     sys.stderr.write(f"decoding {a.db} ...\n")
     ds = build_dataset(a.db, a.tables, a.strict)

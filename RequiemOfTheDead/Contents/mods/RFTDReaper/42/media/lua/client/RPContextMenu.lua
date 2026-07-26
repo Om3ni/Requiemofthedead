@@ -1,4 +1,4 @@
--- RPContextMenu — adds a debug right-click ground option that asks the server
+-- RPContextMenu - adds a debug right-click ground option that asks the server
 -- to run an immediate full scan (all bloom detection layers on demand).
 -- Sandbox option RFTDReaper.DebugContextMenu gates whether the option appears.
 

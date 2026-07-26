@@ -1,18 +1,18 @@
--- HBBedding — hutch bedding (hay) that keeps coops clean.
+-- HBBedding - hutch bedding (hay) that keeps coops clean.
 --
 -- WHY: vanilla IsoHutch accumulates hutchDirt / nestBoxDirt over time
 -- (IsoHutch.update + doMeta). Animals only REGENERATE health while
 -- getHutchDirt() < 20, and take minor damage above it
 -- (IsoHutch.updateAnimalHealthInside). Vanilla's only remedy is the manual
 -- "clean floor" action. This adds a cozy upkeep loop: lay hay bedding in a
--- hutch and it soaks up the dirt the coop generates, keeping animals healthy —
+-- hutch and it soaks up the dirt the coop generates, keeping animals healthy -
 -- the bedding is spent as it absorbs that dirt (no time decay), so a busy coop
 -- has to be re-bedded sooner than a quiet one.
 --
 -- SHAPE (mirrors HBData): read helpers are shared (the Dragonfly Hutches tab
 -- reads bedding level client-side); all WRITES are server-only. The per-pass
 -- cleaning runs as applyBedding(hutch), called from HBKeepAlive's existing
--- loaded-square hutch scan — NOT a second grid scan, and NEVER the un-pruned
+-- loaded-square hutch scan - NOT a second grid scan, and NEVER the un-pruned
 -- DesignationZoneAnimal hutch list (that list holds stale/orphaned hutches and
 -- is exactly STA Better Hutches' type-1/-1 ObjectModData bug). Adding hay is an
 -- admin action that routes client → HBCmd.ADD_BEDDING → server handler in
@@ -20,7 +20,7 @@
 -- ModData schema (HBData.NS_HUTCH) and every write to it.
 --
 -- API safety: this only touches getHutchDirt/setHutchDirt/getNestBoxDirt/
--- setNestBoxDirt and getModData — none read the hutch script def, so none can
+-- setNestBoxDirt and getModData - none read the hutch script def, so none can
 -- hit the engine-internal NPE that getMaxAnimals() does (see HBKeepAlive).
 
 HBBedding = {}
@@ -31,7 +31,7 @@ HBBedding.CLEAN_PER_PASS = 5    -- max dirt absorbed per pass (rate limit, for v
 HBBedding.DEFAULT_TUFTS  = 4    -- fallback if the HayTuftsPerBedding option is gone
 HBBedding.DEFAULT_RATIO  = 3    -- fallback dirt-absorbed-per-bedding ratio
 
--- Hay tufts required to fully bed a hutch — server-tunable via the
+-- Hay tufts required to fully bed a hutch - server-tunable via the
 -- RFTDHusbandry.HayTuftsPerBedding sandbox option (default 4 → each tuft = 25%).
 function HBBedding.tuftsPerFull()
     local sv = SandboxVars and SandboxVars.RFTDHusbandry
@@ -45,7 +45,7 @@ function HBBedding.perAdd()
     return HBBedding.MAX / HBBedding.tuftsPerFull()
 end
 
--- Dirt absorbed per 1 unit of bedding consumed — server-tunable via
+-- Dirt absorbed per 1 unit of bedding consumed - server-tunable via
 -- RFTDHusbandry.BeddingDirtRatio (default 3 → 1 bedding soaks up 3 dirt, so a
 -- full 100 bed absorbs ~300 dirt of natural buildup before it runs out).
 function HBBedding.dirtPerBedding()
@@ -55,7 +55,7 @@ function HBBedding.dirtPerBedding()
     return n
 end
 
--- If true, bedding is never consumed — placing hay once keeps a coop clean
+-- If true, bedding is never consumed - placing hay once keeps a coop clean
 -- forever (RFTDHusbandry.BeddingNeverDepletes). Cleaning still happens; only
 -- the bedding spend is skipped.
 function HBBedding.neverDepletes()
@@ -106,7 +106,7 @@ end
 
 if not isServer() then return end
 
-print("[HB] HBBedding loaded — hutch bedding/cleaning (server)")
+print("[HB] HBBedding loaded - hutch bedding/cleaning (server)")
 
 -- Merge a key into the hutch's NS_HUTCH ModData table (create on demand).
 local function putState(hutch, k, v)
@@ -127,7 +127,7 @@ end
 -- When bedding runs out, leftover dirt simply stays and accrues as normal.
 --
 -- Mirrors resulting dirt into ModData so dedicated-server clients can see it
--- (native hutchDirt isn't replicated by transmitModData — see getStatus), and
+-- (native hutchDirt isn't replicated by transmitModData - see getStatus), and
 -- auto-prunes the record once a hutch is clean and out of bedding.
 function HBBedding.applyBedding(hutch)
     if not hutch then return end
@@ -161,7 +161,7 @@ function HBBedding.applyBedding(hutch)
 
         if amount <= 0 and dirt <= 0 and nb <= 0 then
             -- Clean AND out of bedding: drop the record so idle hutches store
-            -- nothing (auto-flush — keeps per-hutch ModData from lingering).
+            -- nothing (auto-flush - keeps per-hutch ModData from lingering).
             hutch:getModData()[HBData.NS_HUTCH] = nil
         else
             putState(hutch, "bedding", amount)
@@ -169,7 +169,7 @@ function HBBedding.applyBedding(hutch)
             putState(hutch, "nbDirt",  nb)
         end
         -- Safe transmit: this hutch came from a loaded-square getObjects()
-        -- scan, so it is live and in its square's object list — not the stale
+        -- scan, so it is live and in its square's object list - not the stale
         -- zone-list case that produces junk type-1/-1 ObjectModData packets.
         hutch:transmitModData()
     end)
@@ -187,7 +187,7 @@ function HBBedding.addBedding(hutch, amount)
 end
 
 -- Resolve the live MASTER hutch on a given square (client sends coords).
--- Skips slave halves of multi-tile coops (isSlave: linkedX>0 && linkedY>0) —
+-- Skips slave halves of multi-tile coops (isSlave: linkedX>0 && linkedY>0) -
 -- the master holds the real dirt/animals/bedding.
 function HBBedding.resolveHutchAt(x, y, z)
     local cell = getCell()

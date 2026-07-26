@@ -73,7 +73,7 @@ function RQDazedMoodle:new(player)
 end
 
 -- Count active vanilla moodles so we stack below them.
--- B42 uses Registries.MOODLE_TYPE:values() — MoodleType.FromIndex no longer exists.
+-- B42 uses Registries.MOODLE_TYPE:values() - MoodleType.FromIndex no longer exists.
 local function countVanillaMoodles(player)
     local count = 0
     local moodles      = player:getMoodles()

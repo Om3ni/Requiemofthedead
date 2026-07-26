@@ -491,7 +491,7 @@ local function svDoSpawn(x, y, z, count)
 end
 
 -- ========================
--- EMP helpers — shared because Boss uses EMP blast too
+-- EMP helpers - shared because Boss uses EMP blast too
 -- ========================
 
 local function svApplyEMPEnduranceDrain(player)
@@ -531,7 +531,7 @@ local function svDamageWorldElectronics(x, y, z, radius, drainPercent)
                             elseif obj and (instanceof(obj, "IsoTelevision") or instanceof(obj, "IsoRadio")) then
                                 -- WaveSignalDevice API: getDeviceData():setIsTurnedOn(false).
                                 -- Earlier code called obj:turnOff() which silently no-op'd
-                                -- (that method doesn't exist on radios/TVs in vanilla — confirmed
+                                -- (that method doesn't exist on radios/TVs in vanilla - confirmed
                                 -- by grep against the Steam install). Pattern below mirrors
                                 -- ISMoveablesAction.lua and ISVehicleDashboard.lua.
                                 local dd = obj.getDeviceData and obj:getDeviceData()
@@ -567,7 +567,7 @@ local EMP_OUTER_DMG = 0.10
 -- subclasses vary on which methods they actually expose.
 --
 -- Drainable semantics: setUsedDelta(x) treats x as REMAINING fullness, not
--- "amount consumed" — 1.0 = full, 0.0 = depleted. Naming is misleading but
+-- "amount consumed" - 1.0 = full, 0.0 = depleted. Naming is misleading but
 -- the getCurrentUsesFloat/setUsedDelta pairing in vanilla (ISItemEditPanel,
 -- RecipeTests, ClientCommands) confirms this. To drain, we subtract.
 local function svDrainPlayerElectronics(player, drainPercent)
@@ -646,7 +646,7 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent)
     end
     -- Zombies caught in the blast stumble; inner-zone zeds go down hard
     -- (mirrors the player inner/outer split). Ownership rule: only the side
-    -- that OWNS a zombie may drive its state machine — and zeds near players
+    -- that OWNS a zombie may drive its state machine - and zeds near players
     -- (i.e. exactly the ones in a blast) are usually client-owned, which is
     -- why the old unconditional server-side knockDown looked like a no-op in
     -- dedicated MP. isRemoteZombie() is true here for client-owned zeds: skip
@@ -675,7 +675,7 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent)
                                     -- syntax (`obj:knockDown(...)`) for the Java bridge to
                                     -- resolve them. Grabbing `obj.knockDown` as a value can
                                     -- yield nil, and pcall would silently swallow the
-                                    -- "attempt to call a nil value" error — the original
+                                    -- "attempt to call a nil value" error - the original
                                     -- pcall(obj.knockDown, obj, false) form looked correct
                                     -- but quietly no-op'd in dedicated MP. Wrap in a
                                     -- function so the dispatch happens inside the pcall.
@@ -708,7 +708,7 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent)
 end
 
 -- ========================
--- processPending — called by RQServer.lua in its OnTick
+-- processPending - called by RQServer.lua in its OnTick
 -- ========================
 
 function RQSvShared.processPending()
