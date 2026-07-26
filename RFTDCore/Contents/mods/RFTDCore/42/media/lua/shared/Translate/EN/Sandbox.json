@@ -1,0 +1,18 @@
+{
+    "Sandbox_RFTDCore": "Requiem of the Dead: Core",
+
+    "Sandbox_RD_SeasonId": "Season id",
+    "Sandbox_RD_SeasonId_tooltip": "Names the current season. Everything Core records is filed under this id; changing it starts a new season directory and closes out the old one. Letters, digits, dash and underscore only (anything else becomes a dash). Bump it at every wipe.",
+
+    "Sandbox_RD_Debug": "Debug logging",
+    "Sandbox_RD_Debug_tooltip": "Print [RFTDCore] diagnostic traces to the console. Leave off for normal play.",
+
+    "Sandbox_RD_DeathCaptureEnabled": "Capture player deaths",
+    "Sandbox_RD_DeathCaptureEnabled_tooltip": "Records player deaths server-side. Kill switch: the capture hook fires for every character in the world (players, zombies, animals), so if a horde-night performance problem is ever traced here, turn this off and report it.",
+
+    "Sandbox_RD_ForensicRingSegments": "Forensic log: ring segments",
+    "Sandbox_RD_ForensicRingSegments_tooltip": "How many segments each rotating forensic log stream keeps before the oldest is overwritten. Disk ceiling per stream is roughly segments x segment lines x 200 bytes; the default 8 x 20000 is ~40 MB.",
+
+    "Sandbox_RD_ForensicSegmentLines": "Forensic log: lines per segment",
+    "Sandbox_RD_ForensicSegmentLines_tooltip": "How many lines a forensic segment holds before rolling to the next one. Line-counted rather than byte-counted; after an unclean restart the counter can be up to 500 lines stale, which is expected and harmless."
+}
