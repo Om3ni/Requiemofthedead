@@ -7,7 +7,7 @@
 -- HBKeepAlive's hutch scan. This tab is just the reader + the spawn button.
 --
 -- Soft-depends on Dragonfly: bails inside OnGameStart if DFRegistry is absent.
--- Mirrors HBAnimalsTab's structure (DFColumns layout, "RQ" command module,
+-- Mirrors HBAnimalsTab's structure (DFColumns layout, "RFTDHusbandry" command module,
 -- DFFeedback for inline feedback). Values in the list are read LIVE from each
 -- hutch every frame, so a bedding top-up / cleaning pass shows up without a
 -- manual rescan.
@@ -217,7 +217,7 @@ end
 -- The server derives the per-add amount from the sandbox option.
 local function spawnHay(row)
     if not row then return end
-    sendClientCommand(getPlayer(), "RQ", HBCmd.ADD_BEDDING,
+    sendClientCommand(getPlayer(), "RFTDHusbandry", HBCmd.ADD_BEDDING,
         { x = row.x, y = row.y, z = row.z })
 end
 

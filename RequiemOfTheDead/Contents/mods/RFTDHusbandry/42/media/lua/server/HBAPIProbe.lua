@@ -24,7 +24,7 @@ local function emit(player, line)
     local s = tostring(line)
     print("[HB probe] " .. s)
     if player then
-        sendServerCommand(player, "RQ", HBCmd.DEBUG_PROBE_RESULT, { line = s })
+        sendServerCommand(player, "RFTDHusbandry", HBCmd.DEBUG_PROBE_RESULT, { line = s })
     end
 end
 

@@ -22,7 +22,7 @@ local function onAnimalContext(playerNum, context, animals, test)
     for _, animal in ipairs(animals) do
         local ok, oid = pcall(function() return animal:getOnlineID() end)
         if ok and oid and oid ~= 0 then
-            sendClientCommand(player, "RQ", HBCmd.ADD_SEEN, { id = tostring(oid) })
+            sendClientCommand(player, "RFTDHusbandry", HBCmd.ADD_SEEN, { id = tostring(oid) })
         end
     end
 end

@@ -48,7 +48,7 @@ function HBAddHayAction:complete()
     local sq
     pcall(function() sq = self.hutch:getSquare() end)
     if sq then
-        sendClientCommand(self.character, "RQ", HBCmd.ADD_BEDDING,
+        sendClientCommand(self.character, "RFTDHusbandry", HBCmd.ADD_BEDDING,
             { x = sq:getX(), y = sq:getY(), z = sq:getZ() })
     end
     return true

@@ -3,11 +3,11 @@
 -- Exists to kill two classes of drift that shipped in 1.0.x:
 --
 --   1. WIRE TOKEN. Dirge historically dispatched on the bare token "RQ",
---      which Husbandry also squats on (live cross-dispatch collision). The
---      token is now the mod id, per family law. TRANSITION: acceptsModule()
---      answers true for BOTH tokens for exactly this release, so mixed
---      client/server versions mid-rollout cannot go silent; the legacy "RQ"
---      acceptance is deleted next release. All sends use MODULE only.
+--      which Husbandry also squatted on - a live cross-dispatch collision
+--      that survived only because command names never overlapped. The token
+--      is the mod id now, per family law, and the bare token is fully dead:
+--      the bundle ships every client and server atomically, so no wire
+--      transition period was ever needed.
 --
 --   2. ENUM TABLES. The sandbox enum value arrays existed twice (client
 --      RQConfig, server RQSvShared) and had already drifted: DEVOUR_TIME
@@ -23,13 +23,15 @@
 
 RQCommon = RQCommon or {}
 
-RQCommon.MODULE        = "RFTDDirge"   -- wire token = mod id
-RQCommon.LEGACY_MODULE = "RQ"          -- dual-accept THIS RELEASE ONLY
-RQCommon.VERSION       = "1.1.0"
+RQCommon.MODULE  = "RFTDDirge"   -- wire token = mod id
+RQCommon.VERSION = "1.1.0"
 
--- Receive-side gate for both dispatch directions during the transition.
+-- Receive-side gate. The legacy "RQ" token is DEAD: the bundle is a brand-new
+-- Workshop item, so no subscriber can ever hold old-wire clients, and
+-- Husbandry (the other "RQ" squatter) took its own token in the same bundle.
+-- The collision that survived two years by luck is now structurally gone.
 function RQCommon.acceptsModule(m)
-    return m == RQCommon.MODULE or m == RQCommon.LEGACY_MODULE
+    return m == RQCommon.MODULE
 end
 
 -- RFTDCore adoption (hard require - no guards, per family law).
