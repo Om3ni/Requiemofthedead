@@ -9,6 +9,16 @@
     "Sandbox_DF_Enabled": "Enable Dragonfly admin panel",
     "Sandbox_DF_Enabled_tooltip": "Master toggle. When disabled, the panel keybind does nothing and consumer mods that register tabs/actions sit idle. Designed for dedicated multiplayer servers.",
 
+    "Sandbox_DF_PanelAccess": "Admin panel access",
+    "Sandbox_DF_PanelAccess_tooltip": "Who may open the admin panel. Admin only: requires the highest access level. All staff: any role holding at least one capability - careful, if the role editor ever granted a capability to the User role, that role could open the panel too. Default is Admin only.",
+    "Sandbox_DF_PanelAccess_option1": "Admin only",
+    "Sandbox_DF_PanelAccess_option2": "All staff",
+
+    "Sandbox_DF_DebugGateAccess": "Debug menu reveal access",
+    "Sandbox_DF_DebugGateAccess_tooltip": "Who may use the reveal key to unhide the engine's debug context-menu options. Admin only: requires the highest access level. All staff: any role holding at least one capability. Default is Admin only.",
+    "Sandbox_DF_DebugGateAccess_option1": "Admin only",
+    "Sandbox_DF_DebugGateAccess_option2": "All staff",
+
     "Sandbox_DF_OpenKeybind": "Admin panel: open key",
     "Sandbox_DF_OpenKeybind_tooltip": "LWJGL key code that opens the admin panel. Default 22 = U (paired with Shift). Common alternatives: 41 = backtick, 19 = R, 36 = J. Set to 0 to disable the keybind entirely.",
 

@@ -195,23 +195,21 @@ end
 -- Open / close / toggle / keybind
 -- ─────────────────────────────────────────────────────────────────────────
 
--- True only for full server admins. Ordinary players have no business
--- seeing the panel, so they're blocked before any content is built.
--- We deliberately do NOT accept "holds any capability" here: the role
--- editor can grant capabilities to the User role, which would let every
--- player open the panel. Per-tab gating in prerender still hides tabs an
--- admin's role doesn't grant. FAILS CLOSED: a bad lookup denies access.
--- isAdmin() alone is NOT enough: on a dedicated-server client it can return
--- false for a genuine admin (a known PZ quirk), locking real admins out. So
--- we also accept the player's access level == "admin" as an authoritative
--- fallback (the robust pattern the rest of RFTD uses). Still admin-only:
--- moderator/gm/overseer are intentionally not granted panel access here.
+-- Panel access is a SANDBOX POLICY (RFTDDragonfly.PanelAccess) resolved by
+-- RDAccess.meetsTier: 1 = Admin only (the shipped default - access level
+-- "admin", nothing less), 2 = all staff (any capability). The default stays
+-- deliberately strict because the role editor can grant capabilities to the
+-- User role, which under "all staff" would let every player open the panel -
+-- a server choosing tier 2 is choosing to own that. Per-tab gating in
+-- prerender still hides tabs a role doesn't grant. FAILS CLOSED: a bad
+-- lookup or unset option resolves to Admin only. (isAdmin() is deliberately
+-- not consulted - it can return false for a genuine admin on a
+-- dedicated-server client; the access-level check inside isTopAdmin is the
+-- authoritative path, same robust pattern the rest of RFTD uses.)
 function DFPanel.canOpen()
-    local ok, admin = pcall(isAdmin)
-    if ok and admin == true then return true end
-    local p = getPlayer()
-    local ok2, lvl = pcall(function() return p and p:getAccessLevel() end)
-    return ok2 and type(lvl) == "string" and lvl:lower() == "admin"
+    local tier
+    pcall(function() tier = SandboxVars.RFTDDragonfly and SandboxVars.RFTDDragonfly.PanelAccess end)
+    return RDAccess.meetsTier(getPlayer(), tier)
 end
 
 function DFPanel.open()

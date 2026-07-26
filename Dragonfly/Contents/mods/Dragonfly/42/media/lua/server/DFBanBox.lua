@@ -163,86 +163,19 @@ local function scrubPlayer(player)
         tostring(who), scanned, any and "yes" or "none banned")
 end
 
--- Trigger reality on a DEDICATED server: OnPlayerUpdate doesn't fire (no local
--- player), and OnConnected/OnCreatePlayer BIND but don't fire on a remote join
--- here (the bounded "arm on connect" watcher printed "armed" then went silent
--- forever - nothing ever armed it). The only event proven to fire server-side is
--- OnTick (see DFPatch_RVInterior). So this is a STANDING OnTick poll - but kept
--- cheap: it does real work at most once a second, skips already-handled players
--- instantly, and gives up on any one player after WATCH_MAX_MS so a stuck loader
--- never causes repeated scans. Time-based (getTimestampMs); keyed by onlineID so
--- a relog (fresh id) is re-scrubbed.
-local WATCH_MAX_MS     = 5 * 60 * 1000  -- give up waiting for one player to load in
-local POLL_INTERVAL_MS = 1000           -- do real work at most this often
-local scrubbedID = {}                   -- onlineID -> true (handled this connection)
-local watchStart = {}                   -- onlineID -> ms first seen, still loading in
-local lastDiag   = {}                   -- onlineID -> ms of last "waiting" diagnostic
-local lastPoll   = 0
-
-local function nowMs()
-    local ok, v = pcall(getTimestampMs); if ok and type(v) == "number" then return v end
-    ok, v = pcall(getTimeInMillis); if ok and type(v) == "number" then return v end
-    return nil
-end
-
-local function pollScrub()
-    local now = nowMs()
-    if not now or (now - lastPoll) < POLL_INTERVAL_MS then return end  -- throttle to ~1s
-    lastPoll = now
-    if not confiscateOn() then return end
-    if not DFBanBox._pollProven then
-        DFBanBox._pollProven = true
-        dbg("OnTick poll active (confiscate ON; scanning logins)")
-    end
-    local players = getOnlinePlayers()
-    if not players then return end
-    for i = 0, players:size() - 1 do
-        local p = players:get(i)
-        local id = p and p.getOnlineID and p:getOnlineID()
-        if id and not scrubbedID[id] then
-            local sq  = p.getSquare and p:getSquare()
-            local inv = p.getInventory and p:getInventory()
-            if sq and inv then
-                scrubbedID[id] = true; watchStart[id] = nil; lastDiag[id] = nil
-                scrubPlayer(p)
-            else
-                local start = watchStart[id]
-                if not start then watchStart[id] = now; start = now end
-                -- Throttled visibility while waiting (every ~5s): shows what the
-                -- server actually sees, so we can tell "not loaded yet" from a
-                -- getSquare/getInventory that never populates.
-                if not lastDiag[id] or (now - lastDiag[id]) > 5000 then
-                    lastDiag[id] = now
-                    dbg("waiting on %s: square=%s inv=%s (%ds elapsed)",
-                        tostring((p.getUsername and p:getUsername()) or id),
-                        tostring(sq ~= nil), tostring(inv ~= nil), math.floor((now - start) / 1000))
-                end
-                if now - start >= WATCH_MAX_MS then
-                    scrubbedID[id] = true; watchStart[id] = nil; lastDiag[id] = nil
-                    dbg("gave up waiting for %s after %d min - not scrubbed this connection",
-                        tostring((p.getUsername and p:getUsername()) or id), math.floor(WATCH_MAX_MS / 60000))
-                end
-            end
-        end
-    end
-end
-
+-- Player-ready trigger: Core owns the family's ONLY standing OnTick poll now
+-- (RDLife - same throttle / square+inventory gates / 5-minute give-up this
+-- file pioneered; RDLife's header carries the dedicated-server trigger
+-- facts). BanBox subscribes and scrubs once per connection; RDLife keys by
+-- onlineID and prunes on disconnect, so a relog is re-scrubbed exactly as
+-- before. BEHAVIOR NOTE: the confiscate toggle is read at ready time - a
+-- mid-session sandbox enable now applies from each player's NEXT connection
+-- rather than mid-connection (the old poll re-checked every second; nobody
+-- legitimately flips this mid-session).
 if not DFBanBox._connectHooked then
     DFBanBox._connectHooked = true
-    if Events.OnTick then
-        Events.OnTick.Add(pollScrub)
-        dbg("login scrub armed (standing OnTick poll, %dms interval, %d-min per-player cap)",
-            POLL_INTERVAL_MS, math.floor(WATCH_MAX_MS / 60000))
-    else
-        print("[DFBanBox] login scrub: OnTick unavailable - scrub disabled")
-    end
-    -- Prune per-connection flags on disconnect (best-effort; a relog gets a fresh id).
-    local function bindDC(name)
-        local ev = Events[name]
-        if ev and ev.Add then ev.Add(function(p)
-            local i = p and p.getOnlineID and p:getOnlineID()
-            if i then scrubbedID[i] = nil; watchStart[i] = nil; lastDiag[i] = nil end
-        end) end
-    end
-    bindDC("OnDisconnect"); bindDC("OnPlayerDisconnect")
+    RDLife.onPlayerReady(function(p)
+        if confiscateOn() then scrubPlayer(p) end
+    end)
+    dbg("login scrub armed (via RDLife.onPlayerReady)")
 end
