@@ -1,0 +1,26 @@
+version=1
+id=
+title=Requiem of the Dead
+description=[h1]Requiem of the Dead[/h1]
+description=
+description=The shared core library for the Requiem of the Dead mod family. It carries the family's common infrastructure — unified server-side logging, season bookkeeping, networking helpers, rate limiting, and capability-based staff access gates — so the individual mods can stay lean and consistent.
+description=
+description=Newer releases of the RFTD mods require this mod. It has no gameplay content of its own.
+description=
+description=[hr][/hr]
+description=
+description=[h2]Server[/h2]
+description=
+description=Built for and live on the [b]Requiem of the Dead[/b] RP server.
+description=
+description=[url=https://discord.gg/UMSj4vQs2P]Join the Discord →[/url]
+description=
+description=[hr][/hr]
+description=
+description=[h2]Technical[/h2]
+description=
+description=[list]
+description=[*][b]Mod ID:[/b] RFTDCore
+description=[/list]
+tags=Build 42
+visibility=unlisted
