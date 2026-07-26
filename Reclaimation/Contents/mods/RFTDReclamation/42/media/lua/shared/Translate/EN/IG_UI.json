@@ -104,5 +104,5 @@
     "IGUI_RC_EngineLocked": "Engine salvage is disabled on this server.",
 
     "IGUI_CheatPanel_EternalTorch": "Eternal Torch",
-    "IGUI_CheatPanel_EternalTorch_tooltip": "Reclamation: blowtorches you are carrying never run dry - any use (dismantling, welding, anything) refills within moments. Like Unlimited Ammo, for torches."
+    "IGUI_CheatPanel_EternalTorch_tooltip": "Reclaimation: blowtorches you are carrying never run dry - any use (dismantling, welding, anything) refills within moments. Like Unlimited Ammo, for torches."
 }

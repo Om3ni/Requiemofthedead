@@ -13,7 +13,7 @@
 -- uncontested, so we insert there and push every existing control down one row.
 --
 -- MP-only by design: the Client button that opens ISUserPanelUI only exists for
--- network clients (matches Reclamation's dedicated-MP scope).
+-- network clients (matches Reclaimation's dedicated-MP scope).
 --
 -- Post-hooks create() (no vanilla edits) with our own onclick closure. Mirrors
 -- Last Rites' LRUserPanelHook, which does the identical top-insert - when both

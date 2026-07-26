@@ -15,7 +15,7 @@ adopted, the dependency is hard.
 |---|---|---|---|
 | `RFTDCore` | `RFTDCore` | *(unpublished)* | In development — v0.1 |
 | — | `RFTDDirge` | 3701543539 | Migrating from PZMod (order: 1) |
-| — | `RFTDReclamation` | 3752878504 | Migrating from PZMod (order: 1) |
+| `Reclaimation` | `RFTDReclamation` | 3752878504 | Migrated — Core adoption pending |
 | — | `Dragonfly` (+`BBLibrary`) | 3728273142 | Migrating + shakeout (order: 2) |
 | — | `RFTDReaper` | 3730287596 | Evaluate vs 42.20 vanilla culling (order: 3) |
 | — | `RFTDHusbandry` | 3711156499 | Migrating (order: 4) |
@@ -35,6 +35,10 @@ one dual-accept release) → Core adoption → Workshop uploads thereafter happe
 - Test forks are retired. Testing happens on git branches, not folder copies.
 - Every Lua edit goes through `tools\check-lua.bat` before upload (silence = clean).
 - No mod-id renames of existing mods, ever.
+- The vehicle mod is spelled **Reclaimation** (reclaim + reclamation — intentional
+  wordplay) everywhere human-facing. The mod id `RFTDReclamation` and derived
+  identifiers (wire token, sandbox page, zone field ids, translation keys) keep the
+  id spelling — they are frozen, not prose.
 - Core emits its event registry as `RFTD/schema.json` at boot; external tooling in
   `tools/` consumes that artifact rather than carrying its own copy of the contract.
 
