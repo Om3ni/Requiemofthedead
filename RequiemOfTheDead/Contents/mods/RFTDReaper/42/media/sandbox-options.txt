@@ -1,0 +1,113 @@
+VERSION = 1,
+
+option RFTDReaper.Enabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDReaper,
+    translation = RP_Enabled,
+}
+
+option RFTDReaper.CullEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDReaper,
+    translation = RP_CullEnabled,
+}
+
+option RFTDReaper.LogCulls
+{
+    type = boolean,
+    default = true,
+    page = RFTDReaper,
+    translation = RP_LogCulls,
+}
+
+option RFTDReaper.DebugContextMenu
+{
+    type = boolean,
+    default = false,
+    page = RFTDReaper,
+    translation = RP_DebugContextMenu,
+}
+
+option RFTDReaper.SequentialThreshold
+{
+    type = integer,
+    min = 1,
+    max = 50,
+    default = 2,
+    page = RFTDReaper,
+    translation = RP_SequentialThreshold,
+}
+
+option RFTDReaper.BloomInterval
+{
+    type = integer,
+    min = 5,
+    max = 300,
+    default = 5,
+    page = RFTDReaper,
+    translation = RP_BloomInterval,
+}
+
+option RFTDReaper.StackThreshold
+{
+    type = integer,
+    min = 2,
+    max = 50,
+    default = 5,
+    page = RFTDReaper,
+    translation = RP_StackThreshold,
+}
+
+option RFTDReaper.MaxRemovalsPerScan
+{
+    type = integer,
+    min = 50,
+    max = 5000,
+    default = 500,
+    page = RFTDReaper,
+    translation = RP_MaxRemovalsPerScan,
+}
+
+option RFTDReaper.CullsPerTick
+{
+    type = integer,
+    min = 1,
+    max = 200,
+    default = 15,
+    page = RFTDReaper,
+    translation = RP_CullsPerTick,
+}
+
+option RFTDReaper.OutfitIdGap
+{
+    type = integer,
+    min = 1,
+    max = 100,
+    default = 15,
+    page = RFTDReaper,
+    translation = RP_OutfitIdGap,
+}
+
+option RFTDReaper.OutfitMinCluster
+{
+    type = integer,
+    min = 2,
+    max = 20,
+    default = 3,
+    page = RFTDReaper,
+    translation = RP_OutfitMinCluster,
+}
+
+option RFTDReaper.OutfitProximity
+{
+    type = integer,
+    min = 10,
+    max = 300,
+    default = 75,
+    page = RFTDReaper,
+    translation = RP_OutfitProximity,
+}
