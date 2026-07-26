@@ -755,7 +755,13 @@ end
 local svReflectPingAt = {}
 
 Events.OnClientCommand.Add(function(module, command, player, args)
-    if module ~= "RQ" then return end
+    -- Dual-accept transition (this release only): "RFTDDirge" is the token,
+    -- legacy "RQ" still lands here so a mixed-version rollout cannot go
+    -- silent. "RQ" acceptance is deleted next release - and note Husbandry
+    -- still SENDS on "RQ" until its own migration turn, so its commands keep
+    -- arriving here exactly as they always (wrongly) have; command names do
+    -- not overlap, which is the only reason that collision has been benign.
+    if not RQCommon.acceptsModule(module) then return end
 
     if command == "reflectPing" then
         -- Reflection probe (client half: RQReflect.lua). A client is asking
@@ -1027,6 +1033,12 @@ Events.OnClientCommand.Add(function(module, command, player, args)
     -- Only server-confirmed type triggers death effects
     if not zType then return end
     svProcessedDeaths[onlineIDStr] = getTimestampMs()
+
+    -- Chronicle: one record per server-confirmed special death, attributed to
+    -- the reporting client (the zombie's owning client - the killer in
+    -- practice). Sits after the liveness guard and the dedup stamp, so a
+    -- spoofed or duplicate report can never mint a record.
+    RDLog.chronicle("RQ.SPECIAL_KILL", player, { ztype = zType, x = x, y = y, z = z })
 
     -- Dormant registry: a server-confirmed death retires the record. The tick
     -- cleanup would catch it anyway; doing it here closes the window where a

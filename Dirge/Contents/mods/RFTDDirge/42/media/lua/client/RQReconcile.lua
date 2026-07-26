@@ -143,7 +143,7 @@ end)
 
 -- Delta channel: lightweight per-tick churn.
 Events.OnServerCommand.Add(function(module, command, args)
-    if module ~= "RQ" or command ~= "zombieDelta" then return end
+    if not RQCommon.acceptsModule(module) or command ~= "zombieDelta" then return end
     onReceiveDelta(args)
 end)
 

@@ -70,7 +70,7 @@ end
 local function sendPing(reason)
     local player = getPlayer()
     if not player then return end
-    sendClientCommand("RQ", "reflectPing", {
+    sendClientCommand(RQCommon.MODULE, "reflectPing", {
         reason   = reason,
         clientTs = getTimestampMs(),
         x        = math.floor(player:getX()),
@@ -277,7 +277,7 @@ end)
 -- ========================
 
 Events.OnServerCommand.Add(function(module, command, args)
-    if module ~= "RQ" or command ~= "reflectTruth" then return end
+    if not RQCommon.acceptsModule(module) or command ~= "reflectTruth" then return end
     if not RQReflect.ENABLED or not args then return end
     local player = getPlayer()
     if not player then return end

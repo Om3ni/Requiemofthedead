@@ -15,6 +15,19 @@
 -- "RQDormant" is its own ModData table on purpose: RQZombieState is
 -- transmitted to every connecting client, this table must NEVER ride a
 -- transmit/request. Do not nest it there, do not ModData.transmit it.
+--
+-- WHY GLOBAL MODDATA (owner-approved exception to the family's
+-- don't-touch-GMD principle): during high-population cell churn, converted
+-- specials lost their identity on chunk unload and the conversion scanner
+-- re-rolled them IN FRONT OF PLAYERS - "a Screamer just spawned on top of
+-- me". GMD is the only store that is already in RAM, survives cell churn by
+-- definition, and needs no sync plumbing. Known accepted limit: GMD
+-- durability rides the engine-save cadence (30-min saves on the prod dedi;
+-- saves OFF locally), so a force-kill restart can lose up to one save
+-- interval of registry changes - conversions from the final minutes
+-- despecialize at the boundary. If that ever bites, the fix is a
+-- write-through mirror via RFTDCore's file layer (replay at boot), NOT a
+-- redesign of this table.
 -- =============================================
 
 if not isServer() then return end

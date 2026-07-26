@@ -5,16 +5,9 @@
 
 RQConfig = RQConfig or {}
 
-RQConfig.JUGGERNAUT_MIN_BASE_HEALTH = 1.0
-
-RQConfig.HEALTH_MULTIPLIER = {
-    Screamer   = 2,
-    Juggernaut = 10,  -- big health pool to survive being in the open while casting, and to make EMP and Glutton devouring more meaningful
-    EMP        = 2,
-    Glutton    = 2,   -- starts tougher, grows more by eating
-    Scavenger  = 2,   -- survives long enough to actually rage
-    Boss       = 10,
-}
+-- Single source in RQCommon (was a drifting duplicate of the server's copy).
+RQConfig.JUGGERNAUT_MIN_BASE_HEALTH = RQCommon.JUGGERNAUT_MIN_BASE_HEALTH
+RQConfig.HEALTH_MULTIPLIER          = RQCommon.HEALTH_MULTIPLIER
 
 RQConfig.COLORS = {
     Screamer   = { r = 0.6, g = 0.0,  b = 1.0,  a = 0.6 },  -- Purple
@@ -28,36 +21,34 @@ RQConfig.COLORS = {
 
 RQConfig.SCREAMER_SPAWN_RADIUS = 8  -- Radius for spawning new zombies
 
--- sandbox-options.txt enum options store 1-based indices
-
-local E_SPAWN_CHANCE        = {1, 3, 5, 10, 15, 20, 30}         -- default idx=4 -> 10%
+-- sandbox-options.txt enum options store 1-based indices.
+-- Single source in RQCommon.ENUMS - aliases, not copies. The old client copy
+-- of DEVOUR_TIME had drifted to {10,...} against the server's {15,...}: the
+-- cast bar showed 10s for a 15s devour at defaults. Server values are truth.
+local E = RQCommon.ENUMS
+local E_SPAWN_CHANCE        = E.SPAWN_CHANCE        -- default idx=4 -> 10%
 -- (per-type spacing is now integer sandbox options, no enum table needed)
-local E_CAST_5              = {1, 2, 3, 5, 8}                    -- 5-tier cast time (seconds)
-local E_CAST_4              = {1, 2, 3, 5}                       -- 4-tier cast time (seconds)
-local E_TYPE_WEIGHT         = {0, 5, 10, 15, 20, 30, 40, 50}    -- per-type spawn weight %
-local E_SCREAMER_INTERVAL   = {15, 30, 45, 60, 90, 120}          -- default idx=4 -> 60s
-local E_SCREAMER_CAST       = {1, 2, 3, 5, 8}                    -- default idx=3 -> 3s
-local E_SCREAMER_RANGE      = {10, 15, 20, 30, 40}               -- default idx=3 -> 20
-local E_SCREAMER_SOUND      = {20, 40, 60, 80, 100}              -- default idx=3 -> 60
-local E_SCREAMER_SPAWN_MIN  = {10, 15, 20, 25}                   -- default idx=1 -> 10
-local E_SCREAMER_SPAWN_MAX  = {15, 20, 25, 30}                   -- default idx=3 -> 25
-local E_SCREAMER_THRESHOLD  = {3, 5, 8, 10, 15}                  -- default idx=2 -> 5
-local E_JUGG_RADIUS         = {3, 5, 8, 12, 20}                  -- default idx=3 -> 8
-local E_JUGG_BUFF           = {5, 10, 15, 20, 25}                -- default idx=2 -> 10%
-local E_EMP_RANGE           = {5, 10, 15, 20, 30}                -- default idx=3 -> 15
-local E_EMP_CAST            = {1, 2, 3, 5, 8}                    -- default idx=3 -> 3s
-local E_EMP_RADIUS          = {3, 5, 8, 12, 20}                  -- default idx=3 -> 8
-local E_EMP_DRAIN           = {20, 35, 50, 75}                   -- default idx=2 -> 35%
-local E_GLUTTON_RADIUS      = {1, 2, 3, 5, 8, 12, 20}            -- default idx=7 -> 20
-local E_GLUTTON_MULT        = {2, 3, 5, 8, 10}                   -- default idx=3 -> 5
-local E_DEVOUR_TIME         = {10, 20, 30, 45, 60, 90}           -- default idx=1 -> 10s
-local E_BOSS_COOLDOWN       = {5, 10, 15, 20, 30, 60}            -- default idx=3 -> 15s
+local E_CAST_4              = E.CAST_4
+local E_TYPE_WEIGHT         = E.TYPE_WEIGHT
+local E_SCREAMER_INTERVAL   = E.SCREAMER_INTERVAL
+local E_SCREAMER_CAST       = E.SCREAMER_CAST
+local E_SCREAMER_RANGE      = E.SCREAMER_RANGE
+local E_SCREAMER_SOUND      = E.SCREAMER_SOUND
+local E_SCREAMER_SPAWN_MIN  = E.SCREAMER_SPAWN_MIN
+local E_SCREAMER_SPAWN_MAX  = E.SCREAMER_SPAWN_MAX
+local E_SCREAMER_THRESHOLD  = E.SCREAMER_THRESHOLD
+local E_JUGG_RADIUS         = E.JUGG_RADIUS
+local E_JUGG_BUFF           = E.JUGG_BUFF
+local E_EMP_RANGE           = E.EMP_RANGE
+local E_EMP_CAST            = E.EMP_CAST
+local E_EMP_RADIUS          = E.EMP_RADIUS
+local E_EMP_DRAIN           = E.EMP_DRAIN
+local E_GLUTTON_RADIUS      = E.GLUTTON_RADIUS
+local E_GLUTTON_MULT        = E.GLUTTON_MULT
+local E_DEVOUR_TIME         = E.DEVOUR_TIME
+local E_BOSS_COOLDOWN       = E.BOSS_COOLDOWN
 
--- Get actual value from enum index, fall back to default when out of bounds
-local function ev(tbl, idx, defaultIdx)
-    local i = idx or defaultIdx
-    return tbl[i] or tbl[defaultIdx]
-end
+local ev = RQCommon.ev
 
 -- Cached config singleton (avoids creating new table on each call)
 local cachedConfig = nil

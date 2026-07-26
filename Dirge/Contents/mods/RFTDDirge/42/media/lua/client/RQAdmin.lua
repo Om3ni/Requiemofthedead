@@ -7,19 +7,12 @@ RQAdmin = RQAdmin or {}
 
 local ADMIN_TYPES = { "Screamer", "Juggernaut", "EMP", "Glutton", "Scavenger", "Boss" }
 
--- Mirrors RQSvShared.ADMIN_ACCESS_LEVELS. Duplicated here because RQSvShared
--- is server-only and this file runs on clients.
-local ADMIN_ACCESS_LEVELS = {
-    admin     = true,
-    moderator = true,
-    overseer  = true,
-    gm        = true,
-}
-
 -- figures out if the current player should see the admin menu.
 -- SP, co-op host, dedicated server, and MP client all handled separately -
 -- the old code conflated SP and co-op host via `not isClient()` and worked
--- by accident.
+-- by accident. MP clients now go through the RDAccess capability model
+-- (RFTDCore adoption) instead of the old duplicated access-level allowlist;
+-- this is the UI gate only - the server re-validates every command.
 local function isAdmin()
     local player = getPlayer()
     if not player then return false end
@@ -33,10 +26,8 @@ local function isAdmin()
     -- dedicated server with no client (shouldn't hit a UI hook, but be safe)
     if isServer() and not isClient() then return false end
 
-    -- MP client: explicit allowlist
-    local ok, access = pcall(player.getAccessLevel, player)
-    if not ok or not access or access == "" then return false end
-    return ADMIN_ACCESS_LEVELS[string.lower(access)] == true
+    -- MP client: any capability at all = staff
+    return RDAccess.hasAnyCapability(player)
 end
 
 -- scans a small area around the click point looking for something
@@ -124,7 +115,7 @@ local function convertZombie(zombie, zType)
     -- gets the entry. The host-direct path bypassed svActiveZombies, breaking
     -- all alive behaviors (buff aura, scream, regen, etc.) for admin-converted
     -- zombies. sendClientCommand works on host too — routes to OnClientCommand.
-    sendClientCommand("RQ", "adminConvert", {
+    sendClientCommand(RQCommon.MODULE, "adminConvert", {
         onlineID = oid or 0,   -- 0 = no valid ID; server falls back to nearest-at-position
         x        = math.floor(zombie:getX()),
         y        = math.floor(zombie:getY()),
@@ -176,7 +167,7 @@ local function identifyZombie(zombie)
         return
     end
 
-    sendClientCommand("RQ", "adminInspect", {
+    sendClientCommand(RQCommon.MODULE, "adminInspect", {
         onlineID = oid,
         x        = math.floor(zombie:getX()),
         y        = math.floor(zombie:getY()),
@@ -185,7 +176,7 @@ local function identifyZombie(zombie)
 end
 
 local function onAdminServerCommand(module, command, args)
-    if module ~= "RQ" then return end
+    if not RQCommon.acceptsModule(module) then return end
 
     if command == "adminInspectResult" then
         local status = args and args.status or "missing"
