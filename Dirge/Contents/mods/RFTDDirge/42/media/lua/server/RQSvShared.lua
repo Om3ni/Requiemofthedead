@@ -20,14 +20,16 @@ local COLORS = {
     Boss       = { r = 1.0, g = 0.84, b = 0.0,  a = 1.0 },  -- Gold
 }
 
--- Staff gate: RDAccess capability model (RFTDCore adoption). The old
--- four-level access allowlist (admin/moderator/overseer/gm) is retired -
--- "who may do what" is now answered by role capabilities, edited live in the
--- role editor instead of shipped in a Lua table. POLICY NOTE: any role
--- holding at least one capability passes; that is the family-wide meaning of
--- "staff".
+-- Staff gate: RDAccess tier model (RFTDCore adoption). The old four-level
+-- access allowlist (admin/moderator/overseer/gm) is retired. Who may
+-- convert/inspect is a SANDBOX POLICY (RFTDDirge.ConvertAccess): 1 = Admin
+-- only (shipped default - conversion is a lot of power), 2 = all staff (any
+-- role holding a capability). Read live so a mid-session sandbox change
+-- takes effect without a restart.
 function RQSvShared.svIsAdminPlayer(player)
-    return RDAccess.hasAnyCapability(player)
+    local tier
+    pcall(function() tier = SandboxVars.RFTDDirge and SandboxVars.RFTDDirge.ConvertAccess end)
+    return RDAccess.meetsTier(player, tier)
 end
 
 local SCREAMER_SPAWN_RADIUS = 8

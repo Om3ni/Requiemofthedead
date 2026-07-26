@@ -22,6 +22,11 @@
     "Sandbox_RQ_Enabled_tooltip": "Master toggle for all special zombie spawning.",
     "Sandbox_RQ_DebugMode": "Debug Mode",
     "Sandbox_RQ_DebugMode_tooltip": "100% conversion rate for testing. Do not use in normal play.",
+    "Sandbox_RQ_ConvertAccess": "Conversion/inspect access",
+    "Sandbox_RQ_ConvertAccess_tooltip": "Who may use the zombie conversion and inspection tools. Admin only: requires the highest access level. All staff: any role holding at least one capability. Default is Admin only - conversion is a lot of power.",
+    "Sandbox_RQ_ConvertAccess_option1": "Admin only",
+    "Sandbox_RQ_ConvertAccess_option2": "All staff",
+
     "Sandbox_RQ_SpawnChance": "Spawn Chance",
     "Sandbox_RQ_SpawnChance_tooltip": "Chance for a zombie to become special.",
     "Sandbox_RQ_SpawnChance_option1": "1%",

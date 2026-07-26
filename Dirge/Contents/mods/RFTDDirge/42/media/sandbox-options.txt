@@ -58,6 +58,15 @@ option RFTDDirge.SpawnChance
     translation = RQ_SpawnChance,
 }
 
+option RFTDDirge.ConvertAccess
+{
+    type = enum,
+    numValues = 2,
+    default = 1,
+    page = RFTDDirge,
+    translation = RQ_ConvertAccess,
+}
+
 /* ====================== Visuals ====================== */
 
 option RFTDDirge.VisualsHeader
