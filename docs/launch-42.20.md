@@ -67,6 +67,25 @@ Work through this top to bottom; nothing here is optional except where marked.
    positives. Any hit: note the exact action; Dragonfly fixes happen in PZMod
    until its migration turn.
 
+## Client-side traps (learned 2026-07-26, the hard way)
+
+- **Duplicate mod ids beat the bundle.** A client subscribed to BOTH a legacy
+  per-mod item and the bundle loads the LEGACY copy (observed: Dragonfly 0.6.2
+  running against a 0.7.0 server, plus `unknown SandboxOption
+  RFTDDragonfly.PanelAccess / .DebugGateAccess / RFTDDirge.ConvertAccess`
+  because the old copy declares neither). Unsubscribe the legacy items on every
+  test client, and say so loudly in the sunset notes — players who keep both
+  subscriptions get silent version skew, not an error.
+- Junctions in `%USERPROFILE%\Zomboid\mods\` are a THIRD copy of the same ids.
+  Fine for local hosting; remove them before testing against the dedi so it is
+  unambiguous which build ran.
+- **A world save outlives its mod list.** `WorldDictionary.bin` keeps every
+  script name the save was built with; trim `Mods=` afterwards and the client
+  aborts world load with `Missing dictionary script on client: <name>` (the
+  server itself boots fine — it owns the dictionary). Wednesday's fresh world
+  clears this by construction; mid-season, never remove a content mod from a
+  live save.
+
 ## Not on Wednesday
 
 - Nothing player-visible ships. No announcements about Core; it is

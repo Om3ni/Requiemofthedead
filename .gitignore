@@ -25,3 +25,6 @@ debuglog*.txt
 
 # --- Binary tooling (re-download; see tools/check-lua.bat header) ---
 tools/luacheck.exe
+
+# Dropped-in client logs for analysis (not repo content)
+debugclientlog*.txt
