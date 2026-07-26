@@ -10,6 +10,8 @@
 -- controls. The window rebuilds its tabs from the registry every time it
 -- opens, so a section registered by any later-loading file still appears.
 
+require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
+
 RDShared.registerMod("RFTDLastRites", "0.2.0")   -- keep in sync with mod.info
 
 require "ISUI/ISCollapsableWindow"

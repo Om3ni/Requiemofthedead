@@ -19,6 +19,8 @@ if not isServer() then return end
 
 local MODULE = "RFTDReaper"
 
+require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
+
 RDShared.registerMod(MODULE, "1.2.0")   -- keep in sync with mod.info
 
 -- Staff gate: RDAccess capability model (RFTDCore adoption) - the old

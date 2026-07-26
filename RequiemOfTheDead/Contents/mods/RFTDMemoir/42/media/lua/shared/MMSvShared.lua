@@ -28,6 +28,17 @@
 --     match -> the old harmless top-up (could be the same life); mismatch -> overwrite.
 
 MMShared = MMShared or {}
+
+-- LOAD ORDER (landmine, verified 42.19): the CLIENT walks media/lua/shared
+-- ALPHABETICALLY ACROSS ALL MODS - "MMSvShared.lua" runs before Core's
+-- "RDShared.lua", so RDShared was still nil here and this file died with
+-- "attempted index: registerMod of non-table" (taking MMClient with it). The
+-- dedicated server resolves require= into mod order and loads Core first, so
+-- the dedi never saw it. require() pulls Core's file forward and is a no-op if
+-- the walk already ran it - every shared file that touches an RD* global at
+-- file scope needs this line.
+require "RDShared"
+
 RDShared.registerMod("RFTDMemoir", "0.7.0")   -- keep in sync with mod.info
 
 MMShared.MODULE = "RFTDMemoir"   -- wire token = mod id (was "RFTDDragonflyMemoir" pre-shakeout; client+server ship atomically in the bundle, so the flip needs no dual-accept)

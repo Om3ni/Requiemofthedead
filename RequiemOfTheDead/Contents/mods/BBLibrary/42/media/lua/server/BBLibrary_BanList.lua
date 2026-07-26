@@ -14,16 +14,12 @@
 -- Depends on Dragonfly (the BanBox engine lives there); mod.info declares
 -- `require=Dragonfly`. `require "DFBanBox"` below also forces the engine to load
 -- first regardless of mod order.
+-- No longer in Dragonfly. Don't feel like rewriting comments. feeling lazy today.
 
 require "DFBanBox"
 
 DFBanBox.ban("Base.Yoyo")
-DFBanBox.ban("LD.LDMagLegendary")
-DFBanBox.ban("LF.LFMagLegendary")
-DFBanBox.ban("LTW.LTWMag")
-DFBanBox.ban("LK.LKMagLegendary")
-DFBanBox.ban("LB.LBMagLegendary")
-DFBanBox.ban("Phun.WristWatch_Left_MilitaryX")
+
 
 -- Server-specific player notice (policy, not engine mechanism): overrides the
 -- engine's generic default with this server's wording + ticket process. %s = item name.

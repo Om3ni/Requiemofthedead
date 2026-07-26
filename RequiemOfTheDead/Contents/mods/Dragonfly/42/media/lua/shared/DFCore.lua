@@ -23,6 +23,14 @@ DFCore.VERSION = "0.7.0"   -- 0.7.0: RFTDCore adoption (hard require) - RDAccess
 -- RFTDCore adoption (hard require - no guards, per family law). Registered
 -- under the WORKSHOP MOD ID ("Dragonfly"), not the wire token - the HELLO
 -- handshake compares what the server config loads.
+--
+-- LOAD ORDER (landmine, verified 42.19): the CLIENT walks media/lua/shared
+-- ALPHABETICALLY ACROSS ALL MODS, so "DFCore.lua" runs long before Core's
+-- "RDShared.lua" and RDShared would be nil below. require() pulls Core's file
+-- forward; no-op if the walk already ran it. (The dedi resolves require= into
+-- mod order and loads Core first, so this only ever bites clients.)
+require "RDShared"
+
 RDShared.registerMod("Dragonfly", DFCore.VERSION)
 
 -- Capability check: delegates to the family gate (RDAccess). Signature kept

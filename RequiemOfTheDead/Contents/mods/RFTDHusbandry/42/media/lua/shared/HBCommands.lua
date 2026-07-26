@@ -1,6 +1,13 @@
 -- HBCommands — command string constants and server dispatch shell.
 -- Constants are shared; dispatch routes to HBData / HBAPIProbe.
 
+-- LOAD ORDER (landmine, verified 42.19): the CLIENT walks media/lua/shared
+-- ALPHABETICALLY ACROSS ALL MODS, so "HBCommands.lua" runs before Core's
+-- "RDShared.lua" and RDShared would be nil below. require() pulls Core's file
+-- forward; no-op if the walk already ran it. (The dedi loads Core first via
+-- require=, so this only bites clients.)
+require "RDShared"
+
 RDShared.registerMod("RFTDHusbandry", "0.2.0")   -- keep in sync with mod.info
 
 HBCmd = {}
