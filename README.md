@@ -16,7 +16,7 @@ adopted, the dependency is hard.
 | `RFTDCore` | `RFTDCore` | *(unpublished)* | In development — v0.1 |
 | `Dirge` | `RFTDDirge` | 3701543539 | Migrated — on the harness (1.1.0, requires RFTDCore; "RQ" dual-accept this release) |
 | `Reclaimation` | `RFTDReclamation` | 3752878504 | Migrated — on the harness (0.7.0, requires RFTDCore) |
-| — | `Dragonfly` (+`BBLibrary`) | 3728273142 | Migrating + shakeout (order: 2) |
+| `Dragonfly` | `Dragonfly` (+`BBLibrary`) | 3728273142 | Migrated — on the harness (0.7.0, requires RFTDCore); shakeout post-stable |
 | — | `RFTDReaper` | 3730287596 | Evaluate vs 42.20 vanilla culling (order: 3) |
 | — | `RFTDHusbandry` | 3711156499 | Migrating (order: 4) |
 | — | `RFTDLastRites` | 3748797439 | Migrating (order: 4) |
