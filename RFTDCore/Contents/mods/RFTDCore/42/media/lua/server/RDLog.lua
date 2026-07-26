@@ -28,12 +28,14 @@
 -- no stat). Existence probing would use cacheFileExists (roots at
 -- cacheDir/Lua/); fileExists and serverFileExists root elsewhere.
 --
--- Layout (under <cacheDir>/Lua/):
---   RFTD/season/<SeasonId>/chronicle/p/<slug>.jsonl   permanent, per player
---   RFTD/season/<SeasonId>/chronicle/world.jsonl      permanent, server scope
---   RFTD/season/<SeasonId>/index/p/<slug>.json        derived state, rewritten
---   RFTD/forensic/<stream>/head.txt                   "<segment> <lines>"
---   RFTD/forensic/<stream>/000.jsonl .. NNN.jsonl     ring segments
+-- Layout (under <cacheDir>/Lua/). Every player owns ONE directory per season
+-- (<SafeName>.<SteamID>, see RDIdentity) holding their permanent record and
+-- their derived-state index side by side:
+--   RFTD/season/<SeasonId>/chronicle/p/<Name.SID>/events.jsonl  permanent
+--   RFTD/season/<SeasonId>/chronicle/p/<Name.SID>/index.json    rewritten
+--   RFTD/season/<SeasonId>/chronicle/world.jsonl                server scope
+--   RFTD/forensic/<stream>/head.txt                             "<segment> <lines>"
+--   RFTD/forensic/<stream>/000.jsonl .. NNN.jsonl               ring segments
 --
 -- Envelope (one JSON object per line, keys sorted by RDJson):
 --   {"v":2,"t":<epoch>,"d":<gameDay>,"s":"<seasonId>","e":"<NS.EVENT>",
@@ -151,9 +153,7 @@ local function chroniclePath(seasonId, def, subj)
     if def.scope == "w" then
         return DIR .. "season/" .. seasonId .. "/chronicle/world.jsonl"
     end
-    local user = usernameOf(subj) or "unknown"
-    local slug = RDIdentity.slugFor(user)
-    return DIR .. "season/" .. seasonId .. "/chronicle/p/" .. slug .. ".jsonl"
+    return DIR .. "season/" .. seasonId .. "/chronicle/p/" .. RDIdentity.dirFor(subj) .. "/events.jsonl"
 end
 
 -- Write one chronicle record for the CURRENT season. Returns true on accept.
@@ -189,11 +189,10 @@ end
 -- place. Convenience for ticket lookups ("what does this player have right
 -- now") - always rebuildable from the chronicle, never authoritative.
 function RDLog.state(subj, tbl)
-    local user = usernameOf(subj)
-    if not user then return end
+    if not usernameOf(subj) then return end
     RDSeasonServer.ensure()
-    local slug = RDIdentity.slugFor(user)
-    local path = DIR .. "season/" .. RDSeasonServer.current() .. "/index/p/" .. slug .. ".json"
+    local path = DIR .. "season/" .. RDSeasonServer.current()
+        .. "/chronicle/p/" .. RDIdentity.dirFor(subj) .. "/index.json"
     rewrite(path, RDJson.encode(tbl or {}) .. "\n")
 end
 
