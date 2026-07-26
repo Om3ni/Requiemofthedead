@@ -1,0 +1,26 @@
+-- BBLibrary_Example.lua — TEMPLATE for building your own ban list (your BBL).
+--
+-- This file does NOTHING on its own: every line below is commented out. It is a
+-- copy-paste reference, not an active list. To ban your own items:
+--
+--   1. Create your own server-side mod (or reuse one you already maintain).
+--   2. Drop a file like this into its  media/lua/server/  folder.
+--   3. require the engine, then call DFBanBox.ban() once per item using the
+--      item's FULL type (Module.Type). Find an item's full type with the
+--      debug-menu item picker, or read it from the item mod's scripts.
+--   4. Bans take effect on the next server restart — the engine strips them from
+--      the loot distribution before any container fills. Prevention only:
+--      copies already placed in the world are left alone.
+--
+-- You do NOT need the BBLibrary submod enabled to use the engine. Dragonfly's
+-- BanBox engine is always present; BBLibrary is just a ready-made list. Your own
+-- list mod only needs Dragonfly (the engine), not BBLibrary.
+--
+-- Master toggle: SandboxVars.RFTDDragonfly.BanBoxEnabled (default ON) gates the
+-- whole engine, so a server can pause all banning without disabling mods.
+
+-- require "DFBanBox"
+--
+-- DFBanBox.ban("Base.Yoyo")
+-- DFBanBox.ban("YourMod.SomeAnnoyingItem")
+-- DFBanBox.ban("AnotherMod.AnotherItem")

@@ -1,0 +1,22 @@
+module Base
+{
+    craftRecipe BindMemoir
+    {
+        timedAction = Making,
+        time = 150,
+        Tags = InHandCraft,
+        category = Literature,
+
+        inputs
+        {
+            item 1 [Base.Notebook;Base.Journal;Base.Diary1;Base.Diary2;Base.Notepad] mode:destroy,
+            item 3 [Base.LeatherStrips;Base.LeatherStripsDirty] mode:destroy,
+            item 3 [Base.Twine;5:Base.Thread] flags[IsExclusive],
+        }
+
+        outputs
+        {
+            item 1 Base.Memoir,
+        }
+    }
+}
