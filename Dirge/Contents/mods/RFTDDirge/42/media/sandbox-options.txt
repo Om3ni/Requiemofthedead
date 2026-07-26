@@ -1,0 +1,580 @@
+VERSION = 1,
+
+/* =====================================================================
+   Dirge sandbox options
+   ---------------------------------------------------------------------
+   All options live on a single "Dirge" sandbox tab. PZ B42 doesn't expose
+   subpages to mod-declared options, so we use decoy boolean options as
+   visual section headers. Toggling a header checkbox does nothing — the
+   underscored label is what makes them read as dividers in the panel.
+   ---------------------------------------------------------------------
+   Order within the tab:
+     1. Mod Settings  (Enabled, DebugMode, SpawnChance)
+     2. Visuals       (Show... toggles for HUD/cast bar)
+     3. Boss          (boss-specific + ShowBossRing)
+     4. EMP           (EMP-specific + ShowEMPRing)
+     5. Glutton       (Glutton-specific + DevourTime + ShowGluttonRing)
+     6. Juggernaut    (Jugg-specific + aura values shared with boss/scav)
+     7. Scavenger     (Scav-specific, sparse — reuses jugg + screamer values)
+     8. Screamer      (Screamer-specific + scream values shared with boss/scav rage)
+   Per-section options are alphabetized.
+   ---------------------------------------------------------------------
+   Eventual home: Dragonfly Admin panel will get a proper sectioned UI
+   for these. The sandbox pattern here is the portable fallback.
+   ===================================================================== */
+
+/* ====================== Mod Settings ====================== */
+
+option RFTDDirge.ModSettingsHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ModSettingsHeader,
+}
+
+option RFTDDirge.DebugMode
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_DebugMode,
+}
+
+option RFTDDirge.Enabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_Enabled,
+}
+
+option RFTDDirge.SpawnChance
+{
+    type = enum,
+    numValues = 7,
+    default = 4,
+    page = RFTDDirge,
+    translation = RQ_SpawnChance,
+}
+
+/* ====================== Visuals ====================== */
+
+option RFTDDirge.VisualsHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_VisualsHeader,
+}
+
+option RFTDDirge.ShowCastBarText
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowCastBarText,
+}
+
+option RFTDDirge.ShowHealthBars
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowHealthBars,
+}
+
+/* ====================== Boss ====================== */
+
+option RFTDDirge.BossHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_BossHeader,
+}
+
+option RFTDDirge.BossCastTime
+{
+    type = enum,
+    numValues = 4,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_BossCastTime,
+}
+
+option RFTDDirge.BossSkillCooldown
+{
+    type = enum,
+    numValues = 6,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_BossSkillCooldown,
+}
+
+option RFTDDirge.ShowBossRing
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_ShowBossRing,
+}
+
+/* ====================== EMP ====================== */
+
+option RFTDDirge.EMPHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_EMPHeader,
+}
+
+option RFTDDirge.EMPBatteryDrain
+{
+    type = enum,
+    numValues = 4,
+    default = 2,
+    page = RFTDDirge,
+    translation = RQ_EMPBatteryDrain,
+}
+
+option RFTDDirge.EMPBlindMaxMs
+{
+    type = integer,
+    min = 0,
+    max = 10000,
+    default = 2000,
+    page = RFTDDirge,
+    translation = RQ_EMPBlindMaxMs,
+}
+
+option RFTDDirge.EMPBlindMinMs
+{
+    type = integer,
+    min = 0,
+    max = 10000,
+    default = 500,
+    page = RFTDDirge,
+    translation = RQ_EMPBlindMinMs,
+}
+
+option RFTDDirge.EMPCastTime
+{
+    type = enum,
+    numValues = 5,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_EMPCastTime,
+}
+
+option RFTDDirge.EMPDeafMaxMs
+{
+    type = integer,
+    min = 0,
+    max = 30000,
+    default = 5000,
+    page = RFTDDirge,
+    translation = RQ_EMPDeafMaxMs,
+}
+
+option RFTDDirge.EMPDeafMinMs
+{
+    type = integer,
+    min = 0,
+    max = 30000,
+    default = 3000,
+    page = RFTDDirge,
+    translation = RQ_EMPDeafMinMs,
+}
+
+option RFTDDirge.EMPEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_EMPEnabled,
+}
+
+option RFTDDirge.EMPRadius
+{
+    type = enum,
+    numValues = 5,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_EMPRadius,
+}
+
+option RFTDDirge.EMPSpacing
+{
+    type = integer,
+    min = 0,
+    max = 150,
+    default = 150,
+    page = RFTDDirge,
+    translation = RQ_EMPSpacing,
+}
+
+option RFTDDirge.EMPTriggerRange
+{
+    type = enum,
+    numValues = 5,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_EMPTriggerRange,
+}
+
+option RFTDDirge.EMPWeight
+{
+    type = enum,
+    numValues = 8,
+    default = 5,
+    page = RFTDDirge,
+    translation = RQ_EMPWeight,
+}
+
+option RFTDDirge.ShowEMPRing
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_ShowEMPRing,
+}
+
+/* ====================== Glutton ====================== */
+
+option RFTDDirge.GluttonHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_GluttonHeader,
+}
+
+option RFTDDirge.DevourTime
+{
+    type = enum,
+    numValues = 6,
+    default = 1,
+    page = RFTDDirge,
+    translation = RQ_DevourTime,
+}
+
+option RFTDDirge.GluttonEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_GluttonEnabled,
+}
+
+option RFTDDirge.GluttonMaxMult
+{
+    type = enum,
+    numValues = 5,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_GluttonMaxMult,
+}
+
+option RFTDDirge.GluttonRadius
+{
+    type = enum,
+    numValues = 7,
+    default = 7,
+    page = RFTDDirge,
+    translation = RQ_GluttonRadius,
+}
+
+option RFTDDirge.GluttonSpacing
+{
+    type = integer,
+    min = 0,
+    max = 150,
+    default = 150,
+    page = RFTDDirge,
+    translation = RQ_GluttonSpacing,
+}
+
+option RFTDDirge.GluttonWeight
+{
+    type = enum,
+    numValues = 8,
+    default = 6,
+    page = RFTDDirge,
+    translation = RQ_GluttonWeight,
+}
+
+option RFTDDirge.ShowGluttonRing
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowGluttonRing,
+}
+
+/* ====================== Juggernaut ====================== */
+
+option RFTDDirge.JuggernautHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_JuggernautHeader,
+}
+
+option RFTDDirge.JuggernautAuraMultiplier
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 0,
+    page = RFTDDirge,
+    translation = RQ_JuggernautAuraMultiplier,
+}
+
+option RFTDDirge.JuggernautBuffPercent
+{
+    type = enum,
+    numValues = 5,
+    default = 2,
+    page = RFTDDirge,
+    translation = RQ_JuggernautBuffPercent,
+}
+
+option RFTDDirge.JuggernautBuffRadius
+{
+    type = enum,
+    numValues = 5,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_JuggernautBuffRadius,
+}
+
+option RFTDDirge.JuggernautEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_JuggernautEnabled,
+}
+
+option RFTDDirge.JuggernautHealthMultiplier
+{
+    type = integer,
+    min = 1,
+    max = 50,
+    default = 10,
+    page = RFTDDirge,
+    translation = RQ_JuggernautHealthMultiplier,
+}
+
+option RFTDDirge.JuggernautMitigation
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 0,
+    page = RFTDDirge,
+    translation = RQ_JuggernautMitigation,
+}
+
+option RFTDDirge.JuggernautSpacing
+{
+    type = integer,
+    min = 0,
+    max = 150,
+    default = 150,
+    page = RFTDDirge,
+    translation = RQ_JuggernautSpacing,
+}
+
+option RFTDDirge.JuggernautWeight
+{
+    type = enum,
+    numValues = 8,
+    default = 4,
+    page = RFTDDirge,
+    translation = RQ_JuggernautWeight,
+}
+
+option RFTDDirge.ShowJuggernautRing
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowJuggernautRing,
+}
+
+/* ====================== Scavenger ====================== */
+
+option RFTDDirge.ScavengerHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ScavengerHeader,
+}
+
+option RFTDDirge.ScavengerEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_ScavengerEnabled,
+}
+
+option RFTDDirge.ScavengerSpacing
+{
+    type = integer,
+    min = 0,
+    max = 150,
+    default = 150,
+    page = RFTDDirge,
+    translation = RQ_ScavengerSpacing,
+}
+
+option RFTDDirge.ScavengerWeight
+{
+    type = enum,
+    numValues = 8,
+    default = 2,
+    page = RFTDDirge,
+    translation = RQ_ScavengerWeight,
+}
+
+option RFTDDirge.ShowScavengerRing
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowScavengerRing,
+}
+
+/* ====================== Screamer ====================== */
+
+option RFTDDirge.ScreamerHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ScreamerHeader,
+}
+
+option RFTDDirge.ScreamerBlurStrength
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDirge,
+    translation = RQ_ScreamerBlurStrength,
+}
+
+option RFTDDirge.ScreamerCastTime
+{
+    type = enum,
+    numValues = 5,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_ScreamerCastTime,
+}
+
+option RFTDDirge.ScreamerDarkStrength
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDirge,
+    translation = RQ_ScreamerDarkStrength,
+}
+
+option RFTDDirge.ScreamerEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_ScreamerEnabled,
+}
+
+option RFTDDirge.ScreamerRepeatInterval
+{
+    type = enum,
+    numValues = 6,
+    default = 4,
+    page = RFTDDirge,
+    translation = RQ_ScreamerRepeatInterval,
+}
+
+option RFTDDirge.ScreamerSoundRadius
+{
+    type = enum,
+    numValues = 5,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_ScreamerSoundRadius,
+}
+
+option RFTDDirge.ScreamerSpacing
+{
+    type = integer,
+    min = 0,
+    max = 150,
+    default = 150,
+    page = RFTDDirge,
+    translation = RQ_ScreamerSpacing,
+}
+
+option RFTDDirge.ScreamerSpawnMax
+{
+    type = enum,
+    numValues = 4,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_ScreamerSpawnMax,
+}
+
+option RFTDDirge.ScreamerSpawnMin
+{
+    type = enum,
+    numValues = 4,
+    default = 1,
+    page = RFTDDirge,
+    translation = RQ_ScreamerSpawnMin,
+}
+
+option RFTDDirge.ScreamerSpawnThreshold
+{
+    type = enum,
+    numValues = 5,
+    default = 2,
+    page = RFTDDirge,
+    translation = RQ_ScreamerSpawnThreshold,
+}
+
+option RFTDDirge.ScreamerTriggerRange
+{
+    type = enum,
+    numValues = 5,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_ScreamerTriggerRange,
+}
+
+option RFTDDirge.ScreamerWeight
+{
+    type = enum,
+    numValues = 8,
+    default = 2,
+    page = RFTDDirge,
+    translation = RQ_ScreamerWeight,
+}
+
+option RFTDDirge.ShowScreamerRing
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowScreamerRing,
+}
