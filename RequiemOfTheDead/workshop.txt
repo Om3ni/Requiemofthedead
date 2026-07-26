@@ -1,6 +1,6 @@
 version=1
 id=
-title=Requiem of the Dead
+title=Requiem of the Dead: Season One
 description=[h1]Requiem of the Dead[/h1]
 description=
 description=The complete Requiem of the Dead mod family in one Workshop item. Subscribe once; enable the mods your server wants. Everything here updates together, so the family's versions always match.
