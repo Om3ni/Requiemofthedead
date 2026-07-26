@@ -1,0 +1,15 @@
+module Base
+{
+    item Memoir
+    {
+        Weight = 0.8,
+        ItemType = base:normal,
+        DisplayCategory = Literature,
+        DisappearOnUse = FALSE,
+        /* ART: custom flat-book icon (Item_Memoir.png); ground model is the vanilla
+           closed-book placeholder. For the crystal-ball set later: swap the icon PNG and add
+           a model def + WorldStaticModel (and optionally a StaticModel for the in-hand look). */
+        Icon = Memoir,
+        WorldStaticModel = BookClosedGround,
+    }
+}

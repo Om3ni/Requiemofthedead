@@ -1,0 +1,528 @@
+VERSION = 1,
+
+option RFTDDragonfly.Enabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDragonfly,
+    translation = DF_Enabled,
+}
+
+option RFTDDragonfly.OpenKeybind
+{
+    type = integer,
+    min = 0,
+    max = 256,
+    default = 22,
+    page = RFTDDragonfly,
+    translation = DF_OpenKeybind,
+}
+
+option RFTDDragonfly.OpenKeyRequiresShift
+{
+    type = boolean,
+    default = true,
+    page = RFTDDragonfly,
+    translation = DF_OpenKeyRequiresShift,
+}
+
+option RFTDDragonfly.MemoirDebug
+{
+    type = boolean,
+    default = false,
+    page = RFTDDragonfly,
+    translation = DF_MemoirDebug,
+}
+
+option RFTDDragonfly.MemoirXPRestore
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonfly,
+    translation = DF_MemoirXPRestore,
+}
+
+/* Memoir XP-restore mode: 1 = Global (the single % above applies to every skill),
+   2 = Per Individual (each skill uses its own % on the "Memoir Skill XP" page; any skill
+   without a knob there falls back to the Global % above). The per-skill knobs are always
+   visible — PZ can't hide them by mode — but only matter when this is set to Individual. */
+option RFTDDragonfly.MemoirXPRestoreMode
+{
+    type = enum,
+    numValues = 2,
+    default = 1,
+    page = RFTDDragonfly,
+    translation = DF_MemoirXPRestoreMode,
+}
+
+/* ===== Per-skill Memoir XP restore % (only active when MemoirXPRestoreMode = Individual).
+   Option name keys on perk:getId() so the codec lookup matches exactly — note several ids
+   differ from the in-game name (Woodwork=Carpentry, Sneak=Sneaking, Lightfoot=Lightfooted,
+   PlantScavenging=Foraging, Small*=Short *). Generated from PerkFactory's vanilla leaf skills. */
+option RFTDDragonfly.MemoirXPRestore_Axe
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Axe,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Blunt
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Blunt,
+}
+
+option RFTDDragonfly.MemoirXPRestore_SmallBlunt
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_SmallBlunt,
+}
+
+option RFTDDragonfly.MemoirXPRestore_LongBlade
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_LongBlade,
+}
+
+option RFTDDragonfly.MemoirXPRestore_SmallBlade
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_SmallBlade,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Spear
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Spear,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Maintenance
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Maintenance,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Aiming
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Aiming,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Reloading
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Reloading,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Woodwork
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Woodwork,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Carving
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Carving,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Cooking
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Cooking,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Electricity
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Electricity,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Glassmaking
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Glassmaking,
+}
+
+option RFTDDragonfly.MemoirXPRestore_FlintKnapping
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_FlintKnapping,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Masonry
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Masonry,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Blacksmith
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Blacksmith,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Mechanics
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Mechanics,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Pottery
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Pottery,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Tailoring
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Tailoring,
+}
+
+option RFTDDragonfly.MemoirXPRestore_MetalWelding
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_MetalWelding,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Doctor
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Doctor,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Fishing
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Fishing,
+}
+
+option RFTDDragonfly.MemoirXPRestore_PlantScavenging
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_PlantScavenging,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Tracking
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Tracking,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Trapping
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Trapping,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Fitness
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Fitness,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Strength
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Strength,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Lightfoot
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Lightfoot,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Nimble
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Nimble,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Sprinting
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Sprinting,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Sneak
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Sneak,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Farming
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Farming,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Husbandry
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Husbandry,
+}
+
+option RFTDDragonfly.MemoirXPRestore_Butchering
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDragonflyMemoirXP,
+    translation = DF_MemoirXPRestore_Butchering,
+}
+
+option RFTDDragonfly.ActionSpeedEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDragonflyActions,
+    translation = DF_ActionSpeedEnabled,
+}
+
+option RFTDDragonfly.ASReading
+{
+    type = enum,
+    numValues = 6,
+    default = 1,
+    page = RFTDDragonflyActions,
+    translation = DF_ASReading,
+    valueTranslation = DF_ASpeed,
+}
+
+option RFTDDragonfly.ASForaging
+{
+    type = enum,
+    numValues = 6,
+    default = 1,
+    page = RFTDDragonflyActions,
+    translation = DF_ASForaging,
+    valueTranslation = DF_ASpeed,
+}
+
+option RFTDDragonfly.ASCleaning
+{
+    type = enum,
+    numValues = 6,
+    default = 1,
+    page = RFTDDragonflyActions,
+    translation = DF_ASCleaning,
+    valueTranslation = DF_ASpeed,
+}
+
+option RFTDDragonfly.ASRepair
+{
+    type = enum,
+    numValues = 6,
+    default = 1,
+    page = RFTDDragonflyActions,
+    translation = DF_ASRepair,
+    valueTranslation = DF_ASpeed,
+}
+
+option RFTDDragonfly.ASDismantle
+{
+    type = enum,
+    numValues = 6,
+    default = 1,
+    page = RFTDDragonflyActions,
+    translation = DF_ASDismantle,
+    valueTranslation = DF_ASpeed,
+}
+
+option RFTDDragonfly.DebugGateEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDragonflyDebug,
+    translation = DF_DebugGateEnabled,
+}
+
+option RFTDDragonfly.DebugGateKey
+{
+    type = integer,
+    min = 0,
+    max = 256,
+    default = 68,
+    page = RFTDDragonflyDebug,
+    translation = DF_DebugGateKey,
+}
+
+option RFTDDragonfly.DebugGateRequiresShift
+{
+    type = boolean,
+    default = false,
+    page = RFTDDragonflyDebug,
+    translation = DF_DebugGateRequiresShift,
+}
+
+option RFTDDragonfly.EngineLockEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDragonflyVehicles,
+    translation = DF_EngineLockEnabled,
+}
+
+option RFTDDragonfly.BanBoxEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDragonflyBanBox,
+    translation = DF_BanBoxEnabled,
+}
+
+option RFTDDragonfly.BanBoxConfiscateOnLogin
+{
+    type = boolean,
+    default = false,
+    page = RFTDDragonflyBanBox,
+    translation = DF_BanBoxConfiscateOnLogin,
+}
+
+option RFTDDragonfly.BanBoxDebug
+{
+    type = boolean,
+    default = false,
+    page = RFTDDragonflyBanBox,
+    translation = DF_BanBoxDebug,
+}
