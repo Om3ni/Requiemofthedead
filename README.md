@@ -32,6 +32,13 @@ Still to migrate from `C:\VSCodeProjects\PZMod` (repo `Om3ni/PZMods`, tag
 verdict — may retire into Dirge's Necro tab). Legacy per-mod Workshop items freeze as
 superseded-by pointers at bundle publish; their assets live in `docs/legacy-items/`.
 
+## Naming
+
+Display names are "Requiem of the Dead: X" — Season One (RFTDCore; the harness wears
+the season's name and rolls to Season Two at the next wipe, id never changes), Memoirs,
+Ban Box, Staffing Tools, Dragonfly, Dirge, Reclaimation, and at their turns Husbandry
+and Last Rites. Display names are free text; mod ids are frozen.
+
 ## Conventions
 
 - Layout: `RequiemOfTheDead/Contents/mods/<modid>/mod.info` + `<modid>/42/media/...`;
