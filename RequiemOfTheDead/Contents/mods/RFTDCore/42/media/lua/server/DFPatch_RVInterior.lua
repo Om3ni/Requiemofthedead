@@ -1,21 +1,21 @@
--- DFPatch_RVInterior.lua — Dragonfly removable third-party patch
+-- DFPatch_RVInterior.lua - Dragonfly removable third-party patch
 --
 -- Fixes a per-tick crash in "[B42]PROJECT RV Interior" (RVServerMP_V3.lua).
 -- Its GLOBAL UpdateGen() schedules an OnTick that places an RV generator via
 --   square:AddSpecialObject(generator)
 -- When the target square is in an UNLOADED chunk, square.chunk is null and the
 -- native pathfinder (PathfindNative.squareChanged) throws a NullPointerException
--- every time that OnTick fires. RV's own pcall does NOT catch it — that is a
+-- every time that OnTick fires. RV's own pcall does NOT catch it - that is a
 -- native Java exception, which propagates past Lua pcall.
 --
--- Fix: redefine the global UpdateGen with ONE change — guard the generator
+-- Fix: redefine the global UpdateGen with ONE change - guard the generator
 -- placement behind square:getChunk() so it only runs in a loaded chunk. If the
 -- chunk is not loaded, skip (nobody is there to see it; it places correctly the
 -- next time the room loads).
 --
 -- REMOVABLE: delete this file to drop the patch. RV Interior keeps working with
 -- its original behaviour; nothing else in Dragonfly depends on this. The body
--- below mirrors RVServerMP_V3.lua:138-201 — if RV rewrites UpdateGen, re-sync.
+-- below mirrors RVServerMP_V3.lua:138-201 - if RV rewrites UpdateGen, re-sync.
 
 if not isServer() then return end
 

@@ -1,19 +1,19 @@
--- HBData — ModData schema, persistent ID generation, herd registry, seen list.
+-- HBData - ModData schema, persistent ID generation, herd registry, seen list.
 -- Read operations (getRecord, constants) are safe from both sides.
 -- Write operations are server-only and guarded accordingly.
 
 HBData = {}
 
--- ModData namespace keys — centralised here; never hardcode these elsewhere.
+-- ModData namespace keys - centralised here; never hardcode these elsewhere.
 HBData.NS_ANIMAL = "RQHB"        -- per-animal pedigree/genetics record
 HBData.NS_HERD   = "RQHB_herd"   -- per-player herd membership list
 HBData.NS_SRV    = "RQHB_srv"    -- server globals (ID counter)
-HBData.NS_HUTCH  = "RQHB_hutch"  -- per-hutch state (bedding) — keyed on the
+HBData.NS_HUTCH  = "RQHB_hutch"  -- per-hutch state (bedding) - keyed on the
                                  -- IsoHutch's own ModData, persists in saves
 
 -- In-memory state (session-scoped; rebuilt on connect and encounter).
--- Server side only — not meaningful on the client.
-HBData.seen  = {}  -- [onlineID:number] = true  — all encountered animals this session
+-- Server side only - not meaningful on the client.
+HBData.seen  = {}  -- [onlineID:number] = true - all encountered animals this session
 HBData.herds = {}  -- [username:string] = { rqhbId:string, ... }
 HBData.idMap = {}  -- [rqhbId:string]   = onlineID:number
 

@@ -47,7 +47,7 @@ function RQGlutton.startEating(zombie, onlineID, corpseX, corpseY, corpseZ)
 end
 
 -- Called when server confirms devour has started. Marks arrivedSent=true to prevent
--- re-sending eaterArrived, then sets the body target (correct time — body still exists).
+-- re-sending eaterArrived, then sets the body target (correct time - body still exists).
 function RQGlutton.confirmEating(onlineID, zombie, corpseX, corpseY, corpseZ)
     local entry = clActiveEaters[onlineID]
     local hadEntry = entry ~= nil
@@ -141,7 +141,7 @@ local function onZombieUpdate(zombie)
         pcall(zombie.setUseless,  zombie, true)
         pcall(zombie.setVariable, zombie, "bPathfind", false)
         pcall(zombie.setVariable, zombie, "bMoving",   false)
-        -- do NOT call setEatBodyTarget here — the engine consumes the body immediately,
+        -- do NOT call setEatBodyTarget here - the engine consumes the body immediately,
         -- which causes the server to see corpseGone=true and cancel the devour timer before
         -- the eating animation ever plays. setEatBodyTarget is called later in confirmEating()
         -- after the server broadcasts phase=eating.

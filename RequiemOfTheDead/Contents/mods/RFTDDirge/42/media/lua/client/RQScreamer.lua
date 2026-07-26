@@ -3,13 +3,13 @@
 -- This file handles the local player screen effect only.
 --
 -- Uses the SearchMode overlay system (blur + darkness + desat).
--- Non-zero interior values ensure the entire screen is affected —
+-- Non-zero interior values ensure the entire screen is affected -
 -- no clear tunnel in the center, just a gradient from heavy at
 -- edges to moderate at center.
 --
 -- Critically: SearchMode holds the effect natively with no per-tick
 -- reapplication. The intoxication approach caused rhythmic 60fps
--- flicker as the engine fought our stat set — a genuine accessibility
+-- flicker as the engine fought our stat set - a genuine accessibility
 -- concern for photosensitive players. This approach has none of that.
 --
 -- Cleanup: all parameters zeroed before releasing override so no
@@ -47,13 +47,13 @@ local EFFECTS = {
 }
 
 -- Radius of 0 collapses the clear zone so the effect covers the full screen.
--- Interior and exterior effect values are identical — uniform coverage
+-- Interior and exterior effect values are identical - uniform coverage
 -- with slightly more darkness at the actual screen edges via the gradient.
 local RADIUS_EXT   = 0     -- no clear zone
 local GRAD_EXT     = 6     -- soft gradient from center outward
 local FADE_IN      = 0.3   -- seconds
 local FADE_OUT     = 1.5   -- seconds
-local MAX_LINGER   = 20000 -- ms — hard cap, stacking can't push past 20s
+local MAX_LINGER   = 20000 -- ms - hard cap, stacking can't push past 20s
 
 local disorientation = { active = false, clearTime = 0 }
 
@@ -76,7 +76,7 @@ local function startDisorientation(player, fx, lingerMs)
     RQDirgeLog.write("Screamer", "[INFO] startDisorientation effect=" .. tostring(fx.name)
         .. " linger=" .. tostring(lingerMs) .. " smAvail=" .. tostring(sm ~= nil))
     if not sm then
-        RQDirgeLog.write("Screamer", "[WARN] getSearchMode() returned nil — screen effect SKIPPED")
+        RQDirgeLog.write("Screamer", "[WARN] getSearchMode() returned nil - screen effect SKIPPED")
     end
 
     if sm then pcall(function()
@@ -191,7 +191,7 @@ function RQScreamer.onCastStart(player, screamer, blastX, blastY)
         .. " range=" .. tostring(cfg.screamerTriggerRange))
     if not inRange then return end
     if not fx then
-        RQDirgeLog.write("Screamer", "[INFO] player is Desensitized — effect skipped")
+        RQDirgeLog.write("Screamer", "[INFO] player is Desensitized - effect skipped")
         return
     end
 
@@ -210,7 +210,7 @@ function RQScreamer.onDead(zombie)
     clearDisorientation()
 end
 
--- Linger timeout — no per-tick stat manipulation, just a timer check.
+-- Linger timeout - no per-tick stat manipulation, just a timer check.
 -- SearchMode holds the effect natively until we release it.
 Events.OnTick.Add(function()
     if not disorientation.active then return end

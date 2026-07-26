@@ -1,8 +1,8 @@
--- DFPatch_SpecialLootSpawns.lua — Dragonfly removable log-noise patch
+-- DFPatch_SpecialLootSpawns.lua - Dragonfly removable log-noise patch
 --
 -- No-op stub for a MISSING DEPENDENCY, not a fix. Two installed mods ship
 -- item scripts whose OnCreate references a `SpecialLootSpawns` Lua global
--- that no installed mod (and no vanilla file) defines — presumably a
+-- that no installed mod (and no vanilla file) defines - presumably a
 -- helper from another of the authors' mods that was never installed here:
 --
 --   TrueActionsDancing (TAD_ordinary.txt):

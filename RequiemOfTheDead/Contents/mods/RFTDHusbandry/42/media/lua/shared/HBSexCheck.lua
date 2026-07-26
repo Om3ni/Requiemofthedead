@@ -1,9 +1,9 @@
--- HBSexCheck — diagnostic for the "all animals read as male" bug.
+-- HBSexCheck - diagnostic for the "all animals read as male" bug.
 --
 -- Sex is decided once in the AnimalData constructor from the animal definition:
 --   adef.female -> female,  adef.male -> male,  else Rand.NextBool(2) (50/50).
 -- SurvivorDesc defaults to FEMALE, so "everything male" means something is
--- explicitly setting male — by far the most likely culprit being a definition
+-- explicitly setting male - by far the most likely culprit being a definition
 -- (a species or its babyType) that carries male=true. This dumps every animal
 -- definition's sex flags so that is verifiable at a glance, and can compare a
 -- single animal's sex as the SERVER sees it vs. the CLIENT (to catch a

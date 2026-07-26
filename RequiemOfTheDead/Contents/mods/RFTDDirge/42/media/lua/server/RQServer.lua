@@ -321,7 +321,7 @@ end
 -- Sends a canonical state table to all clients every ~2 seconds when dirty.
 -- Clients reconcile their local registry against this snapshot.
 
--- Pure comparison — no external deps, so it stays exactly as-is.
+-- Pure comparison - no external deps, so it stays exactly as-is.
 local function svRowChanged(prev, cur)
     if not prev then return true end
     if prev.zType        ~= cur.zType        then return true end
@@ -1132,7 +1132,7 @@ local function svOnTick()
         local okG, grappleOnly = pcall(zombie.isReanimatedForGrappleOnly, zombie)
         -- Stale Java refs come back isDead()=false but getOnlineID()=-1 forever.
         -- Evict them so they don't sit as permanently inert entries.
-        -- Use gid == -1 (not gid < 0) — B42 assigns valid negative IDs like -31580.
+        -- Use gid == -1 (not gid < 0) - B42 assigns valid negative IDs like -31580.
         if not ok or dead or (okG and grappleOnly) or (ok2 and (not gid or gid == -1)) then
             cleanupCount = cleanupCount + 1
             svToCleanup[cleanupCount] = zombie

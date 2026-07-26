@@ -1,13 +1,13 @@
--- DFBanBox.lua — server-side item ban ENGINE (neutral mechanism, no content).
+-- DFBanBox.lua - server-side item ban ENGINE (neutral mechanism, no content).
 --
 -- Prevention, not a world sweep: strips banned item types from the merged loot
 -- distribution at startup so no NEW copies spawn. Already-spawned items are left
--- alone — the engine caches an item's identity per instance and in the save, so a
+-- alone - the engine caches an item's identity per instance and in the save, so a
 -- non-destructive pass can't reach them. That's the accepted trade: it shuts the
 -- faucet; it does not hunt down existing copies.
 --
 -- This file ships ZERO bans of its own. It is pure mechanism. The ban LIST is
--- policy and lives elsewhere — either the optional "BBLibrary" submod (which ships
+-- policy and lives elsewhere - either the optional "BBLibrary" submod (which ships
 -- the Requiem of the Dead defaults) or any server's own ban-list mod. Both attach the
 -- same way:
 --
@@ -45,7 +45,7 @@ local function featureOn()
     return s.BanBoxEnabled ~= false   -- default ON
 end
 
--- Register a ban. Applies whenever the engine is enabled. PUBLIC API — this is
+-- Register a ban. Applies whenever the engine is enabled. PUBLIC API - this is
 -- the single hook a ban-list mod calls.
 function DFBanBox.ban(fullType)
     if type(fullType) == "string" and fullType ~= "" then

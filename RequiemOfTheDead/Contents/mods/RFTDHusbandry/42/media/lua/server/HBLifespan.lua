@@ -1,43 +1,43 @@
--- HBLifespan — server-side old-age mitigation for tame animals.
+-- HBLifespan - server-side old-age mitigation for tame animals.
 --
 -- WHY: Vanilla animal lifespan is hard-capped at ~maxAgeGeriatric real days
 -- (often ~6 months), and the sandbox animalAgeModifier only makes animals age
--- FASTER, never slower — so there is no vanilla way to make livestock live
+-- FASTER, never slower - so there is no vanilla way to make livestock live
 -- longer. Past ~80% of max age an animal becomes "geriatric"
 -- (IsoAnimal.isGeriatric) and bleeds health every hour; at ~95% it loses a
 -- flat 0.1 HP/hour and dies within ~10 game-hours (AnimalData.checkOld).
 -- Same-age herds reach that cliff together → mass die-offs.
 --
 -- WHAT THIS DOES (sandbox-controlled, tame animals only):
---   Vanilla  — does nothing; engine behavior unchanged.
---   Extended — slows aging to 1/N so animals still age and eventually die of
+--   Vanilla - does nothing; engine behavior unchanged.
+--   Extended - slows aging to 1/N so animals still age and eventually die of
 --              old age, just N times later. N = AnimalLifespanMultiplier.
 --              Easy math: each game-day the engine ages an animal by 1 day;
 --              we roll (1 - 1/N) of that back, so net aging is 1/N. N=4 means
 --              ~4x lifespan (a 6-month species now lasts ~2 years).
---   Frozen   — lets animals grow to adulthood, then holds their age there so
+--   Frozen - lets animals grow to adulthood, then holds their age there so
 --              they never become geriatric. Immortal livestock.
 --
 -- HOW age is changed: IsoAnimal.setAgeDebug(n) sets age, recomputes
--- hoursSurvived (so daysSurvived follows) and clamps to the species minAge —
+-- hoursSurvived (so daysSurvived follows) and clamps to the species minAge -
 -- which is exactly what we need, since isGeriatric() keys off daysSurvived and
 -- getGeriatricPercentage() keys off age. setAgeDebug also calls
 -- AnimalData.init(), and vanilla initSize() has a bug (AnimalData.java:1215
--- unconditionally setSize(0.1f)) that would shrink the animal — so we snapshot
+-- unconditionally setSize(0.1f)) that would shrink the animal - so we snapshot
 -- size/weight and restore them around the call. setHoursSurvived is not
 -- exposed to Lua, so setAgeDebug is the only lever; the snapshot/restore is the
 -- price of using it.
 --
 -- Per-animal state is in-memory only (resets on restart; animals resume from
--- their stored age — no save data is touched). Enumeration mirrors HBKeepAlive's
+-- their stored age - no save data is touched). Enumeration mirrors HBKeepAlive's
 -- loose/trailer/hutch walk but is kept separate so this feature toggles
 -- independently and never risks the keep-alive path. Gated solely by
--- AnimalLifespanMode (its "Vanilla" value is the off switch) — independent of
+-- AnimalLifespanMode (its "Vanilla" value is the off switch) - independent of
 -- the mod's hunger/thirst Enable toggle.
 
 if not isServer() then return end
 
-print("[HB] HBLifespan loaded — server old-age mitigation")
+print("[HB] HBLifespan loaded - server old-age mitigation")
 
 local MODE_VANILLA = 1
 local MODE_EXTEND  = 2
@@ -45,7 +45,7 @@ local MODE_FROZEN  = 3
 
 local SCAN_RANGE = 20  -- +/- squares around each player (matches HBKeepAlive)
 
--- Enumerate a hutch's occupants via getAnimal(pos) over a fixed slot range —
+-- Enumerate a hutch's occupants via getAnimal(pos) over a fixed slot range -
 -- NOT getMaxAnimals(), and NOT getAnimalInside():values():iterator(). Two engine
 -- traps: (1) getMaxAnimals() reads IsoHutch.def, which is null on a hutch whose
 -- sprite def failed to resolve, NPEing *inside the engine* past Lua pcall and
@@ -68,7 +68,7 @@ local function visitHutchAnimals(hutch, visit)
     end)
     if not ok then
         hutchScanOK = false
-        print("[HB] HBLifespan hutch enumeration disabled — IsoHutch animal API "
+        print("[HB] HBLifespan hutch enumeration disabled - IsoHutch animal API "
             .. "unavailable (logged once): " .. tostring(err))
     end
 end
@@ -147,7 +147,7 @@ local function manageAnimal(animal, mode, mult)
     end
 
     -- MODE_EXTEND: slow aging to 1/N. Animals still eventually age out and die,
-    -- just N times later — so no never-geriatric safety here, by design.
+    -- just N times later - so no never-geriatric safety here, by design.
     if mult and mult > 1 then
         local prev = lastAge[oid]
         if prev and age > prev then

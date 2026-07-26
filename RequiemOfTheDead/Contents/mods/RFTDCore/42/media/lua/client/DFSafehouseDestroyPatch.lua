@@ -3,14 +3,14 @@
 -- Vanilla SledgehammerOnlyInSafehouse rule, as written in ISDestroyCursor, has two
 -- problems:
 --   1. :create() (the click handler reached via tryBuild) never consults :isValid(),
---      so the safehouse rule colours the cursor but doesn't gate destruction — the
+--      so the safehouse rule colours the cursor but doesn't gate destruction - the
 --      original bug griefers exploit.
---   2. Vanilla's intent is "destruction allowed ONLY inside safehouses you belong to" —
+--   2. Vanilla's intent is "destruction allowed ONLY inside safehouses you belong to" -
 --      wild/unclaimed squares paint the cursor red too, blocking destruction-gated loot
 --      points in the open world.
 --
--- Patch semantic: destruction is blocked only when the target square — or, for
--- walls/doors/windows/door-frames, a cardinal neighbour — is inside a safehouse the
+-- Patch semantic: destruction is blocked only when the target square - or, for
+-- walls/doors/windows/door-frames, a cardinal neighbour - is inside a safehouse the
 -- player isn't a member of. Open-world and own-safehouse destruction stay allowed and
 -- the cursor stays green there.
 --
@@ -25,7 +25,7 @@ local function dbg(fmt, ...)
     print("[DF-Safehouse] " .. (ok and msg or fmt))
 end
 
-local BLOCKED_MSG = "Cannot destroy here — safehouse protected."
+local BLOCKED_MSG = "Cannot destroy here - safehouse protected."
 
 local function squareDesc(square)
     if not square then return "nil" end
@@ -80,7 +80,7 @@ local lastOverrideKey = nil
 local function installHooks()
     if hooksInstalled then return end
     if not ISDestroyCursor then
-        dbg("installHooks: ISDestroyCursor still nil — aborting")
+        dbg("installHooks: ISDestroyCursor still nil - aborting")
         return
     end
     hooksInstalled = true
@@ -131,7 +131,7 @@ else
     Events.OnGameStart.Add(installHooks)
 end
 
--- Admin-panel status badge (native now — Dragonfly owns this fix).
+-- Admin-panel status badge (native now - Dragonfly owns this fix).
 Events.OnGameStart.Add(function()
     if DFRegistry and DFRegistry.registerStatusBadge then
         DFRegistry.registerStatusBadge{

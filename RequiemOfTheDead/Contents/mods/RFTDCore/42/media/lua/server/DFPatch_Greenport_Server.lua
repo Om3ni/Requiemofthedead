@@ -1,4 +1,4 @@
--- DFPatch_Greenport_Server.lua — Dragonfly removable third-party patch (server authority)
+-- DFPatch_Greenport_Server.lua - Dragonfly removable third-party patch (server authority)
 --
 -- Authoritative half of the Greenport ground-item fix. The client half
 -- (client/DFPatch_Greenport.lua) neutralizes Greenport's buggy client spawner and
@@ -9,11 +9,11 @@
 --     each configured item per square) and remove the vestigial invisible
 --     bookkeeping objects it spammed (IsoObject.new + AddSpecialObject carrying
 --     .spawnedItems). Server-side removal via removeFromSquare()/removeFromWorld()
---     — the same three-step DFZombiesTab_Server uses — so it actually sticks in MP
+-- - the same three-step DFZombiesTab_Server uses - so it actually sticks in MP
 --     instead of being re-sent by the server.
 --   * ONE-AND-DONE: each configured coord+type spawns exactly once, EVER. The
 --     "already spawned/taken" record lives in a server-saved global ModData table,
---     so a picked-up item never comes back — not on revisit, not after a restart.
+--     so a picked-up item never comes back - not on revisit, not after a restart.
 --   * SPAWN: server-side AddWorldInventoryItem + transmitCompleteItemToClients,
 --     mirroring how DFPatch_RVInterior places its generator, behind the same
 --     square:getChunk() loaded-guard to avoid the native unloaded-chunk NPE.
@@ -23,8 +23,8 @@
 -- the first sets the record before the second is served.
 --
 -- NEW PATTERN NOTE: this is the first place in Dragonfly to use global ModData
--- (ModData.getOrCreate). It is used purely as a server-side saved table — never
--- transmitted, never read by clients — so there is no sync plumbing. If the API
+-- (ModData.getOrCreate). It is used purely as a server-side saved table - never
+-- transmitted, never read by clients - so there is no sync plumbing. If the API
 -- ever misbehaves we fall back to an in-memory table (patch still works for the
 -- session, just loses cross-restart persistence).
 --

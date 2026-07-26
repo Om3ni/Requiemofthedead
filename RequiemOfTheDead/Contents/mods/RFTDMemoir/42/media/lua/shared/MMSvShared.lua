@@ -1,19 +1,19 @@
--- MMSvShared.lua — Memoir (snapshot/restore) shared constants, lookups, and
+-- MMSvShared.lua - Memoir (snapshot/restore) shared constants, lookups, and
 -- debug layer. RFTD convention: two-letter prefix (MM), <Px>SvShared = shared tokens.
 --
 -- This subsystem turns a craftable journal into a CONVENIENCE SAVE (not a
 -- reincarnation): write captures a full character snapshot; read restores it onto
 -- whatever body you respawned as. Locked design rules (2026-07-13 overwrite model):
 --   * MEMOIR IS THE SOURCE OF TRUTH: reading it OVERWRITES whatever was built at the
---     respawn screen — identity (profession/traits), body, faith: snapshot wins. No
+--     respawn screen - identity (profession/traits), body, faith: snapshot wins. No
 --     reconcile window, no choice: the creation screen picks a loaner body, the
 --     memoir returns the real character.
 --   * XP: memoir restore (grants + earned*knob) PLUS whatever was EARNED playing the
---     new body — post-respawn grinding is real play, it adds on top. The respawn
---     build's starting grants — XP levels, traits/profession, AND granted recipes —
+--     new body - post-respawn grinding is real play, it adds on top. The respawn
+--     build's starting grants - XP levels, traits/profession, AND granted recipes -
 --     are DISMISSED with the build (no chef->die->engineer->read laundering of
 --     profession-locked abilities). Additive is safe ONLY because the two earning
---     windows are disjoint lives — the life-id guarantees it.
+--     windows are disjoint lives - the life-id guarantees it.
 --   * SAME-LIFE READS REFUSE (and do not consume): a memoir read by the life that
 --     wrote it would double-count its own history. The life-id stamped at write
 --     detects this; death wipes player modData, so a respawn never matches.
@@ -54,10 +54,10 @@ MMShared.CMD = {
 MMShared.SCHEMA_VERSION = 4 -- v4 adds snap.lifeId (same-life read guard); v3 faith; v2 nutrition
 
 -- WIPE EPOCH: read-time amnesty gate. Every write stamps the current epoch into the
--- snapshot; reading a book stamped with an OLDER epoch (or none) refuses — "the ink
--- has faded" — and KEEPS the book, so the owner just writes over it for a fresh
+-- snapshot; reading a book stamped with an OLDER epoch (or none) refuses - "the ink
+-- has faded" - and KEEPS the book, so the owner just writes over it for a fresh
 -- snapshot. Bump the number to void every memoir written before the bump, wherever
--- it is stored (unloaded chunks, offline inventories — no scrub can reach those).
+-- it is stored (unloaded chunks, offline inventories - no scrub can reach those).
 -- Epoch 1 retires all books written before the 2026-07-20 double-read dupe fix.
 MMShared.WIPE_EPOCH = 1
 
@@ -69,7 +69,7 @@ MMShared.WIPE_EPOCH = 1
 
 -- XP restore mode (sandbox MemoirXPRestoreMode): 1 = Global (one % for every skill,
 -- default / legacy behaviour), 2 = Per Individual (each vanilla skill has its own %).
--- Per-category was deliberately dropped — only these two tiers are wanted.
+-- Per-category was deliberately dropped - only these two tiers are wanted.
 function MMShared.xpRestoreMode()
     local sv = SandboxVars and SandboxVars.RFTDMemoir
     local m = sv and sv.MemoirXPRestoreMode
@@ -86,12 +86,12 @@ end
 
 -- XP restore fraction for ONE skill on restore (0..1). Scales that skill's recorded RAW XP
 -- (90 = give back 90% of its saved XP). Identity (traits/profession), recipes, kills and
--- Faith are NOT scaled — they always restore in full — so the journal stays a true snapshot
+-- Faith are NOT scaled - they always restore in full - so the journal stays a true snapshot
 -- and only XP potential dials down.
 --   Global mode     : every skill uses MemoirXPRestore.
 --   Individual mode : skill uses MemoirXPRestore_<perkId> if declared, else falls back to the
 --                     global MemoirXPRestore. So any skill without its own knob (a modded
---                     skill, or a vanilla one we didn't list) degrades to the global value —
+--                     skill, or a vanilla one we didn't list) degrades to the global value -
 --                     never silently to 100%.
 -- perkId optional: omit it (or in Global mode) and you get the single global fraction.
 function MMShared.xpRestoreFraction(perkId)
@@ -103,7 +103,7 @@ end
 
 -- =====================================================================
 --  DEBUG LAYER. Read/write/dump traces (tagged [MM_DBG]) are gated by the
---  MemoirDebug sandbox option (default OFF) — silent unless an admin turns it on.
+--  MemoirDebug sandbox option (default OFF) - silent unless an admin turns it on.
 --  MM_DEBUG_FORCE is a local dev override (set true to force prints on).
 -- =====================================================================
 MM_DEBUG_FORCE = false
@@ -136,7 +136,7 @@ function MMlog(...)
     print("[MM_DBG][" .. sideTag() .. "] " .. table.concat(parts, " "))
 end
 
--- Unconditional warn — NOT gated by MemoirDebug. Apply failures must reach the console
+-- Unconditional warn - NOT gated by MemoirDebug. Apply failures must reach the console
 -- on live servers: a failed recall that logs nothing is how "Restore Saved did nothing"
 -- tickets stay unsolvable for weeks after the logs rotate away.
 function MMwarn(...)
@@ -172,7 +172,7 @@ end
 -- Dedi guard (same gap findProfessionDefByName guards below for professions): trait
 -- definitions are populated by the character-creation Lua (BaseGameCharacterDetails
 -- .DoTraits), which a dedicated server never runs on its own. Without the guard the
--- first server-side applyIdentity dies inside getTraits() — a "Restore Saved" that
+-- first server-side applyIdentity dies inside getTraits() - a "Restore Saved" that
 -- errors before the reply and looks to the player like nothing happened at all.
 local traitByName = nil
 function MMShared.findTraitByName(name)
@@ -184,7 +184,7 @@ function MMShared.findTraitByName(name)
             ok, defs = pcall(function() return CharacterTraitDefinition.getTraits() end)
         end
         if not ok or not defs or defs:size() == 0 then
-            MMwarn("findTraitByName: trait definitions unavailable — lookup for '"
+            MMwarn("findTraitByName: trait definitions unavailable - lookup for '"
                 .. tostring(name) .. "' fails; will retry on next call")
             return nil -- leave the cache unbuilt so a later call retries
         end
@@ -208,7 +208,7 @@ end
 
 -- Professions: resolve a saved profession NAME back to its
 -- CharacterProfessionDefinition (carries getType() + getXpBoosts()).
--- BaseGameCharacterDetails.DoProfessions() must have populated the table — it runs
+-- BaseGameCharacterDetails.DoProfessions() must have populated the table - it runs
 -- at creation/boot; we guard-call it lazily in case a snapshot read is the first
 -- thing that needs it.
 local profByName = nil

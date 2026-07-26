@@ -1,4 +1,4 @@
--- HBKeepAlive — automated keep-alive for animals.
+-- HBKeepAlive - automated keep-alive for animals.
 --
 -- Two coverage tracks:
 --
@@ -6,7 +6,7 @@
 -- object list) and animals in nearby trailers (grid-square getVehicleContainer
 -- scan around each connected player). For each, sets HUNGER=0, THIRST=0 and
 -- resets the elapsed-time clock via updateLastTimeSinceUpdate(). This is the
--- normal-operation keep-alive — animals never accumulate need while loaded.
+-- normal-operation keep-alive - animals never accumulate need while loaded.
 -- (Need rises over in-game hours, so a 10-minute cadence is ample; see tick().)
 --
 -- TRACK B: Vehicles.Update.TrailerAnimalFood override. Vanilla's meta-time
@@ -17,19 +17,19 @@
 -- trailer left for days doesn't return with starved animals.
 --
 -- Both gated by SandboxVars.RFTDHusbandry.Enable. When the toggle is off,
--- vanilla behavior is preserved — vanilla drain function still in place,
+-- vanilla behavior is preserved - vanilla drain function still in place,
 -- no refill tick.
 
 if not isServer() then return end
 
-print("[HB] HBKeepAlive loaded — server tick + trailer override")
+print("[HB] HBKeepAlive loaded - server tick + trailer override")
 
 local TRAILER_SCAN_RANGE = 20  -- ±squares around each player for trailer scan
 
 -- Diagnostic instrumentation. Read-only state exposed for optional consumers
 -- (e.g. HBErrorMagnifier). If you want to fully de-instrument the keep-alive
 -- when the mod stabilises, deleting this table and the four `HBKeepAlive.*`
--- writes below removes it cleanly — no other module reads these fields
+-- writes below removes it cleanly - no other module reads these fields
 -- beyond HBErrorMagnifier.lua.
 HBKeepAlive = HBKeepAlive or {}
 HBKeepAlive.tickCount            = 0
@@ -74,21 +74,21 @@ local function refillLoose(cell, seen)
     return refilled
 end
 
--- Read a hutch's occupants via getAnimal(pos) over a fixed slot range — NOT
+-- Read a hutch's occupants via getAnimal(pos) over a fixed slot range - NOT
 -- getMaxAnimals(), and NOT getAnimalInside():values():iterator().
 --
 -- Two distinct engine traps to avoid here:
 --
 --  1. def-NPE: getMaxAnimals() (and most slot/def accessors) read the hutch's
 --     script definition (IsoHutch.def). A hutch whose sprite def failed to
---     resolve — an orphaned coop sprite from a removed mod, or a build whose
---     hutch defs shifted — has def == null, so getMaxAnimals() NPEs *inside
+--     resolve - an orphaned coop sprite from a removed mod, or a build whose
+--     hutch defs shifted - has def == null, so getMaxAnimals() NPEs *inside
 --     the engine* (def.rawgetInt). PZ's Lua pcall does NOT catch that Java
 --     NPE: it propagates past the pcall, dumps a stack trace, and aborts the
 --     tick. So we must never call getMaxAnimals() to bound the loop.
 --
 --  2. unexposed-view: getAnimalInside() returns the animalInside HashMap
---     (always initialised, never touches def — safe), BUT chaining
+--     (always initialised, never touches def - safe), BUT chaining
 --     :values():iterator() fails with "attempted index: iterator of non-table:
 --     []". HashMap.values() returns a java.util.HashMap$Values view whose class
 --     PZ's Kahlua bridge doesn't expose, so :iterator() indexes a non-table.
@@ -104,7 +104,7 @@ end
 --
 -- The capability flag is kept as a genuine guard: getAnimal()/getAnimalInside()
 -- won't NPE, so a failure here would be a real, catchable Lua error (e.g. the
--- method renamed in a future build) — the first one disables hutch scanning and
+-- method renamed in a future build) - the first one disables hutch scanning and
 -- logs once instead of per-square.
 local hutchScanOK = true
 local MAX_HUTCH_SLOTS = 64
@@ -132,7 +132,7 @@ local function refillHutch(hutch, seen)
     if not ok then
         hutchScanOK = false
         HBKeepAlive.hutchScanOK = false
-        print("[HB] hutch keep-alive disabled — IsoHutch animal API unavailable "
+        print("[HB] hutch keep-alive disabled - IsoHutch animal API unavailable "
             .. "(logged once): " .. tostring(err))
     end
     return count
@@ -188,9 +188,9 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
 
                 -- Hutches: enumerate once per square, dedup across players,
                 -- then do two independent jobs per hutch:
-                --   • HBBedding.applyBedding — def-free dirt cleaning; runs
+                --   • HBBedding.applyBedding - def-free dirt cleaning; runs
                 --     even if the animal API is disabled (it never calls it).
-                --   • refillHutch — animal keep-alive; gated by hutchScanOK,
+                --   • refillHutch - animal keep-alive; gated by hutchScanOK,
                 --     which trips off if the IsoHutch animal API ever vanishes.
                 local objs = s:getObjects()
                 if objs then
@@ -239,7 +239,7 @@ end
 
 -- Runs on EveryTenMinutes. Animal hunger/thirst rise over in-game HOURS, so
 -- 10-minute resolution pins loaded animals at zero need with no gameplay
--- difference from a faster cadence — at ~1/10th the cost of EveryOneMinute,
+-- difference from a faster cadence - at ~1/10th the cost of EveryOneMinute,
 -- which re-zeroed need far more often than the stat itself moved. Trailers
 -- that sat through meta-time are handled separately by Track B below, so this
 -- loop only services currently-loaded animals and needs no fast reaction time.
@@ -271,7 +271,7 @@ local function tick()
     HBKeepAlive.lastTrailerRefilled = nTrailer
     HBKeepAlive.lastHutchRefilled   = nHutch
 
-    -- Logging is opt-in (HBKeepAlive.verbose) — the instrumentation fields
+    -- Logging is opt-in (HBKeepAlive.verbose) - the instrumentation fields
     -- above carry the same state without spamming the server log.
     if HBKeepAlive.verbose and (nLoose + nTrailer + nHutch) > 0 then
         print(string.format("[HB] keep-alive tick: refilled %d loose, %d trailer, %d hutch",
@@ -316,5 +316,5 @@ if Vehicles and Vehicles.Update then
 
     print("[HB] Vehicles.Update.TrailerAnimalFood override installed")
 else
-    print("[HB] Vehicles.Update not available at load — trailer override skipped")
+    print("[HB] Vehicles.Update not available at load - trailer override skipped")
 end

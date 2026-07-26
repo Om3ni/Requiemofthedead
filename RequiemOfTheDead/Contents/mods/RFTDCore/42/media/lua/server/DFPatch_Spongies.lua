@@ -1,4 +1,4 @@
--- DFPatch_Spongies.lua — Dragonfly removable third-party patch
+-- DFPatch_Spongies.lua - Dragonfly removable third-party patch
 --
 -- Fixes a join-time crash in "Spongies Character Customisation".
 -- FaceManager_Server.CheckData(player, data) reads data.GrowTimer.stubbleHead

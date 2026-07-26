@@ -1,10 +1,10 @@
--- MMAudit.lua — Memoir write/read audit trail (server-only, removable).
+-- MMAudit.lua - Memoir write/read audit trail (server-only, removable).
 -- Why: memoir tickets can't be reconstructed from player memory, and the season
 -- deserves a record. Every write/read ATTEMPT (refusals included) becomes a
 -- SCHEMA'D record (JSONL) so the log is machine-consumable three ways:
 --   * a player-facing progression sheet (parse events.jsonl, plot snapshots)
 --   * oversight/forensics (full snapshot on every write and successful read)
---   * disaster recovery (snap in the record IS MMSnapshotCodec's snapshot table —
+--   * disaster recovery (snap in the record IS MMSnapshotCodec's snapshot table -
 --     feed it back through applyToCharacter to rebuild a character after a wipe
 --     or DB corruption; restore command lands as a Players-tab row action)
 -- MMServer calls MMAudit.log(...) behind `if MMAudit then` guards, so deleting
@@ -13,20 +13,20 @@
 -- Output (under the server cachedir, Lua/):
 --   Memoirs/<SafeName>/events.jsonl  append-only full history, one JSON obj/line
 --   Memoirs/<SafeName>/latest.json   newest snapshot-bearing record (overwritten;
---                                    derived convenience — rebuildable from the
+--                                    derived convenience - rebuildable from the
 --                                    last events.jsonl line; restore reads this)
 --   Memoirs/_all.log                 slim human pipe timeline (no heavy payloads):
 --                                    <epochSec>|<gameDay>|<EVENT>|user=<name>|k=v...
 -- Nested dirs are ENGINE-GUARANTEED: getFileWriter runs File.mkdirs() on the
 -- full parent chain (LuaManager.getFileWriter, verified in the 42.19 decompile),
 -- and only ".." paths are refused (safeName can't emit dots). The flat fallback
--- below is retained as free insurance only — it should never fire.
+-- below is retained as free insurance only - it should never fire.
 --
 -- getFileWriter is the ONLY server-side I/O that works in B42 (raw io.open is
 -- silently blocked); open-append-close per line, so a hard-killed server loses
 -- nothing already logged.
 --
--- JSON: hand-rolled encoder — safe because we control every shape (strings,
+-- JSON: hand-rolled encoder - safe because we control every shape (strings,
 -- numbers, bools, string-keyed maps, string arrays). Object keys sorted, sets
 -- flattened to sorted lists, so identical states encode identically (diffable).
 
@@ -168,7 +168,7 @@ local function userWriter(safe, base, append)
         if w then layoutByUser[safe] = "nested"; return w end
         if not layoutByUser[safe] then
             MMwarn("MMAudit: nested folder open failed for '" .. safe
-                .. "' — using flat Memoirs/" .. safe .. ".<file> instead")
+                .. "' - using flat Memoirs/" .. safe .. ".<file> instead")
         end
         layoutByUser[safe] = "flat"
     end
@@ -239,7 +239,7 @@ local PIPE_SKIP = { snap = true, postXP = true, lvlsBefore = true, lvlsAfter = t
 --         player object is gone, e.g. an offline recheck)
 -- data:   plain table; values may be scalars or tables (snap, lvls maps, drift...).
 --         Merged into the JSON envelope {v,t,day,event,user}; key clashes are a
---         caller bug — envelope wins nothing, don't reuse its names.
+--         caller bug - envelope wins nothing, don't reuse its names.
 function MMAudit.log(player, event, data)
     data = data or {}
     local user
@@ -256,7 +256,7 @@ function MMAudit.log(player, event, data)
     local jsonLine = jsonEncode(rec)
     writeLine(userWriter(safe, "events.jsonl", true), jsonLine)
 
-    -- 2) latest.json — overwritten whenever this event carries a snapshot; the
+    -- 2) latest.json - overwritten whenever this event carries a snapshot; the
     -- one-file answer to "what does this player have right now" (restore + web)
     if rec.snap then
         writeLine(userWriter(safe, "latest.json", false), jsonLine)
@@ -286,13 +286,13 @@ end
 -- ─────────────────────────────────────────────────────────────────────────
 -- Delayed post-read recheck (READ_RECHECK, ~2 min after READ_OK).
 -- Why: the client MIRROR-applies the restore locally, and the additive overwrite
--- model is not idempotent — if the server's XP sync lands on the client before its
+-- model is not idempotent - if the server's XP sync lands on the client before its
 -- mirror runs, the restore double-adds CLIENT-side, invisible at apply time. The
 -- server only sees it once client XP syncs back up. So we snapshot per-perk XP
 -- right after the server apply and re-sample ~2 min later: large POSITIVE drift =
 -- suspected double-add; large NEGATIVE drift = mirror failed / apply lost. Small
 -- drift is just play. Caveat: client->server XP sync cadence is not guaranteed
--- inside the window — "drift=none" is weak evidence, a big drift is strong.
+-- inside the window - "drift=none" is weak evidence, a big drift is strong.
 -- ─────────────────────────────────────────────────────────────────────────
 local RECHECK_DELAY_S = 120
 local pendingRechecks = {}   -- list of { user, itemId, due, xp = {perkId -> xp} }

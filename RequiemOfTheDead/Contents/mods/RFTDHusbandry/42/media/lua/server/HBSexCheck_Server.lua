@@ -1,4 +1,4 @@
--- HBSexCheck_Server — server side of the sex-check diagnostic.
+-- HBSexCheck_Server - server side of the sex-check diagnostic.
 --
 -- Handles "RFTDHusbandry"/"hbSexCheck": dumps the definition table to the server log,
 -- reports the server-authoritative sex for the requested OID, and replies to

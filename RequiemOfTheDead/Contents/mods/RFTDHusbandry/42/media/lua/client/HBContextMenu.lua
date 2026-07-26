@@ -1,4 +1,4 @@
--- HBContextMenu — animal right-click integration.
+-- HBContextMenu - animal right-click integration.
 -- Notifies the server of encountered animals (seen list) and will host
 -- Register/Unregister actions once the Ledger UI exists.
 

@@ -162,7 +162,7 @@ function RQConfig.get()
         showScavengerRing      = (sv and sv.ShowScavengerRing  == true),
         showScreamerRing       = (sv and sv.ShowScreamerRing   == true),
 
-        -- Screamer screen effect strengths (0–1 scale; sandbox exposes as 0–100 integer)
+        -- Screamer screen effect strengths (0-1 scale; sandbox exposes as 0-100 integer)
         screamerBlurStrength   = math.max(0, math.min(100, tonumber(sv and sv.ScreamerBlurStrength) or 100)) / 100.0,
         screamerDarkStrength   = math.max(0, math.min(100, tonumber(sv and sv.ScreamerDarkStrength) or 100)) / 100.0,
     }

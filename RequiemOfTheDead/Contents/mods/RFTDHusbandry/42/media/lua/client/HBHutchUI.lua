@@ -1,4 +1,4 @@
--- HBHutchUI — extends the vanilla hutch window (ISHutchRoostParentPanel) with
+-- HBHutchUI - extends the vanilla hutch window (ISHutchRoostParentPanel) with
 -- a bedding "hay meter" beside the dirtiness meter, and an "Add Hay" button
 -- beside the "Clean" button. Reads HBBedding state; the button walks the player
 -- to the hutch and runs HBAddHayAction (consumes a HayTuft, tops up bedding).

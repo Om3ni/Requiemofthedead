@@ -34,7 +34,7 @@ local function onRenderTick()
                     col = RQScavenger.getHighlightColor(onlineID)
                 elseif zType == "EMP" then
                     -- Match the EMP inner knockdown ring (orange) so the body
-                    -- glow and that ring read as one colour — and so EMPs are
+                    -- glow and that ring read as one colour - and so EMPs are
                     -- no longer confused with Juggernauts (blue).
                     col = RQConfig.COLORS.EMPInner
                 end

@@ -69,7 +69,7 @@ function RQSvGlutton.tick(zombie)
             })
 
         elseif state.phase == "seeking" then
-            -- server does nothing to the zombie here — owning client drives movement via pathToSound
+            -- server does nothing to the zombie here - owning client drives movement via pathToSound
             -- we only cancel if the corpse disappears or the client never arrived
             local corpseGone = not RQSvEating.svCorpseStillThere(state.targetCorpse, state.targetSq)
             local timedOut   = state.seekDue and now >= state.seekDue

@@ -1,4 +1,4 @@
--- RPCore — vanilla twin-spawn detector and culler.
+-- RPCore - vanilla twin-spawn detector and culler.
 --
 -- Root cause: PZPopMan64.dll's virtual zombie pool appends entries without a
 -- duplicate-position check. When n_addZombie() is called multiple times for
@@ -11,7 +11,7 @@
 -- Skin/hair colors are randomized per zombie post-spawn, so twins look
 -- different visually despite being template-clones.
 --
--- IMPORTANT: do NOT virtualizeZombie() culled duplicates — that re-feeds the
+-- IMPORTANT: do NOT virtualizeZombie() culled duplicates - that re-feeds the
 -- DLL pool and reseeds the bug. We use removeFromWorld/removeFromSquare only.
 
 if not isServer() then return end
@@ -46,11 +46,11 @@ local function cfg()
 end
 
 -- -------------------------------------------------------------------------
--- Fingerprint — outfit + sorted inventory type-counts
+-- Fingerprint - outfit + sorted inventory type-counts
 -- -------------------------------------------------------------------------
 
 local function safeOutfit(z)
-    -- Try persistent outfit ID first — integer, survives saves, twins share it.
+    -- Try persistent outfit ID first - integer, survives saves, twins share it.
     local ok, id = pcall(function() return z:getPersistentOutfitID() end)
     if ok and id and id ~= 0 then return "o" .. tostring(id) end
     -- Fall back to getOutfitName (may only work on IsoDeadBody).
@@ -100,7 +100,7 @@ local function fingerprintFull(z)
 end
 
 -- -------------------------------------------------------------------------
--- Removal — defensive; multiple known APIs, pcall each
+-- Removal - defensive; multiple known APIs, pcall each
 -- -------------------------------------------------------------------------
 
 local function cullZombie(z)
@@ -123,7 +123,7 @@ local knownIds     = {}   -- [OnlineID] = birthTileKey; recorded at first-seen t
 local bootstrapped = false
 local stats        = { culled = 0, ticks = 0 }
 
-local LIVE_INTERVAL    = 200  -- ticks; ~7s at 30Hz — catches twins before they wander
+local LIVE_INTERVAL    = 200  -- ticks; ~7s at 30Hz - catches twins before they wander
 local tickCount        = 0
 local bloomMinuteCount = 0
 
@@ -132,7 +132,7 @@ local function isValidId(id)
 end
 
 -- -------------------------------------------------------------------------
--- Cull queue — detection and removal are decoupled. Scans enqueue their
+-- Cull queue - detection and removal are decoupled. Scans enqueue their
 -- verdicts; drainCullQueue removes a bounded number per tick. Every
 -- removal makes the engine broadcast a despawn packet to each connected
 -- client, so executing a 1500-cull scan pass inline is a ~30k-packet
@@ -217,7 +217,7 @@ local function drainCullQueue()
 end
 
 -- -------------------------------------------------------------------------
--- Zombie enumeration — server-side getCell() only exposes one cell, so a
+-- Zombie enumeration - server-side getCell() only exposes one cell, so a
 -- bloom in a remote player's loaded area is invisible to it. We instead
 -- walk every online player's cell and dedupe by OnlineID. This covers all
 -- loaded chunks across all connected players.
@@ -302,12 +302,12 @@ local function newbornSweep()
 end
 
 -- -------------------------------------------------------------------------
--- Tile+outfit bloom scan — catches existing/migrated blooms that the newborn
+-- Tile+outfit bloom scan - catches existing/migrated blooms that the newborn
 -- watcher missed. Groups loaded zombies by (current tile, outfit ID). Within
 -- each bucket, culls based on two rules (whichever fires first):
 --   1. Sequential IDs: runs of consecutive OnlineIDs within threshold (tight)
 --   2. Stack threshold: bucket size >= stackThreshold (safety net for blooms
---      whose IDs aren't perfectly sequential — e.g., older accumulated stacks)
+--      whose IDs aren't perfectly sequential - e.g., older accumulated stacks)
 -- Removals are capped per scan to avoid frame spikes on huge blooms.
 -- -------------------------------------------------------------------------
 
@@ -379,7 +379,7 @@ local function tileSequentialScan()
 end
 
 -- -------------------------------------------------------------------------
--- Wandered bloom scan — catches twins that spawned together and separated.
+-- Wandered bloom scan - catches twins that spawned together and separated.
 -- Groups loaded zombies by (recorded birth tile, outfit ID) and applies the
 -- same sequential-ID rule. Outfit narrows the bucket so legit zombies that
 -- happened to first-load on the same tile don't false-positive.
@@ -439,7 +439,7 @@ local function wanderedBloomScan()
 end
 
 -- -------------------------------------------------------------------------
--- Outfit cluster scan — catches wandered/dispersed blooms that tile-based
+-- Outfit cluster scan - catches wandered/dispersed blooms that tile-based
 -- scans miss. Groups by outfit ID (across all tiles), finds runs of nearly-
 -- sequential IDs within the outfit bucket, and only culls clusters that
 -- are geographically proximate (bbox <= outfitProximity tiles).
@@ -508,7 +508,7 @@ local function outfitClusterScan()
                         if e.zc ~= zRef then sameZ = false end
                     end
                     if sameZ and (maxX - minX) <= maxBox and (maxY - minY) <= maxBox then
-                        -- Cluster confirmed — cull all but the lowest ID.
+                        -- Cluster confirmed - cull all but the lowest ID.
                         for k = i + 1, j - 1 do
                             if removed >= maxRemove then break end
                             if enqueueCull(entries[k].z, entries[k].id, "cluster") then
@@ -549,7 +549,7 @@ Events.OnTick.Add(onTick)
 Events.EveryOneMinute.Add(onMinute)
 
 -- -------------------------------------------------------------------------
--- Force full scan — runs all three bloom scans on demand instead of waiting
+-- Force full scan - runs all three bloom scans on demand instead of waiting
 -- for the interval timer. Invoked from the right-click debug menu.
 -- -------------------------------------------------------------------------
 

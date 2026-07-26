@@ -11,7 +11,7 @@
 -- setRoleForUser was deliberately removed along with the tab's role dropdown:
 -- in-panel role assignment double-dutied with vanilla's role management,
 -- leaving two sources of truth for a player's role. NOTE: DFPlayerRoles_Server
--- stays — existing assignments in Dragonfly_PlayerRoles.txt still re-apply on
+-- stays - existing assignments in Dragonfly_PlayerRoles.txt still re-apply on
 -- connect, and deleting that engine before migrating them to vanilla's DB
 -- would silently revert those players' roles.
 

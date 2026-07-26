@@ -1,4 +1,4 @@
--- DFDebugGate.lua — gate PZ's admin/debug right-click options behind a keypress.
+-- DFDebugGate.lua - gate PZ's admin/debug right-click options behind a keypress.
 --
 -- Vanilla shows debug-styled context options (the "Tools" admin submenu, the
 -- *Report options, etc.) to admins/moderators at all times, which clutters the

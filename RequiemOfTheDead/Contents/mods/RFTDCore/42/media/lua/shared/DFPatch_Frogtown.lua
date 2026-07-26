@@ -1,4 +1,4 @@
--- DFPatch_Frogtown.lua — Dragonfly removable third-party patch (SHARED: client + server)
+-- DFPatch_Frogtown.lua - Dragonfly removable third-party patch (SHARED: client + server)
 --
 -- Fixes the Frogtown map mod's "Frogtown: Infestation" flier, which is broken
 -- three ways in B42 (all verified against the game jar + Frogtown 1.21). The
@@ -7,7 +7,7 @@
 --
 --   1. WRONG MiscDetails KEY. Frogtown registers Flier.register(
 --      "Frogtown:FrogFlier"), but the engine stamps the spawned item's media
---      id as ResourceLocation.getPath() — lowercased, namespace dropped:
+--      id as ResourceLocation.getPath() - lowercased, namespace dropped:
 --      "frogflier" (ItemCodeOnCreate.onCreateFlier -> Flier.toString()). The
 --      case-sensitive lookups PrintMediaDefinitions.MiscDetails[mediaID]
 --      (ISReadABook:304, ISWorldMap:472) never match Frogtown's mixed-case
@@ -17,7 +17,7 @@
 --   2. DEAD TRANSLATIONS. Frogtown ships Print_Media_EN.txt/Print_Text_EN.txt,
 --      but B42's Translator loads .json only (the one path template in
 --      zombie.core.Translator is "%s/media/lua/shared/Translate/%s/%s.json"),
---      so the flier renders raw keys / a blank page. Not fixable from Lua —
+--      so the flier renders raw keys / a blank page. Not fixable from Lua -
 --      Dragonfly ships the keys instead, in its own Translate/EN/
 --      Print_Media.json + Print_Text.json (the Translator merges every active
 --      mod's files). The key names keep Frogtown's raw registration string
@@ -27,7 +27,7 @@
 --   3. ENGINE NAMESPACE ROUND-TRIP BUG (only reachable once fix 1 lands).
 --      ISWorldMap:496/:537 does Flier.get(ResourceLocation.of(mediaID));
 --      of("frogflier") defaults to namespace "base" -> "base:frogflier",
---      which can never match the "frogtown:frogflier" registry entry — get()
+--      which can never match the "frogtown:frogflier" registry entry - get()
 --      returns nil and val:getTranslationKey() throws on icon hover/click.
 --      True for EVERY flier registered outside the "base" namespace; vanilla
 --      never trips it. -> shadow the global Flier with a pass-through proxy

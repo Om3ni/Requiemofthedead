@@ -6,7 +6,7 @@
 --
 -- Architecture: ALL effects (cast bar, rings, debuffs) are driven by
 -- server commands (castStart → castDone → empDebuff). RQEMP.onDead
--- is a no-op — the server's zombieKilled handler owns the EMP sequence.
+-- is a no-op - the server's zombieKilled handler owns the EMP sequence.
 -- This prevents the dual-detonation bug where the client and server
 -- both fired their own cast bars and effects.
 
@@ -32,7 +32,7 @@ function RQEMP.applyDebuff(player)
 end
 
 -- Walks through the player's inventory and drains anything battery-powered.
--- Each item wrapped in pcall — B42 item API can throw for some DrainableComboItem
+-- Each item wrapped in pcall - B42 item API can throw for some DrainableComboItem
 -- subtypes (radio stacks, worn items, etc.).
 function RQEMP.drainPlayerElectronics(player, drainPercent)
     if not player then return end
@@ -145,7 +145,7 @@ end
 
 Events.OnTick.Add(updateExpandingRings)
 
--- VFX only — no debuffs. Called by RQCore when castDone fires for an EMP ring.
+-- VFX only - no debuffs. Called by RQCore when castDone fires for an EMP ring.
 function RQEMP.playDetonationVFX(x, y, z, radius)
     RQDirgeLog.write("EMP", "[INFO] playDetonationVFX at (" .. x .. "," .. y .. "," .. z .. ") radius=" .. tostring(radius))
     RQEMP.startExpandingRing(x, y, z, radius, RQConfig.COLORS.EMP)
@@ -176,7 +176,7 @@ function RQEMP.playDetonationVFX(x, y, z, radius)
     pcall(addSound, nil, x, y, z, 100, 100)
 end
 
--- Shockwave knockback — called by RQCore from the empDebuff handler.
+-- Shockwave knockback - called by RQCore from the empDebuff handler.
 function RQEMP.applyKnockback(player, distSq, radiusSq)
     if not player then return end
     local dist       = math.sqrt(distSq)
@@ -218,7 +218,7 @@ function RQEMP.applyKnockback(player, distSq, radiusSq)
 end
 
 -- ========================
--- Sensory shock — inner zone blinds + deafens, outer ring deafens only.
+-- Sensory shock - inner zone blinds + deafens, outer ring deafens only.
 -- Both effects are local-player-only, so this all lives client-side:
 -- the screen fade and the FMOD mix don't exist anywhere else.
 -- ========================
@@ -280,7 +280,7 @@ local sensoryScrubbed = false  -- one-shot rejoin/crash cleanup, see updateSenso
 -- Lifting deafness is gated on the modData flag, not just the runtime timer:
 -- the flag only exists if WE added the trait to this character. A player who
 -- took Deaf at creation never gets the flag, so we can never strip their
--- legitimate trait — not even after death/respawn races the timer.
+-- legitimate trait - not even after death/respawn races the timer.
 local function restoreHearing(player)
     if not player then return end
     local md = player:getModData()
@@ -374,7 +374,7 @@ end
 Events.OnTick.Add(updateSensoryEffects)
 
 -- ========================
--- Zombie stumble — called by RQCore when castDone fires for an EMP ring.
+-- Zombie stumble - called by RQCore when castDone fires for an EMP ring.
 -- Ownership rule (same as the glutton pathing hint in RQCore): only the side
 -- that OWNS a zombie may drive its state machine. Each client handles the
 -- zeds it owns here; the server handles its remainder in svApplyEMPBlast.
@@ -400,7 +400,7 @@ function RQEMP.stumbleZombies(x, y, z, radius)
             local dy  = zed:getY() - y
             local dSq = dx * dx + dy * dy
             if dSq <= outerSq then
-                -- Colon-call inside the pcall closure — see the dispatch note
+                -- Colon-call inside the pcall closure - see the dispatch note
                 -- in RQSvShared.svApplyEMPBlast.
                 if dSq <= innerSq and not zed:isCrawling() and not zed:isOnFloor() then
                     -- Engine's own "shove crit" bundle: flags + wasHit anim event.

@@ -6,11 +6,11 @@ And within that folder we break it down to current claims - past claims. In curr
 
 Each log is a snapshot of 1 vehicle over time. When a restart happens, or when the log hits n size we save it and start a new one. Old logs are saved per day
 Show less
-Before the design question — I found why it truncates, and it's not a design gap. It's a one-word bug.
+Before the design question - I found why it truncates, and it's not a design gap. It's a one-word bug.
 
-The engine signature is getFileWriter(String filename, boolean createIfNull, boolean append) (LuaManager.java:5445). Both Reclamation audit writers pass (FILE, true, false) — that's createIfNull=true, append=**false**, with a comment next to it claiming append=true. Every call opens the file in truncate mode, writes one line, and closes. The file has only ever held the single most recent event.
+The engine signature is getFileWriter(String filename, boolean createIfNull, boolean append) (LuaManager.java:5445). Both Reclamation audit writers pass (FILE, true, false) - that's createIfNull=true, append=**false**, with a comment next to it claiming append=true. Every call opens the file in truncate mode, writes one line, and closes. The file has only ever held the single most recent event.
 
-Your other mods get it right — OSNLog, GuardianLogger, RQReflectLog, and BXServer all pass (FILE, true, true), with BoonBox even commenting "createIfNull, append (never truncate)". Reclamation's two audit writers are the only outliers. Fixing that now, since it's losing data independently of anything we redesign:
+Your other mods get it right - OSNLog, GuardianLogger, RQReflectLog, and BXServer all pass (FILE, true, true), with BoonBox even commenting "createIfNull, append (never truncate)". Reclamation's two audit writers are the only outliers. Fixing that now, since it's losing data independently of anything we redesign:
 
 Edit RCAudit.lua
 Modified
@@ -35,23 +35,23 @@ All mod lua trees parse clean.
 Syntax gate passes. Now, on the redesign.
 
 First: that changes what you're fixing
-The ledger design was sound — it just never appended. Worth deciding the new structure on its own merits rather than as a remedy for truncation, because the truncation is now gone either way. What you don't get back is history: everything before this fix is unrecoverable, so the Moa/Samothy question can't be settled from the ledger no matter what we build. Going forward it accumulates.
+The ledger design was sound - it just never appended. Worth deciding the new structure on its own merits rather than as a remedy for truncation, because the truncation is now gone either way. What you don't get back is history: everything before this fix is unrecoverable, so the Moa/Samothy question can't be settled from the ledger no matter what we build. Going forward it accumulates.
 
 What I'd keep from your proposal
-The subfolder, the per-vehicle timeline, and rotation on size are all right. getFileWriter runs File.mkdirs() on the full parent chain, so nested directories are free — Dragonfly's MMAudit already relies on that, so there's a working precedent in-repo to copy rather than invent.
+The subfolder, the per-vehicle timeline, and rotation on size are all right. getFileWriter runs File.mkdirs() on the full parent chain, so nested directories are free - Dragonfly's MMAudit already relies on that, so there's a working precedent in-repo to copy rather than invent.
 
 Where I'd push back
-Key the tree by vehicle, not by player. Your own description contains the tension: you said "break it down per player," then "each log is a snapshot of 1 vehicle over time." Those give different trees, and the second one is correct. A vehicle outlives its owners — Samothy's StepVan becoming Moa's StepVan is precisely a chain-of-custody event, and in a player-keyed tree that history splits across two folders with nothing linking the halves. You'd be rebuilding the exact blind spot that started this. The claimId is already stable, owner-independent, and deliberately preserved after unclaim for audit continuity; it's the natural filename.
+Key the tree by vehicle, not by player. Your own description contains the tension: you said "break it down per player," then "each log is a snapshot of 1 vehicle over time." Those give different trees, and the second one is correct. A vehicle outlives its owners - Samothy's StepVan becoming Moa's StepVan is precisely a chain-of-custody event, and in a player-keyed tree that history splits across two folders with nothing linking the halves. You'd be rebuilding the exact blind spot that started this. The claimId is already stable, owner-independent, and deliberately preserved after unclaim for audit continuity; it's the natural filename.
 
-Keep the player view as a thin index — one line per claim, release, or expiry pointing at a claimId — so "what does Moa own" stays a single file read without duplicating the timeline.
+Keep the player view as a thin index - one line per claim, release, or expiry pointing at a claimId - so "what does Moa own" stays a single file read without duplicating the timeline.
 
-Current/past won't hold the interesting traffic. Fifty-six of Moa's events were on unclaimed cars, which have no owner and therefore no folder in a player-keyed scheme. Most of what you want to watch — someone driving and stripping cars nobody owns — lives outside claims entirely. A vehicle-keyed tree handles it natively; a player-keyed one has nowhere to put it. I'd also drop current-vs-past as directories and let the timeline carry ownership transitions inline, since a car can cycle owners repeatedly and moving files on each transition is a lot of failure surface for a distinction you can derive by reading the last claim event.
+Current/past won't hold the interesting traffic. Fifty-six of Moa's events were on unclaimed cars, which have no owner and therefore no folder in a player-keyed scheme. Most of what you want to watch - someone driving and stripping cars nobody owns - lives outside claims entirely. A vehicle-keyed tree handles it natively; a player-keyed one has nowhere to put it. I'd also drop current-vs-past as directories and let the timeline carry ownership transitions inline, since a car can cycle owners repeatedly and moving files on each transition is a lot of failure surface for a distinction you can derive by reading the last claim event.
 
-The event volume is a different order of magnitude. Claim mutations are rare — a handful a day. Entry/exit, damage, driver changes, positions, and part removals are continuous, and RCAudit does a full open-write-close per line. Crash events off the vanilla vehicle channel alone will dwarf everything the current ledger writes. I'd buffer in RAM and flush on the hourly RCSession pass that Janitor already rides, rather than adding a timer or fsyncing per event. Position tracking especially — "where they started, where they stopped" — should come from the existing sweep's signature sampling, not a new poll.
+The event volume is a different order of magnitude. Claim mutations are rare - a handful a day. Entry/exit, damage, driver changes, positions, and part removals are continuous, and RCAudit does a full open-write-close per line. Crash events off the vanilla vehicle channel alone will dwarf everything the current ledger writes. I'd buffer in RAM and flush on the hourly RCSession pass that Janitor already rides, rather than adding a timer or fsyncing per event. Position tracking especially - "where they started, where they stopped" - should come from the existing sweep's signature sampling, not a new poll.
 
-"Save on restart" is the one part that will fail when it matters. There's no shutdown hook that survives a force-kill, and the restart scripts on that box kill java mid-save — that's the documented cause of the mass data loss. Rotate lazily instead: check size and date at flush time and roll over then. A boot marker line gives you the restart boundary without depending on a clean shutdown.
+"Save on restart" is the one part that will fail when it matters. There's no shutdown hook that survives a force-kill, and the restart scripts on that box kill java mid-save - that's the documented cause of the mass data loss. Rotate lazily instead: check size and date at flush time and roll over then. A boot marker line gives you the restart boundary without depending on a clean shutdown.
 
-Mark what's trustworthy. Entry/exit arrives via a client relay, and part removal is client-driven with no Lua veto. If this log is going to settle cheating disputes, each record needs to say whether the server observed it or a client asserted it — otherwise the evidence is forgeable by exactly the person you're investigating.
+Mark what's trustworthy. Entry/exit arrives via a client relay, and part removal is client-driven with no Lua veto. If this log is going to settle cheating disputes, each record needs to say whether the server observed it or a client asserted it - otherwise the evidence is forgeable by exactly the person you're investigating.
 
 Switch to one JSON object per line. The current key=value format has a live collision I hit earlier: EXPIRE emits user= twice, once for the actor and once for the subject, and the owner field is variously owner=, user=, or lastUser= depending on the verb. JSONL removes the ambiguity and makes the whole tree consumable by the same Python tooling you already use for the save-file decoders.
 
@@ -70,7 +70,7 @@ The reason i wanted per player folders was specificly to make it easier to find 
 
 I've got an idea brewing in the back of my head. An end of season snapshot of their progress in that season 
 
-Here is your life - 
+Here is your life -
 
 Where you started
 Your stat progression
@@ -100,13 +100,13 @@ IN
 cd "c:/VSCodeProjects/PZMod/Dragonfly/Contents/mods/Dragonfly/42/media/lua" && sed -n '1,60p' server/Memoirs/MMAudit.lua && echo "=== rotation/retention ===" && grep -n "rotate\|MAXSIZE\|MAX_SIZE\|retention\|prune\|os.date\|DIR" server/Memoirs/MMAudit.lua | head -25
 
 OUT
--- MMAudit.lua — Memoir write/read audit trail (server-only, removable).
+-- MMAudit.lua - Memoir write/read audit trail (server-only, removable).
 -- Why: memoir tickets can't be reconstructed from player memory, and the season
 -- deserves a record. Every write/read ATTEMPT (refusals included) becomes a
 -- SCHEMA'D record (JSONL) so the log is machine-consumable three ways:
 --   * a player-facing progression sheet (parse events.jsonl, plot snapshots)
 --   * oversight/forensics (full snapshot on every write and successful read)
---   * disaster recovery (snap in the record IS MMSnapshotCodec's snapshot table —
+--   * disaster recovery (snap in the record IS MMSnapshotCodec's snapshot table -
 --     feed it back through applyToCharacter to rebuild a character after a wipe
 --     or DB corruption; restore command lands as a Players-tab row action)
 -- MMServer calls MMAudit.log(...) behind `if MMAudit then` guards, so deleting
@@ -115,20 +115,20 @@ OUT
 -- Output (under the server cachedir, Lua/):
 --   Memoirs/<SafeName>/events.jsonl  append-only full history, one JSON obj/line
 --   Memoirs/<SafeName>/latest.json   newest snapshot-bearing record (overwritten;
---                                    derived convenience — rebuildable from the
+--                                    derived convenience - rebuildable from the
 --                                    last events.jsonl line; restore reads this)
 --   Memoirs/_all.log                 slim human pipe timeline (no heavy payloads):
 --                                    <epochSec>|<gameDay>|<EVENT>|user=<name>|k=v...
 -- Nested dirs are ENGINE-GUARANTEED: getFileWriter runs File.mkdirs() on the
 -- full parent chain (LuaManager.getFileWriter, verified in the 42.19 decompile),
 -- and only ".." paths are refused (safeName can't emit dots). The flat fallback
--- below is retained as free insurance only — it should never fire.
+-- below is retained as free insurance only - it should never fire.
 --
 -- getFileWriter is the ONLY server-side I/O that works in B42 (raw io.open is
 -- silently blocked); open-append-close per line, so a hard-killed server loses
 -- nothing already logged.
 --
--- JSON: hand-rolled encoder — safe because we control every shape (strings,
+-- JSON: hand-rolled encoder - safe because we control every shape (strings,
 -- numbers, bools, string-keyed maps, string arrays). Object keys sorted, sets
 -- flattened to sorted lists, so identical states encode identically (diffable).
 
@@ -179,7 +179,7 @@ OUT
 19:--     LIVE map), then profession, then add new traits (boosts re-stack on top).
 20:--   * A fresh spawn CARRIES raw XP for its granted levels: creation ends with
 21:--     setXPToLevel(perk, level) (IsoGameCharacter.applyTraits), so a never-trained
-22:--     skill's snapshot XP is pure grant XP — indistinguishable from earned XP unless
+22:--     skill's snapshot XP is pure grant XP - indistinguishable from earned XP unless
 24:--   * getPerkBoost()/XPBoostMap is NOT the starting level: creation stores
 27:-- THE GRANT RULE: grants follow the build being restored; only earned XP carries, and
 28:-- only MEMOIR-earned XP is taxed by the restore knob:
@@ -189,7 +189,7 @@ OUT
 33:-- starting XP is dismissed with the build (write-at-spawn -> die -> remake cycles net
 54:-- The 5 weight traits (Underweight/Very Underweight/Emaciated/Overweight/Obese) are
 55:-- DYNAMIC labels the engine adds/removes from body weight, not identity: Nutrition
-57:-- weight bracket. So we never snapshot them as traits — on restore they re-derive from the
+57:-- weight bracket. So we never snapshot them as traits - on restore they re-derive from the
 58:-- restored weight (see capture / identityMatches / applyBodyState). Names are resolved from
 60:local weightTraitNames
 62:    if not weightTraitNames then
@@ -200,36 +200,36 @@ OUT
 83:        traits  = {},
 85:        kills   = {},
 Shell cwd was reset to c:\VSCodeProjects\PZMod\Reclamation
-Your reasoning holds, and better than that — the exact structure you just described already exists in this repo and is working. Memoirs built it.
+Your reasoning holds, and better than that - the exact structure you just described already exists in this repo and is working. Memoirs built it.
 
 You've already got the pattern
 MMAudit.lua writes Memoirs/<SafeName>/events.jsonl (per-player, append-only, one JSON object per line), plus latest.json as a derived convenience snapshot, plus a slim _all.log global timeline. It has a safeName() sanitizer for usernames, a hand-rolled JSON encoder with sorted keys so records diff cleanly, and open-append-close per line so a hard-killed server loses nothing already written. Its header states three intended consumers, and the first one listed is "a player-facing progression sheet (parse events.jsonl, plot snapshots)."
 
-You had this idea already and shipped half of it. Reclamation should adopt that layout verbatim rather than invent a parallel one — same directory shape, same encoder, same naming — so a single harvester can walk both mods at season end.
+You had this idea already and shipped half of it. Reclamation should adopt that layout verbatim rather than invent a parallel one - same directory shape, same encoder, same naming - so a single harvester can walk both mods at season end.
 
 The one place I'd still split from per-player
 Keep a vehicle-keyed file alongside the player folders, not instead of them. Ticket support and the season story both want per-player; chain of custody wants per-vehicle, and neither view reconstructs the other cheaply. Since every write is already open-append-close, writing a record into both Reclamation/<SafeName>/events.jsonl and Reclamation/_vehicles/RC-xxxx.jsonl costs one extra file handle per event and no schema duplication. That gets you "what does this player own" in one read for the ticket queue, and "who has had this StepVan" in one read for the next Moa.
 
 The actually-new work is rotation
-MMAudit has no rotation and no retention — I checked, there's nothing. And its records embed full character snapshots, so events.jsonl grows without bound with heavy payloads inside. That's the shape of the 74MB Deadband audit log that contributed to the save-time data loss. So the rotation and daily-archive part of your proposal isn't just right for Reclamation, it's a latent fix Memoirs needs too. I'd build it once as a shared helper both mods call.
+MMAudit has no rotation and no retention - I checked, there's nothing. And its records embed full character snapshots, so events.jsonl grows without bound with heavy payloads inside. That's the shape of the 74MB Deadband audit log that contributed to the save-time data loss. So the rotation and daily-archive part of your proposal isn't just right for Reclamation, it's a latent fix Memoirs needs too. I'd build it once as a shared helper both mods call.
 
-Rotate lazily at flush time on size or date change, not on restart — the restart scripts force-kill java, so any shutdown hook fires exactly never when it matters most.
+Rotate lazily at flush time on size or date change, not on restart - the restart scripts force-kill java, so any shutdown hook fires exactly never when it matters most.
 
 On the season retrospective
-The load-bearing constraint: you cannot derive a season story from a log you rotate and prune. A season is months; a verbose forensic log with snapshots in it can't be kept that long. So the two products need different streams — verbose and rotating for forensics, slim and permanent for the story. MMAudit's _all.log is already exactly that slim shape; it just needs to be per-player and kept.
+The load-bearing constraint: you cannot derive a season story from a log you rotate and prune. A season is months; a verbose forensic log with snapshots in it can't be kept that long. So the two products need different streams - verbose and rotating for forensics, slim and permanent for the story. MMAudit's _all.log is already exactly that slim shape; it just needs to be per-player and kept.
 
 Mapping your chapters to what exists today:
 
-Stat progression is the one I'd have expected to be hardest and it's already solved. MMSnapshotCodec captures perks, traits, and kills, and — critically — it already implements the grant-versus-earned split (savedEarned = max(0, savedXP - grantXP(build))). That matters because a fresh spawn carries real raw XP from setXPToLevel, so a naive progression chart would credit players for levels character creation handed them. The distinction between what you were given and what you earned is the entire emotional weight of that chapter, and the math for it is written.
+Stat progression is the one I'd have expected to be hardest and it's already solved. MMSnapshotCodec captures perks, traits, and kills, and - critically - it already implements the grant-versus-earned split (savedEarned = max(0, savedXP - grantXP(build))). That matters because a fresh spawn carries real raw XP from setXPToLevel, so a naive progression chart would credit players for levels character creation handed them. The distinction between what you were given and what you earned is the entire emotional weight of that chapter, and the math for it is written.
 
-Deaths and memoirs written/read are already logged — MMAudit records every write and read attempt including refusals.
+Deaths and memoirs written/read are already logged - MMAudit records every write and read attempt including refusals.
 
 The vehicle you made your own is the chapter Reclamation owns, and it's the one thing on your list nothing currently records. It's also the one that needs the claim timeline to survive the whole season, which argues for putting claim/release events in the slim permanent stream and entry/exit/damage telemetry in the rotating one.
 
-Where you started needs a life-start snapshot specifically — not the first snapshot that happens to exist, since a memoir restore would overwrite the baseline. Where you called home can come off the vanilla SafeHouse API, which Reclamation's janitor already queries. How you died needs a death hook that fires before the character is torn down.
+Where you started needs a life-start snapshot specifically - not the first snapshot that happens to exist, since a memoir restore would overwrite the baseline. Where you called home can come off the vanilla SafeHouse API, which Reclamation's janitor already queries. How you died needs a death hook that fires before the character is torn down.
 
 What I'd say overall
-Build the rotation helper first, in Dragonfly, since both mods need it and Memoirs is currently accumulating unbounded files. Then Reclamation's vehicle timeline on top of it, verified on the dedi. The retrospective is a harvester over those streams and should be written last, in Memoirs, once there's a season of data to harvest — it's a reader, not a writer, so it can't be tested before the streams exist anyway.
+Build the rotation helper first, in Dragonfly, since both mods need it and Memoirs is currently accumulating unbounded files. Then Reclamation's vehicle timeline on top of it, verified on the dedi. The retrospective is a harvester over those streams and should be written last, in Memoirs, once there's a season of data to harvest - it's a reader, not a writer, so it can't be tested before the streams exist anyway.
 
 One flag: the Memoirs folder is still untracked in git and per your own notes hasn't been dedi-verified yet. If it's about to become shared infrastructure for a season-long feature, I'd get it committed and verified before anything depends on it.
 
@@ -326,30 +326,30 @@ id=RFTDLastRites
 Shell cwd was reset to c:\VSCodeProjects\PZMod\Reclamation
 Grep "DFRegistry|DFBanBox|DF[A-Z]\w+\s*(and|~=|then)" (in c:/VSCodeProjects/PZMod, glob: *.lua)
 31 lines of output
-Short answer: you're not structured wrong, and you're already doing the thing you're asking about — but you're doing it in one place and not the others.
+Short answer: you're not structured wrong, and you're already doing the thing you're asking about - but you're doing it in one place and not the others.
 
 You already ship submods
-The Dragonfly Workshop item (3728273142) contains two mod ids: BBLibrary and Dragonfly, with BBLibrary/mod.info declaring require=Dragonfly. Sector-7 ships two map mods in one item the same way. Contents/mods/ is plural by design — one Workshop item can carry as many mod ids as you want, each independently enableable, with require= controlling load order between them.
+The Dragonfly Workshop item (3728273142) contains two mod ids: BBLibrary and Dragonfly, with BBLibrary/mod.info declaring require=Dragonfly. Sector-7 ships two map mods in one item the same way. Contents/mods/ is plural by design - one Workshop item can carry as many mod ids as you want, each independently enableable, with require= controlling load order between them.
 
 So the choice isn't "nine separate mods" versus "one mega-mod." Those are two separate decisions that you've been treating as one: how many Workshop items you publish, and how many mod ids you define. You can collapse the first without touching the second.
 
 The coupling is thinner than it feels
-I grepped the actual integration surface. Sibling mods touch Dragonfly through exactly one seam — DFRegistry tab registration — in five files: RCVehicleTab, RPNecroTab, RQAdmin, BXClient, and the BXShim_DFCompat shim. Every one is soft-guarded and deferred to OnGameStart, so each mod runs headless when Dragonfly is absent. That's a clean, well-behaved dependency. What you're feeling as "a lot of interdependence" is one seam repeated five times, which is the good version of this problem.
+I grepped the actual integration surface. Sibling mods touch Dragonfly through exactly one seam - DFRegistry tab registration - in five files: RCVehicleTab, RPNecroTab, RQAdmin, BXClient, and the BXShim_DFCompat shim. Every one is soft-guarded and deferred to OnGameStart, so each mod runs headless when Dragonfly is absent. That's a clean, well-behaved dependency. What you're feeling as "a lot of interdependence" is one seam repeated five times, which is the good version of this problem.
 
 The real problem is version skew, not structure
-Here's what actually bites: the server runs published Workshop builds while your client symlinks the dev tree. The moment Reclamation depends on a shared rotation helper living in Dragonfly, you can have Reclamation 0.6 and Dragonfly 0.5 live simultaneously, and nothing in require= catches a version mismatch — only presence. That's a genuine hazard the current layout has been sheltered from only because the mods don't share code yet, and the logging work would end that.
+Here's what actually bites: the server runs published Workshop builds while your client symlinks the dev tree. The moment Reclamation depends on a shared rotation helper living in Dragonfly, you can have Reclamation 0.6 and Dragonfly 0.5 live simultaneously, and nothing in require= catches a version mismatch - only presence. That's a genuine hazard the current layout has been sheltered from only because the mods don't share code yet, and the logging work would end that.
 
 Co-packaging fixes it directly: mods in the same Workshop item update atomically, so they can never be out of step with each other.
 
 What I'd do
-One Workshop item — "Requiem of the Dead" — containing every mod id, plus a new thin RFTDCore holding the shared pieces (the rotation/retention helper, the JSON encoder, the getFileWriter idiom, safeName, the audit conventions). Everything else declares require=RFTDCore. That's the BBLibrary pattern scaled up, and it's already proven on your own live item.
+One Workshop item - "Requiem of the Dead" - containing every mod id, plus a new thin RFTDCore holding the shared pieces (the rotation/retention helper, the JSON encoder, the getFileWriter idiom, safeName, the audit conventions). Everything else declares require=RFTDCore. That's the BBLibrary pattern scaled up, and it's already proven on your own live item.
 
-I'd specifically not fold everything into a single mod id. Three reasons: the Kahlua 200-local bug silently fails an entire mod's load from one oversized function, so a monolith maximizes blast radius on a failure mode you've already been bitten by; server admins lose per-feature disable, which matters when one mod misbehaves on a live box; and your sandbox options all merge into one unmanageable list. Your own vertical-slice rule argues the same way — a monolith makes "verify one slice on the dedi" much harder.
+I'd specifically not fold everything into a single mod id. Three reasons: the Kahlua 200-local bug silently fails an entire mod's load from one oversized function, so a monolith maximizes blast radius on a failure mode you've already been bitten by; server admins lose per-feature disable, which matters when one mod misbehaves on a live box; and your sandbox options all merge into one unmanageable list. Your own vertical-slice rule argues the same way - a monolith makes "verify one slice on the dedi" much harder.
 
 Keep RFTDCore genuinely thin, and don't make Dragonfly the base everything requires. Dragonfly is a heavy admin-facing panel; a headless server running only Reclamation shouldn't have to load it.
 
 One timing constraint
-Mod ids are the key that save data hangs off, and PZ never self-cleans ModData from a removed mod id. Restructuring ids on a live server orphans state. If you consolidate, do it at a wipe boundary — and you already have one penciled in after 42.20 for the Sector-7 rehost. That's the window.
+Mod ids are the key that save data hangs off, and PZ never self-cleans ModData from a removed mod id. Restructuring ids on a live server orphans state. If you consolidate, do it at a wipe boundary - and you already have one penciled in after 42.20 for the Sector-7 rehost. That's the window.
 
 Practically: the packaging change can wait, but the RFTDCore decision can't, because the logging work is the first thing that would live in it. If you want the rotation helper shared, it should be born in RFTDCore rather than in Dragonfly and moved later.
 
@@ -378,13 +378,13 @@ Top-level mod directories include: Reclamation, Dragonfly, Dirge, Reaper, Husban
 
 Report on:
 1. **Shared helper duplication.** Each mod has a <Px>Shared.lua (RCShared, DFShared?, RQShared?, BXShared, LRShared?, HBShared?). Compare them. List functions that appear in 3+ mods with near-identical bodies (e.g. isAdmin/getAccessLevel ladders, halo/notify helpers, cfg() sandbox readers, dbg/trace loggers, safeName sanitizers, JSON encoders, file writers, isWreck/isTrailer-style predicates, rate limiters). Quote the function signature and which mods contain it.
-2. **The OnClientCommand dispatcher pattern.** Each mod has a <Px>Server.lua single dispatcher with a rate limiter. Compare the rate-limit implementations and dispatch scaffolding — how similar are they?
+2. **The OnClientCommand dispatcher pattern.** Each mod has a <Px>Server.lua single dispatcher with a rate limiter. Compare the rate-limit implementations and dispatch scaffolding - how similar are they?
 3. **The Dragonfly integration contract.** Exactly how sibling mods register admin tabs: the DFRegistry global, what functions/args, where registration is deferred to, and how the soft-dependency guard is written. Files that do this: Reclamation RCVehicleTab.lua, Reaper RPNecroTab.lua, Dirge RQAdmin.lua, OddsAndEnds BXClient.lua/BXShim_DFCompat.lua.
 4. **mod.info conventions.** For every mod.info under */Contents/mods/*/mod.info, report: id, name, require=, and any versioning field. Note which declare requires at all.
 5. **Version/constant conventions.** How each mod declares its VERSION and MODULE (command-module token) constants.
 6. **Sandbox options.** How each mod ships media/sandbox-options.txt and Translate/EN/Sandbox.json, and whether there is any shared reader pattern.
 
-Return a structured report with concrete file paths and short code quotes. Do not propose a design — just inventory what exists and flag the strongest consolidation candidates.
+Return a structured report with concrete file paths and short code quotes. Do not propose a design - just inventory what exists and flag the strongest consolidation candidates.
 Agent:Deep dive Memoirs logging
 IN
 Explore the Dragonfly "Memoirs" subsystem in a Project Zomboid Build 42 Lua mod monorepo. Search breadth: very thorough.
@@ -396,17 +396,17 @@ Key files:
 - c:\VSCodeProjects\PZMod\Dragonfly\Contents\mods\Dragonfly\42\media\lua\server\MMServer.lua
 - c:\VSCodeProjects\PZMod\Dragonfly\Contents\mods\Dragonfly\42\media\lua\client\MMClient.lua, MMContext.lua
 
-Context: the owner wants to build a season-long "Reflections" feature — an end-of-season per-player retrospective ("here is your life": where you spawned, stat progression, where you called home, the vehicle you made your own, deaths/memoirs, zombies killed, how you died). MMAudit's existing per-player JSONL layout is the intended model to generalize into a shared Core logging library.
+Context: the owner wants to build a season-long "Reflections" feature - an end-of-season per-player retrospective ("here is your life": where you spawned, stat progression, where you called home, the vehicle you made your own, deaths/memoirs, zombies killed, how you died). MMAudit's existing per-player JSONL layout is the intended model to generalize into a shared Core logging library.
 
 Report in detail on:
 1. **MMAudit's full architecture**: the exact on-disk layout (directories, filenames), the record schema (every field emitted, SCHEMA_V), the JSON encoder implementation (how it handles arrays/maps/numbers/escaping), safeName(), the write path (getFileWriter args, append semantics, the flat fallback), and the complete list of EVENT names it emits.
 2. **What is NOT there**: confirm whether there is any log rotation, size cap, retention/pruning, or archiving. Confirm whether any file is ever truncated vs appended.
-3. **MMSnapshotCodec's capture shape**: the exact fields of the snapshot table (perks, traits, kills, body, identity, faith, etc.) — enumerate them. How is XP captured? Explain the grant-vs-earned XP distinction and the exact helper functions that compute it (quote them). Is there a spawn/life-start baseline captured anywhere?
+3. **MMSnapshotCodec's capture shape**: the exact fields of the snapshot table (perks, traits, kills, body, identity, faith, etc.) - enumerate them. How is XP captured? Explain the grant-vs-earned XP distinction and the exact helper functions that compute it (quote them). Is there a spawn/life-start baseline captured anywhere?
 4. **Life/season identity**: search for any concept of a life id, epoch, generation counter, or season marker across the Memoirs files and the wider Dragonfly mod. How does the system know one life from the next? How does it detect a player died and respawned?
 5. **Hooks used**: what events do MMServer/MMClient bind to (OnClientCommand handlers, player death hooks, login hooks)? Is there any death detection, and does anything capture data at the moment of death?
 6. **Zombie kill / stat data availability**: anywhere in the monorepo that reads zombie kill counts, hours survived, or similar career stats off IsoPlayer.
 
-Return concrete file:line references and code quotes. Do not propose a design — inventory what exists and explicitly flag the gaps relevant to a season retrospective.
+Return concrete file:line references and code quotes. Do not propose a design - inventory what exists and explicitly flag the gaps relevant to a season retrospective.
 Bash Find all mod.info files
 IN
 find "c:/VSCodeProjects/PZMod" -name "mod.info" -not -path "*Test*" 2>/dev/null
@@ -660,11 +660,11 @@ Context: the owner is designing a season-long per-player telemetry + retrospecti
 
 **1. Every logging/file-writing implementation in the monorepo.** Find all uses of getFileWriter and getFileReader across all mods (ignore the *Test dev forks except to note them). For each, report: file path, the exact args passed (filename, createIfNull, append), whether it truncates or appends, the output filename/directory, the line format (JSONL? pipe-delimited? key=value?), and any buffering. Known ones to cover: Reclamation RCAudit.lua + RCDamageAudit.lua, OmenSpyNetwork OSNLog.lua + GuardianLogger.lua, Dirge RQReflectLog.lua, OddsAndEnds BXServer.lua, Dragonfly DFRoleEdit_Server.lua + DFPlayerRoles_Server.lua + Memoirs/MMAudit.lua, "Last Rites" LRPrefs.lua, Longstrider LSTours.lua. Flag any that pass append=false but are clearly intended as append-only logs.
 
-**2. Player lifecycle hooks already in use.** Search every mod for how they detect: a player spawning/first entering the world for a new character, a player logging in, a player dying, and a player respawning. Look for OnCreatePlayer, OnNewGame, OnPlayerDeath, OnCharacterDeath, OnPlayerUpdate, OnTick login polls, getOnlinePlayers polling, etc. Note especially any SERVER-side login detection (there is a documented B42 problem where OnPlayerUpdate never fires server-side and connect events are unreliable, with a standing OnTick poll gated on getSquare()+getInventory() as the workaround — find that implementation if it exists). Report file:line and the approach used.
+**2. Player lifecycle hooks already in use.** Search every mod for how they detect: a player spawning/first entering the world for a new character, a player logging in, a player dying, and a player respawning. Look for OnCreatePlayer, OnNewGame, OnPlayerDeath, OnCharacterDeath, OnPlayerUpdate, OnTick login polls, getOnlinePlayers polling, etc. Note especially any SERVER-side login detection (there is a documented B42 problem where OnPlayerUpdate never fires server-side and connect events are unreliable, with a standing OnTick poll gated on getSquare()+getInventory() as the workaround - find that implementation if it exists). Report file:line and the approach used.
 
-**3. HTML/report generation precedent.** Look at C:\Users\micha\Downloads\pzsurvey.py — a Python tool that decodes PZ player.db blobs and renders an HTML survey. Report: how it structures the decode->dataset->render pipeline (the build_dataset and render functions), what player fields it can already extract (stats, XP, traits, perks, kills, hours survived), and how the HTML is emitted (template strings? CSS approach?). Also check c:\VSCodeProjects\PZMod\tools\ for any other parsing/reporting tooling and report what's there.
+**3. HTML/report generation precedent.** Look at C:\Users\micha\Downloads\pzsurvey.py - a Python tool that decodes PZ player.db blobs and renders an HTML survey. Report: how it structures the decode->dataset->render pipeline (the build_dataset and render functions), what player fields it can already extract (stats, XP, traits, perks, kills, hours survived), and how the HTML is emitted (template strings? CSS approach?). Also check c:\VSCodeProjects\PZMod\tools\ for any other parsing/reporting tooling and report what's there.
 
-Return concrete file:line references and code quotes. Do not propose a design — inventory only.
+Return concrete file:line references and code quotes. Do not propose a design - inventory only.
 Read c:\VSCodeProjects\PZMod\Dragonfly\Contents\mods\Dragonfly\42\media\lua\shared\MMSnapshotCodec.lua
 Bash Dump mod.info batch 1
 IN
@@ -751,7 +751,7 @@ IN
 cd "c:/VSCodeProjects/PZMod" && grep -rn "OnClientCommand" --include=*.lua . | grep -v "Test/" | grep -v "_rollback" | grep -v zz_Archived
 
 OUT
-./Dirge/Contents/mods/RFTDDirge/42/media/lua/client/RQAdmin.lua:126:    -- zombies. sendClientCommand works on host too — routes to OnClientCommand.
+./Dirge/Contents/mods/RFTDDirge/42/media/lua/client/RQAdmin.lua:126:    -- zombies. sendClientCommand works on host too - routes to OnClientCommand.
 ./Dirge/Contents/mods/RFTDDirge/42/media/lua/server/RQServer.lua:757:Events.OnClientCommand.Add(function(module, command, player, args)
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/DFEngineLock_Server.lua:36:Events.OnClientCommand.Add(onClientCommand)
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/DFPatch_Greenport_Server.lua:213:Events.OnClientCommand.Add(onClientCommand)
@@ -1342,7 +1342,7 @@ echo "=== pzbasements.py head ==="; sed -n '1,30p' "/c/VSCodeProjects/PZMod/tool
 OUT
 === pzbasements.py head ===
 #!/usr/bin/env python3
-r"""pzbasements.py — parse a PZ B42 map_basements.bin (basement placements + building/room defs).
+r"""pzbasements.py - parse a PZ B42 map_basements.bin (basement placements + building/room defs).
 
 Format per zombie/basements/Basements.java (loadSavefile/writeSavefile), all big-endian
 DataOutputStream primitives:
@@ -1374,7 +1374,7 @@ covering the footprints at the engine's own w+1/h+1 wall margin.
 
 === pzbasements_inject.py head ===
 #!/usr/bin/env python3
-r"""pzbasements_inject.py — additively inject a map mod's procedural basements into an
+r"""pzbasements_inject.py - additively inject a map mod's procedural basements into an
 existing map_basements.bin, so their rooms register (restoring power) on a world where
 the bin was written before the mod went procedural.
 
@@ -1402,7 +1402,7 @@ import struct
 === cmdscan.py head ===
 #!/usr/bin/env python3
 """
-cmdscan — forensic scanner for Project Zomboid B42 server client-command logs.
+cmdscan - forensic scanner for Project Zomboid B42 server client-command logs.
 
 WHY THIS EXISTS
 ---------------
@@ -1425,13 +1425,13 @@ receive point BEFORE any Lua runs:
 That produces <date>_<time>_cmd.txt in the server Logs dir. This tool reads
 those files and flags:
 
-  1. SENSITIVE   — an admin-only action (curated glob list) issued by a
+  1. SENSITIVE - an admin-only action (curated glob list) issued by a
                    SteamID that is not on the admin allowlist. Highest signal.
-  2. FLOOD       — the same (SteamID, action) repeated past a rate threshold
+  2. FLOOD - the same (SteamID, action) repeated past a rate threshold
                    inside a time window (catches griefing / spam even for
                    actions not on the sensitive list). 1957x spawnVehicle
                    trips this by three orders of magnitude.
-  3. UNKNOWN     — (optional, needs --baseline) an action never seen in a
+  3. UNKNOWN - (optional, needs --baseline) an action never seen in a
                    known-good baseline. Catch-all for unknown-unknowns.
 
 It is DETECTIVE, not preventive: it runs on server restart (or live-tailed)
@@ -1472,10 +1472,10 @@ OUT
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMAudit.lua:158:    pcall(function() w = getFileWriter(DIR .. path, true, append) end)
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMAudit.lua:248:    local safe = safeName(user)
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMAudit.lua:256:    local jsonLine = jsonEncode(rec)
-./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMAudit.lua:259:    -- 2) latest.json — overwritten whenever this event carries a snapshot; the
+./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMAudit.lua:259:    -- 2) latest.json - overwritten whenever this event carries a snapshot; the
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMAudit.lua:262:        writeLine(userWriter(safe, "latest.json", false), jsonLine)
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMRestore.lua:3:-- PROGRESSION. MMAudit's per-player archive (latest.json) carries the full
-./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMRestore.lua:19:-- JSON decoder: parses OUR OWN encoder's output only (MMAudit.jsonEncode —
+./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMRestore.lua:19:-- JSON decoder: parses OUR OWN encoder's output only (MMAudit.jsonEncode -
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMRestore.lua:32:-- must mirror MMAudit's safeName so we find the same files
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMRestore.lua:33:local function safeName(name)
 ./Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMRestore.lua:142:        local br = getFileReader(DIR .. path, false)
@@ -1825,7 +1825,7 @@ VERSION = 1,
    ---------------------------------------------------------------------
    All options live on a single "Dirge" sandbox tab. PZ B42 doesn't expose
    subpages to mod-declared options, so we use decoy boolean options as
-   visual section headers. Toggling a header checkbox does nothing — the
+   visual section headers. Toggling a header checkbox does nothing - the
    underscored label is what makes them read as dividers in the panel.
    ---------------------------------------------------------------------
    Order within the tab:
@@ -1835,7 +1835,7 @@ VERSION = 1,
      4. EMP           (EMP-specific + ShowEMPRing)
      5. Glutton       (Glutton-specific + DevourTime + ShowGluttonRing)
      6. Juggernaut    (Jugg-specific + aura values shared with boss/scav)
-     7. Scavenger     (Scav-specific, sparse — reuses jugg + screamer values)
+     7. Scavenger     (Scav-specific, sparse - reuses jugg + screamer values)
      8. Screamer      (Screamer-specific + scream values shared with boss/scav rage)
    Per-section options are alphabetized.
    ---------------------------------------------------------------------
@@ -2255,7 +2255,7 @@ cd /c/VSCodeProjects/PZMod && head -c 900 _Review/Scorecards/index.html; echo; e
 
 OUT
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RFTD / Dragonfly — Source Mod Review</title><style>
+<title>RFTD / Dragonfly - Source Mod Review</title><style>
 :root{--bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--bd:#2a3240;--tx:#e6edf3;--mut:#8b949e;
 --red:#f85149;--orange:#e3873c;--yellow:#d9b043;--green:#3fb950;--blue:#58a6ff;
 --redb:#3a1518;--orangeb:#3a2410;--yellowb:#332c12;--greenb:#122a17;}
@@ -2763,25 +2763,25 @@ local function scheduleAction(delayMs, fn)
 end
 
 -- invisible or ghost admins shouldn't trigger zombie behaviors
-Strong findings — including a live bug I didn't know about. Let me get a design pass on this.
+Strong findings - including a live bug I didn't know about. Let me get a design pass on this.
 
 Agent:Design RFTDCore + Reflections
 IN
-Design an implementation plan for a refactor in a Project Zomboid Build 42 Lua mod monorepo at c:\VSCodeProjects\PZMod. Read the files referenced below as needed. Output a detailed, staged plan — do not write any code files.
+Design an implementation plan for a refactor in a Project Zomboid Build 42 Lua mod monorepo at c:\VSCodeProjects\PZMod. Read the files referenced below as needed. Output a detailed, staged plan - do not write any code files.
 
 # The goal
 
 The owner ships ~10 separate Workshop items under the "Requiem of the Dead" (RFTD) banner: Reclamation, Dragonfly, Dirge, Reaper, Husbandry, Last Rites, OddsAndEnds, Cookbook, OmenSpyNetwork, Sector7. He wants a new **master mod, "Requiem of the Dead" (RFTDCore)** that is:
-1. A shared library — the family's common infrastructure, which today is copy-pasted 5-9 times over.
-2. A **logging mastermind** — one telemetry/audit library all mods write through, with rotation, retention, and per-player + per-entity streams.
-3. The eventual home of **"Requiem of the Dead: Reflections"** — an end-of-season per-player retrospective ("Here is your life"): where you spawned (with a https://map.projectzomboid.com/ deep link to the spawn house), stat progression, where you called home, the vehicle you made your own, challenges (deaths / memoirs written and read), zombies killed, and how you died.
+1. A shared library - the family's common infrastructure, which today is copy-pasted 5-9 times over.
+2. A **logging mastermind** - one telemetry/audit library all mods write through, with rotation, retention, and per-player + per-entity streams.
+3. The eventual home of **"Requiem of the Dead: Reflections"** - an end-of-season per-player retrospective ("Here is your life"): where you spawned (with a https://map.projectzomboid.com/ deep link to the spawn house), stat progression, where you called home, the vehicle you made your own, challenges (deaths / memoirs written and read), zombies killed, and how you died.
 
 A season is 3-4 months, ending at a server wipe.
 
 # Established facts from exploration (do not re-derive; verify only if a design decision hinges on it)
 
 ## Packaging
-- One Workshop item can ship MULTIPLE mod ids: `<Item>/Contents/mods/<ModId>/`. Already proven live — the Dragonfly item ships both `Dragonfly` and `BBLibrary`, with `BBLibrary/mod.info` declaring `require=Dragonfly`. Sector7 ships two map mods.
+- One Workshop item can ship MULTIPLE mod ids: `<Item>/Contents/mods/<ModId>/`. Already proven live - the Dragonfly item ships both `Dragonfly` and `BBLibrary`, with `BBLibrary/mod.info` declaring `require=Dragonfly`. Sector7 ships two map mods.
 - `require=` in mod.info is the only dependency/load-order mechanism, and it appears exactly ONCE in the whole family (BBLibrary). Four real dependencies (Dragonfly, PhunZones2, RV Interior, Reaper) are undeclared.
 - Every RFTD mod ships TWO identical mod.info files (root + `42/`).
 - Mod ids are the key save data hangs off; PZ never self-cleans ModData from a removed mod id. Renaming/moving ids on a live server orphans state, so id changes must land at a wipe boundary.
@@ -2789,8 +2789,8 @@ A season is 3-4 months, ending at a server wipe.
 ## Duplication inventory (strongest consolidation candidates, ranked)
 1. **Access/authorization**: 9 implementations across mods, 4 incompatible allowlists. `RCShared.isAdmin` (RCShared.lua:156) admits admin/moderator/overseer/gm/observer; Dirge `RQSvShared.svIsAdminPlayer` (:41) and Reaper `privileged` (RPServer.lua:22) admit 4; Husbandry `isAdminLike` (HBCommands.lua:22) admits ANY non-"None" level and is byte-copied into HBSexCheck_Server.lua:10; OddsAndEnds `BX.isAdmin` (BXShared.lua:58) admits only "Admin". Dragonfly uses a capability model instead (`DFCore.roleHas`, DFCore.lua:21).
 2. **Rate limiter**: `DFCore.allow` (DFCore.lua:75) and `RCServer.underRate` (RCServer.lua:528) are the same fixed-window algorithm written twice, same RATE_MAX=20/1000ms, same fail-open policy. Reaper, Dirge, Husbandry dispatchers have NO limiter. The OnPlayerDisconnect prune with its "IsoPlayer or string" defensive branch is copy-pasted verbatim (RCServer.lua:549, DFServer.lua:126).
-3. **LIVE BUG — command-module collision**: Dirge (`RQServer.lua:758`) and Husbandry (`HBCommands.lua:31`) BOTH dispatch on the bare module string `"RQ"`. Every Husbandry command is delivered to Dirge's dispatcher and vice versa; they survive only because command-name sets happen not to overlap. Husbandry also replies on `"RQ"`.
-4. **File writers**: 6+ independent "append one stamped line via getFileWriter" implementations, each with its own timestamp helper and line format — RCAudit.lua:24, BXServer.lua:32, RQReflectLog.lua:36, OSNLog.lua:29, GuardianLogger.lua:123, MMAudit.lua:158. Plus a dead luajava/io.open path in RQDirgeLog.lua.
+3. **LIVE BUG - command-module collision**: Dirge (`RQServer.lua:758`) and Husbandry (`HBCommands.lua:31`) BOTH dispatch on the bare module string `"RQ"`. Every Husbandry command is delivered to Dirge's dispatcher and vice versa; they survive only because command-name sets happen not to overlap. Husbandry also replies on `"RQ"`.
+4. **File writers**: 6+ independent "append one stamped line via getFileWriter" implementations, each with its own timestamp helper and line format - RCAudit.lua:24, BXServer.lua:32, RQReflectLog.lua:36, OSNLog.lua:29, GuardianLogger.lua:123, MMAudit.lua:158. Plus a dead luajava/io.open path in RQDirgeLog.lua.
 5. **Cached cfg() sandbox readers**: 4 cached-singleton implementations + ~30 inline `SandboxVars.<Id> or {}` reads. Dirge has the SAME function twice (RQConfig.get / RQSvShared.getSvConfig) with already-DRIFTED constant tables.
 6. **Feedback**: RCShared.halo / DFFeedback.good|bad / three copies of a server->client `notify`/`reply`; RCServer.lua:16 is copy-pasted verbatim into RCRVGate.lua:34.
 7. **DFRegistry tab-registration boilerplate**: 5 consumers repeat the same `Events.OnGameStart.Add(function() if not DFRegistry then return end ... end)` block with inconsistent pcall/Capability guarding, an unenforced `order` space (Reclamation and Husbandry both claim order=6), and an unvalidated cross-mod tabId reference (Dirge registers row actions onto "necro", a tab owned by Reaper).
@@ -2798,14 +2798,14 @@ A season is 3-4 months, ending at a server wipe.
 9. dbg/trace loggers: 7 declarations of the same gated printf.
 10. VERSION/MODULE constants: 5 mutually exclusive styles. `DFCore.VERSION = "0.6.2"` is already out of sync with Dragonfly mod.info `modversion=0.6.3`.
 
-## The logging model to generalize — Dragonfly Memoirs
+## The logging model to generalize - Dragonfly Memoirs
 `Dragonfly/.../server/Memoirs/MMAudit.lua` is the most developed logger and the intended model:
 - Layout: `Memoirs/<SafeName>/events.jsonl` (append), `Memoirs/<SafeName>/latest.json` (TRUNCATED each write, derived/rebuildable), `Memoirs/_all.log` (append, one GLOBAL slim pipe timeline `<epochSec>|<gameDay>|<EVENT>|user=<name>|k=v...`).
 - Envelope `{v=SCHEMA_V, t=epoch, day=worldAgeHours/24, event, user}` merged with caller data; key clashes documented as "a caller bug" but NOT enforced.
 - Hand-rolled `jsonEncode` (MMAudit.lua:103) with lexicographically sorted keys for diffability; `jsonEscape` handles only 5 chars (no \b, \f, no \uXXXX for other control bytes).
-- `fmtNum` (MMAudit.lua:53) = `string.format("%.2f", n)` with `.00` trimmed — **loses all precision beyond 2 decimals, including XP values**.
-- `isArray` (MMAudit.lua:57) returns true for an EMPTY table — **empty maps encode as `[]`, not `{}`**, a shape hazard for consumers.
-- `safeName` (MMAudit.lua:46) maps `[^%w%-_]` -> `_`; lossy and collision-prone (`Bob.Smith` and `Bob_Smith` collide). The READ side defends (MMRestore.lua:204) but the WRITE side does not — two colliding usernames interleave into one events.jsonl.
+- `fmtNum` (MMAudit.lua:53) = `string.format("%.2f", n)` with `.00` trimmed - **loses all precision beyond 2 decimals, including XP values**.
+- `isArray` (MMAudit.lua:57) returns true for an EMPTY table - **empty maps encode as `[]`, not `{}`**, a shape hazard for consumers.
+- `safeName` (MMAudit.lua:46) maps `[^%w%-_]` -> `_`; lossy and collision-prone (`Bob.Smith` and `Bob_Smith` collide). The READ side defends (MMRestore.lua:204) but the WRITE side does not - two colliding usernames interleave into one events.jsonl.
 - `userWriter` (MMAudit.lua:154) has a nested->flat fallback remembered in an in-memory `layoutByUser` table.
 - Nested dirs are engine-guaranteed: `LuaManager.getFileWriter` runs `File.mkdirs()` (verified, PZ_Engine_Decompiled/zombie/Lua/LuaManager.java:5444-5476); signature is `getFileWriter(filename, createIfNull, append)`.
 - Writes are open-append-close per line (no buffering) so a hard kill loses nothing already written.
@@ -2816,14 +2816,14 @@ A season is 3-4 months, ending at a server wipe.
 ## Data gaps for Reflections (all confirmed absent)
 - **No spawn record**: no position, timestamp, or starting build is ever written at life start.
 - **No life-start event**: `md.MMLifeId` (MMServer.lua:98-105, format `<epoch>-<rand>`) is minted lazily on the FIRST MEMOIR WRITE, not at spawn. A player who never writes a memoir has no life id.
-- **No death capture anywhere in the monorepo.** Engine facts verified: `IsoPlayer.OnDeath()` returns early when `GameServer.server` and the `OnPlayerDeath` trigger is further guarded by `isLocalPlayer()`, so **OnPlayerDeath NEVER fires on a dedicated server**. `IsoGameCharacter.OnDeath()` triggers `OnCharacterDeath` via `super.OnDeath()` BEFORE that early return, so **OnCharacterDeath is the only death hook reachable server-side** — but it fires for every character including animals (IsoAnimal.java:1084), so it needs an `instanceof IsoPlayer`-equivalent guard.
-- **No server-side login/spawn hook is reliable.** The proven in-family workaround is a standing `Events.OnTick` poll gated on `getSquare()` and `getInventory()`, keyed by `getOnlineID()`, with a throttle and a give-up timer — fully implemented at `Dragonfly/.../server/DFBanBox.lua:166-248`. Reclamation instead avoids connect hooks entirely and stamps presence from `EveryTenMinutes`/`EveryHours` sweeps (RCSession.lua:20-63) plus opportunistic stamps in command handlers.
+- **No death capture anywhere in the monorepo.** Engine facts verified: `IsoPlayer.OnDeath()` returns early when `GameServer.server` and the `OnPlayerDeath` trigger is further guarded by `isLocalPlayer()`, so **OnPlayerDeath NEVER fires on a dedicated server**. `IsoGameCharacter.OnDeath()` triggers `OnCharacterDeath` via `super.OnDeath()` BEFORE that early return, so **OnCharacterDeath is the only death hook reachable server-side** - but it fires for every character including animals (IsoAnimal.java:1084), so it needs an `instanceof IsoPlayer`-equivalent guard.
+- **No server-side login/spawn hook is reliable.** The proven in-family workaround is a standing `Events.OnTick` poll gated on `getSquare()` and `getInventory()`, keyed by `getOnlineID()`, with a throttle and a give-up timer - fully implemented at `Dragonfly/.../server/DFBanBox.lua:166-248`. Reclamation instead avoids connect hooks entirely and stamps presence from `EveryTenMinutes`/`EveryHours` sweeps (RCSession.lua:20-63) plus opportunistic stamps in command handlers.
 - **Kill counters are corrupted for per-life reporting**: `MMSnapshotCodec.lua:432-440` ADDITIVELY carries `setZombieKills(snap.kills.Zombie + player:getZombieKills())` forward on every memoir recall, so `getZombieKills()` is not a per-life number on a Memoirs server.
-- **hoursSurvived is never captured server-side** — only a client-side display label at MMStatsView.lua:61.
+- **hoursSurvived is never captured server-side** - only a client-side display label at MMStatsView.lua:61.
 - No safehouse/home capture; no player->vehicle index (Reclamation keys claims BY VEHICLE in vehicle modData: RC_ClaimOwner/RC_ClaimAllowed/RC_ClaimPublic/RC_ClaimUsed/RC_ClaimId, RCClaim.lua:25-30, with a server-only derived index RCRegistry keyed by username).
 - `MMSnapshotCodec.capture()` (MMSnapshotCodec.lua:78-143) captures: schemaVersion, epoch, perks (perkId->raw XP, only >0), traits (weight traits excluded), profession, recipes (set), kills {Zombie,Survivor}, nutrition, faith, lifeId. No position, vehicle, safehouse, hours, body damage, or inventory.
-- `MMShared.WIPE_EPOCH = 1` (MMSvShared.lua:50) is a hand-edited global constant — the only season-ish marker; used only for read-time amnesty.
-- MMSnapshotCodec has strong grant-vs-earned XP math (`buildGrantLevels` :263, `playerBuildIdentity` :295, `applyEarnables` :348) but it is computed at APPLY time and **never stored** — nothing about grant-vs-earned lands in any log.
+- `MMShared.WIPE_EPOCH = 1` (MMSvShared.lua:50) is a hand-edited global constant - the only season-ish marker; used only for read-time amnesty.
+- MMSnapshotCodec has strong grant-vs-earned XP math (`buildGrantLevels` :263, `playerBuildIdentity` :295, `applyEarnables` :348) but it is computed at APPLY time and **never stored** - nothing about grant-vs-earned lands in any log.
 
 ## Existing HTML/report tooling precedent
 `C:\Users\micha\Downloads\pzsurvey.py` (stdlib-only, 590 lines, NOT in the repo) is a complete decode -> build_dataset -> render pipeline that reads `players.db`, decodes IsoPlayer blobs, and emits a single self-contained HTML file (inline `<style>` with a `:root` palette, data injected as `<script type="application/json">`, vanilla-JS render functions, CSS-div charts, no external assets). It ALREADY extracts per player: hoursSurvived, zombieKills, survivorKills, traits, perk levels, x/y/z, profession, inventory, worn items, craft history, and per-mod ModData byte sizes. `c:\VSCodeProjects\PZMod\tools\` holds other stdlib Python forensics tools (cmdscan, pzbasements, SaveValidator) but no HTML generator and no player-data tooling.
@@ -2834,7 +2834,7 @@ A season is 3-4 months, ending at a server wipe.
 - `getFileWriter`/`getFileReader` are the ONLY working Lua file I/O in B42 (raw io.open and java.io are silently blocked server-side).
 - B42 Kahlua gotchas: global `next()` is missing (use pairs + a counter); Java collection views (values()/keySet()/entrySet()) are not exposed and cannot be `:iterator()`'d; a single function with >200 locals silently fails to compile the WHOLE FILE in debug builds.
 - `pcall` catches missing-method errors but PZ still logs them; engine Java NPEs are NOT caught by pcall and abort the tick.
-- The dedicated server runs PUBLISHED Workshop builds while the owner's client symlinks the dev tree — so cross-mod version skew between separately-published items is a real hazard.
+- The dedicated server runs PUBLISHED Workshop builds while the owner's client symlinks the dev tree - so cross-mod version skew between separately-published items is a real hazard.
 - The test server has `SaveWorldEveryMinutes=0`, so global ModData is RAM-only until a graceful shutdown; the owner's restart scripts force-kill java, meaning **no shutdown hook can be relied on**.
 - A syntax gate exists: `tools\check-lua.bat` (luacheck, ~1s over all mod trees).
 - Reclamation's audit writers were just fixed this session from append=false to append=true (RCAudit.lua:25, RCDamageAudit.lua:71). The ReclaimTest fork still carries the bug.
@@ -3135,22 +3135,22 @@ IN
 cd "c:/VSCodeProjects/PZMod" && sed -n '1,120p' Dragonfly/Contents/mods/Dragonfly/42/media/lua/shared/MMSvShared.lua
 
 OUT
--- MMSvShared.lua — Memoir (snapshot/restore) shared constants, lookups, and
+-- MMSvShared.lua - Memoir (snapshot/restore) shared constants, lookups, and
 -- debug layer. RFTD convention: two-letter prefix (MM), <Px>SvShared = shared tokens.
 --
 -- This subsystem turns a craftable journal into a CONVENIENCE SAVE (not a
 -- reincarnation): write captures a full character snapshot; read restores it onto
 -- whatever body you respawned as. Locked design rules (2026-07-13 overwrite model):
 --   * MEMOIR IS THE SOURCE OF TRUTH: reading it OVERWRITES whatever was built at the
---     respawn screen — identity (profession/traits), body, faith: snapshot wins. No
+--     respawn screen - identity (profession/traits), body, faith: snapshot wins. No
 --     reconcile window, no choice: the creation screen picks a loaner body, the
 --     memoir returns the real character.
 --   * XP: memoir restore (grants + earned*knob) PLUS whatever was EARNED playing the
---     new body — post-respawn grinding is real play, it adds on top. The respawn
---     build's starting grants — XP levels, traits/profession, AND granted recipes —
+--     new body - post-respawn grinding is real play, it adds on top. The respawn
+--     build's starting grants - XP levels, traits/profession, AND granted recipes -
 --     are DISMISSED with the build (no chef->die->engineer->read laundering of
 --     profession-locked abilities). Additive is safe ONLY because the two earning
---     windows are disjoint lives — the life-id guarantees it.
+--     windows are disjoint lives - the life-id guarantees it.
 --   * SAME-LIFE READS REFUSE (and do not consume): a memoir read by the life that
 --     wrote it would double-count its own history. The life-id stamped at write
 --     detects this; death wipes player modData, so a respawn never matches.
@@ -3179,10 +3179,10 @@ MMShared.CMD = {
 MMShared.SCHEMA_VERSION = 4 -- v4 adds snap.lifeId (same-life read guard); v3 faith; v2 nutrition
 
 -- WIPE EPOCH: read-time amnesty gate. Every write stamps the current epoch into the
--- snapshot; reading a book stamped with an OLDER epoch (or none) refuses — "the ink
--- has faded" — and KEEPS the book, so the owner just writes over it for a fresh
+-- snapshot; reading a book stamped with an OLDER epoch (or none) refuses - "the ink
+-- has faded" - and KEEPS the book, so the owner just writes over it for a fresh
 -- snapshot. Bump the number to void every memoir written before the bump, wherever
--- it is stored (unloaded chunks, offline inventories — no scrub can reach those).
+-- it is stored (unloaded chunks, offline inventories - no scrub can reach those).
 -- Epoch 1 retires all books written before the 2026-07-20 double-read dupe fix.
 MMShared.WIPE_EPOCH = 1
 
@@ -3194,7 +3194,7 @@ MMShared.WIPE_EPOCH = 1
 
 -- XP restore mode (sandbox MemoirXPRestoreMode): 1 = Global (one % for every skill,
 -- default / legacy behaviour), 2 = Per Individual (each vanilla skill has its own %).
--- Per-category was deliberately dropped — only these two tiers are wanted.
+-- Per-category was deliberately dropped - only these two tiers are wanted.
 function MMShared.xpRestoreMode()
     local sv = SandboxVars and SandboxVars.RFTDDragonfly
     local m = sv and sv.MemoirXPRestoreMode
@@ -3211,12 +3211,12 @@ end
 
 -- XP restore fraction for ONE skill on restore (0..1). Scales that skill's recorded RAW XP
 -- (90 = give back 90% of its saved XP). Identity (traits/profession), recipes, kills and
--- Faith are NOT scaled — they always restore in full — so the journal stays a true snapshot
+-- Faith are NOT scaled - they always restore in full - so the journal stays a true snapshot
 -- and only XP potential dials down.
 --   Global mode     : every skill uses MemoirXPRestore.
 --   Individual mode : skill uses MemoirXPRestore_<perkId> if declared, else falls back to the
 --                     global MemoirXPRestore. So any skill without its own knob (a modded
---                     skill, or a vanilla one we didn't list) degrades to the global value —
+--                     skill, or a vanilla one we didn't list) degrades to the global value -
 --                     never silently to 100%.
 -- perkId optional: omit it (or in Global mode) and you get the single global fraction.
 function MMShared.xpRestoreFraction(perkId)
@@ -3228,7 +3228,7 @@ end
 
 -- =====================================================================
 --  DEBUG LAYER. Read/write/dump traces (tagged [MM_DBG]) are gated by the
---  MemoirDebug sandbox option (default OFF) — silent unless an admin turns it on.
+--  MemoirDebug sandbox option (default OFF) - silent unless an admin turns it on.
 --  MM_DEBUG_FORCE is a local dev override (set true to force prints on).
 -- =====================================================================
 MM_DEBUG_FORCE = false
@@ -4215,7 +4215,7 @@ function MMSnapshotCodec.capture(player)
     snap.kills = { Zombie = player:getZombieKills() or 0, Survivor = player:getSurvivorKills() or 0 }
 
     -- BODY STATE: the full nutrition tuple, not just weight. The engine recomputes weight
-    -- from the calorie/macro balance, so restoring weight alone would drift back — we capture
+    -- from the calorie/macro balance, so restoring weight alone would drift back - we capture
     -- and restore the whole tuple so the body genuinely "is" the saved character again.
     local nut = player.getNutrition and player:getNutrition()
     if nut then
@@ -4228,7 +4228,7 @@ function MMSnapshotCodec.capture(player)
         }
     end
 
-    -- FAITH (ParanormalZ): a custom modData stat — player:getModData().exorcistFaith, 0..120 —
+    -- FAITH (ParanormalZ): a custom modData stat - player:getModData().exorcistFaith, 0..120 -
     -- NOT a PerkFactory skill, so the perk loop above never sees it. Captured verbatim and
     -- restored in full (like nutrition), never scaled by the XP knob. Absent when ParanormalZ
     -- isn't installed -> snap.faith stays nil and restore skips it.
@@ -4236,7 +4236,7 @@ function MMSnapshotCodec.capture(player)
     if md and md.exorcistFaith ~= nil then snap.faith = md.exorcistFaith end
 
     -- LIFE-ID: which life wrote this book. Stamped into player modData by the write
-    -- path (once per life — death wipes player modData). On read, a matching id means
+    -- path (once per life - death wipes player modData). On read, a matching id means
     -- the same life is reading its own history: the additive XP model would double it,
     -- so the read refuses instead.
     snap.lifeId = md and md.MMLifeId or nil
@@ -4269,7 +4269,7 @@ end
 end
 
 -- BODY STATE: restore the saved nutrition tuple, then let the engine RE-DERIVE the weight
--- trait from the restored weight. Set-to-saved (never merged) — weight isn't earnable, it's
+-- trait from the restored weight. Set-to-saved (never merged) - weight isn't earnable, it's
 -- the body you respawn into; "same character, same body." Runs last so applyTraitFromWeight()
 Bash Read RCClaim keys
 IN
@@ -4416,23 +4416,23 @@ Husbandry/contents/mods/RFTDHusbandry/42/media/lua/shared/HBCommands.lua:62:    
 Husbandry/contents/mods/RFTDHusbandry/42/media/lua/shared/HBCommands.lua:97:        sendServerCommand(player, "RQ", HBCmd.DEBUG_PROBE_RESULT, { line = msg })
 Husbandry/contents/mods/RFTDHusbandry/42/media/lua/shared/HBSexCheck.lua:78:        sendClientCommand(getPlayer(), "RQ", "hbSexCheck", { id = oid })
 Husbandry/contents/mods/RFTDHusbandry/42/media/lua/shared/TimedActions/HBAddHayAction.lua:51:        sendClientCommand(self.character, "RQ", HBCmd.ADD_BEDDING,
-The plan is solid. Let me verify one detail the owner named specifically — the map deep-link format — before locking the schema.
+The plan is solid. Let me verify one detail the owner named specifically - the map deep-link format - before locking the schema.
 
 Web Fetchhttps://map.projectzomboid.com/
 Fetched from https://map.projectzomboid.com/
-The map site doesn't expose its deep-link format in the page — which actually confirms the plan's call to log raw coordinates and resolve the link shape at render time, not bake it into the schema. I'll note it as an open item against the PZmap GitHub repo.
+The map site doesn't expose its deep-link format in the page - which actually confirms the plan's call to log raw coordinates and resolve the link shape at render time, not bake it into the schema. I'll note it as an open item against the PZmap GitHub repo.
 
 Three decisions I need from you before finalizing.
 
 AskUserQuestion
 OUT
-The user answered: "Where should the Reflections HTML actually be generated?"="I'm thinking of a different shape. The Core emits a schema and we build the chassis that the schema drives seperately. We dont need it to generate html itself - that seems like a bad idea in a way. it's making my nose itch", "Who is a player's Reflection page visible to?"="Private per player (Recommended)", "How much runway is there before the season this should capture?"="42.20 releases on the 28th". Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.
-Understood on all three — that reframes the renderer as schema-driven and makes the timeline tight. 42.20 on the 28th is three days out, so the wipe window is effectively now.
+The user answered: "Where should the Reflections HTML actually be generated?"="I'm thinking of a different shape. The Core emits a schema and we build the chassis that the schema drives seperately. We dont need it to generate html itself - that seems like a bad idea in a way. it's making my nose itch", "Who is a player's Reflection page visible to?"="Private per player (Recommended)", "How much runway is there before the season this should capture?"="42.20 releases on the 28th". Read the answers carefully - they may request clarification, changes, or that you not proceed - and follow what they actually say.
+Understood on all three - that reframes the renderer as schema-driven and makes the timeline tight. 42.20 on the 28th is three days out, so the wipe window is effectively now.
 
 Write C:\Users\micha\.claude\plans\alright-i-think-you-foamy-quasar.md
 354 lines
 There is no way we can do that for this season. This will be a next season surprise for all the players
-That changes the shape of this significantly — and for the better. Let me revise the plan.
+That changes the shape of this significantly - and for the better. Let me revise the plan.
 
 Edit C:\Users\micha\.claude\plans\alright-i-think-you-foamy-quasar.md
 Added 10 lines
@@ -4440,4 +4440,4 @@ Edit C:\Users\micha\.claude\plans\alright-i-think-you-foamy-quasar.md
 Added 20 lines
 Plan revised. Now calling for approval.
 
-Claude’s Plan C:\Users\micha\.claude\plans\alright-i-think-you-foamy-quasar.md
+Claude's Plan C:\Users\micha\.claude\plans\alright-i-think-you-foamy-quasar.md

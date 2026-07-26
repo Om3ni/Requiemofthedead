@@ -15,7 +15,7 @@ function RQSvJuggernaut.setActiveZombies(tbl)
     _activeZombies = tbl
 end
 
--- main tick — only called every ~2 seconds from the orchestrator, not every tick
+-- main tick - only called every ~2 seconds from the orchestrator, not every tick
 function RQSvJuggernaut.tick(zombie)
     local cfg     = RQSvShared.getSvConfig()
     local radius  = cfg.juggernautBuffRadius

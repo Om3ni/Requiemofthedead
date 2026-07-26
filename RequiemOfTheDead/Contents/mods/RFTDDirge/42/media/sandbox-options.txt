@@ -5,7 +5,7 @@ VERSION = 1,
    ---------------------------------------------------------------------
    All options live on a single "Dirge" sandbox tab. PZ B42 doesn't expose
    subpages to mod-declared options, so we use decoy boolean options as
-   visual section headers. Toggling a header checkbox does nothing — the
+   visual section headers. Toggling a header checkbox does nothing - the
    underscored label is what makes them read as dividers in the panel.
    ---------------------------------------------------------------------
    Order within the tab:
@@ -15,7 +15,7 @@ VERSION = 1,
      4. EMP           (EMP-specific + ShowEMPRing)
      5. Glutton       (Glutton-specific + DevourTime + ShowGluttonRing)
      6. Juggernaut    (Jugg-specific + aura values shared with boss/scav)
-     7. Scavenger     (Scav-specific, sparse — reuses jugg + screamer values)
+     7. Scavenger     (Scav-specific, sparse - reuses jugg + screamer values)
      8. Screamer      (Screamer-specific + scream values shared with boss/scav rage)
    Per-section options are alphabetized.
    ---------------------------------------------------------------------
