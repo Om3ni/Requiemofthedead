@@ -1,0 +1,17 @@
+version=1
+id=3748797439
+title=Requiem of the Dead: Last Rites
+description=[b]IN DEVELOPMENT - Right now it simply adds moodles that appear over the head and warn about extreme weather.  [/b]
+description=
+description=[hr][/hr]
+description=
+description=Last Rites adds client-side survival HUD cues: clear over-head or sidebar warnings when your character hits a life-threatening state.
+description=
+description=[h2]Technical[/h2]
+description=
+description=[list]
+description=[*][b]Mod ID:[/b] RFTDLastRites
+description=[*]Client-side only. Safe to add/remove anytime.
+description=[/list]
+tags=Build 42
+visibility=unlisted
