@@ -49,7 +49,7 @@ local function onZombieDead(zombie)
     -- Screamer spawn, etc.). Requires a valid onlineID; if we only have a
     -- modData fallback, the server can't process the death anyway.
     if validID then
-        sendClientCommand("RQ", "zombieKilled", {
+        sendClientCommand(RQCommon.MODULE, "zombieKilled", {
             onlineID = tostring(oid),
             x        = math.floor(zombie:getX()),
             y        = math.floor(zombie:getY()),
@@ -201,7 +201,7 @@ function RQCore.ensureCastFromSnapshot(row, serverTime)
 end
 
 local function onServerCommand(module, command, args)
-    if module ~= "RQ" then return end
+    if not RQCommon.acceptsModule(module) then return end
 
     if command == "zombieConverted" then
         local onlineID = tonumber(args.onlineID)

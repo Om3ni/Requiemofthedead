@@ -6,16 +6,10 @@ RQSvShared = RQSvShared or {}
 -- Constants
 -- ========================
 
-local HEALTH_MULTIPLIER = {
-    Screamer   = 2,
-    Juggernaut = 10,
-    EMP        = 2,
-    Glutton    = 2,
-    Scavenger  = 2,
-    Boss       = 10,
-}
+-- Single source in RQCommon (was a drifting duplicate of the client's copy).
+local HEALTH_MULTIPLIER = RQCommon.HEALTH_MULTIPLIER
 
-local JUGGERNAUT_MIN_BASE_HEALTH = 1.0
+local JUGGERNAUT_MIN_BASE_HEALTH = RQCommon.JUGGERNAUT_MIN_BASE_HEALTH
 
 local COLORS = {
     Screamer   = { r = 0.6, g = 0.0,  b = 1.0,  a = 1.0 },  -- Purple
@@ -26,23 +20,14 @@ local COLORS = {
     Boss       = { r = 1.0, g = 0.84, b = 0.0,  a = 1.0 },  -- Gold
 }
 
--- Admin-tier access levels (case-insensitive). Shared by the client UI gate
--- (RQAdmin.isAdmin) and the server command gate (adminConvert / adminInspect).
--- Allowlist not denylist - PZ has shipped inconsistent values for
--- getAccessLevel() across builds, so a positive list is the only reliable check.
-RQSvShared.ADMIN_ACCESS_LEVELS = {
-    admin     = true,
-    moderator = true,
-    overseer  = true,
-    gm        = true,
-}
-
--- pcall wrap because getAccessLevel has been crash-prone on ghost player objects
+-- Staff gate: RDAccess capability model (RFTDCore adoption). The old
+-- four-level access allowlist (admin/moderator/overseer/gm) is retired -
+-- "who may do what" is now answered by role capabilities, edited live in the
+-- role editor instead of shipped in a Lua table. POLICY NOTE: any role
+-- holding at least one capability passes; that is the family-wide meaning of
+-- "staff".
 function RQSvShared.svIsAdminPlayer(player)
-    if not player then return false end
-    local ok, access = pcall(player.getAccessLevel, player)
-    if not ok or not access or access == "" then return false end
-    return RQSvShared.ADMIN_ACCESS_LEVELS[string.lower(access)] == true
+    return RDAccess.hasAnyCapability(player)
 end
 
 local SCREAMER_SPAWN_RADIUS = 8
@@ -82,31 +67,32 @@ RQSvShared.svPendingSummons = {}
 
 -- ========================
 -- Config arrays (enum index -> actual value)
+-- Single source in RQCommon.ENUMS - these are aliases, not copies. The old
+-- duplicated tables had drifted against the client's (DEVOUR_TIME idx 1 was
+-- 15 here, 10 there); one table now serves both sides.
 -- ========================
 
-local SE_SPAWN_CHANCE       = {1, 3, 5, 10, 15, 20, 30}   -- default idx=2 -> 3%
-local SE_SCREAMER_INTERVAL  = {15, 30, 45, 60, 90, 120}   -- default idx=4 -> 60s
-local SE_SCREAMER_CAST      = {1, 2, 3, 5, 8}
-local SE_SCREAMER_RANGE     = {10, 15, 20, 30, 40}
-local SE_SCREAMER_SOUND     = {20, 40, 60, 80, 100}
-local SE_SCREAMER_SPAWN_MIN = {10, 15, 20, 25}
-local SE_SCREAMER_SPAWN_MAX = {15, 20, 25, 30}
-local SE_SCREAMER_THRESHOLD = {3, 5, 8, 10, 15}
-local SE_JUGG_RADIUS        = {3, 5, 8, 12, 20}
-local SE_JUGG_BUFF          = {5, 10, 15, 20, 25}
-local SE_EMP_RANGE          = {5, 10, 15, 20, 30}
-local SE_EMP_CAST           = {1, 2, 3, 5, 8}
-local SE_EMP_RADIUS         = {3, 5, 8, 12, 20}
-local SE_EMP_DRAIN          = {20, 35, 50, 75}
-local SE_GLUTTON_RADIUS     = {1, 2, 3, 5, 8, 12, 20}
-local SE_GLUTTON_MULT       = {2, 3, 5, 8, 10}
-local SE_BOSS_COOLDOWN      = {5, 10, 15, 20, 30, 60}
-local SE_CAST_4             = {1, 2, 3, 5}
+local E = RQCommon.ENUMS
+local SE_SPAWN_CHANCE       = E.SPAWN_CHANCE        -- default idx=4 -> 10%
+local SE_SCREAMER_INTERVAL  = E.SCREAMER_INTERVAL   -- default idx=4 -> 60s
+local SE_SCREAMER_CAST      = E.SCREAMER_CAST
+local SE_SCREAMER_RANGE     = E.SCREAMER_RANGE
+local SE_SCREAMER_SOUND     = E.SCREAMER_SOUND
+local SE_SCREAMER_SPAWN_MIN = E.SCREAMER_SPAWN_MIN
+local SE_SCREAMER_SPAWN_MAX = E.SCREAMER_SPAWN_MAX
+local SE_SCREAMER_THRESHOLD = E.SCREAMER_THRESHOLD
+local SE_JUGG_RADIUS        = E.JUGG_RADIUS
+local SE_JUGG_BUFF          = E.JUGG_BUFF
+local SE_EMP_RANGE          = E.EMP_RANGE
+local SE_EMP_CAST           = E.EMP_CAST
+local SE_EMP_RADIUS         = E.EMP_RADIUS
+local SE_EMP_DRAIN          = E.EMP_DRAIN
+local SE_GLUTTON_RADIUS     = E.GLUTTON_RADIUS
+local SE_GLUTTON_MULT       = E.GLUTTON_MULT
+local SE_BOSS_COOLDOWN      = E.BOSS_COOLDOWN
+local SE_CAST_4             = E.CAST_4
 
-local function sev(tbl, idx, defaultIdx)
-    local i = idx or defaultIdx
-    return tbl[i] or tbl[defaultIdx]
-end
+local sev = RQCommon.ev
 
 local svConfig = nil
 
@@ -163,18 +149,18 @@ local function getSvConfig()
         -- Glutton / Scavenger (devourTime shared)
         gluttonRadius  = sev(SE_GLUTTON_RADIUS, sv and sv.GluttonRadius,  7),
         gluttonMaxMult = sev(SE_GLUTTON_MULT,   sv and sv.GluttonMaxMult, 3),
-        devourTime     = sev({15, 20, 30, 45, 60, 90}, sv and sv.DevourTime, 1) * 1000,
+        devourTime     = sev(E.DEVOUR_TIME, sv and sv.DevourTime, 1) * 1000,
 
         -- Boss
         bossCastTime      = sev(SE_CAST_4,        sv and sv.BossCastTime,      3) * 1000,
         bossSkillCooldown = sev(SE_BOSS_COOLDOWN, sv and sv.BossSkillCooldown, 3) * 1000,
 
         -- Per-type spawn weights
-        screamerWeight    = sev({0,5,10,15,20,30,40,50}, sv and sv.ScreamerWeight,    2),
-        juggernautWeight  = sev({0,5,10,15,20,30,40,50}, sv and sv.JuggernautWeight,  4),
-        empWeight         = sev({0,5,10,15,20,30,40,50}, sv and sv.EMPWeight,         5),
-        gluttonWeight     = sev({0,5,10,15,20,30,40,50}, sv and sv.GluttonWeight,     6),
-        scavengerWeight   = sev({0,5,10,15,20,30,40,50}, sv and sv.ScavengerWeight,   2),
+        screamerWeight    = sev(E.TYPE_WEIGHT, sv and sv.ScreamerWeight,    2),
+        juggernautWeight  = sev(E.TYPE_WEIGHT, sv and sv.JuggernautWeight,  4),
+        empWeight         = sev(E.TYPE_WEIGHT, sv and sv.EMPWeight,         5),
+        gluttonWeight     = sev(E.TYPE_WEIGHT, sv and sv.GluttonWeight,     6),
+        scavengerWeight   = sev(E.TYPE_WEIGHT, sv and sv.ScavengerWeight,   2),
     }
     return svConfig
 end
@@ -226,7 +212,7 @@ local function svSetZombieHP(zombie, targetHP)
     pcall(function() zombie:setHealth(targetHP) end)
     local oid = zombie:getOnlineID()
     if not oid or oid < 0 then return end
-    sendServerCommand("RQ", "applyZombieHP", {
+    sendServerCommand(RQCommon.MODULE, "applyZombieHP", {
         onlineID = oid,
         targetHP = targetHP,
         x = math.floor(zombie:getX()),
@@ -274,11 +260,11 @@ RQSvShared.applyBossSprinter = applyBossSprinter
 -- ========================
 
 local function broadcast(cmd, args)
-    sendServerCommand("RQ", cmd, args)
+    sendServerCommand(RQCommon.MODULE, cmd, args)
 end
 
 local function sendToPlayer(player, cmd, args)
-    sendServerCommand(player, "RQ", cmd, args)
+    sendServerCommand(player, RQCommon.MODULE, cmd, args)
 end
 
 -- writes to RQSvShared.svPending so RQServer.lua can drain it in OnTick

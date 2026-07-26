@@ -151,7 +151,7 @@ local function onZombieUpdate(zombie)
                 .. " dist=" .. string.format("%.3f", dist)
                 .. " corpse=(" .. entry.corpseX .. "," .. entry.corpseY .. "," .. entry.corpseZ .. ")"
                 .. " -> sendClientCommand eaterArrived")
-            sendClientCommand("RQ", "eaterArrived", {
+            sendClientCommand(RQCommon.MODULE, "eaterArrived", {
                 onlineID = oid,
                 corpseX  = entry.corpseX,
                 corpseY  = entry.corpseY,

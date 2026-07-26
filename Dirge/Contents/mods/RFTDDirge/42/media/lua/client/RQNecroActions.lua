@@ -23,7 +23,7 @@ local TYPE_IDS = { "Screamer", "Juggernaut", "EMP", "Glutton", "Scavenger", "Bos
 local function convertHandler(zType)
     return function(rowData)
         if not rowData or not rowData.id then return end
-        sendClientCommand(getPlayer(), "RQ", "adminConvert", {
+        sendClientCommand(getPlayer(), RQCommon.MODULE, "adminConvert", {
             onlineID = rowData.id,
             x        = rowData.x or 0,
             y        = rowData.y or 0,
