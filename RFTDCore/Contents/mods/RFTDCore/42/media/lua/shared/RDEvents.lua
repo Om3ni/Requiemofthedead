@@ -111,6 +111,8 @@ RDEvents.registerNamespace("RD", "RFTDCore", {
     -- season bookkeeping (world stream)
     SEASON_BEGIN = { scope = "w", req = { "season" } },
     SEASON_END   = { scope = "w", req = { "season" } },
+    -- synthetic records emitted by the admin selftest; never from real play
+    TEST         = { scope = "p", req = {} },
 })
 
 return RDEvents
