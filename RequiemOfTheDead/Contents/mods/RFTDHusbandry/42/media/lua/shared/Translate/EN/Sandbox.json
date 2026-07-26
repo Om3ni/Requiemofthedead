@@ -1,0 +1,24 @@
+{
+    "Sandbox_RFTDHusbandry": "Husbandry",
+
+    "Sandbox_RQHB_Enable": "Enable Husbandry",
+    "Sandbox_RQHB_Enable_tooltip": "Master toggle for the Husbandry mod.",
+
+    "Sandbox_RQHB_AnimalLifespanMode": "Animal lifespan",
+    "Sandbox_RQHB_AnimalLifespanMode_tooltip": "Controls old-age death for tame animals. Vanilla animals age out in roughly 6 months and whole same-age herds die together. Extended: animals age slowly and still die of old age, but much later (see multiplier). Frozen: animals grow to adulthood, then never age or die of old age.",
+    "Sandbox_RQHB_AnimalLifespanMode_option1": "Vanilla (age and die normally)",
+    "Sandbox_RQHB_AnimalLifespanMode_option2": "Extended (live longer, then die)",
+    "Sandbox_RQHB_AnimalLifespanMode_option3": "Frozen at maturity (never die of old age)",
+
+    "Sandbox_RQHB_AnimalLifespanMultiplier": "Lifespan multiplier (Extended mode)",
+    "Sandbox_RQHB_AnimalLifespanMultiplier_tooltip": "Extended mode only. How many times longer tame animals live. 4 = animals take 4x as long to reach old age (a species that normally ages out in ~6 months now takes ~2 years). 1 = vanilla speed.",
+
+    "Sandbox_RQHB_HayTuftsPerBedding": "Hay tufts to fully bed a hutch",
+    "Sandbox_RQHB_HayTuftsPerBedding_tooltip": "How many hay tufts it takes to fill a hutch's bedding. 4 (default) = each tuft adds 25%. Lower = cheaper to bed; higher = more hay per coop. A harvested hay bale yields roughly 20 tufts.",
+
+    "Sandbox_RQHB_BeddingDirtRatio": "Dirt absorbed per bedding",
+    "Sandbox_RQHB_BeddingDirtRatio_tooltip": "How much coop dirt each point of bedding soaks up. 3 (default) = a full bedding absorbs ~300 dirt of buildup before running out; higher = bedding lasts longer. Minimum 0.5 = each bedding soaks only half a dirt, so hay is used up twice as fast as dirt builds (harshest upkeep). Bedding has no time decay; it is only consumed by absorbing dirt, so busier coops use it faster.",
+
+    "Sandbox_RQHB_BeddingNeverDepletes": "Bedding never depletes",
+    "Sandbox_RQHB_BeddingNeverDepletes_tooltip": "If on, hay bedding is never used up: laying hay in a coop once keeps it clean forever (no replenishing). Cleaning still works the same; only the bedding cost is removed. Ignores the 'Dirt absorbed per bedding' setting."
+}

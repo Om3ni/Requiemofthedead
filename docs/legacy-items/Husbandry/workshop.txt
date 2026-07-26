@@ -1,0 +1,14 @@
+version=1
+id=3711156499
+title=Requiem of the Dead: Husbandry
+description=The Husbandry Mod is a small mercy mod designed to prevent unnecessary animal heartbreak. It prevents animals from dying from hunger and/or thirst, helping avoid situations where players stumble across dead livestock in trailers, locked barns, or abandoned farms simply because someone passed through the area and caused the cell to become active.
+description=
+description=This is not meant to be a realism change. Realistically, an animal trapped without food or water would not survive. This mod exists because we would rather keep the horror focused on survival, atmosphere, and roleplay, not on stumbling across dead animals caused by server mechanics.
+description=
+description=Animals still require care in roleplay. Players are encouraged to feed, water, shelter, and protect them properly. This mod only prevents death from starvation and dehydration. Animals may still die from disease, injury, or other health conditions.
+description=
+description=Roleplay Note:
+description=
+description=If an animal is found alive in a trailer, barn, pen, or abandoned farm, assume they were being cared for or transported by another survivor until recently. That survivor may have died, fled, or otherwise failed to return. The animal’s survival should be treated as evidence of recent human presence, not proof that it lived indefinitely without food or water.
+tags=Build 42
+visibility=public
