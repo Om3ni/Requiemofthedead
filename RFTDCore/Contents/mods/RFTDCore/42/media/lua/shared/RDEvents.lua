@@ -102,11 +102,11 @@ end
 RDEvents.registerNamespace("RD", "RFTDCore", {
     -- life-cycle (per player)
     SPAWN        = { scope = "p", req = { "x", "y", "z", "hours" }, loc = { "x", "y", "z", "house" } },
-    LOGIN        = { scope = "p", req = { "hours" } },
+    LOGIN        = { scope = "p", req = { "hours" }, loc = { "x", "y", "z" } },
     DEATH        = { scope = "p", req = { "x", "y", "z", "hours" }, loc = { "x", "y", "z" } },
     SAMPLE       = { scope = "p", req = { "hours" } },
-    HOME_SET     = { scope = "p", req = { "x", "y", "z" }, loc = { "x", "y", "z" } },
-    HOME_CHANGE  = { scope = "p", req = { "x", "y", "z" }, loc = { "x", "y", "z" } },
+    HOME_SET     = { scope = "p", req = { "x", "y" }, loc = { "x", "y", "w", "h", "title" } },
+    HOME_CHANGE  = { scope = "p", req = { "x", "y" }, loc = { "x", "y", "w", "h", "title" } },
     HELLO        = { scope = "p", req = { "mods" } },
     -- season bookkeeping (world stream)
     SEASON_BEGIN = { scope = "w", req = { "season" } },
