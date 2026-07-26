@@ -31,6 +31,12 @@ Work through this top to bottom; nothing here is optional except where marked.
 
 ## Wednesday (stable day)
 
+0. **Mosaic branch flip:** the PZ server install tracks `beta_branch: "unstable"`
+   in Mosaic's launcher config. 42.20 ships to the DEFAULT branch; switch the
+   branch to default/stable in Mosaic before updating, or the server may sit on
+   a stale 42.19 unstable. Also remember `mod_check_auto_restart` is ON with a
+   5-minute interval - every bundle upload bounces the server automatically.
+
 4. **Server config** (the dedi pulls published builds only):
    - `WorkshopItems=` + the new RFTDCore item id (plus existing items).
    - `Mods=` + `RFTDCore` (load position does not matter to the engine, but
