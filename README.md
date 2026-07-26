@@ -2,11 +2,12 @@
 
 Monorepo for the Requiem of the Dead Project Zomboid (Build 42) server mod suite.
 
-**RFTDCore** is the orchestrator: unified two-tier logging (permanent per-player
-*chronicle* + bounded *forensic* ring), life-cycle instrumentation, the season model,
-networking helpers, and capability-based access gates. Satellite mods declare
-`require=RFTDCore` as each adopts a Core API. The chronicle is the data source for
-**Reflections** — the end-of-season per-player retrospective.
+**RFTDCore is the harness the rest of the RFTD family depends on.** It owns the
+family's shared infrastructure — unified two-tier server logging (permanent per-player
+*chronicle* streams + a bounded *forensic* ring), life-cycle instrumentation, season
+bookkeeping, networking helpers, rate limiting, and capability-based staff access
+gates. Satellite mods declare `require=RFTDCore` as each adopts a Core API; once
+adopted, the dependency is hard.
 
 ## Mods
 
@@ -34,17 +35,11 @@ one dual-accept release) → Core adoption → Workshop uploads thereafter happe
 - Test forks are retired. Testing happens on git branches, not folder copies.
 - Every Lua edit goes through `tools\check-lua.bat` before upload (silence = clean).
 - No mod-id renames of existing mods, ever.
+- Core emits its event registry as `RFTD/schema.json` at boot; external tooling in
+  `tools/` consumes that artifact rather than carrying its own copy of the contract.
 
 ## The Dragonfly shakeout (at its migration turn)
 
 Dragonfly becomes the pure admin panel. Memoir → `RFTDMemoir`; BanBox + BBLibrary →
 `RFTDBanBox`; Scoreboard/RoleEditor → `RFTDStaffTools`; DFCore framework, DFLog buffer,
 DFRegistry, DFPatch_* compat layer → `RFTDCore`.
-
-## Reflections
-
-Core emits `RFTD/schema.json` (from `RDEvents.lua`) at boot; a separate schema-driven
-chassis in `tools/reflections/` (stack TBD) builds one private, self-contained HTML page
-per player at season's end. Nothing player-visible ships before the reveal.
-
-Design docs: `docs/` — see also the plan files referenced in `docs/softplan.md`.
