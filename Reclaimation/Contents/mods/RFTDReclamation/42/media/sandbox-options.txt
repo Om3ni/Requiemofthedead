@@ -1,7 +1,7 @@
 VERSION = 1,
 
 /* =====================================================================
-   Reclamation sandbox options (claim system + dismantle/engine-lock)
+   Reclaimation sandbox options (claim system + dismantle/engine-lock)
    ===================================================================== */
 
 option RFTDReclamation.Enabled

@@ -1,8 +1,8 @@
 {
-    "Sandbox_RFTDReclamation": "Reclamation",
+    "Sandbox_RFTDReclamation": "Reclaimation",
 
     "Sandbox_RC_Enabled": "Enable Mod",
-    "Sandbox_RC_Enabled_tooltip": "Master toggle for the Reclamation mod.",
+    "Sandbox_RC_Enabled_tooltip": "Master toggle for the Reclaimation mod.",
 
     "Sandbox_RC_Debug": "Debug Mode",
     "Sandbox_RC_Debug_tooltip": "Print [RC] debug traces to the log. Off for normal play.",

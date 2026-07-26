@@ -66,5 +66,5 @@ Work through this top to bottom; nothing here is optional except where marked.
 - Nothing player-visible ships. No announcements about Core; it is
   infrastructure.
 - Satellite migrations start after the launch settles, in order:
-  Dirge + Reclamation → Dragonfly (+shakeout) → Reaper decision →
+  Dirge + Reclaimation → Dragonfly (+shakeout) → Reaper decision →
   Husbandry, Last Rites.

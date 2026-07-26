@@ -1,7 +1,7 @@
 -- RCVehicleTab - the "Vehicles" tab on Dragonfly's admin panel (DESIGN §7).
 --
 -- Soft dependency (the RFTD integration contract): registration defers to
--- OnGameStart and bails if the DFRegistry global is absent, so Reclamation
+-- OnGameStart and bails if the DFRegistry global is absent, so Reclaimation
 -- runs headless without Dragonfly. Couples to the DF* globals, never the
 -- mod id.
 --
