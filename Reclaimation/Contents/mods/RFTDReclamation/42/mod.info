@@ -1,0 +1,5 @@
+name=Requiem of the Dead: Reclaimation
+id=RFTDReclamation
+modversion=0.6.0
+description=Reclaimation - a full vehicle lifecycle suite for dedicated MP: claim and lock vehicles with granular per-player permissions, a fleet panel and auto-releasing claims, dismantle worn cars and wrecks with a blowtorch (loot always drops), an optional engine-salvage lock, a sandbox-gated staff vehicle spawner, and a server-side audit ledger. Soft-deps: PhunZones, RV Interior, Dragonfly.
+pzversion=42
