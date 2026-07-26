@@ -19,6 +19,14 @@ RCShared.VERSION = "0.7.0"   -- 0.7.0: RFTDCore adoption (hard require) - dual-w
 -- namespace is additive-only within a season: the planned vehicle-economy
 -- events (token mint/redeem) join this table when they are built, free.
 -- ---------------------------------------------------------------------------
+-- LOAD ORDER (landmine, verified 42.19): the CLIENT walks media/lua/shared
+-- ALPHABETICALLY ACROSS ALL MODS, and "RCShared.lua" sorts before Core's
+-- "RDShared.lua"/"RDEvents.lua" - both would be nil below. require() pulls
+-- Core's files forward; no-op if the walk already ran them. (The dedi resolves
+-- require= into mod order and loads Core first, so this only bites clients.)
+require "RDShared"
+require "RDEvents"
+
 RDShared.registerMod(RCShared.MODULE, RCShared.VERSION)
 RDEvents.registerNamespace("RC", RCShared.MODULE, {
     VEHICLE_CLAIM   = { scope = "p", req = { "claimId" }, loc = {} },

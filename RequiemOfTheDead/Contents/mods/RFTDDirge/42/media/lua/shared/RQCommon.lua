@@ -35,6 +35,14 @@ function RQCommon.acceptsModule(m)
 end
 
 -- RFTDCore adoption (hard require - no guards, per family law).
+--
+-- LOAD ORDER: the CLIENT walks media/lua/shared ALPHABETICALLY ACROSS ALL
+-- MODS. "RQCommon.lua" happens to sort AFTER Core's "RDShared.lua", so this
+-- file survives on luck alone - the same pattern killed MMSvShared/DFCore.
+-- The require() lines make the dependency real instead of alphabetical.
+require "RDShared"
+require "RDEvents"
+
 RDShared.registerMod(RQCommon.MODULE, RQCommon.VERSION)
 RDEvents.registerNamespace("RQ", RQCommon.MODULE, {
     -- one record per server-confirmed special-zombie death, attributed to the

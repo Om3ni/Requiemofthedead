@@ -38,7 +38,17 @@ RDEvents = RDEvents or {}
 
 RDEvents.SCHEMA_V = 2   -- envelope version stamped on every record ("v")
 
-local namespaces = {}   -- prefix -> { mod = <mod id>, events = { NAME -> def } }
+-- prefix -> { mod = <mod id>, events = { NAME -> def } }
+--
+-- Parked on the global, not a bare `local ... = {}`, so a second execution of
+-- this file cannot silently empty it. Satellites now `require "RDEvents"`
+-- before claiming a namespace (the client's alphabetical shared-dir walk
+-- otherwise runs them first); if the walk ever re-ran this file afterwards, a
+-- fresh table would drop RC.*/RQ.* and RDLog would start REJECTING those
+-- events as unregistered - a silent hole in the chronicle, which is exactly
+-- the failure this season cannot have.
+RDEvents._namespaces = RDEvents._namespaces or {}
+local namespaces = RDEvents._namespaces
 
 function RDEvents.registerNamespace(prefix, modId, events)
     prefix = tostring(prefix)

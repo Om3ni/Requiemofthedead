@@ -21,6 +21,8 @@
 -- engine disabled, registered bans are ignored and nothing is stripped. With it
 -- enabled but no list attached, the engine is simply a no-op.
 
+require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
+
 DFBanBox = DFBanBox or {}
 RDShared.registerMod("RFTDBanBox", "0.7.0")   -- keep in sync with mod.info
 DFBanBox._bans = DFBanBox._bans or {}   -- fullType -> true
@@ -173,7 +175,13 @@ end
 -- mid-session sandbox enable now applies from each player's NEXT connection
 -- rather than mid-connection (the old poll re-checked every second; nobody
 -- legitimately flips this mid-session).
-if not DFBanBox._connectHooked then
+-- CONTEXT GUARD (load-bearing): the CLIENT loads media/lua/server too, and
+-- every RDLife/RDLog/RDIdentity file in Core opens with `if not isServer()
+-- then return end` - so on a connected client RDLife is nil and this line
+-- threw "attempted index: onPlayerReady of non-table" during world load
+-- (observed 42.19, client console 2026-07-26). Existence guards are still
+-- banned per family law; the guard is on CONTEXT, which is the honest test.
+if isServer() and not DFBanBox._connectHooked then
     DFBanBox._connectHooked = true
     RDLife.onPlayerReady(function(p)
         if confiscateOn() then scrubPlayer(p) end
