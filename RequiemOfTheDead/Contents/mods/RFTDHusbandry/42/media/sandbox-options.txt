@@ -1,0 +1,56 @@
+VERSION = 1,
+
+option RFTDHusbandry.Enable
+{
+    type = boolean,
+    default = true,
+    page = RFTDHusbandry,
+    translation = RQHB_Enable,
+}
+
+option RFTDHusbandry.AnimalLifespanMode
+{
+    type = enum,
+    numValues = 3,
+    default = 2,
+    page = RFTDHusbandry,
+    translation = RQHB_AnimalLifespanMode,
+}
+
+option RFTDHusbandry.AnimalLifespanMultiplier
+{
+    type = integer,
+    min = 1,
+    max = 20,
+    default = 4,
+    page = RFTDHusbandry,
+    translation = RQHB_AnimalLifespanMultiplier,
+}
+
+option RFTDHusbandry.HayTuftsPerBedding
+{
+    type = integer,
+    min = 1,
+    max = 20,
+    default = 4,
+    page = RFTDHusbandry,
+    translation = RQHB_HayTuftsPerBedding,
+}
+
+option RFTDHusbandry.BeddingDirtRatio
+{
+    type = double,
+    min = 0.5,
+    max = 10.0,
+    default = 3.0,
+    page = RFTDHusbandry,
+    translation = RQHB_BeddingDirtRatio,
+}
+
+option RFTDHusbandry.BeddingNeverDepletes
+{
+    type = boolean,
+    default = false,
+    page = RFTDHusbandry,
+    translation = RQHB_BeddingNeverDepletes,
+}
