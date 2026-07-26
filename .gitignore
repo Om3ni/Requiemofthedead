@@ -23,8 +23,10 @@ __pycache__/
 **/DebugLog-*.txt
 debuglog*.txt
 
-# --- Binary tooling (re-download; see tools/check-lua.bat header) ---
+# --- Binary tooling (re-download; see tools/check-lua.bat and run-tests.bat headers) ---
 tools/luacheck.exe
+tools/lua5.1.exe
+tools/lua5.1.dll
 
 # Dropped-in client logs for analysis (not repo content)
 debugclientlog*.txt

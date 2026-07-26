@@ -48,6 +48,14 @@
 
 if not isServer() then return end
 
+-- Explicit, because the line below is a FILE-SCOPE read of an RD* global and the
+-- family rule since the 42.19 boot-log crashes is that those are declared, never
+-- assumed. "RDLog.lua" happens to sort after "RDShared.lua", so this survived on
+-- luck; it is also now pulled in earlier than the directory walk would, via
+-- RDGuardian -> RDMeter -> here. Safe below the isServer() guard, which has
+-- already returned on the client where this file self-aborts.
+require "RDShared"
+
 RDLog = RDLog or {}
 
 local DIR = RDShared.DIR

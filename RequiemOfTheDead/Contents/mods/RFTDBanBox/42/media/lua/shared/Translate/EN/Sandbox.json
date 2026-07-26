@@ -2,7 +2,7 @@
     "Sandbox_RFTDBanBox": "BanBox",
     "Sandbox_RFTDDragonflyBanBox": "Dragonfly: Item BanBox",
     "Sandbox_DF_BanBoxEnabled": "Enable item BanBox",
-    "Sandbox_DF_BanBoxEnabled_tooltip": "Master switch for Dragonfly's item BanBox engine (default ON). When on, any item types registered by a ban-list mod (such as the optional BBLibrary submod, or your own) are stripped from loot distribution at server start so no new copies spawn. Prevention only - items already in the world are not removed. With no ban-list mod enabled the engine does nothing. Changes take effect on the next server restart.",
+    "Sandbox_DF_BanBoxEnabled_tooltip": "Master switch for the item BanBox engine (default ON). When on, any item types registered by a ban-list mod (such as the optional BBLibrary submod, or your own) are stripped from loot distribution at server start so no new copies spawn. Prevention only - items already in the world are not removed. With no ban-list mod enabled the engine does nothing. Changes take effect on the next server restart.",
     "Sandbox_DF_BanBoxConfiscateOnLogin": "Confiscate banned items on login",
     "Sandbox_DF_BanBoxConfiscateOnLogin_tooltip": "Default OFF. When on, a player connecting has any banned items removed from their CARRIED inventory (main, worn, and bags) - the one copy prevention can't reach. The player is told and an audit line is logged for staff; the player is never auto-punished. Bounded to the connecting player only - base storage, vehicles and the wider world are never touched. Requires the BanBox to be enabled above.",
     "Sandbox_DF_BanBoxDebug": "BanBox debug logging",

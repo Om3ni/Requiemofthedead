@@ -18,6 +18,28 @@
 -- claimed while online. When a directory must be minted with no SteamID
 -- available, a taken name gets "~N" - the base mapping can never emit "~",
 -- so suffixed names cannot collide with anything.
+--
+-- LEDGER INTEGRITY. The format is line-and-tab delimited and the username is
+-- written verbatim, so the two delimiters are not equally safe:
+--
+--   TAB is safe and deliberately allowed. loadLedger anchors on the FIRST tab
+--   and (.*) swallows the remainder, so "Bob<TAB>Smith" round-trips intact.
+--
+--   NEWLINE is not. It splits one claim across two physical lines, and the
+--   tail fragment parses as a WELL-FORMED claim of its own - so a crafted
+--   username ("x\nSomeDir\tvictim") injects an arbitrary dir->user mapping and
+--   can point another player's name at a directory of its choosing. PZ Lua has
+--   no delete primitive (see RDLog's rotation note), so a poisoned line is
+--   permanent. The write is therefore REFUSED rather than escaped: escaping
+--   would change the lookup key and re-mint a directory for every player whose
+--   name contains the escape character. A refused claim still gets a working
+--   in-memory directory for the session; it just isn't persisted.
+--
+-- In practice `user` always arrives from the engine's getUsername(), so this
+-- is defence against an assumption we do not control rather than an observed
+-- attack. The read side additionally shape-checks the dir field, which is a
+-- known alphabet (safeName's output, plus "." before a SteamID and "~N" for
+-- suffixes) - anything else was not written by this file.
 
 if not isServer() then return end
 
@@ -33,6 +55,19 @@ local function safeName(name)
     local s = name:gsub("[^%w%-_]", "_")
     if s == "" then s = "unknown" end
     return s
+end
+
+-- A username safe to persist: no line break can reach the ledger. See the
+-- LEDGER INTEGRITY note in the header for why this refuses rather than escapes.
+local function ledgerSafe(user)
+    return not tostring(user):find("[\r\n]")
+end
+
+-- The dir field's full alphabet: safeName output ([%w%-_]) plus "." joining a
+-- SteamID and "~" introducing a collision suffix. A line outside it was not
+-- written by appendClaim.
+local function dirShapeOk(dir)
+    return dir:match("^[%w%-_.~]+$") ~= nil
 end
 
 -- Best-effort SteamID as a stable digit string; nil when unavailable
@@ -57,7 +92,11 @@ local function loadLedger()
             local line = r:readLine()
             if line == nil then break end
             local dir, user = line:match("^([^\t]+)\t(.*)$")
-            if dir and user and user ~= "" and not dirOwner[dir] then
+            -- A stray \r survives readLine on a CRLF-written ledger and would
+            -- otherwise become part of the username key.
+            if user then user = user:gsub("\r+$", "") end
+            if dir and user and user ~= "" and dirShapeOk(dir)
+               and ledgerSafe(user) and not dirOwner[dir] then
                 dirOwner[dir] = user
                 if not userToDir[user] then userToDir[user] = dir end
             end
@@ -67,6 +106,12 @@ local function loadLedger()
 end
 
 local function appendClaim(dir, user)
+    if not ledgerSafe(user) then
+        print("[RFTDCore] RDIdentity: refusing to persist a claim whose username "
+            .. "contains a line break (dir=" .. tostring(dir) .. "). The session "
+            .. "directory still works; it will be re-minted next boot.")
+        return
+    end
     pcall(function()
         local w = getFileWriter(FILE, true, true)
         if w then

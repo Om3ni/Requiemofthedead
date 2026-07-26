@@ -7,6 +7,15 @@
 
 if not isServer() then return end
 
+-- Explicit, not riding on load order: "RCServer.lua" sorts BEFORE "RDRate.lua"
+-- in PZ's merged virtual tree (RC < RD), so Core's limiter does not exist yet
+-- when this file runs. The call site is inside a command handler and would
+-- resolve fine at runtime, but the family's rule since the 42.19 boot-log
+-- crashes is that a cross-file RD* dependency is declared, not assumed. Safe
+-- above the isServer() guard's reach because that guard already returned on
+-- the client, where RDRate.lua self-aborts and would resolve to nil.
+require "RDRate"
+
 RCServer = RCServer or {}
 
 local M = RCShared.MODULE
@@ -521,35 +530,34 @@ local handlers = {
 -- ---------------------------------------------------------------------------
 -- Dispatch + a light per-player rate limit (a reply is itself a packet, so an
 -- over-limit command is dropped silently). 20/sec is far above human cadence.
+--
+-- The limiter itself used to live here as a private copy of the same
+-- fixed-window algorithm Core absorbed into RDRate - identical defaults,
+-- identical fail-open policy, maintained twice. It is now the one in RDRate.
+--
+-- ONE BEHAVIOUR CHANGE, deliberate: RDRate keys buckets by username alone, not
+-- by module, so this budget is now shared with every other RDRate consumer
+-- rather than being Reclamation's private 20/sec. That is the correct shape -
+-- what wants bounding is a player's total command cost to the server - but it
+-- does mean a client spamming claims can throttle its own commands elsewhere
+-- in the family. No observable change today (RDNet has no satellite traffic
+-- yet); it becomes real at the RDNet migration, which is when a per-scope key
+-- should be reconsidered if any command ends up registered below rate 5.
+--
+-- Disconnect pruning also moves: RDRate hooks OnDisconnect and
+-- OnPlayerDisconnect itself, so the local cleanup here is gone rather than
+-- duplicated.
 -- ---------------------------------------------------------------------------
 local RATE_MAX = 20
-local rate = {}
-
-local function underRate(player)
-    local nm = player and player.getUsername and player:getUsername()
-    if not nm then return true end
-    local ok, now = pcall(getTimestampMs)
-    if not ok or type(now) ~= "number" then return true end
-    local r = rate[nm]
-    if not r or (now - r.start) >= 1000 then rate[nm] = { start = now, count = 1 }; return true end
-    r.count = r.count + 1
-    return r.count <= RATE_MAX
-end
 
 local function onClientCommand(module, command, player, args)
     if module ~= M then return end
     local h = handlers[command]
     if not h then return end
-    if not underRate(player) then return end
+    if not RDRate.allow(player, RATE_MAX, 1000) then return end
     local ok, err = pcall(h, player, args or {})
     if not ok then print("[RC] handler error (" .. tostring(command) .. "): " .. tostring(err)) end
 end
 Events.OnClientCommand.Add(onClientCommand)
-
-local function onDisconnect(a)
-    local nm = (type(a) == "string") and a or (a and a.getUsername and a:getUsername())
-    if nm then rate[nm] = nil end
-end
-if Events.OnPlayerDisconnect then Events.OnPlayerDisconnect.Add(onDisconnect) end
 
 print("[RC] RCServer loaded (v" .. tostring(RCShared.VERSION) .. ")")

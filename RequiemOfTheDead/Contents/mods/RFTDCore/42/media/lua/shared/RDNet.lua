@@ -33,6 +33,14 @@
 -- reason (unregistered-command / rate / capability). Accepted commands are
 -- not separately logged here - RDGuardian already records every client
 -- command with args; a second copy would be noise.
+--
+-- Handler FAULTS land in the same stream as RD.NET_ERROR, and that symmetry is
+-- the point: a rejection is the benign, expected case, while a fault is a
+-- command that passed both gates and then half-executed - the strictly more
+-- interesting record. Guardian does not cover it; Guardian sees the command
+-- ARRIVE, not that serving it threw. The console print is kept alongside
+-- because that is where an operator actually notices a fault mid-session; the
+-- forensic line is the one that survives to be queried later.
 
 RDNet = RDNet or {}
 
@@ -104,6 +112,11 @@ if isServer() then
         end
         local ok, err = pcall(cmd.handler, player, args)
         if not ok then
+            RDLog.forensic("rdnet", "RD.NET_ERROR", player, {
+                module  = tostring(module),
+                command = tostring(command),
+                err     = tostring(err),
+            })
             print("[RFTDCore] RDNet: handler error in " .. tostring(module) .. "."
                 .. tostring(command) .. ": " .. tostring(err))
         end
