@@ -10,7 +10,21 @@ RCShared = RCShared or {}
 -- Net-command module string. Every client<->server command for this mod
 -- travels under this token: sendClientCommand(player, RCShared.MODULE, cmd, args).
 RCShared.MODULE  = "RFTDReclamation"
-RCShared.VERSION = "0.6.0"
+RCShared.VERSION = "0.7.0"   -- 0.7.0: RFTDCore adoption (hard require) - dual-write audit
+                             -- logging + RC.* chronicle events. 0.6.0: pre-Core baseline.
+
+-- ---------------------------------------------------------------------------
+-- RFTDCore adoption (hard require - no guards, per family law). Register with
+-- the family version handshake and claim the RC.* chronicle namespace. The
+-- namespace is additive-only within a season: the planned vehicle-economy
+-- events (token mint/redeem) join this table when they are built, free.
+-- ---------------------------------------------------------------------------
+RDShared.registerMod(RCShared.MODULE, RCShared.VERSION)
+RDEvents.registerNamespace("RC", RCShared.MODULE, {
+    VEHICLE_CLAIM   = { scope = "p", req = { "claimId" }, loc = {} },
+    VEHICLE_RELEASE = { scope = "p", req = { "claimId" }, loc = {} },
+    VEHICLE_EXPIRE  = { scope = "p", req = { "claimId" }, loc = {} },
+})
 
 -- ---------------------------------------------------------------------------
 -- Sandbox config (cached). SandboxVars are fixed for a session; we read them

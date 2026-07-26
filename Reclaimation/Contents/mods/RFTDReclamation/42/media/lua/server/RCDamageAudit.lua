@@ -108,6 +108,18 @@ local function onClientCommand(module, command, player, args)
         gmtStamp(), how, val(username), steamIdOf(player),
         val(vname), val(args.vehicle), val(owner), val(griefing),
         val(x), val(y), val(z), val(part), val(args.amount)))
+
+    -- Dual-write (RFTDCore adoption): the same observation, structured, into
+    -- Core's forensic ring. claimId included when the vehicle carries one so a
+    -- reader can join damage rows onto the claim timeline.
+    pcall(function()
+        RDLog.forensic("rc-damage", "RC.DAMAGE", player, {
+            how = how, vehicle = vname, vid = args.vehicle,
+            owner = owner, griefing = griefing == true,
+            claimId = vehicle and RCClaim.getClaimId and RCClaim.getClaimId(vehicle) or nil,
+            x = x, y = y, z = z, part = part, amount = args.amount,
+        })
+    end)
 end
 
 Events.OnClientCommand.Add(onClientCommand)
