@@ -1,0 +1,5 @@
+name=Requiem of the Dead: Reaper
+id=RFTDReaper
+modversion=1.1.0
+description=Detects and culls vanilla PZPopMan64 twin-spawn blooms. Server-side, multi-layer detection: newborn watcher catches twins at spawn, tile+outfit scan catches co-located stacks, wandered scan catches separated twins, outfit-cluster scan catches dispersed blooms across a region. Removals are paced across ticks to avoid network bursts.
+pzversion=42
