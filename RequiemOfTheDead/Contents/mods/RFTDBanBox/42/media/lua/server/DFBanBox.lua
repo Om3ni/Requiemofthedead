@@ -17,14 +17,15 @@
 -- `require` forces this engine to load first, so a list file works regardless of
 -- mod load order.
 --
--- Master toggle: SandboxVars.RFTDDragonfly.BanBoxEnabled (default ON). With the
+-- Master toggle: SandboxVars.RFTDBanBox.BanBoxEnabled (default ON). With the
 -- engine disabled, registered bans are ignored and nothing is stripped. With it
 -- enabled but no list attached, the engine is simply a no-op.
 
 DFBanBox = DFBanBox or {}
+RDShared.registerMod("RFTDBanBox", "0.7.0")   -- keep in sync with mod.info
 DFBanBox._bans = DFBanBox._bans or {}   -- fullType -> true
 
-local function cfg() return SandboxVars.RFTDDragonfly or {} end
+local function cfg() return SandboxVars.RFTDBanBox or {} end
 
 -- Verbose tracing, gated by the BanBoxDebug sandbox toggle (default off). The
 -- confiscation audit (DFCore.audit) is a staff feature, NOT routed through here -
@@ -92,7 +93,7 @@ end
 -- it removes the item, tells the player (so an innocent holder has recourse),
 -- and writes an audit line for staff. Acting on a person is a human decision.
 --
--- Gated by SandboxVars.RFTDDragonfly.BanBoxConfiscateOnLogin (default OFF) AND
+-- Gated by SandboxVars.RFTDBanBox.BanBoxConfiscateOnLogin (default OFF) AND
 -- the master BanBox toggles. Applies to EVERYONE, admins included - a banned
 -- item is banned regardless of who holds it.
 -- ─────────────────────────────────────────────────────────────────────────

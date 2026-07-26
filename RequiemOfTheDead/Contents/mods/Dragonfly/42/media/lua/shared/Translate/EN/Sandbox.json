@@ -2,120 +2,42 @@
     "Sandbox_RFTDDragonfly": "Dragonfly",
     "Sandbox_RFTDDragonflyActions": "Dragonfly: Timed Actions",
     "Sandbox_RFTDDragonflyDebug": "Dragonfly: Debug Menus",
-    "Sandbox_RFTDDragonflyBanBox": "Dragonfly: Item BanBox",
-    "Sandbox_RFTDDragonflyVehicles": "Dragonfly: Vehicles",
-    "Sandbox_RFTDDragonflyMemoirXP": "Dragonfly: Memoir Skill XP",
-
     "Sandbox_DF_Enabled": "Enable Dragonfly admin panel",
     "Sandbox_DF_Enabled_tooltip": "Master toggle. When disabled, the panel keybind does nothing and consumer mods that register tabs/actions sit idle. Designed for dedicated multiplayer servers.",
-
     "Sandbox_DF_PanelAccess": "Admin panel access",
     "Sandbox_DF_PanelAccess_tooltip": "Who may open the admin panel. Admin only: requires the highest access level. All staff: any role holding at least one capability - careful, if the role editor ever granted a capability to the User role, that role could open the panel too. Default is Admin only.",
     "Sandbox_DF_PanelAccess_option1": "Admin only",
     "Sandbox_DF_PanelAccess_option2": "All staff",
-
     "Sandbox_DF_DebugGateAccess": "Debug menu reveal access",
     "Sandbox_DF_DebugGateAccess_tooltip": "Who may use the reveal key to unhide the engine's debug context-menu options. Admin only: requires the highest access level. All staff: any role holding at least one capability. Default is Admin only.",
     "Sandbox_DF_DebugGateAccess_option1": "Admin only",
     "Sandbox_DF_DebugGateAccess_option2": "All staff",
-
     "Sandbox_DF_OpenKeybind": "Admin panel: open key",
     "Sandbox_DF_OpenKeybind_tooltip": "LWJGL key code that opens the admin panel. Default 22 = U (paired with Shift). Common alternatives: 41 = backtick, 19 = R, 36 = J. Set to 0 to disable the keybind entirely.",
-
     "Sandbox_DF_OpenKeyRequiresShift": "Admin panel: require Shift",
     "Sandbox_DF_OpenKeyRequiresShift_tooltip": "When enabled, the open key only fires while Shift is held. Recommended so the bind does not collide with single-key gameplay binds. Default Shift+U.",
-
-    "Sandbox_DF_MemoirDebug": "Memoir: debug logging",
-    "Sandbox_DF_MemoirDebug_tooltip": "Print [MM_DBG] record / recall / dump traces from the Memoir system to the server and client logs. Leave off for normal play.",
-
-    "Sandbox_DF_MemoirXPRestore": "Memoir: XP restore % (Global)",
-    "Sandbox_DF_MemoirXPRestore_tooltip": "Global skill-XP restore percentage (100 = full restore, 90 = 10% off every skill, 0 = no XP). In Global mode this applies equally to every skill. In Per-Individual mode it is the fallback for any skill that has no per-skill value set (including modded skills). Traits, profession, recipes and ParanormalZ Faith always restore in full regardless of this setting. The normal recall never drops a skill below its current XP, so re-grinding still pays off.",
-
-    "Sandbox_DF_MemoirXPRestoreMode": "Memoir: XP restore mode",
-    "Sandbox_DF_MemoirXPRestoreMode_tooltip": "Global = the single XP restore % above applies to every skill. Per Individual = each skill uses its own % from the \"Dragonfly: Memoir Skill XP\" page (any skill left unset there falls back to the Global %). The per-skill sliders stay visible in both modes but only take effect in Per-Individual.",
-    "Sandbox_DF_MemoirXPRestoreMode_option1": "Global (one % for all skills)",
-    "Sandbox_DF_MemoirXPRestoreMode_option2": "Per Individual skill",
-
-    "Sandbox_DF_MemoirXPRestore_Axe": "Axe",
-    "Sandbox_DF_MemoirXPRestore_Blunt": "Long Blunt",
-    "Sandbox_DF_MemoirXPRestore_SmallBlunt": "Short Blunt",
-    "Sandbox_DF_MemoirXPRestore_LongBlade": "Long Blade",
-    "Sandbox_DF_MemoirXPRestore_SmallBlade": "Short Blade",
-    "Sandbox_DF_MemoirXPRestore_Spear": "Spear",
-    "Sandbox_DF_MemoirXPRestore_Maintenance": "Maintenance",
-    "Sandbox_DF_MemoirXPRestore_Aiming": "Aiming",
-    "Sandbox_DF_MemoirXPRestore_Reloading": "Reloading",
-    "Sandbox_DF_MemoirXPRestore_Woodwork": "Carpentry",
-    "Sandbox_DF_MemoirXPRestore_Carving": "Carving",
-    "Sandbox_DF_MemoirXPRestore_Cooking": "Cooking",
-    "Sandbox_DF_MemoirXPRestore_Electricity": "Electrical",
-    "Sandbox_DF_MemoirXPRestore_Glassmaking": "Glassmaking",
-    "Sandbox_DF_MemoirXPRestore_FlintKnapping": "Flintknapping",
-    "Sandbox_DF_MemoirXPRestore_Masonry": "Masonry",
-    "Sandbox_DF_MemoirXPRestore_Blacksmith": "Blacksmithing",
-    "Sandbox_DF_MemoirXPRestore_Mechanics": "Mechanics",
-    "Sandbox_DF_MemoirXPRestore_Pottery": "Pottery",
-    "Sandbox_DF_MemoirXPRestore_Tailoring": "Tailoring",
-    "Sandbox_DF_MemoirXPRestore_MetalWelding": "Metalworking",
-    "Sandbox_DF_MemoirXPRestore_Doctor": "First Aid",
-    "Sandbox_DF_MemoirXPRestore_Fishing": "Fishing",
-    "Sandbox_DF_MemoirXPRestore_PlantScavenging": "Foraging",
-    "Sandbox_DF_MemoirXPRestore_Tracking": "Tracking",
-    "Sandbox_DF_MemoirXPRestore_Trapping": "Trapping",
-    "Sandbox_DF_MemoirXPRestore_Fitness": "Fitness",
-    "Sandbox_DF_MemoirXPRestore_Strength": "Strength",
-    "Sandbox_DF_MemoirXPRestore_Lightfoot": "Lightfooted",
-    "Sandbox_DF_MemoirXPRestore_Nimble": "Nimble",
-    "Sandbox_DF_MemoirXPRestore_Sprinting": "Sprinting",
-    "Sandbox_DF_MemoirXPRestore_Sneak": "Sneaking",
-    "Sandbox_DF_MemoirXPRestore_Farming": "Farming",
-    "Sandbox_DF_MemoirXPRestore_Husbandry": "Animal Husbandry",
-    "Sandbox_DF_MemoirXPRestore_Butchering": "Butchering",
-
     "Sandbox_DF_ActionSpeedEnabled": "Enable action-speed scaling",
     "Sandbox_DF_ActionSpeedEnabled_tooltip": "Master switch for timed-action speed scaling (default ON). Each family below picks a speed from Vanilla up to Instant. Inventory transfers are never scaled - in multiplayer the server completes them on vanilla timing, so speeding the client only makes the progress bar lie. Sandbox changes require a server restart.",
-
-
     "Sandbox_DF_ASReading": "Speed: reading",
     "Sandbox_DF_ASReading_tooltip": "Reading books and maps.",
-
     "Sandbox_DF_ASForaging": "Speed: foraging",
     "Sandbox_DF_ASForaging_tooltip": "Foraging / searching the ground.",
-
     "Sandbox_DF_ASCleaning": "Speed: cleaning",
     "Sandbox_DF_ASCleaning_tooltip": "Cleaning blood, burns and graffiti; washing yourself and clothing.",
-
     "Sandbox_DF_ASRepair": "Speed: repair",
     "Sandbox_DF_ASRepair_tooltip": "Repairing clothing, vehicle engines and light bars.",
-
     "Sandbox_DF_ASDismantle": "Speed: dismantle",
     "Sandbox_DF_ASDismantle_tooltip": "Dismantling items.",
-
     "Sandbox_DF_ASpeed_option1": "0 - Vanilla",
     "Sandbox_DF_ASpeed_option2": "1 - 10x faster",
     "Sandbox_DF_ASpeed_option3": "2 - 20x faster",
     "Sandbox_DF_ASpeed_option4": "3 - 30x faster",
     "Sandbox_DF_ASpeed_option5": "4 - 40x faster",
     "Sandbox_DF_ASpeed_option6": "5 - Instant",
-
     "Sandbox_DF_DebugGateEnabled": "Hide debug context options",
     "Sandbox_DF_DebugGateEnabled_tooltip": "When enabled (default), the admin/debug right-click options are hidden until you press the toggle key. Declutters the context menu. Disable to restore vanilla behaviour (debug options always shown to admins).",
-
     "Sandbox_DF_DebugGateKey": "Toggle key",
     "Sandbox_DF_DebugGateKey_tooltip": "LWJGL key code that shows/hides the debug context options. Default 68 = F10 (unbound in vanilla B42). Other examples: 43 = backslash, 41 = backtick. Set to 0 to disable the toggle.",
-
     "Sandbox_DF_DebugGateRequiresShift": "Require Shift",
-    "Sandbox_DF_DebugGateRequiresShift_tooltip": "When enabled, the toggle key only fires while Shift is held. Off by default, so the key works on its own.",
-
-    "Sandbox_DF_EngineLockEnabled": "Lock vehicle engines (no dismantle)",
-    "Sandbox_DF_EngineLockEnabled_tooltip": "When ON (default), non-admin players cannot 'Take Engine Parts' or uninstall the Engine from vehicles, stopping engine salvage that wrecks otherwise-good vehicles. Admins are unaffected. Client-side enforcement: it stops normal players but is not proof against modified clients.",
-
-    "Sandbox_DF_BanBoxEnabled": "Enable item BanBox",
-    "Sandbox_DF_BanBoxEnabled_tooltip": "Master switch for Dragonfly's item BanBox engine (default ON). When on, any item types registered by a ban-list mod (such as the optional BBLibrary submod, or your own) are stripped from loot distribution at server start so no new copies spawn. Prevention only - items already in the world are not removed. With no ban-list mod enabled the engine does nothing. Changes take effect on the next server restart.",
-
-    "Sandbox_DF_BanBoxConfiscateOnLogin": "Confiscate banned items on login",
-    "Sandbox_DF_BanBoxConfiscateOnLogin_tooltip": "Default OFF. When on, a player connecting has any banned items removed from their CARRIED inventory (main, worn, and bags) - the one copy prevention can't reach. The player is told and an audit line is logged for staff; the player is never auto-punished. Bounded to the connecting player only - base storage, vehicles and the wider world are never touched. Requires the BanBox to be enabled above.",
-
-    "Sandbox_DF_BanBoxDebug": "BanBox debug logging",
-    "Sandbox_DF_BanBoxDebug_tooltip": "Default OFF. Verbose BanBox tracing to the server log (login poll, per-player wait state, scan counts). Off keeps the log clean - only the confiscation audit line is still written. Turn on only when diagnosing the BanBox."
+    "Sandbox_DF_DebugGateRequiresShift_tooltip": "When enabled, the toggle key only fires while Shift is held. Off by default, so the key works on its own."
 }

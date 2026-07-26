@@ -89,7 +89,7 @@ local function notify(action, target)
     DFLog.push{ source = "Admin", level = "audit",
         text = string.format("%s by %s (target=%s)",
             action, getPlayer():getUsername(), tostring(target or "?")) }
-    pcall(sendClientCommand, getPlayer(), DFCore.MODULE, "auditOnly",
+    pcall(sendClientCommand, getPlayer(), "RFTDDragonfly", "auditOnly",   -- Dragonfly-optional: handler lives in DFServer; without the panel mod the send is a no-op
         { action = action, target = target })
 end
 
@@ -193,7 +193,7 @@ function DFScoreboard.update(sb)
     for id, cap in pairs(pairsCap) do
         local btn = byId(id)
         if btn then
-            local has = DFCore.roleHas(me, cap)
+            local has = RDAccess.roleHas(me, cap)
             btn:setVisible(has)
             if has then anyCap = true end
         end
@@ -201,8 +201,8 @@ function DFScoreboard.update(sb)
 
     -- Invisible toggle uses either self-only or everyone cap.
     local invBtn = byId("DF_INVISIBLE")
-    local canInvis = DFCore.roleHas(me, Capability.ToggleInvisibleEveryone)
-        or DFCore.roleHas(me, Capability.ToggleInvisibleHimself)
+    local canInvis = RDAccess.roleHas(me, Capability.ToggleInvisibleEveryone)
+        or RDAccess.roleHas(me, Capability.ToggleInvisibleHimself)
     if invBtn then
         invBtn:setVisible(canInvis)
         if canInvis then anyCap = true end
@@ -210,8 +210,8 @@ function DFScoreboard.update(sb)
 
     -- God-mode toggle, same self-only / everyone capability split as invisible.
     local godBtn = byId("DF_GODMODE")
-    local canGod = DFCore.roleHas(me, Capability.ToggleGodModEveryone)
-        or DFCore.roleHas(me, Capability.ToggleGodModHimself)
+    local canGod = RDAccess.roleHas(me, Capability.ToggleGodModEveryone)
+        or RDAccess.roleHas(me, Capability.ToggleGodModHimself)
     if godBtn then
         godBtn:setVisible(canGod)
         if canGod then anyCap = true end
@@ -241,15 +241,15 @@ function DFScoreboard.update(sb)
     -- Invisible: self uses self cap, others use everyone cap.
     if invBtn then
         invBtn.enable = isSelf
-            and DFCore.roleHas(me, Capability.ToggleInvisibleHimself)
-            or (not isSelf and DFCore.roleHas(me, Capability.ToggleInvisibleEveryone))
+            and RDAccess.roleHas(me, Capability.ToggleInvisibleHimself)
+            or (not isSelf and RDAccess.roleHas(me, Capability.ToggleInvisibleEveryone))
     end
 
     -- God mode: self uses self cap, others use everyone cap.
     if godBtn then
         godBtn.enable = isSelf
-            and DFCore.roleHas(me, Capability.ToggleGodModHimself)
-            or (not isSelf and DFCore.roleHas(me, Capability.ToggleGodModEveryone))
+            and RDAccess.roleHas(me, Capability.ToggleGodModHimself)
+            or (not isSelf and RDAccess.roleHas(me, Capability.ToggleGodModEveryone))
     end
 
     -- Mute / VOIP mute enable + toggle labels reflect current state. (muteBtn /

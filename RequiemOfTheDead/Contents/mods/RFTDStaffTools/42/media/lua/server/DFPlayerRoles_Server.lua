@@ -20,6 +20,8 @@
 
 if not isServer() then return end
 
+RDShared.registerMod("RFTDStaffTools", "0.7.0")   -- keep in sync with mod.info
+
 DFPlayerRoles = DFPlayerRoles or {}
 
 local OVERRIDES_FILE = "Dragonfly_PlayerRoles.txt"
