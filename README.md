@@ -15,7 +15,7 @@ adopted, the dependency is hard.
 |---|---|---|---|
 | `RFTDCore` | `RFTDCore` | *(unpublished)* | In development — v0.1 |
 | — | `RFTDDirge` | 3701543539 | Migrating from PZMod (order: 1) |
-| `Reclaimation` | `RFTDReclamation` | 3752878504 | Migrated — Core adoption pending |
+| `Reclaimation` | `RFTDReclamation` | 3752878504 | Migrated — on the harness (0.7.0, requires RFTDCore) |
 | — | `Dragonfly` (+`BBLibrary`) | 3728273142 | Migrating + shakeout (order: 2) |
 | — | `RFTDReaper` | 3730287596 | Evaluate vs 42.20 vanilla culling (order: 3) |
 | — | `RFTDHusbandry` | 3711156499 | Migrating (order: 4) |
