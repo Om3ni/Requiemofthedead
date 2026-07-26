@@ -1,0 +1,349 @@
+VERSION = 1,
+
+option RFTDMemoir.MemoirDebug
+{
+    type = boolean,
+    default = false,
+    page = RFTDMemoir,
+    translation = DF_MemoirDebug,
+}
+option RFTDMemoir.MemoirXPRestore
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoir,
+    translation = DF_MemoirXPRestore,
+}
+/* Memoir XP-restore mode: 1 = Global (the single % above applies to every skill),
+   2 = Per Individual (each skill uses its own % on the "Memoir Skill XP" page; any skill
+   without a knob there falls back to the Global % above). The per-skill knobs are always
+   visible — PZ can't hide them by mode — but only matter when this is set to Individual. */
+option RFTDMemoir.MemoirXPRestoreMode
+{
+    type = enum,
+    numValues = 2,
+    default = 1,
+    page = RFTDMemoir,
+    translation = DF_MemoirXPRestoreMode,
+}
+/* ===== Per-skill Memoir XP restore % (only active when MemoirXPRestoreMode = Individual).
+   Option name keys on perk:getId() so the codec lookup matches exactly — note several ids
+   differ from the in-game name (Woodwork=Carpentry, Sneak=Sneaking, Lightfoot=Lightfooted,
+   PlantScavenging=Foraging, Small*=Short *). Generated from PerkFactory's vanilla leaf skills. */
+option RFTDMemoir.MemoirXPRestore_Axe
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Axe,
+}
+option RFTDMemoir.MemoirXPRestore_Blunt
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Blunt,
+}
+option RFTDMemoir.MemoirXPRestore_SmallBlunt
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_SmallBlunt,
+}
+option RFTDMemoir.MemoirXPRestore_LongBlade
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_LongBlade,
+}
+option RFTDMemoir.MemoirXPRestore_SmallBlade
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_SmallBlade,
+}
+option RFTDMemoir.MemoirXPRestore_Spear
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Spear,
+}
+option RFTDMemoir.MemoirXPRestore_Maintenance
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Maintenance,
+}
+option RFTDMemoir.MemoirXPRestore_Aiming
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Aiming,
+}
+option RFTDMemoir.MemoirXPRestore_Reloading
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Reloading,
+}
+option RFTDMemoir.MemoirXPRestore_Woodwork
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Woodwork,
+}
+option RFTDMemoir.MemoirXPRestore_Carving
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Carving,
+}
+option RFTDMemoir.MemoirXPRestore_Cooking
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Cooking,
+}
+option RFTDMemoir.MemoirXPRestore_Electricity
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Electricity,
+}
+option RFTDMemoir.MemoirXPRestore_Glassmaking
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Glassmaking,
+}
+option RFTDMemoir.MemoirXPRestore_FlintKnapping
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_FlintKnapping,
+}
+option RFTDMemoir.MemoirXPRestore_Masonry
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Masonry,
+}
+option RFTDMemoir.MemoirXPRestore_Blacksmith
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Blacksmith,
+}
+option RFTDMemoir.MemoirXPRestore_Mechanics
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Mechanics,
+}
+option RFTDMemoir.MemoirXPRestore_Pottery
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Pottery,
+}
+option RFTDMemoir.MemoirXPRestore_Tailoring
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Tailoring,
+}
+option RFTDMemoir.MemoirXPRestore_MetalWelding
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_MetalWelding,
+}
+option RFTDMemoir.MemoirXPRestore_Doctor
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Doctor,
+}
+option RFTDMemoir.MemoirXPRestore_Fishing
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Fishing,
+}
+option RFTDMemoir.MemoirXPRestore_PlantScavenging
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_PlantScavenging,
+}
+option RFTDMemoir.MemoirXPRestore_Tracking
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Tracking,
+}
+option RFTDMemoir.MemoirXPRestore_Trapping
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Trapping,
+}
+option RFTDMemoir.MemoirXPRestore_Fitness
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Fitness,
+}
+option RFTDMemoir.MemoirXPRestore_Strength
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Strength,
+}
+option RFTDMemoir.MemoirXPRestore_Lightfoot
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Lightfoot,
+}
+option RFTDMemoir.MemoirXPRestore_Nimble
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Nimble,
+}
+option RFTDMemoir.MemoirXPRestore_Sprinting
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Sprinting,
+}
+option RFTDMemoir.MemoirXPRestore_Sneak
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Sneak,
+}
+option RFTDMemoir.MemoirXPRestore_Farming
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Farming,
+}
+option RFTDMemoir.MemoirXPRestore_Husbandry
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Husbandry,
+}
+option RFTDMemoir.MemoirXPRestore_Butchering
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDMemoirXP,
+    translation = DF_MemoirXPRestore_Butchering,
+}

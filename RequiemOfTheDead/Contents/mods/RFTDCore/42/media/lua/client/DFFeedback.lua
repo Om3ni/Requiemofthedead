@@ -30,7 +30,7 @@ end
 -- Server replies via sendServerCommand(module, "Result", {ok, action, reason}).
 -- Consume it here so every command has visible feedback by default.
 local function onServerCommand(module, command, args)
-    if module ~= DFCore.MODULE or command ~= "Result" then return end
+    if module ~= "RFTDDragonfly" or command ~= "Result" then return end   -- literal: DFCore is Dragonfly-only; result events only flow when the panel mod is present
     args = args or {}
     if args.ok then
         if args.message then DFFeedback.good(args.message) end

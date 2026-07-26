@@ -1,0 +1,23 @@
+VERSION = 1,
+
+option RFTDBanBox.BanBoxEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDDragonflyBanBox,
+    translation = DF_BanBoxEnabled,
+}
+option RFTDBanBox.BanBoxConfiscateOnLogin
+{
+    type = boolean,
+    default = false,
+    page = RFTDDragonflyBanBox,
+    translation = DF_BanBoxConfiscateOnLogin,
+}
+option RFTDBanBox.BanBoxDebug
+{
+    type = boolean,
+    default = false,
+    page = RFTDDragonflyBanBox,
+    translation = DF_BanBoxDebug,
+}

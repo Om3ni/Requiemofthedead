@@ -121,7 +121,7 @@ end
 
 -- Receive cross-admin broadcast pushes from the server.
 local function onServerCommand(module, command, args)
-    if module ~= DFCore.MODULE then return end
+    if module ~= "RFTDDragonfly" then return end   -- literal: DFCore lives in Dragonfly, which is optional now that this buffer is Core infrastructure; audits only flow when the panel mod is present
     if command ~= "LogBroadcast" or not args then return end
     DFLog.push(args)
 end

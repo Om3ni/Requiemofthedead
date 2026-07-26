@@ -1,0 +1,6 @@
+name=Requiem of the Dead: BanBox
+id=RFTDBanBox
+modversion=0.7.0
+require=RFTDCore
+description=A neutral, server-side item ban engine. Banned item types are stripped from loot distribution at server start (prevention, not a destructive world sweep), and optionally any banned item a player is carrying is confiscated on login, with a message to the player and an audit line for staff. Ships with ZERO bans of its own - enable the bundled BBLibrary mod for the Requiem of the Dead defaults, or supply your own list via a Lua file calling DFBanBox.ban. Shaken out of Dragonfly as its own mod. Requires Requiem of the Dead: Core. Designed for dedicated multiplayer servers.
+pzversion=42

@@ -28,8 +28,9 @@
 --     match -> the old harmless top-up (could be the same life); mismatch -> overwrite.
 
 MMShared = MMShared or {}
+RDShared.registerMod("RFTDMemoir", "0.7.0")   -- keep in sync with mod.info
 
-MMShared.MODULE = "RFTDDragonflyMemoir"
+MMShared.MODULE = "RFTDMemoir"   -- wire token = mod id (was "RFTDDragonflyMemoir" pre-shakeout; client+server ship atomically in the bundle, so the flip needs no dual-accept)
 
 -- client <-> server command names
 MMShared.CMD = {
@@ -59,7 +60,7 @@ MMShared.WIPE_EPOCH = 1
 -- default / legacy behaviour), 2 = Per Individual (each vanilla skill has its own %).
 -- Per-category was deliberately dropped — only these two tiers are wanted.
 function MMShared.xpRestoreMode()
-    local sv = SandboxVars and SandboxVars.RFTDDragonfly
+    local sv = SandboxVars and SandboxVars.RFTDMemoir
     local m = sv and sv.MemoirXPRestoreMode
     return (type(m) == "number") and m or 1
 end
@@ -83,7 +84,7 @@ end
 --                     never silently to 100%.
 -- perkId optional: omit it (or in Global mode) and you get the single global fraction.
 function MMShared.xpRestoreFraction(perkId)
-    local sv = SandboxVars and SandboxVars.RFTDDragonfly
+    local sv = SandboxVars and SandboxVars.RFTDMemoir
     local globalFrac = pctToFraction(sv and sv.MemoirXPRestore) or 1.0
     if not perkId or MMShared.xpRestoreMode() ~= 2 then return globalFrac end
     return pctToFraction(sv and sv["MemoirXPRestore_" .. perkId]) or globalFrac
@@ -98,7 +99,7 @@ MM_DEBUG_FORCE = false
 
 local function debugOn()
     if MM_DEBUG_FORCE then return true end
-    local sv = SandboxVars and SandboxVars.RFTDDragonfly
+    local sv = SandboxVars and SandboxVars.RFTDMemoir
     return (sv and sv.MemoirDebug == true) or false
 end
 MMShared.debugOn = debugOn

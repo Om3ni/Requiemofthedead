@@ -234,7 +234,7 @@ local function onSave()
         if DFFeedback then DFFeedback.bad("Select a role first.") end
         return
     end
-    if not DFCore.roleHas(getPlayer(), Capability.RolesWrite) then
+    if not RDAccess.roleHas(getPlayer(), Capability.RolesWrite) then
         if DFFeedback then DFFeedback.bad("Missing capability: RolesWrite.") end
         return
     end
