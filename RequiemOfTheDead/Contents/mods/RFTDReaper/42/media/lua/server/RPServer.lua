@@ -19,14 +19,13 @@ if not isServer() then return end
 
 local MODULE = "RFTDReaper"
 
+RDShared.registerMod(MODULE, "1.2.0")   -- keep in sync with mod.info
+
+-- Staff gate: RDAccess capability model (RFTDCore adoption) - the old
+-- four-level access allowlist is retired; any role holding at least one
+-- capability is staff, per family policy.
 local function privileged(player)
-    if not player then return false end
-    local ok, lvl = pcall(function() return player:getAccessLevel() end)
-    if ok and lvl then
-        lvl = tostring(lvl):lower()
-        return lvl == "admin" or lvl == "moderator" or lvl == "overseer" or lvl == "gm"
-    end
-    return false
+    return RDAccess.hasAnyCapability(player)
 end
 
 local function broadcastAudit(action, player, extra)
