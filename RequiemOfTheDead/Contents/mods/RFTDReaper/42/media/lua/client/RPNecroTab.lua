@@ -429,7 +429,7 @@ local function build(spec, panel, x, y, w, h)
     if getActivatedMods():contains("RFTDDirge") then
         mkBtn("Reroll Dirge", PAD + 596, 120, function()
             local function send()
-                sendClientCommand(getPlayer(), "RQ", "adminReroll", {})
+                sendClientCommand(getPlayer(), "RFTDDirge", "adminReroll", {})   -- Dirge's token (the legacy bare token is dead)
                 if DFFeedback then DFFeedback.good("Dirge reroll requested.") end
             end
             if DFConfirm then

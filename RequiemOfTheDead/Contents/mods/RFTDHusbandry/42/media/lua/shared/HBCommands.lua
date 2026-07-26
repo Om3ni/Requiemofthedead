@@ -1,6 +1,8 @@
 -- HBCommands — command string constants and server dispatch shell.
 -- Constants are shared; dispatch routes to HBData / HBAPIProbe.
 
+RDShared.registerMod("RFTDHusbandry", "0.2.0")   -- keep in sync with mod.info
+
 HBCmd = {}
 
 HBCmd.ADD_SEEN           = "hbAddSeen"
@@ -19,16 +21,17 @@ print("[HB] server dispatch loaded (HBCommands)")
 -- Admin gate. In SP, getAccessLevel() returns "" — treat as admin since the
 -- local player has full server control. In MP, only "None" is rejected.
 -- Errors LOG — the old pcall-everywhere pattern hid silent failures.
+-- Staff gate: RDAccess capability model (RFTDCore adoption). The old check
+-- admitted ANY non-None access level; family policy is "any role holding at
+-- least one capability". Debug-mode escape kept for SP/dev sessions.
 local function isAdminLike(player)
     if not player then return false end
     if isDebugEnabled and isDebugEnabled() then return true end
-    local access = player:getAccessLevel()
-    if access == nil or access == "None" then return false end
-    return true
+    return RDAccess.hasAnyCapability(player)
 end
 
 Events.OnClientCommand.Add(function(module, command, player, args)
-    if module ~= "RQ" then return end
+    if module ~= "RFTDHusbandry" then return end
 
     print("[HB] cmd=" .. tostring(command)
         .. " access=" .. tostring(player and player:getAccessLevel())
@@ -59,7 +62,7 @@ Events.OnClientCommand.Add(function(module, command, player, args)
 
     elseif command == HBCmd.DEBUG_REFILL then
         if not isAdminLike(player) then
-            sendServerCommand(player, "RQ", HBCmd.DEBUG_PROBE_RESULT,
+            sendServerCommand(player, "RFTDHusbandry", HBCmd.DEBUG_PROBE_RESULT,
                 { line = "[set] rejected (not admin)" })
             return
         end
@@ -94,7 +97,7 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         local msg = string.format("[%s value=%.2f] applied=%d  missing=%d  errors=%d",
             label, target, count, missing, errors)
         print("[HB] " .. msg)
-        sendServerCommand(player, "RQ", HBCmd.DEBUG_PROBE_RESULT, { line = msg })
+        sendServerCommand(player, "RFTDHusbandry", HBCmd.DEBUG_PROBE_RESULT, { line = msg })
 
     elseif command == HBCmd.ADD_BEDDING then
         -- Add hay bedding to a hutch. Open to any player: the diegetic path is

@@ -1,5 +1,6 @@
 name=Requiem of the Dead: Husbandry
 id=RFTDHusbandry
-modversion=0.1.1
-description=Husbandry - Animal taming, breeding, and management for the apocalypse.
+modversion=0.2.0
+require=RFTDCore
+description=Husbandry - Animal taming, breeding, and management for the apocalypse. Requires Requiem of the Dead: Core.
 pzversion=42

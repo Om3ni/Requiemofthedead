@@ -731,7 +731,7 @@ function HBDebugPanel:_applyToAll(value, label)
         return
     end
     self:logLine(string.format("[%s] target=%.2f, sending %d OIDs", label, value, #oids))
-    sendClientCommand(player, "RQ", HBCmd.DEBUG_REFILL, {
+    sendClientCommand(player, "RFTDHusbandry", HBCmd.DEBUG_REFILL, {
         oids = table.concat(oids, ","),
         value = tostring(value),
     })
@@ -754,7 +754,7 @@ function HBDebugPanel:onProbe()
     local player = getPlayer()
     if not player then return end
     self:logLine(string.format("[probe] requesting server probe for OID %s", tostring(row.oid)))
-    sendClientCommand(player, "RQ", HBCmd.DEBUG_PROBE, { id = tostring(row.oid) })
+    sendClientCommand(player, "RFTDHusbandry", HBCmd.DEBUG_PROBE, { id = tostring(row.oid) })
 end
 
 -- Teleport the player to the selected animal. MP-aware: player position
@@ -943,7 +943,7 @@ end
 -- ─── Server→client probe result echo ─────────────────────────────────────
 
 Events.OnServerCommand.Add(function(module, command, args)
-    if module ~= "RQ" then return end
+    if module ~= "RFTDHusbandry" then return end
     if command ~= HBCmd.DEBUG_PROBE_RESULT then return end
     local panel = HBDebugPanel._instance
     if not panel or not panel:isVisible() then return end

@@ -75,7 +75,7 @@ function HBSexCheck.run(oid)
         print("[HBSexCheck] animal " .. oid .. " not resolvable here")
     end
     if not isServer() then
-        sendClientCommand(getPlayer(), "RQ", "hbSexCheck", { id = oid })
+        sendClientCommand(getPlayer(), "RFTDHusbandry", "hbSexCheck", { id = oid })
     end
 end
 

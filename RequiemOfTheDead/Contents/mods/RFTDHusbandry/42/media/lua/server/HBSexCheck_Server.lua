@@ -1,22 +1,23 @@
 -- HBSexCheck_Server — server side of the sex-check diagnostic.
 --
--- Handles "RQ"/"hbSexCheck": dumps the definition table to the server log,
+-- Handles "RFTDHusbandry"/"hbSexCheck": dumps the definition table to the server log,
 -- reports the server-authoritative sex for the requested OID, and replies to
 -- the requesting admin via the existing hbDebugProbeResult channel so the
 -- result also surfaces in the panel log. Admin-gated like the other probes.
 
 if not isServer() then return end
 
+-- Staff gate: RDAccess capability model (RFTDCore adoption). The old check
+-- admitted ANY non-None access level; family policy is "any role holding at
+-- least one capability". Debug-mode escape kept for SP/dev sessions.
 local function isAdminLike(player)
     if not player then return false end
     if isDebugEnabled and isDebugEnabled() then return true end
-    local access = player:getAccessLevel()
-    if access == nil or access == "None" then return false end
-    return true
+    return RDAccess.hasAnyCapability(player)
 end
 
 Events.OnClientCommand.Add(function(module, command, player, args)
-    if module ~= "RQ" or command ~= "hbSexCheck" then return end
+    if module ~= "RFTDHusbandry" or command ~= "hbSexCheck" then return end
     if not isAdminLike(player) then
         print("[HBSexCheck] rejected (not admin)")
         return
@@ -37,7 +38,7 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         line = "[HBSexCheck] server: animal " .. tostring(oid) .. " not resolvable"
     end
     print(line)
-    pcall(function() sendServerCommand(player, "RQ", "hbDebugProbeResult", { line = line }) end)
+    pcall(function() sendServerCommand(player, "RFTDHusbandry", "hbDebugProbeResult", { line = line }) end)
 end)
 
 print("[HB] HBSexCheck_Server loaded")

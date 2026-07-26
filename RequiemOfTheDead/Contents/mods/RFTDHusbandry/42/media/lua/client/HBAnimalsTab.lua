@@ -260,12 +260,12 @@ local function probeSelected()
         logLine("[probe] no animal selected")
         return
     end
-    sendClientCommand(getPlayer(), "RQ", HBCmd.DEBUG_PROBE, { id = tostring(row.oid) })
+    sendClientCommand(getPlayer(), "RFTDHusbandry", HBCmd.DEBUG_PROBE, { id = tostring(row.oid) })
     logLine(string.format("[probe] requested OID %d", row.oid or 0))
 end
 
 local function refillAll()
-    sendClientCommand(getPlayer(), "RQ", HBCmd.DEBUG_REFILL, { value = 0.0, label = "refill" })
+    sendClientCommand(getPlayer(), "RFTDHusbandry", HBCmd.DEBUG_REFILL, { value = 0.0, label = "refill" })
     logLine("[refill] sent (all animals -> 0.0)")
 end
 
@@ -295,7 +295,7 @@ local function copyLog()
 end
 
 local function starveAll()
-    sendClientCommand(getPlayer(), "RQ", HBCmd.DEBUG_REFILL, { value = 0.9, label = "starve" })
+    sendClientCommand(getPlayer(), "RFTDHusbandry", HBCmd.DEBUG_REFILL, { value = 0.9, label = "starve" })
     logLine("[starve] sent (all animals -> 0.9)")
 end
 
@@ -303,7 +303,7 @@ end
 -- tab's cross-admin view. Two surfaces, same data; admins reading either
 -- get the same picture.
 local function onServerCommand(module, command, args)
-    if module ~= "RQ" then return end
+    if module ~= "RFTDHusbandry" then return end
     if command ~= HBCmd.DEBUG_PROBE_RESULT then return end
     if not args then return end
     local line = tostring(args.line or "(probe: no line)")

@@ -755,12 +755,9 @@ end
 local svReflectPingAt = {}
 
 Events.OnClientCommand.Add(function(module, command, player, args)
-    -- Dual-accept transition (this release only): "RFTDDirge" is the token,
-    -- legacy "RQ" still lands here so a mixed-version rollout cannot go
-    -- silent. "RQ" acceptance is deleted next release - and note Husbandry
-    -- still SENDS on "RQ" until its own migration turn, so its commands keep
-    -- arriving here exactly as they always (wrongly) have; command names do
-    -- not overlap, which is the only reason that collision has been benign.
+    -- "RFTDDirge" only. The legacy bare token is dead (see RQCommon) - the
+    -- bundle ships every client and server atomically and Husbandry took
+    -- its own token in the same release.
     if not RQCommon.acceptsModule(module) then return end
 
     if command == "reflectPing" then
