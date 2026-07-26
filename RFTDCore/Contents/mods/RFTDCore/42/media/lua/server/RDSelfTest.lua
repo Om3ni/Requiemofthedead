@@ -32,11 +32,17 @@ function RDSelfTest.run(player, args)
 
     local t0 = RDShared.nowMs()
 
-    -- 1) Colliding usernames through the slug ledger.
-    local slugA = RDIdentity.slugFor("Bob.Smith")
-    local slugB = RDIdentity.slugFor("Bob_Smith")
-    print("[RFTDCore] selftest slugs: 'Bob.Smith' -> " .. slugA .. ", 'Bob_Smith' -> " .. slugB
-        .. (slugA ~= slugB and "  (disambiguated OK)" or "  (COLLISION - BUG)"))
+    -- 1) Colliding usernames through the directory ledger. String subjects
+    -- carry no SteamID, so this exercises the ~N fallback path specifically.
+    local dirA = RDIdentity.dirFor("Bob.Smith")
+    local dirB = RDIdentity.dirFor("Bob_Smith")
+    print("[RFTDCore] selftest dirs: 'Bob.Smith' -> " .. dirA .. ", 'Bob_Smith' -> " .. dirB
+        .. (dirA ~= dirB and "  (disambiguated OK)" or "  (COLLISION - BUG)"))
+    if player then
+        local own = RDIdentity.dirFor(player)
+        print("[RFTDCore] selftest: your directory is chronicle/p/" .. own
+            .. (own:find("%.") and "  (SteamID suffix OK)" or "  (no SteamID available - fallback name)"))
+    end
 
     -- 2) Hostile payload through the chronicle tier (5 records, 2 fake users).
     local hostile = {
@@ -72,7 +78,7 @@ function RDSelfTest.run(player, args)
 
     if player then
         RDNet.reply(player, RDShared.MODULE, "selftestDone", {
-            forensic = count, ms = elapsed, slugA = slugA, slugB = slugB,
+            forensic = count, ms = elapsed, dirA = dirA, dirB = dirB,
         })
     end
 end

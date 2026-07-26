@@ -64,12 +64,6 @@ function RDGuardian.serializeArgs(a)
     return s
 end
 
-local function sidApprox(player)
-    local ok, s = pcall(function() return string.format("%.0f", player:getSteamID() or 0) end)
-    if ok then return s end
-    return "0"
-end
-
 if not RDGuardian._hooked then
     RDGuardian._hooked = true
     Events.OnClientCommand.Add(function(module, command, player, args)
@@ -80,7 +74,7 @@ if not RDGuardian._hooked then
             end)
             RDLog.forensic("guardian", "RD.CMD", player, {
                 access   = (player and player:getAccessLevel()) or "",
-                sid      = player and sidApprox(player) or "0",
+                sid      = RDIdentity.sidApprox(player) or "0",
                 onlineid = (player and player:getOnlineID()) or -1,
                 x = x, y = y, z = z,
                 module   = tostring(module),
