@@ -64,4 +64,26 @@ function RDAccess.can(player, requirement)
     return RDAccess.roleHas(player, requirement)
 end
 
+-- The highest tier: access level "admin", nothing less. For surfaces with
+-- too much power for general staff (zombie conversion, the admin panel,
+-- debug menus). pcall because getAccessLevel has been crash-prone on ghost
+-- player objects.
+function RDAccess.isTopAdmin(player)
+    if not player then return false end
+    local ok, access = pcall(function() return player:getAccessLevel() end)
+    if not ok or type(access) ~= "string" then return false end
+    return string.lower(access) == "admin"
+end
+
+-- Sandbox-driven tier gate, so each server chooses its own policy per
+-- surface. `tier` is the raw enum value from a sandbox option:
+--   1 (or anything else) -> Admin only        <- the shipped default
+--   2                    -> All staff (any capability)
+-- Strictest-by-default on purpose: an unset or out-of-range value locks
+-- down rather than opening up.
+function RDAccess.meetsTier(player, tier)
+    if tier == 2 then return RDAccess.hasAnyCapability(player) end
+    return RDAccess.isTopAdmin(player)
+end
+
 return RDAccess

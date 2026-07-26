@@ -10,9 +10,10 @@ local ADMIN_TYPES = { "Screamer", "Juggernaut", "EMP", "Glutton", "Scavenger", "
 -- figures out if the current player should see the admin menu.
 -- SP, co-op host, dedicated server, and MP client all handled separately -
 -- the old code conflated SP and co-op host via `not isClient()` and worked
--- by accident. MP clients now go through the RDAccess capability model
--- (RFTDCore adoption) instead of the old duplicated access-level allowlist;
--- this is the UI gate only - the server re-validates every command.
+-- by accident. MP clients go through the RDAccess tier gate driven by the
+-- RFTDDirge.ConvertAccess sandbox option (1 = Admin only, the default;
+-- 2 = all staff). This is the UI gate only - the server re-validates every
+-- command with the same policy (RQSvShared.svIsAdminPlayer).
 local function isAdmin()
     local player = getPlayer()
     if not player then return false end
@@ -26,8 +27,10 @@ local function isAdmin()
     -- dedicated server with no client (shouldn't hit a UI hook, but be safe)
     if isServer() and not isClient() then return false end
 
-    -- MP client: any capability at all = staff
-    return RDAccess.hasAnyCapability(player)
+    -- MP client: sandbox-chosen tier
+    local tier
+    pcall(function() tier = SandboxVars.RFTDDirge and SandboxVars.RFTDDirge.ConvertAccess end)
+    return RDAccess.meetsTier(player, tier)
 end
 
 -- scans a small area around the click point looking for something
