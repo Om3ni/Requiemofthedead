@@ -117,8 +117,11 @@ if isServer() then
         pcall(function() sendServerCommand(tostring(module), tostring(command), args or {}) end)
     end
 
-    -- Core's own token is adopted from the start; Core commands register onto it.
-    RDNet.adopt(RDShared.MODULE)
+    -- Core's own token is adopted from the start; Core commands register onto
+    -- it. LITERAL, not RDShared.MODULE: PZ loads shared/ files alphabetically
+    -- and RDNet < RDShared, so RDShared does not exist yet when this line
+    -- runs (proven by a boot-log stack trace on 2026-07-26).
+    RDNet.adopt("RFTDCore")
 end
 
 return RDNet
