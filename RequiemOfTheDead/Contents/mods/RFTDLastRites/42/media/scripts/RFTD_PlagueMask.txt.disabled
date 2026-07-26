@@ -1,0 +1,32 @@
+module Base
+{
+    model RFTD_PlagueMask_Ground
+    {
+        mesh = Static/Clothes/M_RFTD_PlagueMask,
+        scale = 1.0,
+    }
+
+    item Hat_RFTD_PlagueMask
+    {
+        DisplayCategory = ProtectiveGear,
+        ItemType = base:clothing,
+        DisplayName = Plague Doctor Mask,
+        Icon = GasMask,
+        BodyLocation = base:maskeyes,
+        ClothingItem = Hat_RFTD_PlagueMask,
+        BloodLocation = Head,
+        CanHaveHoles = false,
+        Weight = 0.4,
+        CorpseSicknessDefense = 50.0,
+        BiteDefense = 12,
+        ScratchDefense = 20,
+        Insulation = 0.7,
+        WaterResistance = 0.4,
+        WindResistance = 0.5,
+        VisionModifier = 0.65,
+        DiscomfortModifier = 0.5,
+        Tags = base:islowerdisguise,
+        WorldStaticModel = RFTD_PlagueMask_Ground,
+        ChanceToFall = 10,
+    }
+}

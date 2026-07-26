@@ -1,0 +1,15 @@
+{
+    "IGUI_LR_Panel": "Last Rites",
+    "IGUI_LR_PanelTitle": "Last Rites",
+    "IGUI_LR_NoOptions": "No options available yet.",
+
+    "IGUI_LR_Danger_Tab": "Danger",
+    "IGUI_LR_Danger_Enabled": "Enable danger indicators",
+    "IGUI_LR_Danger_Cold": "Cold / hypothermia warning",
+    "IGUI_LR_Danger_Hot": "Heat / hyperthermia warning",
+    "IGUI_LR_Danger_Blood": "Bleeding warning",
+    "IGUI_LR_Danger_Quips": "Over-head thoughts",
+    "IGUI_LR_Danger_Shake": "Shake the warning icons",
+    "IGUI_LR_Danger_OverheadY": "Over-head height",
+    "IGUI_LR_Danger_Hint": "Warnings move over your head as they turn life-threatening."
+}
