@@ -78,6 +78,13 @@ Work through this top to bottom; nothing here is optional except where marked.
   because the old copy declares neither). Unsubscribe the legacy items on every
   test client, and say so loudly in the sunset notes - players who keep both
   subscriptions get silent version skew, not an error.
+- **The printed version can lie, so do not date a build from it alone.**
+  `[Dragonfly] DFPanel loaded (vX)` prints `DFCore.VERSION`, a hand-maintained
+  constant, not `mod.info`'s `modversion`. Legacy Dragonfly shipped 0.6.3 with
+  the constant still reading `0.6.2`, so those two builds were indistinguishable
+  in a client log. The v0.6.2 sighting still proves a non-bundle copy won the id
+  collision (the bundle prints 0.7.0), but it cannot tell you *which* legacy one.
+  Both were bumped together to 0.6.4; keep them in step at every release.
 - Junctions in `%USERPROFILE%\Zomboid\mods\` are a THIRD copy of the same ids.
   Fine for local hosting; remove them before testing against the dedi so it is
   unambiguous which build ran.

@@ -262,6 +262,112 @@ function MMRestore.run(admin, targetUsername)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
+-- Bulk restore
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- Each target costs an archive read, a JSON decode, a whole-character codec
+-- apply and a packet to that player. Ten of those inside one OnClientCommand is
+-- already a visible hitch; forty would be a stall an admin reads as a crash.
+local MAX_BATCH = 10
+
+-- Restore a SELECTION, each player from their OWN archive.
+--
+-- That correctness property comes from MMRestore.run being pure per-target: it
+-- resolves the IsoPlayer by the name it was handed and reads
+-- readLatest(safeName(thatUsername)), with the envelope's rec.user as a
+-- tiebreaker against safeName collisions. Nothing ambient, no "currently
+-- selected" state on the server, no snapshot id on the wire - so five names
+-- produce five independent restores and cross-contamination is impossible by
+-- construction. Do not introduce shared state between iterations.
+--
+-- Partial failure is the NORMAL case here, not the exception: every target must
+-- be online AND alive AND hold a readable archive AND not have already recalled
+-- this life. Restore five and it is entirely likely two are skipped, so this
+-- reports per-target rather than a single cheerful "done".
+function MMRestore.runMany(admin, usernames)
+    if type(usernames) ~= "table" then
+        return { ok = false, reason = "No targets selected." }
+    end
+
+    -- Dedup, preserving click order. A name listed twice would restore on the
+    -- first pass and then trip its OWN once-per-life gate on the second,
+    -- reporting a failure that is really just the duplicate.
+    local seen, targets = {}, {}
+    for _, u in ipairs(usernames) do
+        local name = tostring(u or "")
+        if name ~= "" and not seen[name] then
+            seen[name] = true
+            targets[#targets + 1] = name
+        end
+    end
+    if #targets == 0 then return { ok = false, reason = "No targets selected." } end
+
+    -- One target hands straight to the single-target path, so its richer message
+    -- ("...snapshot t=...") is untouched. Every ordinary single-select click
+    -- still lands there: this change cannot regress the common case.
+    if #targets == 1 then return MMRestore.run(admin, targets[1]) end
+
+    -- Never silently truncate. An admin who selected twenty and read "restored
+    -- 10" would reasonably conclude the other ten FAILED, rather than that they
+    -- were never attempted.
+    local overflow = {}
+    while #targets > MAX_BATCH do
+        table.insert(overflow, 1, table.remove(targets))
+    end
+
+    local okNames, failed = {}, {}
+
+    -- Per-target line into every admin's Console tab. The reply below is a
+    -- single HaloText string and cannot carry ten reasons; this is where an
+    -- admin actually finds out WHY someone was skipped.
+    local function report(name, ok, why)
+        if DFCore and DFCore.audit then
+            DFCore.audit("memoirRestore", admin, "target=" .. name
+                .. (ok and " (restored)" or (" (skipped: " .. tostring(why) .. ")")))
+        else
+            MMwarn("RESTORE batch -> " .. name
+                .. (ok and ": restored" or (": skipped - " .. tostring(why))))
+        end
+    end
+
+    for _, name in ipairs(targets) do
+        -- pcall per target: one engine fault must not abandon the rest of the
+        -- batch, half applied and wholly unreported.
+        local called, res = pcall(MMRestore.run, admin, name)
+        local ok, why = false, nil
+        if not called then
+            why = "internal error: " .. tostring(res)
+            MMwarn("RESTORE batch: " .. name .. " threw: " .. tostring(res))
+        elseif type(res) == "table" and res.ok then
+            ok = true
+        else
+            why = (type(res) == "table" and (res.reason or res.message)) or "unknown failure"
+        end
+
+        if ok then okNames[#okNames + 1] = name else failed[#failed + 1] = name end
+        report(name, ok, why)
+    end
+
+    for _, name in ipairs(overflow) do
+        report(name, false, "not attempted, batch cap " .. MAX_BATCH)
+    end
+
+    -- Summary only - this becomes a floating HaloText line over the admin.
+    local parts = { string.format("Restored %d of %d", #okNames, #targets) }
+    if #failed > 0 then parts[#parts + 1] = string.format("%d skipped", #failed) end
+    if #overflow > 0 then
+        parts[#parts + 1] = string.format("%d over the %d cap", #overflow, MAX_BATCH)
+    end
+    if #failed > 0 or #overflow > 0 then parts[#parts + 1] = "see Console tab" end
+    local summary = table.concat(parts, " - ") .. "."
+
+    -- ok=false when nothing landed, so DFFeedback renders it as a failure rather
+    -- than a green "Restored 0 of 5".
+    if #okNames == 0 then return { ok = false, reason = summary } end
+    return { ok = true, message = summary }
+end
+
+-- ─────────────────────────────────────────────────────────────────────────
 -- Dragonfly panel registration (deferred: DFServer loads after Memoirs/
 -- alphabetically; OnServerStarted is the same gate DFPlayersTab_Server uses)
 -- ─────────────────────────────────────────────────────────────────────────
@@ -273,8 +379,17 @@ Events.OnServerStarted.Add(function()
     DFServer.registerHandler{
         action     = "memoirRestore",
         capability = Capability.CanModifyPlayerStatsInThePlayerStatsUI,
+        -- Both shapes accepted. args.usernames is the selection (what the panel
+        -- sends now); args.username is the pre-bulk single-target form, kept
+        -- because a client on an older Dragonfly pointed at this server would
+        -- otherwise silently restore nobody. ONE capability check covers the
+        -- whole batch - it is the same permission for every target.
         run = function(player, args)
-            return MMRestore.run(player, args and args.username)
+            args = args or {}
+            if type(args.usernames) == "table" then
+                return MMRestore.runMany(player, args.usernames)
+            end
+            return MMRestore.run(player, args.username)
         end,
     }
     print("[Dragonfly] MMRestore handler registered")

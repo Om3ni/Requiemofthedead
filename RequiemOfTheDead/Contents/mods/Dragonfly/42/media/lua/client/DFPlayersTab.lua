@@ -15,6 +15,15 @@
 -- v1 ships without a right-click context menu - actions are explicit buttons
 -- in the detail pane. v2 will add the row context menu via
 -- DFRegistry.getRowActions("players") for consumer-mod extension.
+--
+-- MULTI-SELECT (ctrl-toggle / shift-range) is on the list, but only SOME actions
+-- are bulk-capable, so the pane has to say which. Two rules hold it together:
+--   * selectedName remains the PRIMARY row. Every single-target button still
+--     reads it, which is why none of them needed to change.
+--   * a bulk-capable button shows its count ("Restore Memoir (5)"). If a button
+--     shows no count it acts on the primary row alone. The detail title says so
+--     out loud whenever more than one row is selected.
+-- Bulk actions are capped and never loop sendClientCommand - see BULK_MAX.
 
 if isServer() then return end
 
@@ -23,12 +32,27 @@ require "ISUI/ISComboBox"
 require "ISUI/ISButton"
 require "ISUI/ISLabel"
 
+-- Selection model lives in Core so this tab, Reaper's necro tab and
+-- Reclamation's vehicle tab share one set of click semantics. RDSelect sits in
+-- media/lua/shared, which the client walks BEFORE media/lua/client, so this
+-- require is belt-and-braces rather than load-order critical - keep it anyway:
+-- the family rule since the 42.19 boot crashes is that a file-scope use of an
+-- RD* global is declared, never assumed, and the alias below is exactly that.
+require "RDSelect"
+local Select = RDSelect
+
 local MODULE = "RFTDDragonfly"
 local FONT   = UIFont.Code
 
+-- Ceiling on one bulk click, client side. Mirrors MMRestore's own MAX_BATCH so
+-- the panel and the authority agree on the limit instead of the server silently
+-- trimming what the panel promised.
+local BULK_MAX = 10
+
 local PlayersTab = {
     rows         = {},
-    selectedName = nil,
+    selectedName = nil,           -- PRIMARY row: what single-target buttons hit
+    sel          = Select.new(),  -- full selection, keyed by username
     listBox      = nil,
     filterCombo  = nil,
     statsLabel   = nil,
@@ -96,6 +120,42 @@ local function findRowByName(name)
     return nil
 end
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- Selection views
+--
+-- Two DIFFERENT orderings, and conflating them is a bug:
+--   orderedNames  what the list is showing right now, after the filter. Shift
+--                 ranges and bulk ordering are computed against this, and
+--                 sel:list() drops anything absent - so a bulk action can never
+--                 touch a player the admin cannot currently see.
+--   rosterNames   every online player regardless of filter. PRUNING uses this.
+--                 Pruning against the filtered view instead would delete the
+--                 selection every time a snapshot arrived with a filter active.
+-- ─────────────────────────────────────────────────────────────────────────
+
+local function orderedNames()
+    local out = {}
+    local lb = PlayersTab.listBox
+    if not lb or not lb.items then return out end
+    for _, it in ipairs(lb.items) do
+        if it.item and it.item.username then out[#out + 1] = it.item.username end
+    end
+    return out
+end
+
+local function rosterNames()
+    local out = {}
+    for _, r in ipairs(PlayersTab.rows) do
+        if r.username then out[#out + 1] = r.username end
+    end
+    return out
+end
+
+-- Selection in display order, visible rows only.
+local function selectedNames()
+    return PlayersTab.sel:list(orderedNames())
+end
+
 local function rebuildList()
     if not PlayersTab.listBox then return end
     PlayersTab.listBox:clear()
@@ -124,6 +184,16 @@ end
 local function refreshDetail()
     local d = PlayersTab.detail
     if not d.panel then return end
+
+    local names = selectedNames()
+
+    -- The primary row goes stale when its player disconnects or the filter hides
+    -- them. Re-point it at the selection rather than blanking a pane that still
+    -- has selected rows in it.
+    if PlayersTab.selectedName and not findRowByName(PlayersTab.selectedName) then
+        PlayersTab.selectedName = names[1]
+    end
+
     local row = findRowByName(PlayersTab.selectedName)
     if not row then
         d.title:setName("No player selected")
@@ -131,11 +201,35 @@ local function refreshDetail()
         for _, b in ipairs(d.actionButtons or {}) do b:setVisible(false) end
         return
     end
-    d.title:setName(string.format("%s  (%s) - %s @ %d,%d,%d",
-        row.username, row.display or row.username, row.access or "none",
-        row.x or 0, row.y or 0, row.z or 0))
     d.accessCombo:setVisible(true)
     for _, b in ipairs(d.actionButtons or {}) do b:setVisible(true) end
+
+    local vis, total = #names, PlayersTab.sel:count()
+    if vis > 1 then
+        -- Say the quiet part out loud: which buttons are bulk, which row the
+        -- others hit, and that the filter is hiding part of the selection. Kept
+        -- terse because this is one ISLabel on a fixed-width pane - it clips
+        -- rather than wraps.
+        local hidden = ""
+        if total > vis then
+            hidden = string.format("  [+%d hidden]", total - vis)
+        end
+        d.title:setName(string.format("%d selected - counted buttons hit all %d, others hit %s%s",
+            vis, vis, row.username, hidden))
+    else
+        d.title:setName(string.format("%s  (%s) - %s @ %d,%d,%d",
+            row.username, row.display or row.username, row.access or "none",
+            row.x or 0, row.y or 0, row.z or 0))
+    end
+
+    -- Bulk-capable buttons carry the count so it is never ambiguous how far a
+    -- click reaches. No count shown means primary row only.
+    if d.restoreButton then
+        d.restoreButton:setTitle(vis > 1 and ("Restore Memoir (" .. vis .. ")") or "Restore Memoir")
+    end
+    if d.bringButton then
+        d.bringButton:setTitle(vis > 1 and ("Bring to me (" .. vis .. ")") or "Bring to me")
+    end
 
     -- God-mode / invisible buttons are stateful toggles: labels reflect the
     -- target's current state so the admin sees ON/OFF rather than a blind toggle.
@@ -159,6 +253,14 @@ local function onServerCommand(module, command, args)
     if command == "PlayersList" then
         PlayersTab.rows = (args and args.players) or {}
         rebuildList()
+        -- Players disconnect mid-selection. Drop them from the set rather than
+        -- firing a bulk action at someone who left, and SAY the selection shrank
+        -- so the admin does not read a smaller count as the action misfiring.
+        local dropped = PlayersTab.sel:prune(rosterNames())
+        if dropped > 0 and DFFeedback then
+            DFFeedback.bad(string.format("%d selected player%s no longer online.",
+                dropped, dropped == 1 and "" or "s"))
+        end
         updateStats()
         refreshDetail()
     end
@@ -175,8 +277,14 @@ function PlayerList:doDrawItem(y, item, alt)
     local row = item.item
     if not row then return y + self.itemheight end
 
-    if PlayersTab.selectedName == row.username then
-        self:drawRect(0, y, self.width, self.itemheight - 1, 0.35, 0.25, 0.55, 0.85)
+    if PlayersTab.sel:has(row.username) then
+        if PlayersTab.selectedName == row.username then
+            -- Primary row reads brighter than the rest of the selection, so a
+            -- five-row selection still shows WHICH row "Kick" would hit.
+            self:drawRect(0, y, self.width, self.itemheight - 1, 0.35, 0.25, 0.55, 0.85)
+        else
+            self:drawRect(0, y, self.width, self.itemheight - 1, 0.26, 0.16, 0.34, 0.62)
+        end
     elseif alt then
         self:drawRect(0, y, self.width, self.itemheight - 1, 0.18, 0.08, 0.08, 0.08)
     end
@@ -190,7 +298,18 @@ function PlayerList:onMouseDown(x, y)
     if idx <= 0 then return end
     local item = self.items[idx]
     if not item or not item.item then return end
-    PlayersTab.selectedName = item.item.username
+    local name = item.item.username
+
+    local ctrl, shift = Select.modifiers()
+    PlayersTab.sel:click(name, orderedNames(), ctrl, shift)
+
+    -- A ctrl-click that DEselected the clicked row must not leave it primary, or
+    -- the single-target buttons would keep acting on a row drawn as unselected.
+    if PlayersTab.sel:has(name) then
+        PlayersTab.selectedName = name
+    else
+        PlayersTab.selectedName = selectedNames()[1]
+    end
     self.selected = idx
     refreshDetail()
 end
@@ -226,6 +345,15 @@ local function notify(action, target)
         { action = action, target = target })
 end
 
+-- Audit/label text for a set of targets. Names are useful up to a point; past
+-- that a count reads better and keeps the audit line a sane length.
+local function targetLabel(names)
+    if #names == 0 then return "?" end
+    if #names == 1 then return names[1] end
+    if #names <= 3 then return table.concat(names, ",") end
+    return #names .. " players"
+end
+
 local function withSelected(actionLabel, capability, fn)
     return function()
         local row = findRowByName(PlayersTab.selectedName)
@@ -238,6 +366,24 @@ local function withSelected(actionLabel, capability, fn)
             return
         end
         fn(row)
+    end
+end
+
+-- Bulk sibling of withSelected: hands the handler the whole visible selection in
+-- display order instead of one row. Same client-side capability gate; the server
+-- re-validates once for the batch, because one capability covers every target.
+local function withSelection(actionLabel, capability, fn)
+    return function()
+        local names = selectedNames()
+        if #names == 0 then
+            if DFFeedback then DFFeedback.bad("Select a player first.") end
+            return
+        end
+        if capability and not DFCore.roleHas(getPlayer(), capability) then
+            if DFFeedback then DFFeedback.bad("Missing capability for " .. actionLabel) end
+            return
+        end
+        fn(names)
     end
 end
 
@@ -306,44 +452,99 @@ local function buildDetail(panel, x, y, w, h)
     -- (Lua/Memoirs/<player>/latest.json). Lives on row 1 because row 2 is full.
     -- Always-confirm: it overwrites the target's build/XP with the archived
     -- snapshot at 100% (server re-gates on capability + once-per-life).
+    --
+    -- BULK-CAPABLE, and each target is restored from THEIR OWN archive: the
+    -- command carries the username list and MMRestore.runMany resolves each name
+    -- independently. That is the whole reason this sends one command with a list
+    -- instead of looping sendClientCommand - DFServer drops everything past 20
+    -- commands/sec SILENTLY, so a loop could restore four of five people and
+    -- still report success for all five.
     local restoreBtn = ISButton:new(x + PAD + 300, row1Y, 130, BTN_H, "Restore Memoir", panel,
-        withSelected("Restore Memoir", Capability.CanModifyPlayerStatsInThePlayerStatsUI, function(row)
+        withSelection("Restore Memoir", Capability.CanModifyPlayerStatsInThePlayerStatsUI, function(names)
             local function send()
-                sendClientCommand(getPlayer(), MODULE, "memoirRestore", { username = row.username })
-                notify("Restore Memoir", row.username)
+                sendClientCommand(getPlayer(), MODULE, "memoirRestore", { usernames = names })
+                notify("Restore Memoir", targetLabel(names))
+            end
+            -- DFConfirm.ask is a fixed 440x180 modal that splits on newlines but
+            -- does NOT wrap, so the text has to stay bounded. That rules out
+            -- listing ten usernames; the count is the fact that matters and the
+            -- selected rows are highlighted in the list behind the dialog.
+            local head
+            if #names == 1 then
+                head = "Restore " .. names[1] .. "'s character from the memoir archive?"
+            else
+                head = "Restore " .. #names .. " selected characters, each from their OWN archive?"
             end
             if DFConfirm and DFConfirm.ask then
-                DFConfirm.ask("Restore " .. row.username .. "'s character from the memoir archive?\n\n"
-                    .. "Their current build and XP will be overwritten by the archived snapshot\n"
-                    .. "(anything earned since the archive still adds on top).", send)
+                DFConfirm.ask(head .. "\n\n"
+                    .. "Current build and XP are overwritten by that snapshot\n"
+                    .. "(anything earned since still adds on top).\n\n"
+                    .. "Offline, dead, or already-recalled players are skipped -\n"
+                    .. "per-player results appear in the Console tab.", send)
             else send() end
         end))
     restoreBtn.borderColor.a = 0.4
     restoreBtn:initialise(); restoreBtn:instantiate()
     panel:addChild(restoreBtn)
     d.actionButtons[#d.actionButtons + 1] = restoreBtn
+    d.restoreButton = restoreBtn
 
     -- Action button row
     local row2Y = row1Y + BTN_H + PAD
-    local function mkAction(label, bx, bw, cap, handler)
-        local btn = ISButton:new(x + PAD + bx, row2Y, bw, BTN_H, label, panel,
-            withSelected(label, cap, handler))
+    local function mkButton(label, bx, bw, callback)
+        local btn = ISButton:new(x + PAD + bx, row2Y, bw, BTN_H, label, panel, callback)
         btn.borderColor.a = 0.4
         btn:initialise(); btn:instantiate()
         panel:addChild(btn)
         d.actionButtons[#d.actionButtons + 1] = btn
         return btn
     end
+    local function mkAction(label, bx, bw, cap, handler)
+        return mkButton(label, bx, bw, withSelected(label, cap, handler))
+    end
+    local function mkBulkAction(label, bx, bw, cap, handler)
+        return mkButton(label, bx, bw, withSelection(label, cap, handler))
+    end
 
     mkAction("Teleport to", 0, 100, Capability.TeleportToPlayer, function(row)
         SendCommandToServer("/teleport " .. quote(row.username))
         notify("Teleport to", row.username)
     end)
-    mkAction("Bring to me", 104, 100, Capability.TeleportPlayerToAnotherPlayer, function(row)
-        SendCommandToServer("/teleportplayer "
-            .. quote(row.username) .. " " .. quote(getPlayer():getUsername()))
-        notify("Bring to me", row.username)
-    end)
+
+    -- BULK-CAPABLE. No batched teleport exists, and these are vanilla chat
+    -- commands that bypass DFServer entirely (SendCommandToServer), so the
+    -- 20/sec dispatcher limit does not apply - but a loop of chat commands is
+    -- still worth capping, and herding an event crowd is the use case, not
+    -- teleporting the whole server onto one tile.
+    d.bringButton = mkBulkAction("Bring to me", 104, 100,
+        Capability.TeleportPlayerToAnotherPlayer, function(names)
+            local function send()
+                local me   = getPlayer():getUsername()
+                local sent = 0
+                for _, n in ipairs(names) do
+                    if sent >= BULK_MAX then break end
+                    SendCommandToServer("/teleportplayer " .. quote(n) .. " " .. quote(me))
+                    sent = sent + 1
+                end
+                notify("Bring to me", targetLabel(names))
+                if DFFeedback and #names > 1 then
+                    if sent < #names then
+                        DFFeedback.bad(string.format(
+                            "Brought %d of %d - %d per click is the cap.", sent, #names, BULK_MAX))
+                    else
+                        DFFeedback.good(string.format("Brought %d players to you.", sent))
+                    end
+                end
+            end
+            -- Confirm only for a real bulk teleport; a single bring stays a
+            -- one-click action, as it has always been. Count only, for the same
+            -- fixed-modal reason as the restore confirm above.
+            if #names > 1 and DFConfirm and DFConfirm.ask then
+                DFConfirm.ask(string.format(
+                    "Teleport %d selected players to your position?", #names), send)
+            else send() end
+        end)
+
     mkAction("Inspect Stats", 208, 110, Capability.CanSeePlayersStats, function(row)
         local target = getPlayerFromUsername(row.username)
         if not target then
@@ -442,6 +643,7 @@ end
 local function build(spec, panel, x, y, w, h)
     PlayersTab.selectedName = nil
     PlayersTab.detail = {}
+    PlayersTab.sel:clear()
 
     local PAD       = 8
     local BTN_H     = 24
@@ -459,8 +661,15 @@ local function build(spec, panel, x, y, w, h)
     panel:addChild(filterCombo)
     PlayersTab.filterCombo = filterCombo
 
+    -- Filter changes rebuild the list but must NOT prune: a hidden row stays
+    -- selected and comes back when the filter is cleared. refreshDetail then
+    -- reports how many of the selection the filter is hiding.
     local origSelect = filterCombo.select
-    filterCombo.select = function(self_, ...) origSelect(self_, ...); rebuildList() end
+    filterCombo.select = function(self_, ...)
+        origSelect(self_, ...)
+        rebuildList()
+        refreshDetail()
+    end
 
     local refreshBtn = ISButton:new(PAD + 170, cursorY, 90, BTN_H, "Refresh",
         panel, requestSnapshot)
