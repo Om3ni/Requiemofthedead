@@ -35,6 +35,26 @@ local function safeName(name)
     return (name:gsub("[^%w%-_]", "_"))
 end
 
+-- The Players tab's XP% dial, normalised. Returns (fraction 0..1, integer 0..100).
+--
+-- The clamp is NOT optional and NOT a duplicate of the codec's own: the dial is a
+-- free-text client field, so the wire value is attacker-controlled - 500, -1 and
+-- "abc" all have to become something sane before they reach the apply. Absent
+-- means 100, which is what every pre-dial caller and any older client sends, so
+-- the single-click behaviour that shipped before this field is unchanged.
+--
+-- Reminder on what the number means, since it is reported to admins: it scales
+-- EARNED xp only. The saved build's grant floor always restores in full, so 0%
+-- still returns a character equivalent to a fresh spawn of their own build.
+local function restoreFraction(xpPercent)
+    local p = tonumber(xpPercent)
+    if p == nil then p = 100 end
+    if p < 0 then p = 0 elseif p > 100 then p = 100 end
+    p = math.floor(p + 0.5)
+    return p / 100.0, p
+end
+MMRestore.restoreFraction = restoreFraction   -- exposed for the test suite
+
 -- ─────────────────────────────────────────────────────────────────────────
 -- JSON decode (own-schema only; see header)
 -- ─────────────────────────────────────────────────────────────────────────
@@ -176,9 +196,10 @@ end
 -- ─────────────────────────────────────────────────────────────────────────
 
 -- Returns DFServer's handler contract: { ok = bool, message|reason = string }.
-function MMRestore.run(admin, targetUsername)
+function MMRestore.run(admin, targetUsername, xpPercent)
     targetUsername = tostring(targetUsername or "")
     if targetUsername == "" then return { ok = false, reason = "No target username." } end
+    local xpFrac, xpPct = restoreFraction(xpPercent)
 
     local target = findOnlineByUsername(targetUsername)
     if not target then
@@ -225,7 +246,9 @@ function MMRestore.run(admin, targetUsername)
     local chosen = { profession = snap.profession, traits = snap.traits }
     local preLevels = MMAudit and MMAudit.perkLevels(target) or nil
     local okApply, err = pcall(function()
-        MMSnapshotCodec.applyToCharacter(target, snap, chosen, "overwrite", true) -- fullRestore
+        -- fullRestore, with the dial as an explicit fraction. xpFrac is 1.0 when no
+        -- dial was sent, so this is byte-for-byte the old 100% behaviour by default.
+        MMSnapshotCodec.applyToCharacter(target, snap, chosen, "overwrite", true, xpFrac)
     end)
     if not okApply then
         MMwarn("RESTORE apply FAILED for " .. targetUsername .. ": " .. tostring(err))
@@ -240,15 +263,24 @@ function MMRestore.run(admin, targetUsername)
 
     -- Mirror-apply on the target's client over the existing memoir RESULT
     -- channel - MMClient already knows how to apply applyData and refresh.
+    -- xpFraction MUST travel with the mirror: the client recomputes the same
+    -- targets from the same snapshot, and a mirror that defaulted to 100% while
+    -- the server applied 60% would desync the character until relog.
     sendServerCommand(target, MMShared.MODULE, MMShared.CMD.RESULT, {
         ok = true,
         say = "My life... it all comes back to me.",
-        applyData = { snap = snap, chosen = chosen, xpMode = "overwrite", fullRestore = true },
+        applyData = { snap = snap, chosen = chosen, xpMode = "overwrite", fullRestore = true,
+                      xpFraction = xpFrac },
     })
 
     if MMAudit then
         MMAudit.log(target, "RESTORE_OK", {
             admin      = (admin and admin.getUsername and admin:getUsername()) or "?",
+            -- The dial is recorded because a restore at anything but 100% is a
+            -- deliberate policy act (a season migration allowance, say), and
+            -- "why is my carpentry lower than my old character" is unanswerable
+            -- a month later without it.
+            xpPct      = xpPct,
             archiveT   = rec.t,
             lvlsBefore = preLevels,
             lvlsAfter  = MMAudit.perkLevels(target),
@@ -257,7 +289,8 @@ function MMRestore.run(admin, targetUsername)
         })
         MMAudit.scheduleRecheck(target, nil)
     end
-    return { ok = true, message = "Restored " .. targetUsername
+    local pctNote = (xpPct ~= 100) and (" at " .. xpPct .. "% of earned XP") or ""
+    return { ok = true, message = "Restored " .. targetUsername .. pctNote
         .. " from archive (snapshot t=" .. tostring(snap.writtenAt or rec.t or "?") .. ")." }
 end
 
@@ -284,7 +317,7 @@ local MAX_BATCH = 10
 -- be online AND alive AND hold a readable archive AND not have already recalled
 -- this life. Restore five and it is entirely likely two are skipped, so this
 -- reports per-target rather than a single cheerful "done".
-function MMRestore.runMany(admin, usernames)
+function MMRestore.runMany(admin, usernames, xpPercent)
     if type(usernames) ~= "table" then
         return { ok = false, reason = "No targets selected." }
     end
@@ -305,7 +338,7 @@ function MMRestore.runMany(admin, usernames)
     -- One target hands straight to the single-target path, so its richer message
     -- ("...snapshot t=...") is untouched. Every ordinary single-select click
     -- still lands there: this change cannot regress the common case.
-    if #targets == 1 then return MMRestore.run(admin, targets[1]) end
+    if #targets == 1 then return MMRestore.run(admin, targets[1], xpPercent) end
 
     -- Never silently truncate. An admin who selected twenty and read "restored
     -- 10" would reasonably conclude the other ten FAILED, rather than that they
@@ -333,7 +366,7 @@ function MMRestore.runMany(admin, usernames)
     for _, name in ipairs(targets) do
         -- pcall per target: one engine fault must not abandon the rest of the
         -- batch, half applied and wholly unreported.
-        local called, res = pcall(MMRestore.run, admin, name)
+        local called, res = pcall(MMRestore.run, admin, name, xpPercent)
         local ok, why = false, nil
         if not called then
             why = "internal error: " .. tostring(res)
@@ -354,6 +387,13 @@ function MMRestore.runMany(admin, usernames)
 
     -- Summary only - this becomes a floating HaloText line over the admin.
     local parts = { string.format("Restored %d of %d", #okNames, #targets) }
+    -- Surface the dial whenever it is not 100: restoring five people at 60% is a
+    -- different act from restoring them whole, and the admin should see which one
+    -- just happened without going to the Console tab for it.
+    local _, batchPct = restoreFraction(xpPercent)
+    if batchPct ~= 100 then
+        parts[#parts + 1] = string.format("%d%% of earned XP", batchPct)
+    end
     if #failed > 0 then parts[#parts + 1] = string.format("%d skipped", #failed) end
     if #overflow > 0 then
         parts[#parts + 1] = string.format("%d over the %d cap", #overflow, MAX_BATCH)
@@ -384,12 +424,14 @@ Events.OnServerStarted.Add(function()
         -- because a client on an older Dragonfly pointed at this server would
         -- otherwise silently restore nobody. ONE capability check covers the
         -- whole batch - it is the same permission for every target.
+        -- args.xpPercent is the Players tab dial. It is clamped server-side in
+        -- restoreFraction, never trusted as sent, and absent means 100.
         run = function(player, args)
             args = args or {}
             if type(args.usernames) == "table" then
-                return MMRestore.runMany(player, args.usernames)
+                return MMRestore.runMany(player, args.usernames, args.xpPercent)
             end
-            return MMRestore.run(player, args.username)
+            return MMRestore.run(player, args.username, args.xpPercent)
         end,
     }
     print("[Dragonfly] MMRestore handler registered")

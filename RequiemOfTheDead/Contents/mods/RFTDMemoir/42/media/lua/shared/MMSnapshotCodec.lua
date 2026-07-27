@@ -345,21 +345,40 @@ end
 -- We scale RAW XP, never levels, so the engine re-derives the level from the total.
 -- preSwapBuild = {profession, traits} worn BEFORE applyIdentity ran (caller captures
 -- it; after the swap the "current build" IS the saved build and the info is gone).
-local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore)
+local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpFraction)
     mode = mode or "max"
     local xp = player:getXp()
     local savedGrant = MMSnapshotCodec.buildGrantLevels(snap.profession, snap.traits)
     local preSwapGrant = preSwapBuild
         and MMSnapshotCodec.buildGrantLevels(preSwapBuild.profession, preSwapBuild.traits) or nil
 
+    -- Precedence, resolved once where it cannot vary per perk: an explicit
+    -- xpFraction (the Players tab dial) outranks fullRestore, which outranks the
+    -- sandbox knob. Only the knob can differ per perk (Individual mode), so only
+    -- that case is left inside the loop.
+    --
+    -- WHAT THE FRACTION ACTUALLY SCALES, because it is the most misread number in
+    -- this subsystem: savedEarned ONLY - the XP earned ABOVE the saved build's
+    -- grant floor. grantXP(saved) always restores in full, so no fraction, not
+    -- even 0, can land a character below a fresh spawn of their own build. "60%"
+    -- means "60% of what they earned", never "60% of their XP bar". That is the
+    -- anti-laundering invariant in the header, and a fraction must not break it.
+    local fixedPct = nil
+    if type(xpFraction) == "number" then
+        fixedPct = xpFraction
+        if fixedPct < 0 then fixedPct = 0 elseif fixedPct > 1 then fixedPct = 1 end
+    elseif fullRestore then
+        -- Admin recovery with no dial supplied: bypass the restore knob entirely.
+        -- The knob is a death tax, not a wipe tax - players are made whole.
+        fixedPct = 1.0
+    end
+
     for i = 0, PerkFactory.PerkList:size() - 1 do
         local perk = PerkFactory.PerkList:get(i)
         local t = perk:getType()
         if t ~= PerkFactory.Perks.None and t ~= PerkFactory.Perks.MAX then
             local id = perk:getId()
-            -- fullRestore (admin disaster recovery) bypasses the restore knob:
-            -- the knob is a death tax, not a wipe tax - players are made whole.
-            local pct = fullRestore and 1.0 or MMShared.xpRestoreFraction(id)
+            local pct = fixedPct or MMShared.xpRestoreFraction(id)
             local cur = xp:getXP(t) or 0
             local rawSaved = (snap.perks and snap.perks[id]) or 0
             local savedGrantXP = perk:getTotalXpForLevel(savedGrant[id] or 0) or 0
@@ -474,18 +493,26 @@ end
 -- chosenIdentity: table = overwrite identity from the snapshot; nil = keep (legacy "max").
 -- xpMode: "overwrite" (memoir is the source of truth) | "max" (legacy top-up bridge)
 -- fullRestore: true = admin disaster recovery - XP knob bypassed (100% restore).
-function MMSnapshotCodec.applyToCharacter(player, snap, chosenIdentity, xpMode, fullRestore)
+-- xpFraction: optional 0..1 override (the Players tab's XP% dial), outranking
+--   fullRestore. Scales EARNED xp only - see the note in applyEarnables.
+--   BOTH SIDES MUST BE HANDED THE SAME VALUE. The server applies authoritatively
+--   and the owning client mirror-applies the identical snapshot; if one runs at
+--   1.0 and the other at 0.6 they compute different targets and the character
+--   desyncs until relog. MMRestore puts it in applyData, MMClient reads it back.
+function MMSnapshotCodec.applyToCharacter(player, snap, chosenIdentity, xpMode, fullRestore, xpFraction)
     if not snap then return end
     MMlog("APPLY to " .. MMname(player) .. " | xpMode=" .. tostring(xpMode or "max")
         .. (chosenIdentity and " (overwrite identity)" or " (keep identity)")
-        .. (fullRestore and " (FULL restore, knob bypassed)" or ""))
+        .. (type(xpFraction) == "number"
+            and string.format(" (xp %d%% of earned)", math.floor(xpFraction * 100 + 0.5))
+            or (fullRestore and " (FULL restore, knob bypassed)" or "")))
     -- The dismissal rule needs the build the player is wearing BEFORE the identity
     -- swap (its XP grants AND its granted recipes) - capture it first; applyIdentity
     -- rewrites it and the information is gone.
     local preSwapBuild = (xpMode == "overwrite")
         and MMSnapshotCodec.playerBuildIdentity(player) or nil
     if chosenIdentity then applyIdentity(player, chosenIdentity) end
-    applyEarnables(player, snap, xpMode, preSwapBuild, fullRestore)
+    applyEarnables(player, snap, xpMode, preSwapBuild, fullRestore, xpFraction)
     applyBodyState(player, snap)
     applyFaith(player, snap)
 end
