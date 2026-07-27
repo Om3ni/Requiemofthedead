@@ -1,11 +1,11 @@
 VERSION = 1,
 
-option RFTDCore.SeasonId
+option RFTDCore.SeasonName
 {
     type = string,
     default = S1,
     page = RFTDCore,
-    translation = RD_SeasonId,
+    translation = RD_SeasonName,
 }
 
 option RFTDCore.Debug

@@ -118,9 +118,11 @@ RDEvents.registerNamespace("RD", "RFTDCore", {
     HOME_SET     = { scope = "p", req = { "x", "y" }, loc = { "x", "y", "w", "h", "title" } },
     HOME_CHANGE  = { scope = "p", req = { "x", "y" }, loc = { "x", "y", "w", "h", "title" } },
     HELLO        = { scope = "p", req = { "mods" } },
-    -- season bookkeeping (world stream)
+    -- Season bookkeeping (world stream). SEASON_BEGIN is written once, the
+    -- first time anything is recorded into a season folder. There is no
+    -- SEASON_END: seasons are renamed by hand now, so no moment exists that the
+    -- server could recognise as one ending.
     SEASON_BEGIN = { scope = "w", req = { "season" } },
-    SEASON_END   = { scope = "w", req = { "season" } },
     -- synthetic records emitted by the admin selftest; never from real play
     TEST         = { scope = "p", req = {} },
 })
