@@ -31,6 +31,7 @@ require "ISUI/ISScrollingListBox"
 require "ISUI/ISComboBox"
 require "ISUI/ISButton"
 require "ISUI/ISLabel"
+require "ISUI/ISTextEntryBox"
 
 -- Selection model lives in Core so this tab, Reaper's necro tab and
 -- Reclamation's vehicle tab share one set of click semantics. RDSelect sits in
@@ -48,6 +49,10 @@ local FONT   = UIFont.Code
 -- the panel and the authority agree on the limit instead of the server silently
 -- trimming what the panel promised.
 local BULK_MAX = 10
+
+-- Default for the XP% dial beside Restore Memoir. 100 = the behaviour that
+-- shipped before the dial existed, so leaving the field alone changes nothing.
+local XP_PCT_DEFAULT = 100
 
 local PlayersTab = {
     rows         = {},
@@ -459,11 +464,50 @@ local function buildDetail(panel, x, y, w, h)
     -- instead of looping sendClientCommand - DFServer drops everything past 20
     -- commands/sec SILENTLY, so a loop could restore four of five people and
     -- still report success for all five.
+    -- The XP% dial, read at click time and sent with the command.
+    --
+    -- It scales EARNED xp only. The saved build's profession and trait grants
+    -- always restore in full, so no value - not even 0 - can land a character
+    -- below a fresh spawn of their own build. The label says "Earned" because an
+    -- admin who reads it as "% of their XP bar" will dial the wrong number: 60
+    -- here does NOT mean the character ends up at 60% of what they had.
+    --
+    -- Primary use is not disaster recovery but season migration: set 60, restore
+    -- the returning players, and they carry a defined fraction of last season's
+    -- work across. Left at 100 it is exactly the behaviour that shipped before.
+    local xpLbl = ISLabel:new(x + PAD + 438, row1Y + 4, 16, "Earned XP %:",
+        0.85, 0.85, 0.85, 1, UIFont.Small, true)
+    xpLbl:initialise(); xpLbl:instantiate()
+    panel:addChild(xpLbl)
+    d.actionButtons[#d.actionButtons + 1] = xpLbl
+
+    local xpEntry = ISTextEntryBox:new(tostring(XP_PCT_DEFAULT), x + PAD + 514, row1Y, 46, BTN_H)
+    xpEntry.align  = "center"
+    xpEntry.valign = "middle"
+    xpEntry:initialise(); xpEntry:instantiate()
+    panel:addChild(xpEntry)
+    d.xpEntry = xpEntry
+    d.actionButtons[#d.actionButtons + 1] = xpEntry
+
+    -- Unparseable falls back to the DEFAULT, deliberately not to 0: a stray
+    -- keystroke in this field must never quietly strip everyone's earned XP. The
+    -- server re-clamps regardless - this is so the admin acts on a sane number.
+    local function xpPercent()
+        local v = tonumber(xpEntry:getText())
+        if v == nil then return XP_PCT_DEFAULT end
+        if v < 0 then v = 0 elseif v > 100 then v = 100 end
+        return math.floor(v + 0.5)
+    end
+
     local restoreBtn = ISButton:new(x + PAD + 300, row1Y, 130, BTN_H, "Restore Memoir", panel,
         withSelection("Restore Memoir", Capability.CanModifyPlayerStatsInThePlayerStatsUI, function(names)
+            -- Captured at CLICK time so the value the admin just looked at is the
+            -- one that gets applied, not whatever the field holds later.
+            local pct = xpPercent()
             local function send()
-                sendClientCommand(getPlayer(), MODULE, "memoirRestore", { usernames = names })
-                notify("Restore Memoir", targetLabel(names))
+                sendClientCommand(getPlayer(), MODULE, "memoirRestore",
+                    { usernames = names, xpPercent = pct })
+                notify(string.format("Restore Memoir (%d%% earned XP)", pct), targetLabel(names))
             end
             -- DFConfirm.ask is a fixed 440x180 modal that splits on newlines but
             -- does NOT wrap, so the text has to stay bounded. That rules out
@@ -475,11 +519,20 @@ local function buildDetail(panel, x, y, w, h)
             else
                 head = "Restore " .. #names .. " selected characters, each from their OWN archive?"
             end
+            local body
+            if pct >= 100 then
+                body = "Current build and XP are overwritten by that snapshot\n"
+                    .. "(anything earned since still adds on top)."
+            else
+                -- Spell out the floor. "I set 0 and they still have skills" is
+                -- otherwise a guaranteed ticket.
+                body = string.format("Earned XP restored at %d%%. Profession and trait grants\n", pct)
+                    .. "still restore in full, so nobody lands below a fresh\n"
+                    .. "spawn of their own build."
+            end
             if DFConfirm and DFConfirm.ask then
-                DFConfirm.ask(head .. "\n\n"
-                    .. "Current build and XP are overwritten by that snapshot\n"
-                    .. "(anything earned since still adds on top).\n\n"
-                    .. "Offline, dead, or already-recalled players are skipped -\n"
+                DFConfirm.ask(head .. "\n\n" .. body .. "\n\n"
+                    .. "Offline / dead / already-recalled players are skipped -\n"
                     .. "per-player results appear in the Console tab.", send)
             else send() end
         end))

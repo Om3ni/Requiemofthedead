@@ -102,6 +102,52 @@ local function runSuite(MR)
     eq("all-success is ok", res.ok, true)
     eq("all-success summary", res.message, "Restored 5 of 5.")
 
+    -- ---- the XP% dial ----------------------------------------------------
+    -- Clamping lives on the SERVER because the dial is a free-text client field,
+    -- so the wire value is attacker-controlled. Absent must mean 100, or every
+    -- pre-dial caller and every older client would silently restore at 0%.
+    local frac = MR.restoreFraction
+    eq("absent percent defaults to 100",           select(2, frac(nil)),   100)
+    eq("absent percent is a full fraction",        select(1, frac(nil)),   1.0)
+    eq("100 is a full fraction",                   select(1, frac(100)),   1.0)
+    eq("60 becomes 0.6",                           select(1, frac(60)),    0.6)
+    eq("0 is honoured, not treated as absent",     select(2, frac(0)),     0)
+    eq("0 yields a zero fraction",                 select(1, frac(0)),     0.0)
+    eq("above 100 clamps down",                    select(2, frac(500)),   100)
+    eq("below 0 clamps up",                        select(2, frac(-1)),    0)
+    eq("garbage falls back to 100, never to 0",    select(2, frac("abc")), 100)
+    eq("a numeric string is accepted",             select(2, frac("60")),  60)
+    eq("fractional input rounds to an integer",    select(2, frac(59.6)),  60)
+
+    -- The dial has to reach EVERY target in a batch, not just the first.
+    local seenPct = {}
+    calls, warned = {}, {}
+    MR.run = function(admin, name, pct)
+        calls[#calls + 1] = name
+        seenPct[name] = pct
+        return { ok = true, message = "Restored " .. tostring(name) }
+    end
+    res = MR.runMany(ADMIN, { "alice", "bob", "carl" }, 60)
+    eq("the dial reaches the first target",  seenPct.alice, 60)
+    eq("the dial reaches the last target",   seenPct.carl,  60)
+    eq("a non-100 dial is surfaced in the summary", res.message,
+        "Restored 3 of 3 - 60% of earned XP.")
+
+    -- At 100 the summary must stay clean - no noise on the common path.
+    arm()
+    res = MR.runMany(ADMIN, { "alice", "bob" }, 100)
+    eq("a 100% dial adds nothing to the summary", res.message, "Restored 2 of 2.")
+
+    -- Single-target still delegates, and still carries the dial.
+    local gotPct = nil
+    calls = {}
+    MR.run = function(admin, name, pct)
+        calls[#calls + 1] = name; gotPct = pct
+        return { ok = true, message = "Restored " .. tostring(name) }
+    end
+    MR.runMany(ADMIN, { "alice" }, 40)
+    eq("the single-target path carries the dial too", gotPct, 40)
+
     -- ---- duplicates ------------------------------------------------------
     -- A name listed twice would restore, then trip its own once-per-life gate
     -- on the second pass and report a failure that is really just the dupe.

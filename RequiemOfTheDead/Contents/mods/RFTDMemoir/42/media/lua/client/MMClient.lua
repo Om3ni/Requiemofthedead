@@ -76,11 +76,16 @@ local function onServerCommand(module, command, args)
             local p = getPlayer()
             if p and not p:isDead() then
                 local okApply, err = pcall(function()
-                    -- fullRestore rides along for admin disaster-recovery restores
-                    -- (MMRestore) so the mirror bypasses the XP knob exactly like
-                    -- the server apply did; nil/absent for normal memoir reads.
+                    -- fullRestore and xpFraction ride along for admin restores
+                    -- (MMRestore) so the mirror resolves the SAME restore fraction
+                    -- the server apply did; both nil/absent for normal memoir reads.
+                    -- xpFraction is not optional here: the server may have applied
+                    -- at 60% from the Players tab dial, and a mirror that defaulted
+                    -- to 100% would compute a higher target and desync the
+                    -- character until relog.
                     MMSnapshotCodec.applyToCharacter(p, args.applyData.snap, args.applyData.chosen,
-                        args.applyData.xpMode, args.applyData.fullRestore)
+                        args.applyData.xpMode, args.applyData.fullRestore,
+                        args.applyData.xpFraction)
                 end)
                 if not okApply then
                     MMwarn("mirror-apply FAILED (server state is applied; relog to resync): " .. tostring(err))
