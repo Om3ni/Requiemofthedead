@@ -18,6 +18,14 @@
 -- x.retro=true so a reader knows the life was in progress when recording
 -- began, rather than inventing a spawn point.
 --
+-- That "a respawn reads as absent" only became TRUE in practice once the poll
+-- learned to re-arm: respawning is not a reconnect, the onlineID does not
+-- change, and the poll's own once-per-connection gate used to stop handleReady
+-- from ever seeing the new character. See the block above poll() for the engine
+-- evidence. Consequence for anyone reading old data: records written by a
+-- respawned life before that fix carry "l":null, so any join on life id has to
+-- treat null as "unknown life", not as a value.
+--
 -- DEATH: OnPlayerDeath NEVER fires on a dedicated server (IsoPlayer.OnDeath
 -- returns early on GameServer.server, and the trigger is further gated by
 -- isLocalPlayer). OnCharacterDeath fires via super.OnDeath() BEFORE that
@@ -206,9 +214,44 @@ end
 local WATCH_MAX_MS     = 5 * 60 * 1000
 local POLL_INTERVAL_MS = 1000
 local readyID    = {}   -- onlineID -> true (handled this connection)
+local gaveUpID   = {}   -- onlineID -> true (never loaded in; do not retry)
 local watchStart = {}   -- onlineID -> ms first seen, still loading in
 local lastPoll   = 0
 
+-- A character this poll already handled whose modData no longer carries
+-- RFTD_LifeId is a NEW character on an OLD connection, because modData died with
+-- the previous IsoPlayer. That is the whole detection.
+local function swappedCharacter(p)
+    local md
+    pcall(function() md = p:getModData() end)
+    return md ~= nil and md.RFTD_LifeId == nil
+end
+
+-- RESPAWN IS NOT A RECONNECT. Verified against the B42 decompile, because the
+-- header's "a respawn reads as absent and starts a new life" was the INTENT and
+-- this poll's own gate defeated it: readyID is keyed by onlineID and cleared only
+-- on disconnect, so handleReady never ran a second time and the entire respawned
+-- life went unrecorded - no RD.SPAWN, and every record it produced carrying
+-- "l":null. Observed live (Kriegan, 2026-07-26: RD.DEATH, then a memoir write by
+-- a character with no chronicle entries at all).
+--
+-- Why there is no event to wait for:
+--   * GameServer.receivePlayerConnect returns immediately when the connection's
+--     player slot is occupied, so a repeat connect is refused outright.
+--   * onlineID comes from connection.getPlayerId(playerIndex) - derived from the
+--     connection and player index, so it is stable for the whole session.
+--   * Server-side registration happens in exactly two places,
+--     receivePlayerConnect and disconnectPlayer. Neither runs on respawn.
+-- What DOES happen is CreatePlayerPacket.processServer constructing a brand new
+-- IsoPlayer and firing OnNewGame. Hooking that is a trap: at trigger time the
+-- character is not in the world, has no square, and has not been assigned an
+-- onlineID yet. So detect the invariant instead of awaiting the event - it also
+-- self-heals if modData is ever lost by some other route.
+--
+-- Idempotent by construction: handleReady mints RFTD_LifeId, so the condition
+-- stops matching on the very next pass and a failure cannot flood RD.SPAWN once
+-- per second. gaveUpID is excluded because that path deliberately never sets a
+-- life id, and re-arming it would turn the 5-minute give-up into a retry loop.
 local function poll()
     local now = RDShared.nowMs()
     if now == 0 or (now - lastPoll) < POLL_INTERVAL_MS then return end
@@ -219,20 +262,34 @@ local function poll()
     for i = 0, players:size() - 1 do
         local p = players:get(i)
         local id = p and p.getOnlineID and p:getOnlineID()
-        if id and not readyID[id] then
-            local sq, inv
-            pcall(function() sq = p:getSquare(); inv = p:getInventory() end)
-            if sq and inv then
-                readyID[id] = true; watchStart[id] = nil
-                handleReady(p)
-            else
-                local start = watchStart[id]
-                if not start then watchStart[id] = now; start = now end
-                if now - start >= WATCH_MAX_MS then
+
+        -- Skip the dead outright. A corpse still answers getSquare() and
+        -- getInventory(), so without this the re-arm below would fire
+        -- handleReady on the body and chronicle a spawn for someone who just
+        -- died. It also keeps the give-up timer from burning down while a player
+        -- sits on the death screen.
+        local dead = false
+        if p then pcall(function() dead = p:isDead() end) end
+
+        if id and not dead then
+            if readyID[id] and not gaveUpID[id] and swappedCharacter(p) then
+                readyID[id] = nil; watchStart[id] = nil
+            end
+            if not readyID[id] then
+                local sq, inv
+                pcall(function() sq = p:getSquare(); inv = p:getInventory() end)
+                if sq and inv then
                     readyID[id] = true; watchStart[id] = nil
-                    print("[RFTDCore] RDLife: gave up waiting for "
-                        .. tostring((p.getUsername and p:getUsername()) or id)
-                        .. " to load in - not instrumented this connection")
+                    handleReady(p)
+                else
+                    local start = watchStart[id]
+                    if not start then watchStart[id] = now; start = now end
+                    if now - start >= WATCH_MAX_MS then
+                        readyID[id] = true; gaveUpID[id] = true; watchStart[id] = nil
+                        print("[RFTDCore] RDLife: gave up waiting for "
+                            .. tostring((p.getUsername and p:getUsername()) or id)
+                            .. " to load in - not instrumented this connection")
+                    end
                 end
             end
         end
@@ -243,7 +300,7 @@ Events.OnTick.Add(poll)
 
 local function prune(p)
     local id = p and p.getOnlineID and p:getOnlineID()
-    if id then readyID[id] = nil; watchStart[id] = nil end
+    if id then readyID[id] = nil; gaveUpID[id] = nil; watchStart[id] = nil end
 end
 if Events.OnDisconnect then Events.OnDisconnect.Add(prune) end
 if Events.OnPlayerDisconnect then Events.OnPlayerDisconnect.Add(prune) end
