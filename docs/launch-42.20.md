@@ -41,9 +41,11 @@ Work through this top to bottom; nothing here is optional except where marked.
    - `WorkshopItems=` + the new RFTDCore item id (plus existing items).
    - `Mods=` + `RFTDCore` (load position does not matter to the engine, but
      listing it first reads well).
-   - Sandbox: set **`RFTDCore.SeasonId`** for the new season (e.g. `S1-2026-STABLE`).
-     Bump this at every wipe - if it is forgotten after a future wipe, Core
-     auto-rolls to `auto-<date>` when it notices world age went backwards.
+   - Sandbox: set **`RFTDCore.SeasonName`** for the new season (e.g. `S1-2026-STABLE`).
+     Change it by hand at every wipe - that rename is the only thing that starts
+     a new season. Nothing is automatic. If it is forgotten, the new world's
+     records land in the previous season's folder and mix; Core warns in the
+     console and pops a notice at the first admin to join, but changes nothing.
    - Leave `DeathCaptureEnabled` ON; it is the kill switch if horde-night
      performance ever points at the death hook.
 5. **Verify all published mods load on 42.20.** Watch server console for

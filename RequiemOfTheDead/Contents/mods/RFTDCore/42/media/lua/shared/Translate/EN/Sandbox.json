@@ -1,8 +1,8 @@
 {
     "Sandbox_RFTDCore": "Requiem of the Dead: Core",
 
-    "Sandbox_RD_SeasonId": "Season id",
-    "Sandbox_RD_SeasonId_tooltip": "Names the current season. Everything Core records is filed under this id; changing it starts a new season directory and closes out the old one. Letters, digits, dash and underscore only (anything else becomes a dash). Bump it at every wipe.",
+    "Sandbox_RD_SeasonName": "Season name",
+    "Sandbox_RD_SeasonName_tooltip": "The folder name for everything this server records. Set it before the first boot, then change it by hand whenever you wipe the world - renaming it is the only thing that starts a new season. Nothing is automatic: records always go to the folder you name here, so if you wipe WITHOUT renaming, the new world's records are added to the old season's folder and the two get mixed together. The server warns you in the console and on screen if it spots that, but it will not change anything for you. Letters, digits, dash and underscore only; anything else becomes a dash.",
 
     "Sandbox_RD_Debug": "Debug logging",
     "Sandbox_RD_Debug_tooltip": "Print [RFTDCore] diagnostic traces to the console. Leave off for normal play.",

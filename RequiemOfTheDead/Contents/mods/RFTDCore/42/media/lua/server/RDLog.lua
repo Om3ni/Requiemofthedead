@@ -34,14 +34,14 @@
 -- Layout (under <cacheDir>/Lua/). Every player owns ONE directory per season
 -- (<SafeName>.<SteamID>, see RDIdentity) holding their permanent record and
 -- their derived-state index side by side:
---   RFTD/season/<SeasonId>/chronicle/p/<Name.SID>/events.jsonl  permanent
---   RFTD/season/<SeasonId>/chronicle/p/<Name.SID>/index.json    rewritten
---   RFTD/season/<SeasonId>/chronicle/world.jsonl                server scope
+--   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/events.jsonl  permanent
+--   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/index.json    rewritten
+--   RFTD/season/<SeasonName>/chronicle/world.jsonl                server scope
 --   RFTD/forensic/<stream>/head.txt                             "<segment> <lines>"
 --   RFTD/forensic/<stream>/000.jsonl .. NNN.jsonl               ring segments
 --
 -- Envelope (one JSON object per line, keys sorted by RDJson):
---   {"v":2,"t":<epoch>,"d":<gameDay>,"s":"<seasonId>","e":"<NS.EVENT>",
+--   {"v":2,"t":<epoch>,"d":<gameDay>,"s":"<seasonName>","e":"<NS.EVENT>",
 --    "m":"<producing mod>","u":"<user>","l":"<lifeId|null>","x":{...payload}}
 --
 -- Payload nests under "x" so caller keys can never clash with the envelope.

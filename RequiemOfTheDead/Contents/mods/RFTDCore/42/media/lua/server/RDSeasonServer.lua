@@ -1,100 +1,74 @@
 -- RDSeasonServer.lua - season bookkeeping (server only).
 --
--- A "season" partitions everything Core writes: the id is a PATH COMPONENT
--- (RFTD/season/<SeasonId>/...), so rolling the season means "start writing
+-- A "season" partitions everything Core writes: the name is a PATH COMPONENT
+-- (RFTD/season/<SeasonName>/...), so starting a new season means "start writing
 -- elsewhere" - nothing migrates, nothing can clobber the previous season, and
 -- old seasons stay readable forever.
 --
--- The id comes from SandboxVars.RFTDCore.SeasonId. NOT global ModData (its
--- durability rides the engine-save cadence - 30-minute saves on the prod dedi,
--- saves OFF locally - and a force-killed restart can hand back a stale value
--- at exactly the moment a wipe makes staleness expensive) and NOT a
--- hand-edited Lua constant (changing a server setting must not require a
--- Workshop republish). Sandbox survives restarts and is admin-editable.
+-- ONE KNOB, NO CLEVERNESS. The season is whatever the server owner typed into
+-- SandboxVars.RFTDCore.SeasonName, always, with no exceptions. Set it before
+-- first boot; change it by hand when you wipe. That is the whole model.
 --
--- Boot sequence (first server tick after the world is up):
---   manifest matches sandbox id  -> normal boot; regression check (below)
---   manifest missing             -> first install: begin the configured season
---   manifest differs             -> season roll: close the old season (write
---       RD.SEASON_END into ITS world stream - timestamped "last observed",
---       honest about the fact there was no graceful shutdown), then begin the
---       new one and rewrite the manifest.
+-- This replaced a manifest-driven design that tracked world age and rolled the
+-- season automatically when it detected a wipe the admin had not accounted for.
+-- It worked exactly as specified and was still the wrong shape: the failure it
+-- produced ("why is my folder called auto-20260726?") was unexplainable to
+-- anyone who had not read this file, and the recovery was non-obvious even to
+-- the person who wrote it. A tool whose safety mechanism generates support
+-- tickets is not safer. The manual version can also go wrong - forget to change
+-- the name after a wipe and two worlds share a folder - but that failure is
+-- legible: the records are in the folder you named, because you named it.
 --
--- Defensive auto-roll: if world age has gone BACKWARDS versus the manifest,
--- the world was wiped and the admin forgot to bump the knob. Roll to
--- "auto-<YYYYMMDD>" rather than appending a fresh world onto last season's
--- record. Ten lines, and it saves an entire season's integrity.
+-- What is left of the safety net is advisory only and changes NOTHING about
+-- where records go: if this season already has records and the world is young,
+-- somebody probably wiped without renaming, so say so - in the console and, on
+-- the first admin to join, on their screen. A dedicated server console is read
+-- by nobody until the damage is already done.
+--
+-- The "already has records" probe is the season's own world stream rather than
+-- a state file, so the simplification did not smuggle a manifest back in under
+-- another name. Existence probing uses cacheFileExists, which roots at
+-- cacheDir/Lua/ - the same root RDLog writes to.
 --
 -- NOTE (write down why, because someone will try): MMShared.WIPE_EPOCH is a
--- DIFFERENT mechanism and must never be merged into the season id. WIPE_EPOCH
--- voids memoir items wherever they lie; SeasonId partitions Core's records.
--- Conflating them means bumping a season silently voids every memoir in the
--- world.
+-- DIFFERENT mechanism and must never be merged into the season name. WIPE_EPOCH
+-- voids memoir items wherever they lie; SeasonName partitions Core's records.
+-- Conflating them means renaming a season silently voids every memoir.
 
 if not isServer() then return end
 
+require "RDShared"
+
 RDSeasonServer = RDSeasonServer or {}
 
-local DIR      = RDShared.DIR
-local MANIFEST = DIR .. "manifest.json"
+local DIR = RDShared.DIR
 
-local current      = nil     -- active season id; nil until boot
-local booted       = false
-local schemaDirty  = true
+-- A world younger than this is treated as fresh for the stale-season warning.
+-- Generous on purpose: the warning is advisory, and crying wolf on an
+-- established season would train people to ignore the one that matters.
+local FRESH_WORLD_HOURS = 24
 
--- Season ids become directory names and manifest fields; keep them boring.
-local function sanitize(id)
-    id = tostring(id or ""):gsub("[^%w%-_]", "-")
-    if id == "" then id = "unset" end
-    if #id > 64 then id = id:sub(1, 64) end
-    return id
+local current     = nil     -- active season name; nil until boot
+local booted      = false
+local schemaDirty = true
+local stale       = false   -- season already had records when a young world booted
+
+-- Season names become directory names; keep them boring.
+local function sanitize(name)
+    name = tostring(name or ""):gsub("[^%w%-_]", "-")
+    if name == "" then name = "unset" end
+    if #name > 64 then name = name:sub(1, 64) end
+    return name
 end
 
-local function configuredId()
-    local ok, v = pcall(function() return SandboxVars.RFTDCore and SandboxVars.RFTDCore.SeasonId end)
+-- Sandbox, not global ModData (its durability rides the engine-save cadence and
+-- a force-killed restart can hand back a stale value at exactly the moment a
+-- wipe makes staleness expensive) and not a Lua constant (changing a server
+-- setting must never require a Workshop republish).
+local function configuredName()
+    local ok, v = pcall(function() return SandboxVars.RFTDCore and SandboxVars.RFTDCore.SeasonName end)
     if ok and type(v) == "string" and v ~= "" then return sanitize(v) end
     return "unset"
-end
-
--- Manifest: flat JSON we both write and read. Pattern-parsed on read, which is
--- safe because we control the writer (sorted keys, sanitized ids, no nesting).
-local function readManifest()
-    local text
-    pcall(function()
-        local r = getFileReader(MANIFEST, false)
-        if not r then return end
-        local parts = {}
-        for _ = 1, 100 do
-            local line = r:readLine()
-            if line == nil then break end
-            parts[#parts + 1] = line
-        end
-        r:close()
-        text = table.concat(parts, "")
-    end)
-    if not text or text == "" then return nil end
-    local season = text:match('"season":"([^"]*)"')
-    if not season then return nil end
-    return {
-        season        = season,
-        worldAgeHours = tonumber(text:match('"worldAgeHours":([%d%.%-]+)')),
-        updatedAt     = tonumber(text:match('"updatedAt":([%d%.%-]+)')),
-    }
-end
-
-local function writeManifest()
-    pcall(function()
-        local w = getFileWriter(MANIFEST, true, false)
-        if w then
-            w:write(RDJson.encode({
-                season        = current,
-                schemaV       = RDEvents.SCHEMA_V,
-                worldAgeHours = RDShared.worldAgeHours(),
-                updatedAt     = RDShared.nowSec(),
-            }) .. "\n")
-            w:close()
-        end
-    end)
 end
 
 local function emitSchema()
@@ -112,30 +86,11 @@ function RDSeasonServer.markSchemaDirty()
     schemaDirty = true
 end
 
-local function autoId()
-    local ok, stamp = pcall(function() return os.date("!%Y%m%d") end)
-    if ok and stamp then return "auto-" .. stamp end
-    return "auto-" .. tostring(RDShared.nowSec())
-end
-
-local function beginSeason(id, why)
-    current = id
-    RDLog.chronicleInto(id, "RD.SEASON_BEGIN", nil, {
-        season = id,
-        why    = why,
-        core   = RDShared.VERSION,
-    })
-    writeManifest()
-    emitSchema()
-    print("[RFTDCore] season '" .. id .. "' active (" .. why .. ")")
-end
-
-local function endSeason(oldId, manifest, why)
-    RDLog.chronicleInto(oldId, "RD.SEASON_END", nil, {
-        season       = oldId,
-        why          = why,
-        lastObserved = manifest and manifest.updatedAt or nil,
-    })
+local function seasonHasRecords(name)
+    local ok, exists = pcall(function()
+        return cacheFileExists(DIR .. "season/" .. name .. "/chronicle/world.jsonl")
+    end)
+    return ok and exists == true
 end
 
 -- Idempotent; safe to call from any write path. Does nothing until the world
@@ -144,23 +99,35 @@ function RDSeasonServer.ensure()
     if booted then return true end
     local ok = pcall(function() return getGameTime() ~= nil end)
     if not ok then return false end
-    booted = true   -- set first: beginSeason writes through RDLog, which calls back here
+    booted = true   -- set first: the write below goes through RDLog, which calls back here
 
-    local cfg      = configuredId()
-    local manifest = readManifest()
-    local wah      = RDShared.worldAgeHours()
+    current = configuredName()
 
-    if not manifest then
-        beginSeason(cfg, "first-boot")
-    elseif manifest.season ~= cfg then
-        endSeason(manifest.season, manifest, "id-changed")
-        beginSeason(cfg, "roll")
-    elseif wah and manifest.worldAgeHours and (wah < manifest.worldAgeHours - 1.0) then
-        endSeason(manifest.season, manifest, "world-age-regressed")
-        beginSeason(autoId(), "auto-roll-after-wipe")
+    local had = seasonHasRecords(current)
+    local age = RDShared.worldAgeHours()
+    stale = had and (age ~= nil) and (age < FRESH_WORLD_HOURS)
+
+    if not had then
+        -- First write into this season opens its world stream, which is also
+        -- what makes the probe above meaningful on the next boot.
+        RDLog.chronicleInto(current, "RD.SEASON_BEGIN", nil, {
+            season = current,
+            core   = RDShared.VERSION,
+        })
+    end
+    emitSchema()
+
+    if stale then
+        print("[RFTDCore] ================================================================")
+        print("[RFTDCore] Season '" .. current .. "' ALREADY HAS RECORDS, but this world is")
+        print("[RFTDCore] only " .. string.format("%.1f", age) .. " hours old. If you wiped, this season's records")
+        print("[RFTDCore] are about to be mixed with the previous world's.")
+        print("[RFTDCore] Fix: set Sandbox Options -> Requiem of the Dead: Core -> Season")
+        print("[RFTDCore] Name to a new value and restart, BEFORE players join.")
+        print("[RFTDCore] Nothing has been changed automatically - the season is what you named it.")
+        print("[RFTDCore] ================================================================")
     else
-        current = cfg
-        if schemaDirty then emitSchema() end
+        print("[RFTDCore] season '" .. current .. "' active")
     end
     return true
 end
@@ -170,10 +137,14 @@ function RDSeasonServer.current()
     return current or "unset"
 end
 
+-- True when this boot looks like a wipe the season name was not updated for.
+function RDSeasonServer.isStale()
+    return stale
+end
+
 -- ---------------------------------------------------------------------------
--- Boot on the first usable tick; keep the manifest's world age fresh hourly so
--- the regression check has something recent to compare against, and re-emit
--- the schema when a late namespace registration dirtied it.
+-- Boot on the first usable tick (the only server event proven to fire on a
+-- dedi), then re-emit the schema if a late namespace registration dirtied it.
 -- ---------------------------------------------------------------------------
 
 local function onBootTick()
@@ -184,9 +155,31 @@ end
 Events.OnTick.Add(onBootTick)
 
 Events.EveryHours.Add(function()
-    if not booted then return end
-    writeManifest()
-    if schemaDirty then emitSchema() end
+    if booted and schemaDirty then emitSchema() end
+end)
+
+-- ---------------------------------------------------------------------------
+-- On-screen warning for the first admin in. Console-only would be read after
+-- the season was already polluted; the whole point is to catch it before
+-- players arrive. Admin rather than any staffer, because changing a sandbox
+-- option is not something a general staff role can act on anyway.
+-- ---------------------------------------------------------------------------
+
+-- Registered at file scope rather than from OnGameStart: that event is not one
+-- of the ones proven to fire on a dedicated server, and RDLife.onPlayerReady is
+-- itself the family's answer to that problem (an OnTick poll). Explicit require
+-- because "RDLife.lua" sorts before this file only by luck of the alphabet.
+require "RDLife"
+
+local told = {}
+
+RDLife.onPlayerReady(function(player)
+    if not stale then return end
+    if not RDAccess.isTopAdmin(player) then return end
+    local name = player and player.getUsername and player:getUsername()
+    if not name or told[name] then return end
+    told[name] = true
+    RDNet.reply(player, RDShared.MODULE, "seasonNotice", { season = current })
 end)
 
 return RDSeasonServer
