@@ -20,12 +20,21 @@ require "ISUI/ISTextEntryBox"
 require "ISUI/ISButton"
 require "ISUI/ISLabel"
 
+-- Core's shared selection model. Explicit rather than riding the alphabetical
+-- walk, per the family rule since the 42.19 boot-log crashes; Reaper
+-- hard-requires Core so this is always resolvable.
+require "RDSelect"
+
 local MODULE = "RFTDReaper"
 local FONT   = UIFont.Code  -- monospace; columns line up better
 
 local NecroTab = {
     rows             = {},
-    selectedIds      = {},
+    -- RDSelect instance, reset per build(). Safe to depend on unconditionally:
+    -- RDSelect lives in Core and Reaper hard-requires Core. (It briefly lived in
+    -- Dragonfly, which Reaper only soft-depends on, and that forced a
+    -- create-inside-build dance to avoid breaking servers without Dragonfly.)
+    sel              = nil,
     listBox          = nil,
     filterCombo      = nil,
     statsLabel       = nil,
@@ -90,17 +99,23 @@ local function applyHighlight(id)
     if z then NecroTab.highlightTarget = z end
 end
 
-local function isCtrlDown()
-    local ok, held = pcall(function()
-        return isKeyDown(Keyboard.KEY_LCONTROL) or isKeyDown(Keyboard.KEY_RCONTROL)
-    end)
-    return ok and held == true
+-- Ids in the order the list is currently DRAWN, which is what a shift range has
+-- to walk: the span the admin sees between two clicks, filter and all. Also
+-- makes selectedIdList() return display order instead of hash order, so a cull
+-- applies top-to-bottom.
+local function orderedIds()
+    local out = {}
+    local lb = NecroTab.listBox
+    if not lb or not lb.items then return out end
+    for _, it in ipairs(lb.items) do
+        if it.item and it.item.id then out[#out + 1] = it.item.id end
+    end
+    return out
 end
 
 local function selectedIdList()
-    local out = {}
-    for id, _ in pairs(NecroTab.selectedIds) do out[#out + 1] = id end
-    return out
+    if not NecroTab.sel then return {} end
+    return NecroTab.sel:list(orderedIds())
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -202,7 +217,7 @@ function NecroList:doDrawItem(y, item, alt)
     local row = item.item
     if not row then return y + self.itemheight end
 
-    if NecroTab.selectedIds[row.id] then
+    if NecroTab.sel and NecroTab.sel:has(row.id) then
         self:drawRect(0, y, self.width, self.itemheight - 1, 0.35, 0.25, 0.55, 0.85)
     elseif alt then
         self:drawRect(0, y, self.width, self.itemheight - 1, 0.18, 0.08, 0.08, 0.08)
@@ -219,11 +234,15 @@ function NecroList:onMouseDown(x, y)
     local item = self.items[idx]
     if not item or not item.item then return end
     local id = item.item.id
+    if not NecroTab.sel then return end
 
-    if isCtrlDown() then
-        NecroTab.selectedIds[id] = not NecroTab.selectedIds[id] or nil
-    else
-        NecroTab.selectedIds = { [id] = true }
+    local ctrl, shift = RDSelect.modifiers()
+    NecroTab.sel:click(id, orderedIds(), ctrl, shift)
+
+    -- Highlight only when the click resolved to a single zombie. Highlighting
+    -- one of forty is noise, and that is also why a plain click (which always
+    -- resolves to one) behaves exactly as it did before this was shared out.
+    if NecroTab.sel:count() == 1 and NecroTab.sel:has(id) then
         self.selected = idx
         applyHighlight(id)
     end
@@ -286,7 +305,7 @@ end
 -- ─────────────────────────────────────────────────────────────────────────
 
 local function build(spec, panel, x, y, w, h)
-    NecroTab.selectedIds = {}
+    NecroTab.sel = RDSelect.new()
     NecroTab.thresholdEntries = {}
     clearHighlight()
 
@@ -327,7 +346,7 @@ local function build(spec, panel, x, y, w, h)
             return
         end
         sendClientCommand(getPlayer(), MODULE, "cullIds", { ids = ids })
-        NecroTab.selectedIds = {}
+        NecroTab.sel:clear()
     end)
     mkBtn("Find siblings", PAD + 390, 110, function()
         local ids = selectedIdList()
@@ -343,14 +362,12 @@ local function build(spec, panel, x, y, w, h)
                 local idGap = math.abs(e.id - seed.id)
                 local dx, dy = e.x - seed.x, e.y - seed.y
                 if idGap <= 15 and (dx*dx + dy*dy) <= 2500 then
-                    NecroTab.selectedIds[e.id] = true
+                    NecroTab.sel:add(e.id)
                 end
             end
         end
         if DFFeedback then
-            local n = 0
-            for _ in pairs(NecroTab.selectedIds) do n = n + 1 end
-            DFFeedback.good("Selected " .. n .. " siblings.")
+            DFFeedback.good("Selected " .. NecroTab.sel:count() .. " siblings.")
         end
     end)
     mkBtn("Teleport to",   PAD + 510, 100, function()
