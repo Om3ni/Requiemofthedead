@@ -48,8 +48,11 @@ local clockMs, clockSec = 1000, 1000
 local randSeq = 0
 function ZombRand() randSeq = randSeq + 1; return randSeq end
 
+local gameDay = 1.0
 RDShared = { mods = {}, nowMs = function() return clockMs end,
-             nowSec = function() return clockSec end }
+             nowSec = function() return clockSec end,
+             gameDay = function() return gameDay end,
+             debugOn = function() return false end }
 
 local chronicled = {}   -- list of event names, in order
 RDLog = {
@@ -247,6 +250,54 @@ a:respawnAsNewCharacter()
 spawn, login = counts(tick())
 eq("only the respawned player re-spawns", spawn, 1)
 eq("distinct life ids per player", a._md.RFTD_LifeId ~= b._md.RFTD_LifeId, true)
+
+-- ---------------------------------------------------------------------------
+-- The hourly sampler must not sample a corpse
+--
+-- A player who dies and does NOT log out stays in getOnlinePlayers(), and
+-- getHoursSurvived() keeps climbing on the dead character. Observed live
+-- 2026-07-28: a life died at day 7.08 with hours=49.26, the client was left
+-- connected overnight, and the sampler wrote RD.SAMPLE for ten more game days
+-- under that dead life's id, ending at hours=300.37. Chronicle records are
+-- permanent, so those would tell a future reader the life lasted 300 hours.
+-- RD.DEATH is the last thing a life may record.
+-- ---------------------------------------------------------------------------
+
+local sample = handlers.EveryHours
+eq("an hourly sampler is registered", type(sample), "function")
+
+-- Advance a game day and run one sampler pass.
+local function hour()
+    gameDay = gameDay + 2      -- past the 1.0-day resample threshold
+    chronicled = {}
+    local ok, e = pcall(sample)
+    if not ok then
+        fail = fail + 1
+        print("FAIL EveryHours threw: " .. tostring(e))
+    end
+    local n = 0
+    for _, ev in ipairs(chronicled) do if ev == "RD.SAMPLE" then n = n + 1 end end
+    return n
+end
+
+local s1 = newPlayer(401, "Sampled")
+online = { s1 }
+tick()                                   -- become ready (mints a life id)
+eq("sampler subject is ready", type(s1._md.RFTD_LifeId), "string")
+
+eq("a live ready player is sampled", hour(), 1)
+
+s1._dead = true
+eq("a corpse is NOT sampled", hour(), 0)
+eq("a corpse is still not sampled an hour later", hour(), 0)
+
+-- Respawn: the poll re-arms and the new life becomes sampleable again, under a
+-- NEW id - which is the whole point of keeping the two guards consistent.
+local deadLife = s1._md.RFTD_LifeId
+s1:respawnAsNewCharacter()
+tick()
+eq("the respawned life has a new id", s1._md.RFTD_LifeId ~= deadLife, true)
+eq("the respawned life is sampled again", hour(), 1)
 
 print(string.format("RDLife: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

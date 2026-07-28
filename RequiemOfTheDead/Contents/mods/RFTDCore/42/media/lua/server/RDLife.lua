@@ -391,7 +391,19 @@ Events.EveryHours.Add(function()
     for i = 0, players:size() - 1 do
         local p = players:get(i)
         local id = p and p.getOnlineID and p:getOnlineID()
-        if id and readyID[id] then
+
+        -- Skip the dead, for the same reason poll() does - a player who dies
+        -- and does not log out STAYS in getOnlinePlayers(), and getHoursSurvived()
+        -- keeps climbing on the corpse. Observed 2026-07-28: a character died at
+        -- day 7.08 with hours=49.26 and, because the client was left connected
+        -- overnight, went on producing RD.SAMPLE records for ten more game days
+        -- under the dead life's id, ending at hours=300.37. Those records are
+        -- permanent and would tell a future reader that life lasted 300 hours
+        -- rather than 49. RD.DEATH is the last thing a life may record.
+        local dead = false
+        if p then pcall(function() dead = p:isDead() end) end
+
+        if id and not dead and readyID[id] then
             local md
             pcall(function() md = p:getModData() end)
             if md then
