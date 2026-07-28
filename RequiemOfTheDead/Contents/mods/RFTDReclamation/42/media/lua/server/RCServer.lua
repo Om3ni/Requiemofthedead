@@ -432,6 +432,55 @@ local function hDismantled(player, args)
     end
 end
 
+-- Bulk sibling of the above, for the admin tab's multi-select delete. ONE
+-- command carrying N reports rather than N commands, and the reason is the
+-- ledger rather than performance: the dispatcher below drops everything past
+-- RATE_MAX per second SILENTLY, so a client loop could delete ten vehicles and
+-- ledger only the first few. An audit that under-reports a destructive staff
+-- action is worse than no audit, because it reads as authoritative.
+--
+-- The vanilla "vehicle"/remove commands that actually destroy the cars cannot be
+-- batched - they are the engine's own channel, one per vehicle - so the client
+-- sends those individually and this one line covers the whole set.
+--
+-- Capped independently of whatever the client believes: args arrive untrusted,
+-- and hDismantled prunes claim-index entries, so an unbounded list is an
+-- unbounded write loop on the tick thread.
+local DISMANTLE_BATCH_MAX = 16
+
+local function hDismantledMany(player, args)
+    local list = args and args.reports
+    if type(list) ~= "table" then return end
+
+    -- STAFF ONLY, unlike its single-report sibling. hDismantled is deliberately
+    -- ungated because a field dismantle is an ordinary player action, but it
+    -- also prunes a claim-index entry from client-supplied owner/claimId - so a
+    -- forged report can unclaim someone else's car in the index. That hole
+    -- predates this handler; what is new is that ONE bulk command could work it
+    -- sixteen times instead of once, and the only legitimate sender is the admin
+    -- panel. Gate the amplifier, leave the field path alone.
+    if not RCShared.isAdmin(player) then
+        RCAudit.log("VEHICLE-DELETE-REFUSED", player, { via = "panel-bulk", n = #list })
+        return
+    end
+
+    local n = 0
+    for _, rep in ipairs(list) do
+        if n >= DISMANTLE_BATCH_MAX then
+            print("[RC] dismantledMany: batch capped at " .. DISMANTLE_BATCH_MAX
+                .. " for " .. tostring(player and player.getUsername and player:getUsername()))
+            break
+        end
+        if type(rep) == "table" then
+            n = n + 1
+            -- pcall per report: one malformed entry must not abandon the rest of
+            -- the batch, leaving cars destroyed in the world and unledgered.
+            local ok, err = pcall(hDismantled, player, rep)
+            if not ok then print("[RC] dismantledMany entry failed: " .. tostring(err)) end
+        end
+    end
+end
+
 -- Engine parts actually pulled (RCEngineLock's ISTakeEngineParts telemetry).
 -- The lock should stop every non-staff player BEFORE this point, so a
 -- BYPASS-flagged line = a defeated client. admin is decided by OUR access
@@ -522,6 +571,7 @@ local handlers = {
     myvehicles  = hMyVehicles,
     releaseclaim = hReleaseClaim,
     dismantled  = hDismantled,
+    dismantledMany = hDismantledMany,
     enginePull  = hEnginePull,
     used        = hUsed,
     spawnvehicle = hSpawnVehicle,
