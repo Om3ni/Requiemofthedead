@@ -12,9 +12,10 @@
 --
 -- Output (under the server cachedir, Lua/):
 --   Memoirs/<SafeName>/events.jsonl  append-only full history, one JSON obj/line
---   Memoirs/<SafeName>/latest.json   newest snapshot-bearing record (overwritten;
---                                    derived convenience - rebuildable from the
---                                    last events.jsonl line; restore reads this)
+--   Memoirs/<SafeName>/latest.json   the RECOVERY POINT: newest WRITE, overwritten.
+--                                    Restores deliberately do NOT move it (see the
+--                                    note at the write site); derived convenience,
+--                                    rebuildable from the last WRITE in events.jsonl
 --   Memoirs/_all.log                 slim human pipe timeline (no heavy payloads):
 --                                    <epochSec>|<gameDay>|<EVENT>|user=<name>|k=v...
 -- Nested dirs are ENGINE-GUARANTEED: getFileWriter runs File.mkdirs() on the
@@ -256,9 +257,24 @@ function MMAudit.log(player, event, data)
     local jsonLine = jsonEncode(rec)
     writeLine(userWriter(safe, "events.jsonl", true), jsonLine)
 
-    -- 2) latest.json - overwritten whenever this event carries a snapshot; the
-    -- one-file answer to "what does this player have right now" (restore + web)
-    if rec.snap then
+    -- 2) latest.json - THE RECOVERY POINT: the player's last voluntary save.
+    --
+    -- WRITE only, and the "only" is the whole point. This used to fire for any
+    -- snapshot-bearing event, which meant every admin RESTORE_OK overwrote the
+    -- recovery point with itself. The snapshot inside stayed correct, but the
+    -- ENVELOPE then described the restore rather than the write, so:
+    --   * "how stale is this archive" answered with the restore's timestamp.
+    --     Observed live 2026-07-28: latest.json reading day 18.52 while holding
+    --     a snapshot written on day 3.19.
+    --   * archiveT chained restore -> restore -> restore instead of naming the
+    --     write it ultimately came from.
+    -- That matters because the whole player-facing rule is "your last written
+    -- memoir is your restore path", and this file is what answers when that was.
+    --
+    -- Restores still append to events.jsonl above, snapshot and all - that record
+    -- is worth keeping and is where a restore's provenance belongs. They just no
+    -- longer move the point MMRestore.readLatest recovers from.
+    if rec.snap and event == "WRITE" then
         writeLine(userWriter(safe, "latest.json", false), jsonLine)
     end
 
