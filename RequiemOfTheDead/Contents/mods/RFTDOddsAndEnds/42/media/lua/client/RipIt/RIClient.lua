@@ -43,25 +43,48 @@
 -- depend on a sibling, so each carries its own list and either can be deleted
 -- outright. If you add a recipe here, add it there too, or it will run at
 -- vanilla speed and nobody will know why.
+--
+-- ASRipIt is deliberately a SUPERSET: it still scales CutUpBelt and the three
+-- CutUpLeather_* that this file dropped. Those recipes did not go away, only
+-- the bulk button for them did (see the note on RIP_RECIPES), and you still
+-- craft them by hand from the panel - so they should still run at the tuned
+-- speed. Do not "resync" the two lists by deleting them there.
 
 if isServer() then return end
 
 require "OEShared"
+require "RDShared"
 require "ISUI/ISInventoryPaneContextMenu"
 
 RipIt = RipIt or {}
 local RI = RipIt
 
--- Two sets, because they are two different asks. RIP reduces cloth to rags and
--- strips; CUT takes the things you cut rather than tear - belts and tanned
--- hides - down to leather strips.
+-- One set. Ripping only.
 --
--- CutLeatherInHalf is deliberately ABSENT: it subdivides a large hide into two
--- mediums rather than salvaging it, so it competes with CutUpLeather_* for the
--- same inputs and a "cut all" that hit it would quietly halve your hides
--- instead of stripping them.
+-- THERE WAS A CUT SET AND IT WAS A TRAP - do not add it back without reading
+-- this. It listed CutUpBelt and CutUpLeather_Large/Medium/Small, and the reason
+-- no such feature exists anywhere is that the inputs are not junk:
+--
+--   base:scrapasbelt, the whole CutUpBelt population, is seven items and six of
+--   them are gear you went looking for - HolsterDouble, Holster_Hide, and the
+--   four AmmoStrap_* bandoliers. Exactly one, Belt2, is a plain belt. A "cut
+--   all" button is therefore mostly an offer to turn your holsters and
+--   bandoliers into a buckle and a leather strip each. The recipe's IsEmpty
+--   flag only spares them while they are loaded, so an empty bandolier between
+--   runs is fair game.
+--
+--   CutUpLeather_* are Tags = AnySurfaceCraft at time = 300, and tanned hide is
+--   a scarce multi-use input. You are already standing at a bench with the
+--   craft panel open when you touch those; there is no pile to sweep.
+--
+-- Ripping is worth it precisely because it has the pile the cut set lacks: a
+-- corpse wardrobe is bulk junk with no alternative use and a 40-tick recipe.
+--
+-- Leather clothing is NOT lost with the cut set gone - RipDenimClothing carries
+-- an itemMapper that turns Jacket_Leather, Trousers_LeatherBlack and the rest
+-- straight into LeatherStrips. Shoes genuinely lost their leather salvage
+-- around 42.11 and no recipe below brings it back.
 RI.RIP_RECIPES = { "RipClothing", "RipDenimClothing", "RipSheets" }
-RI.CUT_RECIPES = { "CutUpBelt", "CutUpLeather_Large", "CutUpLeather_Medium", "CutUpLeather_Small" }
 
 function RI.isEnabled()
     return OEShared.enabled("RipItEnable")
@@ -153,19 +176,42 @@ end
 -- trip this. Without this check, the one way a favourite or a worn garment
 -- could still be destroyed is the logic quietly substituting it for our pick -
 -- so this guards exactly the failure you would never forgive.
+-- CraftRecipeData.getAllNotKeepInputItems() is the list, and it took being
+-- wrong TWICE to land on it. Both wrong answers failed the same way - an empty
+-- list, every candidate rejected, no menu option at all, and not one error in
+-- the log - so neither looked like a bug. Read this before "improving" it:
+--
+--   getAllInputItems() minus getAllPutBackInputItems() reads as "everything,
+--   minus the tools handed back". It is not. getAllPutBackInputItems keeps an
+--   input unless `dontPutBack()`, which is the DontPutBack FLAG, and none of
+--   these recipes set it - so put-back contains every input, the difference is
+--   empty, and nothing is ever rippable.
+--
+--   getAllDestroyInputItems() reads as "what gets consumed". It is not.
+--   ItemApplyMode has THREE values - Normal, Keep, Destroy (ItemApplyMode.java)
+--   - and isDestroy() is `mode == Destroy` exactly (InputScript.java:209).
+--   Destroy is an opt-in special case; an ordinary consumed input is the
+--   DEFAULT, Normal (InputScript.java:74). RipClothing declares no mode, so it
+--   is Normal, so getAllDestroyInputItems() is empty for it forever. This is
+--   the one that shipped, and the diagnostic that caught it read
+--   `inputs=1 doomed=0` - applied items present, destroy-filtered list empty.
+--
+-- getAllNotKeepInputItems() (CraftRecipeData.java:1661) filters on
+-- `inputScript.isKeep()`, so it drops only mode:keep - which IS how the tools
+-- are declared (`tags[base:scissors;base:sharpknife] mode:keep`) - and keeps
+-- Normal and Destroy alike. That is the consumed set, tools excluded, which is
+-- exactly the question this gate is asking.
 local function resolvedSetIsSafe(logic, item, playerObj)
     local ok, safe = pcall(function()
         local data = logic:getRecipeData()
         if not data then return false end
-        local inputs  = data:getAllInputItems()
-        local putBack = data:getAllPutBackInputItems()
-        if not inputs then return false end
+        local doomed = data:getAllNotKeepInputItems()
+        if not doomed then return false end
 
         local ourItemConsumed = false
-        for i = 1, inputs:size() do
-            local it = inputs:get(i - 1)
-            local isTool = putBack and putBack:contains(it)
-            if it and not isTool then
+        for i = 1, doomed:size() do
+            local it = doomed:get(i - 1)
+            if it then
                 if it == item then ourItemConsumed = true end
                 if not isRippable(it, playerObj) then return false end
             end
@@ -175,13 +221,31 @@ local function resolvedSetIsSafe(logic, item, playerObj)
     return ok and safe == true
 end
 
--- Full confirmation: everything above plus tools in reach, skill, craft
--- surface, somewhere to put the output - and that the set the engine resolved
--- is the set we meant. Running the last gate here too keeps the count in the
--- menu label honest: it promises only what will actually be acted on.
+-- Full confirmation for the MENU: tools in reach, skill, craft surface,
+-- somewhere to put the output - and that the set the engine resolved is the
+-- set we meant. The safety gate belongs here as well as at execution now that
+-- it is built on getAllDestroyInputItems and actually answers the question; it
+-- keeps the count in the label honest rather than promising work that will be
+-- refused a moment later.
+-- The surface is set here for PARITY, and right now it changes nothing you can
+-- see - say so plainly rather than let a future reader mistake it for load
+-- bearing. All three RIP recipes are Tags = InHandCraft, which never consults
+-- it.
+--
+-- It stays because the menu must not be stricter than the executor it exists to
+-- predict. Leaving setIsoObject unset does not mean "no surface bonus", it means
+-- AnySurfaceCraft recipes are refused outright: canPerformCurrentRecipe zeroes
+-- itself on `isAnySurfaceCraft() and not isCharacterInRangeOfWorkbench()`
+-- (BaseCraftingLogic.java:876), and HandcraftLogic overrides that range test to
+-- `isoObject ~= nil and dist < 3` (HandcraftLogic.java:226) - false forever with
+-- no isoObject. That is how the old cut set could offer a belt and never a hide.
+-- Both the engine's own equivalent (CraftRecipeManager.getUniqueRecipeItems,
+-- line 1113) and RI.run below set it. Add one AnySurfaceCraft recipe above and
+-- this line is the difference between working and silently absent.
 local function canRun(playerObj, recipe, item, containers)
     local ok, result = pcall(function()
         local logic = HandcraftLogic.new(playerObj, nil, nil)
+        logic:setIsoObject(logic:findCraftSurface(playerObj, 2))
         logic:setContainers(containers)
         logic:setRecipeFromContextClick(recipe, item)
         if not logic:canPerformCurrentRecipe() then return false end
@@ -199,17 +263,68 @@ end
 -- First-match is intentional: a leather jacket answers to RipDenimClothing and
 -- nothing else in the set today, but if that stops being true, the set order
 -- declared above is the tiebreak and it is readable.
+-- TEMPORARY DIAGNOSTIC - delete once the gate is understood.
+--
+-- "rip=0" says everything was rejected but not by WHICH gate, and the gates
+-- fail silently by design (pcall + boolean), so there is nothing to read. This
+-- re-walks one rejected item and reports each gate's own answer. Only ever
+-- called when RFTDCore.Debug is on, and only for the first few rejects, so it
+-- costs nothing in normal play and cannot flood the log.
+local function explainReject(playerObj, recipe, item, containers)
+    local bits = { tostring(item:getFullType()) }
+    local function add(label, fn)
+        local ok, v = pcall(fn)
+        bits[#bits + 1] = label .. "=" .. (ok and tostring(v) or "THREW")
+    end
+
+    add("valid", function() return CraftRecipeManager.isItemValidForRecipe(recipe, item, playerObj) end)
+    add("isTool", function() return CraftRecipeManager.isItemToolForRecipe(recipe, item, playerObj) end)
+    add("onTest", function() return recipe:OnTestItem(item, playerObj) end)
+
+    local logic
+    add("logic", function()
+        logic = HandcraftLogic.new(playerObj, nil, nil)
+        logic:setIsoObject(logic:findCraftSurface(playerObj, 2))
+        logic:setContainers(containers)
+        logic:setRecipeFromContextClick(recipe, item)
+        return "built"
+    end)
+    if not logic then return table.concat(bits, " ") end
+
+    add("canPerform", function() return logic:canPerformCurrentRecipe() end)
+
+    -- Answered: appliedItems IS populated by canPerformCurrentRecipe - the first
+    -- run of this printed `inputs=1 doomed=0`, which is what proved the filter
+    -- was the problem and not the timing.
+    add("consumed", function()
+        local data = logic:getRecipeData()
+        if not data then return "noData" end
+        local doomed = data:getAllNotKeepInputItems()
+        if not doomed then return "nil" end
+        local mine = false
+        for i = 1, doomed:size() do
+            if doomed:get(i - 1) == item then mine = true break end
+        end
+        return doomed:size() .. (mine and " (ours)" or " (NOT ours)")
+    end)
+    add("inputs", function()
+        local data = logic:getRecipeData()
+        local all = data and data:getAllInputItems()
+        return all and all:size() or "nil"
+    end)
+
+    return table.concat(bits, " ")
+end
+
 function RI.gatherAll(playerObj)
-    local out = { rip = {}, cut = {} }
+    local out = {}
     if not playerObj then return out end
     local containers = ISInventoryPaneContextMenu.getContainers(playerObj)
     if not containers then return out end
 
-    local sets = {
-        { key = "rip", recipes = resolve(RI.RIP_RECIPES) },
-        { key = "cut", recipes = resolve(RI.CUT_RECIPES) },
-    }
+    local recipes = resolve(RI.RIP_RECIPES)
 
+    local explained = 0
     local seen = {}
     for i = 0, containers:size() - 1 do
         local cont = containers:get(i)
@@ -219,20 +334,37 @@ function RI.gatherAll(playerObj)
                 local item = items:get(j)
                 local id = item and item:getID()
                 if item and not seen[id] and isRippable(item, playerObj) then
-                    for _, set in ipairs(sets) do
-                        if seen[id] then break end
-                        for _, recipe in ipairs(set.recipes) do
-                            if feeds(recipe, item, playerObj) and canRun(playerObj, recipe, item, containers) then
+                    local fed = nil
+                    for _, recipe in ipairs(recipes) do
+                        if feeds(recipe, item, playerObj) then
+                            fed = recipe
+                            if canRun(playerObj, recipe, item, containers) then
                                 seen[id] = true
-                                table.insert(out[set.key], { item = item, recipe = recipe })
+                                table.insert(out, { item = item, recipe = recipe })
                                 break
                             end
                         end
+                    end
+                    -- TEMPORARY: only a GENUINE candidate is worth explaining -
+                    -- one a recipe accepts that still ended up nowhere. The first
+                    -- cut of this explained anything that cleared isRippable, so
+                    -- the cap of three burned on a baseball bat, a pocket knife
+                    -- and a keyring, all correctly rejected, and said nothing.
+                    if not seen[id] and fed and explained < 3 and RDShared.debugOn() then
+                        explained = explained + 1
+                        pcall(function()
+                            RDShared.dbg("RIPIT reject: " .. explainReject(playerObj, fed, item, containers))
+                        end)
                     end
                 end
             end
         end
     end
+    -- Silent unless RFTDCore.Debug is on. The option simply not appearing is
+    -- indistinguishable from "nothing here is rippable", so this is the only
+    -- way to tell an empty room from a broken gate without a second boot.
+    RDShared.dbg("RIPIT: containers=" .. tostring(containers:size())
+        .. " rip=" .. tostring(#out))
     return out
 end
 
@@ -351,11 +483,8 @@ end
 -- reach further than the loot window would. Right-clicking the ground does not
 -- give you longer arms - it just saves you the click into the panel.
 local function offer(context, playerObj, newTooltip)
-    local found = RI.gatherAll(playerObj)
-    addOption(context, playerObj, found.rip,
+    addOption(context, playerObj, RI.gatherAll(playerObj),
               "ContextMenu_OE_RipAll", "ContextMenu_OE_RipAll_Tooltip", newTooltip)
-    addOption(context, playerObj, found.cut,
-              "ContextMenu_OE_CutAll", "ContextMenu_OE_CutAll_Tooltip", newTooltip)
 end
 
 local function invTooltip() return ISInventoryPaneContextMenu.addToolTip() end
