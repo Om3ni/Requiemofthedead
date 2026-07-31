@@ -110,6 +110,38 @@ local function squareFor(args)
     return getCell() and getCell():getGridSquare(args.x, args.y, args.z) or nil
 end
 
+-- World clock in hours. getGameTime():getWorldAgeHours() is GameTime.java:829
+-- and is what vanilla itself uses from Lua (ISButtonPrompt.lua:520). Stored
+-- absolute rather than as a countdown so it survives restarts without anyone
+-- having to tick it down.
+local function nowHours()
+    local ok, h = pcall(function() return getGameTime():getWorldAgeHours() end)
+    return ok and h or 0
+end
+
+local function expired(d)
+    return d and d.expiresAt and nowHours() >= d.expiresAt
+end
+
+-- A Reliquary is bound to the tile it was placed on. Anything that relocates
+-- it destroys it, contents and all.
+--
+-- This is the AUTHORITATIVE half of "the player cannot move it" - the client
+-- also refuses to offer the pickup, but that is a courtesy and this is the
+-- rule. Deliberately destroy-on-move rather than block-every-move: blocking
+-- means enumerating every route by which an object can be relocated, now and
+-- in every future build, and missing one silently grants what the whole design
+-- forbids. Destroying needs only to notice that the tile changed.
+local function moved(obj, d)
+    if not d or not d.origin then return false end
+    local ok, differs = pcall(function()
+        local sq = obj:getSquare()
+        if not sq then return false end
+        return sq:getX() ~= d.origin.x or sq:getY() ~= d.origin.y or sq:getZ() ~= d.origin.z
+    end)
+    return ok and differs == true
+end
+
 local function register(obj, x, y, z)
     if not RL.getData(obj) then return end
     local key = RL.keyFor(x, y, z)
@@ -154,6 +186,11 @@ end
 local CAP  = "AddItem"     -- the gate Dragonfly uses for its item-spawn handlers
 local DOWN = "Reliquary is switched off on this server."
 
+-- NOT DEAD CODE, despite having no caller since 2026-07-30. The client's
+-- "Place Reliquary here" option was removed before the first Workshop push -
+-- placement is to become a spawned item placed deliberately, and this handler
+-- is what that item will call. Registered and gated exactly as before, so the
+-- item is a client-side change only. Deleting it would mean rebuilding it.
 RDNet.register(OEShared.MODULE, "reliquaryPlace", { capability = CAP, rate = 5 }, function(player, args)
     if not RL.isEnabled() then return deny(player, "reliquaryPlace", DOWN) end
     args = args or {}
@@ -171,10 +208,16 @@ RDNet.register(OEShared.MODULE, "reliquaryPlace", { capability = CAP, rate = 5 }
     obj:setContainer(cont)
 
     local whitelist = tostring(args.whitelist or "")
+    local hours = tonumber(args.hours) or RL.defaultHours()
     obj:getModData()[RL.MODKEY] = {
         whitelist = whitelist,
         filled = false,
         owner = player:getUsername(),
+        -- The tile it belongs to. Any later disagreement with this is a move,
+        -- and a move is fatal.
+        origin = { x = args.x, y = args.y, z = args.z },
+        -- 0 or less means "no expiry" - a Reliquary that waits indefinitely.
+        expiresAt = (hours > 0) and (nowHours() + hours) or nil,
     }
     obj:transmitModData()
     obj:transmitCompleteItemToClients() -- mirrors vanilla build: push the new object to clients
@@ -200,6 +243,24 @@ RDNet.register(OEShared.MODULE, "reliquarySetPlayer", { capability = CAP, rate =
          "whitelist=" .. (data.whitelist == "" and "<staff-only>" or data.whitelist))
     ok(player, "reliquarySetPlayer", data.whitelist == "" and "Access set to staff-only."
         or ("Access granted to: " .. data.whitelist .. " (+ staff)."))
+end)
+
+RDNet.register(OEShared.MODULE, "reliquarySetTimer", { capability = CAP, rate = 5 }, function(player, args)
+    if not RL.isEnabled() then return deny(player, "reliquarySetTimer", DOWN) end
+    args = args or {}
+    local sq = squareFor(args)
+    if not sq then return deny(player, "reliquarySetTimer", "Invalid square.") end
+    local obj, data = findBox(sq)
+    if not obj then return deny(player, "reliquarySetTimer", "No Reliquary on that tile.") end
+
+    local hours = tonumber(args.hours) or 0
+    data.expiresAt = (hours > 0) and (nowHours() + hours) or nil
+    obj:transmitModData()
+    flog("TIMER", player:getUsername(), RL.keyFor(args.x, args.y, args.z),
+         hours > 0 and (hours .. "h") or "never")
+    ok(player, "reliquarySetTimer", hours > 0
+        and ("Reliquary expires in " .. hours .. " hour(s).")
+        or "Reliquary will not expire.")
 end)
 
 RDNet.register(OEShared.MODULE, "reliquaryFill", { capability = CAP, rate = 2 }, function(player, args)
@@ -279,8 +340,19 @@ local function poll()
     for key, box in pairs(boxes) do
         local obj = box.obj
         local cont = obj and obj:getContainer()
+        local d = obj and RL.getData(obj)
         if not obj or not cont or not obj:getSquare() then
             boxes[key] = nil -- gone/unloaded; LoadGridsquare re-registers if it returns
+        elseif moved(obj, d) or expired(d) then
+            -- Both are terminal and both take the contents with them: a moved
+            -- Reliquary was tampered with, an expired one was not collected in
+            -- time. Logged distinctly so the audit says which.
+            flog(moved(obj, d) and "MOVED" or "EXPIRED",
+                 nearestPlayer(box.x, box.y, box.z), key,
+                 "destroyed with " .. tostring(cont:getItems():size()) .. " item(s)")
+            pcall(function() cont:removeAllItems() end)
+            obj:getSquare():transmitRemoveItemFromSquare(obj)
+            boxes[key] = nil
         else
             local now = snapshot(cont)
             local actor

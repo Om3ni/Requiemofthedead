@@ -63,9 +63,22 @@ RL.CONTAINER_TYPE = "crate"
 -- items. 10k is far above any legitimate handover.
 RL.MAX_PER_FILL = 10000
 
+-- The item staff spawn and place. Placing it is what creates the world
+-- container; the item is consumed in the act.
+RL.ITEM = "RFTDOddsAndEnds.Reliquary"
+
 -- Master kill switch, per the Odds & Ends enable model.
 function RL.isEnabled()
     return OEShared.enabled("ReliquaryEnable")
+end
+
+-- Hours a freshly placed Reliquary waits before it gives up and takes its
+-- contents with it. 0 means it waits forever.
+function RL.defaultHours()
+    local sv = SandboxVars and SandboxVars.RFTDOddsAndEnds
+    local v = sv and tonumber(sv.ReliquaryDefaultHours)
+    if v == nil then return 72 end
+    return v
 end
 
 -- ---------------------------------------------------------------------------
