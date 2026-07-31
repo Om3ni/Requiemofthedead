@@ -22,6 +22,15 @@ option RFTDOddsAndEnds.ReliquaryEnable
     page = OE_Reliquary,
     translation = OE_ReliquaryEnable,
 }
+option RFTDOddsAndEnds.ReliquaryDefaultHours
+{
+    type = integer,
+    min = 0,
+    max = 8760,
+    default = 72,
+    page = OE_Reliquary,
+    translation = OE_ReliquaryDefaultHours,
+}
 
 /* ============================================================
    Action Speed - per-family timed-action scaling. A world rule,
@@ -169,36 +178,76 @@ option RFTDOddsAndEnds.RipItEnable
 }
 
 /* ============================================================
-   Timber - wooden things weigh what you decide they weigh.
+   Lumberjack - wooden things weigh what you decide they weigh.
    Multipliers against the VANILLA weight, never against the
-   current one: TBWeight keeps the originals, so these are
+   current one: LJWeight keeps the originals, so these are
    absolute and reversible. 1.0 = vanilla.
    ============================================================ */
 
-option RFTDOddsAndEnds.TimberEnable
+option RFTDOddsAndEnds.LumberjackEnable
 {
     type = boolean,
     default = true,
-    page = OE_Timber,
-    translation = OE_TimberEnable,
+    page = OE_Lumberjack,
+    translation = OE_LumberjackEnable,
 }
-option RFTDOddsAndEnds.TimberBulkWeight
+option RFTDOddsAndEnds.LumberjackBulkWeight
 {
     type = double,
     min = 0.05,
     max = 5.0,
     default = 0.5,
-    page = OE_Timber,
-    translation = OE_TimberBulkWeight,
+    page = OE_Lumberjack,
+    translation = OE_LumberjackBulkWeight,
 }
-option RFTDOddsAndEnds.TimberWoodWeight
+option RFTDOddsAndEnds.LumberjackWoodWeight
 {
     type = double,
     min = 0.05,
     max = 5.0,
     default = 1.0,
-    page = OE_Timber,
-    translation = OE_TimberWoodWeight,
+    page = OE_Lumberjack,
+    translation = OE_LumberjackWoodWeight,
+}
+
+/* Sweep: fell a stand of trees without re-clicking each one. Vanilla
+   already auto-swings until ONE tree falls; these govern moving on to
+   the next, and when to stop. The floors are the whole point - a sweep
+   is unattended time in the woods. */
+
+option RFTDOddsAndEnds.LumberjackSweepEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_Lumberjack,
+    translation = OE_LumberjackSweepEnable,
+}
+option RFTDOddsAndEnds.LumberjackSweepRadius
+{
+    type = integer,
+    min = 2,
+    max = 30,
+    default = 8,
+    page = OE_Lumberjack,
+    translation = OE_LumberjackSweepRadius,
+}
+option RFTDOddsAndEnds.LumberjackSweepAxeFloor
+{
+    type = double,
+    min = 0.0,
+    max = 0.9,
+    default = 0.05,
+    page = OE_Lumberjack,
+    translation = OE_LumberjackSweepAxeFloor,
+}
+option RFTDOddsAndEnds.LumberjackSweepEnduranceFloor
+{
+    type = double,
+    min = 0.0,
+    max = 0.9,
+    default = 0.15,
+    page = OE_Lumberjack,
+    translation = OE_LumberjackSweepEnduranceFloor,
 }
 
 /* ============================================================

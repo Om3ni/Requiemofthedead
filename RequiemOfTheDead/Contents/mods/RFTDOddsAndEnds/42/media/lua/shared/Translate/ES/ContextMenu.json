@@ -1,7 +1,8 @@
 {
   "ContextMenu_OE_RipAll": "Rasgar Todo (%1)",
   "ContextMenu_OE_RipAll_Tooltip": "Rasga toda la ropa y sabanas aprovechables de los contenedores que tengas abiertos",
-  "ContextMenu_OE_CutAll": "Cortar Todo (%1)",
-  "ContextMenu_OE_CutAll_Tooltip": "Corta todos los cinturones y cueros curtidos de los contenedores que tengas abiertos",
-  "ContextMenu_OE_RipIt_More": " ...y %1 mas"
+  "ContextMenu_OE_RipIt_More": " ...y %1 mas",
+  "ContextMenu_OE_ChopNearby": "Talar arboles cercanos (%1)",
+  "ContextMenu_OE_ChopNearby_Tooltip": "Tala todos los arboles al alcance, empezando por los mas cercanos",
+  "ContextMenu_OE_ChopNearby_Desc": "Busca en %1 casillas. Se detiene al recibir dano, con poca resistencia, o cuando al hacha le queda un %2%% de estado."
 }

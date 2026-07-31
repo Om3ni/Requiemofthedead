@@ -1,4 +1,4 @@
--- TBWeight.lua - Timber: wooden things weigh what you decide they weigh.
+-- LJWeight.lua - Lumberjack: wooden things weigh what you decide they weigh.
 --
 -- Hauling building material is the complaint. A Log is 9.0 and a Plank 3.0, so
 -- a load of timber is most of an inventory before you carry anything useful.
@@ -42,16 +42,16 @@
 
 require "OEShared"
 
-Timber = Timber or {}
-local TB = Timber
+Lumberjack = Lumberjack or {}
+local LJ = Lumberjack
 
 -- Original actual weights, by item full name. Captured on first touch and
 -- never overwritten - this table is the only reason repeat runs are safe.
-TB.original = TB.original or {}
+LJ.original = LJ.original or {}
 
 -- The haul: what fills an inventory when you are building. Names verified
 -- against the 42.20 scripts.
-TB.BULK = {
+LJ.BULK = {
     "Base.Log", "Base.LogStacks", "Base.Plank",
     "Base.Firewood", "Base.FirewoodBundle", "Base.Twigs",
 }
@@ -59,13 +59,13 @@ TB.BULK = {
 -- Everything the game itself calls burnable wood. Tag-derived rather than
 -- listed, so a mod that tags its own timber is covered without us knowing it
 -- exists.
-TB.WOOD_TAGS = {
+LJ.WOOD_TAGS = {
     "makewoodcharcoalsmall", "makewoodcharcoalmedium", "makewoodcharcoallarge",
     "log",
 }
 
-function TB.isEnabled()
-    return OEShared.enabled("TimberEnable")
+function LJ.isEnabled()
+    return OEShared.enabled("LumberjackEnable")
 end
 
 local function dial(name, fallback)
@@ -97,7 +97,7 @@ local function tagFor(name)
 end
 
 local function isTaggedWood(item)
-    for _, name in ipairs(TB.WOOD_TAGS) do
+    for _, name in ipairs(LJ.WOOD_TAGS) do
         local tag = tagFor(name)
         if tag then
             local ok, has = pcall(function() return item:hasTag(tag) end)
@@ -116,7 +116,7 @@ local function targets()
     local bulk, other = {}, {}
 
     local bulkSet = {}
-    for _, full in ipairs(TB.BULK) do
+    for _, full in ipairs(LJ.BULK) do
         local ok, item = pcall(function() return sm:getItem(full) end)
         if ok and item then
             table.insert(bulk, item)
@@ -141,13 +141,13 @@ local function scale(item, factor)
     local okName, full = pcall(function() return item:getFullName() end)
     if not okName or not full then return end
 
-    if TB.original[full] == nil then
+    if LJ.original[full] == nil then
         local okW, w = pcall(function() return item:getActualWeight() end)
         if not okW or type(w) ~= "number" then return end
-        TB.original[full] = w
+        LJ.original[full] = w
     end
 
-    local target = round2(TB.original[full] * factor)
+    local target = round2(LJ.original[full] * factor)
     pcall(function()
         item:setActualWeight(target)
         -- Both paths: setActualWeight moves the field the instance copies,
@@ -157,16 +157,16 @@ local function scale(item, factor)
     end)
 end
 
-function TB.apply()
-    local on = TB.isEnabled()
-    local bulkFactor  = on and dial("TimberBulkWeight", 1.0) or 1.0
-    local otherFactor = on and dial("TimberWoodWeight", 1.0) or 1.0
+function LJ.apply()
+    local on = LJ.isEnabled()
+    local bulkFactor  = on and dial("LumberjackBulkWeight", 1.0) or 1.0
+    local otherFactor = on and dial("LumberjackWoodWeight", 1.0) or 1.0
 
     local bulk, other = targets()
     for _, item in ipairs(bulk) do scale(item, bulkFactor) end
     for _, item in ipairs(other) do scale(item, otherFactor) end
 
-    print("[RFTDOddsAndEnds] Timber applied (" .. (isServer() and "server" or "client/SP")
+    print("[RFTDOddsAndEnds] Lumberjack applied (" .. (isServer() and "server" or "client/SP")
         .. "; bulk x" .. tostring(bulkFactor) .. " over " .. tostring(#bulk)
         .. ", wood x" .. tostring(otherFactor) .. " over " .. tostring(#other) .. ").")
 end
@@ -174,7 +174,7 @@ end
 -- Same timing as ActionSpeed, and for the same reason: SandboxVars do not
 -- exist at OnGameBoot, so the earliest honest moment is world load. Firing on
 -- both is safe here by construction.
-Events.OnGameStart.Add(TB.apply)
+Events.OnGameStart.Add(LJ.apply)
 if isServer() then
-    Events.OnServerStarted.Add(TB.apply)
+    Events.OnServerStarted.Add(LJ.apply)
 end
