@@ -256,66 +256,13 @@ end
 
 -- ONE walk, both sets. This runs on every right-click that reaches either menu
 -- and canPerformCurrentRecipe is not free - it builds a HandcraftLogic per
--- candidate - so the cheap tests gate the expensive one, each item is examined
--- once, and RIP and CUT share the pass rather than each paying for their own.
+-- candidate - so the cheap tests gate the expensive one and each item is
+-- examined once.
 --
--- Each item is paired with the FIRST recipe in its set that will take it.
--- First-match is intentional: a leather jacket answers to RipDenimClothing and
--- nothing else in the set today, but if that stops being true, the set order
--- declared above is the tiebreak and it is readable.
--- TEMPORARY DIAGNOSTIC - delete once the gate is understood.
---
--- "rip=0" says everything was rejected but not by WHICH gate, and the gates
--- fail silently by design (pcall + boolean), so there is nothing to read. This
--- re-walks one rejected item and reports each gate's own answer. Only ever
--- called when RFTDCore.Debug is on, and only for the first few rejects, so it
--- costs nothing in normal play and cannot flood the log.
-local function explainReject(playerObj, recipe, item, containers)
-    local bits = { tostring(item:getFullType()) }
-    local function add(label, fn)
-        local ok, v = pcall(fn)
-        bits[#bits + 1] = label .. "=" .. (ok and tostring(v) or "THREW")
-    end
-
-    add("valid", function() return CraftRecipeManager.isItemValidForRecipe(recipe, item, playerObj) end)
-    add("isTool", function() return CraftRecipeManager.isItemToolForRecipe(recipe, item, playerObj) end)
-    add("onTest", function() return recipe:OnTestItem(item, playerObj) end)
-
-    local logic
-    add("logic", function()
-        logic = HandcraftLogic.new(playerObj, nil, nil)
-        logic:setIsoObject(logic:findCraftSurface(playerObj, 2))
-        logic:setContainers(containers)
-        logic:setRecipeFromContextClick(recipe, item)
-        return "built"
-    end)
-    if not logic then return table.concat(bits, " ") end
-
-    add("canPerform", function() return logic:canPerformCurrentRecipe() end)
-
-    -- Answered: appliedItems IS populated by canPerformCurrentRecipe - the first
-    -- run of this printed `inputs=1 doomed=0`, which is what proved the filter
-    -- was the problem and not the timing.
-    add("consumed", function()
-        local data = logic:getRecipeData()
-        if not data then return "noData" end
-        local doomed = data:getAllNotKeepInputItems()
-        if not doomed then return "nil" end
-        local mine = false
-        for i = 1, doomed:size() do
-            if doomed:get(i - 1) == item then mine = true break end
-        end
-        return doomed:size() .. (mine and " (ours)" or " (NOT ours)")
-    end)
-    add("inputs", function()
-        local data = logic:getRecipeData()
-        local all = data and data:getAllInputItems()
-        return all and all:size() or "nil"
-    end)
-
-    return table.concat(bits, " ")
-end
-
+-- Each item is paired with the FIRST recipe that will take it. First-match is
+-- intentional: a leather jacket answers to RipDenimClothing and nothing else
+-- in the set today, but if that stops being true, the set order declared above
+-- is the tiebreak and it is readable.
 function RI.gatherAll(playerObj)
     local out = {}
     if not playerObj then return out end
@@ -324,7 +271,6 @@ function RI.gatherAll(playerObj)
 
     local recipes = resolve(RI.RIP_RECIPES)
 
-    local explained = 0
     local seen = {}
     for i = 0, containers:size() - 1 do
         local cont = containers:get(i)
@@ -334,27 +280,12 @@ function RI.gatherAll(playerObj)
                 local item = items:get(j)
                 local id = item and item:getID()
                 if item and not seen[id] and isRippable(item, playerObj) then
-                    local fed = nil
                     for _, recipe in ipairs(recipes) do
-                        if feeds(recipe, item, playerObj) then
-                            fed = recipe
-                            if canRun(playerObj, recipe, item, containers) then
-                                seen[id] = true
-                                table.insert(out, { item = item, recipe = recipe })
-                                break
-                            end
+                        if feeds(recipe, item, playerObj) and canRun(playerObj, recipe, item, containers) then
+                            seen[id] = true
+                            table.insert(out, { item = item, recipe = recipe })
+                            break
                         end
-                    end
-                    -- TEMPORARY: only a GENUINE candidate is worth explaining -
-                    -- one a recipe accepts that still ended up nowhere. The first
-                    -- cut of this explained anything that cleared isRippable, so
-                    -- the cap of three burned on a baseball bat, a pocket knife
-                    -- and a keyring, all correctly rejected, and said nothing.
-                    if not seen[id] and fed and explained < 3 and RDShared.debugOn() then
-                        explained = explained + 1
-                        pcall(function()
-                            RDShared.dbg("RIPIT reject: " .. explainReject(playerObj, fed, item, containers))
-                        end)
                     end
                 end
             end
