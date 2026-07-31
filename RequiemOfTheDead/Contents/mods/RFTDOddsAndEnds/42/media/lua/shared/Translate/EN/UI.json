@@ -1,5 +1,6 @@
 {
   "IGUI_OE_SweepDone": "Felled %1 tree(s).",
+  "IGUI_OE_SweepNewAxe": "Axe worn out - continuing with your spare.",
   "IGUI_OE_SweepStoppedAxe": "Sweep stopped: the axe is nearly worn out.",
   "IGUI_OE_SweepStoppedTired": "Sweep stopped: too tired to keep swinging.",
   "IGUI_OE_SweepStoppedHurt": "Sweep stopped: you took damage."
