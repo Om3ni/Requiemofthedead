@@ -1,0 +1,6 @@
+{
+  "IGUI_OE_SweepDone": "Talados %1 arbol(es).",
+  "IGUI_OE_SweepStoppedAxe": "Tala detenida: el hacha esta casi gastada.",
+  "IGUI_OE_SweepStoppedTired": "Tala detenida: demasiado cansado para seguir.",
+  "IGUI_OE_SweepStoppedHurt": "Tala detenida: has recibido dano."
+}
