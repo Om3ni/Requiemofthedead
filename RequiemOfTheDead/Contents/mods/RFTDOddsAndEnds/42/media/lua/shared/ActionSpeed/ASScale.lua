@@ -120,10 +120,16 @@ end
 -- handcraft recipe shares one Type, so the recipe name is the only thing that
 -- tells thread picking apart from forging a machete.
 --
--- The RIPIT entries are duplicated in RIClient's own RIP_RECIPES/CUT_RECIPES.
--- House rule: no module may depend on a sibling, so each carries its own copy
--- and either can be deleted outright. Add a recipe in one place and it silently
--- runs at vanilla speed; add it in both.
+-- The RIPIT entries overlap RIClient's own RIP_RECIPES. House rule: no module
+-- may depend on a sibling, so each carries its own copy and either can be
+-- deleted outright. Add a recipe in one place and it silently runs at vanilla
+-- speed; add it in both.
+--
+-- This list is INTENTIONALLY WIDER than RIClient's. The four cut recipes below
+-- have no bulk button any more - RIClient dropped that set on purpose, and its
+-- RIP_RECIPES note says why - but the recipes themselves are alive and you
+-- still craft them by hand from the panel, so they still deserve the tuned
+-- speed. This is not drift; do not "resync" by deleting them.
 local RECIPE_VAR = {
     PickThread          = "ASThread",
     PickAramidThread    = "ASThread",
