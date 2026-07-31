@@ -159,7 +159,7 @@
     "Sandbox_RQ_JuggernautMitigation": "Juggernaut Damage Mitigation %",
     "Sandbox_RQ_JuggernautMitigation_tooltip": "HP regenerated per tick cycle (every ~2s) as a percentage of the Juggernaut's max HP. 0 = no mitigation. 100 = indestructible (regens full HP every cycle). Scales naturally: 50% means players must deal over half the Jugg's HP every 2 seconds to make progress.",
     "Sandbox_RQ_JuggernautAuraMultiplier": "Juggernaut Aura Weapon Debuff %",
-    "Sandbox_RQ_JuggernautAuraMultiplier_tooltip": "Weapon damage REDUCTION while inside a Juggernaut, Boss, or raging Scavenger aura. Higher = stronger debuff. 0 = no effect (default). 50 = weapons lose 50% of their damage. 100 = weapons disabled. Restores automatically when you leave the aura or the source zombie dies.",
+    "Sandbox_RQ_JuggernautAuraMultiplier_tooltip": "Weapon damage REDUCTION while inside a Juggernaut, Boss, or raging Scavenger aura. Higher = stronger debuff. 40 = default, weapons lose 40% of their damage. 0 = no effect. 100 = weapons disabled. Restores automatically when you leave the aura or the source zombie dies.",
 
     "Sandbox_RQ_EMPEnabled": "Enable EMP Zombie",
     "Sandbox_RQ_EMPEnabled_tooltip": "EMP (Yellow): detonates on death, drains electronics and exhausts players.",

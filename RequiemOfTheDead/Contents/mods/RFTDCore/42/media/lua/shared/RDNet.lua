@@ -91,7 +91,7 @@ if isServer() then
             module  = tostring(module),
             command = tostring(command),
             reason  = reason,
-        })
+        }, "RFTDCore")
     end
 
     Events.OnClientCommand.Add(function(module, command, player, args)
@@ -116,7 +116,7 @@ if isServer() then
                 module  = tostring(module),
                 command = tostring(command),
                 err     = tostring(err),
-            })
+            }, "RFTDCore")
             print("[RFTDCore] RDNet: handler error in " .. tostring(module) .. "."
                 .. tostring(command) .. ": " .. tostring(err))
         end

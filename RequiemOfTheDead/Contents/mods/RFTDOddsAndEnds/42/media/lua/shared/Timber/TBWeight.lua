@@ -1,0 +1,180 @@
+-- TBWeight.lua - Timber: wooden things weigh what you decide they weigh.
+--
+-- Hauling building material is the complaint. A Log is 9.0 and a Plank 3.0, so
+-- a load of timber is most of an inventory before you carry anything useful.
+-- This scales that, per sandbox dial.
+--
+-- WHAT IT EDITS, AND WHY THAT IS ENOUGH. Weight lives on the item INSTANCE
+-- (InventoryItem.actualWeight, a plain field) and is copied from the script
+-- item at creation - Item.java:1842, `item.setActualWeight(this.actualWeight)`.
+-- The obvious worry is that a script edit therefore cannot reach the logs
+-- already sitting in a save. It can: `actualWeight` appears in InventoryItem
+-- exactly three times - the field, the getter, the setter - and in NEITHER
+-- save() nor load(). It is not serialised. Saved items are rebuilt from the
+-- script on load, so they pick up the new value at the next world load, and
+-- there is no need to walk containers fixing instances up. That was worth
+-- proving before writing a sweeper that would have done nothing.
+--
+-- IDEMPOTENT, WHICH THE OBVIOUS IMPLEMENTATION IS NOT. The tempting version
+-- reads the item's CURRENT weight, multiplies, and writes it back. Fire that
+-- twice and the weights compound - and it does fire twice, because a player
+-- who returns to the main menu and rejoins without quitting the process keeps
+-- the same ScriptManager while the world-load events run again. So originals
+-- are captured once, and every application recomputes from the ORIGINAL. Any
+-- number of runs converge on the same answer.
+--
+-- Because the originals are kept, the dial is also reversible: set it back to
+-- 1.0, or switch the module off, and the vanilla weights return exactly - no
+-- drift, no restart.
+--
+-- SCOPE IS DELIBERATELY NARROW. There is no engine-side "this is wood": items
+-- carry Material = Glass or Metal and nothing else, and the makewoodcharcoal
+-- tags reach about twenty items. So identification has to be a list, and a
+-- 200-name list of every wooden object in the game is a maintenance burden
+-- that mostly exists to make baseball bats lighter. The bulk set below is the
+-- material you actually haul; the charcoal-tagged set is everything the game
+-- itself agrees is burnable wood, which modded items opt into for free.
+-- Widening it is adding names to BULK - the machinery does not care how long
+-- the list is.
+--
+-- Runs on both sides: each process has its own ScriptManager, so the client
+-- and the server must each scale their own copy or the weights disagree.
+
+require "OEShared"
+
+Timber = Timber or {}
+local TB = Timber
+
+-- Original actual weights, by item full name. Captured on first touch and
+-- never overwritten - this table is the only reason repeat runs are safe.
+TB.original = TB.original or {}
+
+-- The haul: what fills an inventory when you are building. Names verified
+-- against the 42.20 scripts.
+TB.BULK = {
+    "Base.Log", "Base.LogStacks", "Base.Plank",
+    "Base.Firewood", "Base.FirewoodBundle", "Base.Twigs",
+}
+
+-- Everything the game itself calls burnable wood. Tag-derived rather than
+-- listed, so a mod that tags its own timber is covered without us knowing it
+-- exists.
+TB.WOOD_TAGS = {
+    "makewoodcharcoalsmall", "makewoodcharcoalmedium", "makewoodcharcoallarge",
+    "log",
+}
+
+function TB.isEnabled()
+    return OEShared.enabled("TimberEnable")
+end
+
+local function dial(name, fallback)
+    local sv = SandboxVars and SandboxVars.RFTDOddsAndEnds
+    local v = sv and tonumber(sv[name])
+    if not v or v <= 0 then return fallback end
+    return v
+end
+
+-- Two decimals, without depending on the `round` global in env.lua. Weight is
+-- displayed to one or two places, so more precision is noise that only makes
+-- the numbers look untidy in a tooltip.
+local function round2(v)
+    return math.floor(v * 100 + 0.5) / 100
+end
+
+-- ItemTag lookup is pcall'd and cached: the constant table is not guaranteed
+-- across builds, and Item:getTags() returns a Java Set that Kahlua cannot
+-- iterate - so hasTag with a resolved tag is the only safe route, and failing
+-- to resolve one must degrade to "no tag match" rather than kill the pass.
+local tagCache = {}
+local function tagFor(name)
+    if tagCache[name] ~= nil then return tagCache[name] or nil end
+    local ok, tag = pcall(function()
+        return ItemTag.get(ResourceLocation.of("base:" .. name))
+    end)
+    tagCache[name] = (ok and tag) or false
+    return tagCache[name] or nil
+end
+
+local function isTaggedWood(item)
+    for _, name in ipairs(TB.WOOD_TAGS) do
+        local tag = tagFor(name)
+        if tag then
+            local ok, has = pcall(function() return item:hasTag(tag) end)
+            if ok and has then return true end
+        end
+    end
+    return false
+end
+
+-- Resolve the two groups to script items. Rebuilt per application rather than
+-- cached: cheap next to the pass itself, and it means a mod loaded later is
+-- picked up without a special case.
+local function targets()
+    local sm = getScriptManager()
+    if not sm then return {}, {} end
+    local bulk, other = {}, {}
+
+    local bulkSet = {}
+    for _, full in ipairs(TB.BULK) do
+        local ok, item = pcall(function() return sm:getItem(full) end)
+        if ok and item then
+            table.insert(bulk, item)
+            bulkSet[full] = true
+        end
+    end
+
+    local ok, all = pcall(function() return sm:getAllItems() end)
+    if ok and all then
+        for i = 0, all:size() - 1 do
+            local item = all:get(i)
+            local okName, full = pcall(function() return item:getFullName() end)
+            if okName and full and not bulkSet[full] and isTaggedWood(item) then
+                table.insert(other, item)
+            end
+        end
+    end
+    return bulk, other
+end
+
+local function scale(item, factor)
+    local okName, full = pcall(function() return item:getFullName() end)
+    if not okName or not full then return end
+
+    if TB.original[full] == nil then
+        local okW, w = pcall(function() return item:getActualWeight() end)
+        if not okW or type(w) ~= "number" then return end
+        TB.original[full] = w
+    end
+
+    local target = round2(TB.original[full] * factor)
+    pcall(function()
+        item:setActualWeight(target)
+        -- Both paths: setActualWeight moves the field the instance copies,
+        -- DoParam keeps the script's own Weight parameter in step so anything
+        -- re-reading the parameter sees the same number.
+        item:DoParam("Weight = " .. tostring(target))
+    end)
+end
+
+function TB.apply()
+    local on = TB.isEnabled()
+    local bulkFactor  = on and dial("TimberBulkWeight", 1.0) or 1.0
+    local otherFactor = on and dial("TimberWoodWeight", 1.0) or 1.0
+
+    local bulk, other = targets()
+    for _, item in ipairs(bulk) do scale(item, bulkFactor) end
+    for _, item in ipairs(other) do scale(item, otherFactor) end
+
+    print("[RFTDOddsAndEnds] Timber applied (" .. (isServer() and "server" or "client/SP")
+        .. "; bulk x" .. tostring(bulkFactor) .. " over " .. tostring(#bulk)
+        .. ", wood x" .. tostring(otherFactor) .. " over " .. tostring(#other) .. ").")
+end
+
+-- Same timing as ActionSpeed, and for the same reason: SandboxVars do not
+-- exist at OnGameBoot, so the earliest honest moment is world load. Firing on
+-- both is safe here by construction.
+Events.OnGameStart.Add(TB.apply)
+if isServer() then
+    Events.OnServerStarted.Add(TB.apply)
+end

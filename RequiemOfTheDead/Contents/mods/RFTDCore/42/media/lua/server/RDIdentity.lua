@@ -45,7 +45,13 @@ if not isServer() then return end
 
 RDIdentity = RDIdentity or {}
 
-local FILE = RDShared.DIR .. "slugs.tsv"
+-- Append-only ledger, so ".log" per the RDShared.EXT_* rule - the bare ".tsv" is
+-- refused by the 42.20 write allowlist (see RDShared). LEGACY is read-only: the
+-- pre-42.20 file still holds every claim made before the outage, and losing those
+-- would re-mint directories for existing players and hand a name to the wrong
+-- account. Reads are ungated, so this costs nothing but an extra open at boot.
+local FILE        = RDShared.DIR .. "slugs.tsv.log"
+local LEGACY_FILE = RDShared.DIR .. "slugs.tsv"
 
 local userToDir = nil   -- username -> dir (lazy-loaded)
 local dirOwner  = nil   -- dir -> username
@@ -83,10 +89,9 @@ function RDIdentity.sidApprox(player)
     return nil
 end
 
-local function loadLedger()
-    userToDir, dirOwner = {}, {}
+local function readLedgerFile(path)
     pcall(function()
-        local r = getFileReader(FILE, false)
+        local r = getFileReader(path, false)
         if not r then return end
         for _ = 1, 1000000 do   -- bounded: no while-true on a file we didn't write this session
             local line = r:readLine()
@@ -103,6 +108,17 @@ local function loadLedger()
         end
         r:close()
     end)
+end
+
+-- LEGACY FIRST, and the order is load-bearing: both readers keep the FIRST claim
+-- they see (`not dirOwner[dir]`), so reading the pre-42.20 ledger first means an
+-- original owner keeps their directory even if the outage window let a second
+-- account claim the same one. Newer-only claims still land, they just cannot
+-- displace history.
+local function loadLedger()
+    userToDir, dirOwner = {}, {}
+    readLedgerFile(LEGACY_FILE)
+    readLedgerFile(FILE)
 end
 
 local function appendClaim(dir, user)

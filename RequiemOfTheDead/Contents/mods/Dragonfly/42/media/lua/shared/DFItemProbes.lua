@@ -17,7 +17,10 @@ DFItemProbes = DFItemProbes or {}
 -- Probe entries: { label, get, set, kind, group?, requires?, max?, min? }
 --   label    - display string in the editor
 --   get      - method name on the item that returns the current value (no args)
---   set      - method name on the item that writes the value (one arg). nil = read-only.
+--   set      - method name on the item that writes the value (one arg), OR a
+--              function(item, value) for fields the engine has no plain setter
+--              for. nil = read-only. A function setter may report a clean
+--              refusal by returning (false, reason) - see Holes below.
 --   kind     - "number" | "int" | "bool" | "string"
 --   group    - optional grouping for the editor (Meta / Condition / Combat / Food / Clothing)
 --   requires - optional Java class name (e.g. "Food", "HandWeapon"); probe only
@@ -77,7 +80,13 @@ DFItemProbes.LIST = {
     { label = "Bloody",        get = "getBloodLevel",      set = "setBloodLevel",      kind = "number", group = "Clothing", requires = "Clothing" },
     { label = "Dirty",         get = "getDirtyness",       set = "setDirtyness",       kind = "number", group = "Clothing", requires = "Clothing" },
     { label = "Wetness",       get = "getWetness",         set = "setWetness",         kind = "number", group = "Clothing", requires = "Clothing" },
-    { label = "Holes",         get = "getHolesNumber",     set = nil,                  kind = "int",    group = "Clothing", requires = "Clothing" },
+    -- Holes have no engine setter (getHolesNumber counts the ItemVisual's per-part
+    -- hole array), so this is a function setter over RDClothing. Remove-only: it
+    -- refuses to raise the count rather than letting an admin punch new holes in
+    -- someone's coat. Writing 0 mends everything and credits the condition back.
+    { label = "Holes",         get = "getHolesNumber",
+      set = function(item, value) return RDClothing.mendHoles(item, value) end,
+      kind = "int", group = "Clothing", requires = "Clothing", min = 0 },
 
     -- Literature / book
     { label = "Already Read",  get = "isAlreadyReadByPlayer", set = nil,               kind = "bool",   group = "Literature", requires = "Literature" },
@@ -173,8 +182,17 @@ function DFItemProbes.write(item, probeLabel, value)
     end
     if not probe then return false, "unknown field: " .. tostring(probeLabel) end
     if not probe.set then return false, "field is read-only: " .. tostring(probeLabel) end
-    local fn = item[probe.set]
-    if type(fn) ~= "function" then return false, "setter not on item" end
+
+    -- Two setter shapes. Usually probe.set names a method on the item; for fields
+    -- the engine exposes no setter for (Holes) it is a function(item, value) that
+    -- does the work itself and may report a clean refusal.
+    local fn, isFuncSetter
+    if type(probe.set) == "function" then
+        fn, isFuncSetter = probe.set, true
+    else
+        fn = item[probe.set]
+        if type(fn) ~= "function" then return false, "setter not on item" end
+    end
 
     -- Coerce + validate
     if probe.kind == "bool" then
@@ -198,8 +216,14 @@ function DFItemProbes.write(item, probeLabel, value)
         end
     end
 
-    local ok, err = pcall(fn, item, value)
-    if not ok then return false, "setter threw: " .. tostring(err) end
+    local ok, res, resErr = pcall(fn, item, value)
+    if not ok then return false, "setter threw: " .. tostring(res) end
+    -- A function setter returning (false, reason) is a refusal we should show the
+    -- admin verbatim, not a thrown error. Method setters return nothing, so res is
+    -- nil for them and this never fires.
+    if isFuncSetter and res == false then
+        return false, tostring(resErr or "refused")
+    end
     return true, nil
 end
 

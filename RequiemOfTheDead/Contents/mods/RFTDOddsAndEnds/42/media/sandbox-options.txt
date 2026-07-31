@@ -1,0 +1,214 @@
+VERSION = 1,
+
+/* PAGE ORDER IS THE ORDER OF THE BLOCKS BELOW. Verified in 42.20: the server
+   settings screen walks every option and creates a page the first time it sees
+   one naming it (ServerSettingsScreen.lua:5133-5147), appending to the end - so
+   first-encounter order is the only layout control that exists. There are no
+   sub-categories: CustomSandboxOption carries exactly id/page/translation and
+   the parser rejects any block that is not "option". Group modules by naming
+   the page "Odds & Ends: X" so they read as one family in a screen shared with
+   every other mod on the server.
+*/
+
+/* ============================================================
+   Reliquary - admin-placed, whitelist-gated stash that dissolves
+   once it has been emptied
+   ============================================================ */
+
+option RFTDOddsAndEnds.ReliquaryEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_Reliquary,
+    translation = OE_ReliquaryEnable,
+}
+
+/* ============================================================
+   Action Speed - per-family timed-action scaling. A world rule,
+   not an admin tool: moved out of Dragonfly 2026-07-30, where it
+   had landed only because Dragonfly owned a sandbox page.
+
+   THE DEFAULTS BELOW ARE NOT "VANILLA" AND THAT IS DELIBERATE.
+   The move renamed RFTDDragonfly.AS* -> RFTDOddsAndEnds.AS*, so
+   on the first boot after it the server has no stored value for
+   any of these and writes the declared default. These defaults
+   are therefore set to the RotD server's live tuning as of
+   2026-07-30, which makes the namespace change invisible in play
+   instead of silently reverting seven dials to vanilla.
+
+   Read that twice before changing them: a default here only ever
+   applies to a world that has never seen the option. Once the
+   server writes its sandbox config the stored value wins and
+   these numbers stop mattering - so this trick works exactly
+   once, on the boot that follows the rename.
+
+   If a future season wants a genuinely neutral out-of-the-box
+   posture, set them all back to 1 (Vanilla) THEN - by which
+   point every existing world has its own stored values and
+   nothing moves underfoot.
+
+   THE SCALE IS 8 RUNGS, RENUMBERED 2026-07-30:
+     1 Vanilla   2 = 2x   3 = 5x   4 = 10x
+     5 = 20x     6 = 30x  7 = 40x  8 = Instant
+   The 2x and 5x rungs are new; before them the dial jumped from
+   vanilla straight to 10x. Adding them shifted every value above
+   1, so the defaults above are the SAME SPEEDS as the server was
+   running, written in the new numbering (reading/hood 20x = 5,
+   the four 10x families = 4). Renumbering was free only because
+   nothing had been stored yet. It will not be free again - and
+   VALUE_DIV in ASScale.lua, numValues here, and the
+   OE_ASpeed_option* labels must move together or the dial will
+   promise one speed and deliver another.
+   ============================================================ */
+
+option RFTDOddsAndEnds.ActionSpeedEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_ActionSpeed,
+    translation = OE_ActionSpeedEnable,
+}
+option RFTDOddsAndEnds.ASReading
+{
+    type = enum,
+    numValues = 8,
+    default = 5,
+    page = OE_ActionSpeed,
+    translation = OE_ASReading,
+    valueTranslation = OE_ASpeed,
+}
+option RFTDOddsAndEnds.ASForaging
+{
+    type = enum,
+    numValues = 8,
+    default = 4,
+    page = OE_ActionSpeed,
+    translation = OE_ASForaging,
+    valueTranslation = OE_ASpeed,
+}
+option RFTDOddsAndEnds.ASCleaning
+{
+    type = enum,
+    numValues = 8,
+    default = 4,
+    page = OE_ActionSpeed,
+    translation = OE_ASCleaning,
+    valueTranslation = OE_ASpeed,
+}
+option RFTDOddsAndEnds.ASRepair
+{
+    type = enum,
+    numValues = 8,
+    default = 4,
+    page = OE_ActionSpeed,
+    translation = OE_ASRepair,
+    valueTranslation = OE_ASpeed,
+}
+option RFTDOddsAndEnds.ASDismantle
+{
+    type = enum,
+    numValues = 8,
+    default = 4,
+    page = OE_ActionSpeed,
+    translation = OE_ASDismantle,
+    valueTranslation = OE_ASpeed,
+}
+option RFTDOddsAndEnds.ASHood
+{
+    type = enum,
+    numValues = 8,
+    default = 5,
+    page = OE_ActionSpeed,
+    translation = OE_ASHood,
+    valueTranslation = OE_ASpeed,
+}
+option RFTDOddsAndEnds.ASMechanics
+{
+    type = enum,
+    numValues = 8,
+    default = 1,
+    page = OE_ActionSpeed,
+    translation = OE_ASMechanics,
+    valueTranslation = OE_ASpeed,
+}
+/* Thread picking is keyed by RECIPE NAME, not action Type - it is the craft
+   recipes PickThread / PickAramidThread, and every B42 handcraft recipe shares
+   the Type ISHandcraftAction. See ASScale.lua's header. Default 2 (2x). */
+option RFTDOddsAndEnds.ASThread
+{
+    type = enum,
+    numValues = 8,
+    default = 2,
+    page = OE_ActionSpeed,
+    translation = OE_ASThread,
+    valueTranslation = OE_ASpeed,
+}
+/* Also recipe-keyed: the rip and cut recipes RIPIT drives. Applies whether the
+   player uses RIPIT's menu or the vanilla craft panel - it is the recipe that
+   is scaled, not the mod. Default 2 (2x). */
+option RFTDOddsAndEnds.ASRipIt
+{
+    type = enum,
+    numValues = 8,
+    default = 2,
+    page = OE_ActionSpeed,
+    translation = OE_ASRipIt,
+    valueTranslation = OE_ASpeed,
+}
+
+/* ============================================================
+   RIPIT - rip and cut everything in the containers you have open
+   ============================================================ */
+
+option RFTDOddsAndEnds.RipItEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_RipIt,
+    translation = OE_RipItEnable,
+}
+
+/* ============================================================
+   Timber - wooden things weigh what you decide they weigh.
+   Multipliers against the VANILLA weight, never against the
+   current one: TBWeight keeps the originals, so these are
+   absolute and reversible. 1.0 = vanilla.
+   ============================================================ */
+
+option RFTDOddsAndEnds.TimberEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_Timber,
+    translation = OE_TimberEnable,
+}
+option RFTDOddsAndEnds.TimberBulkWeight
+{
+    type = double,
+    min = 0.05,
+    max = 5.0,
+    default = 0.5,
+    page = OE_Timber,
+    translation = OE_TimberBulkWeight,
+}
+option RFTDOddsAndEnds.TimberWoodWeight
+{
+    type = double,
+    min = 0.05,
+    max = 5.0,
+    default = 1.0,
+    page = OE_Timber,
+    translation = OE_TimberWoodWeight,
+}
+
+/* ============================================================
+   Sticky Headwear - your hat stays on your head
+   ============================================================ */
+
+option RFTDOddsAndEnds.StickyHeadwearEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_StickyHeadwear,
+    translation = OE_StickyHeadwearEnable,
+}

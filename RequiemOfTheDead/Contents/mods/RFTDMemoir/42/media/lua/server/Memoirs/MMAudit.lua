@@ -11,17 +11,33 @@
 -- the Memoirs/ folder disables auditing with no other edit.
 --
 -- Output (under the server cachedir, Lua/):
---   Memoirs/<SafeName>/events.jsonl  append-only full history, one JSON obj/line
---   Memoirs/<SafeName>/latest.json   the RECOVERY POINT: newest WRITE, overwritten.
---                                    Restores deliberately do NOT move it (see the
---                                    note at the write site); derived convenience,
---                                    rebuildable from the last WRITE in events.jsonl
+--   Memoirs/<SafeName>/events.jsonl.log  append-only history, one JSON obj/line
+--   Memoirs/<SafeName>/latest.json.txt   the RECOVERY POINT: newest WRITE,
+--                                    overwritten. Restores deliberately do NOT move
+--                                    it (see the note at the write site); derived
+--                                    convenience, rebuildable from the last WRITE
+--                                    in events.jsonl.log
 --   Memoirs/_all.log                 slim human pipe timeline (no heavy payloads):
 --                                    <epochSec>|<gameDay>|<EVENT>|user=<name>|k=v...
+--
+-- The compound ".jsonl.log" / ".json.txt" names are FORCED by the engine, not a
+-- style choice: since 42.20 getFileWriter refuses any extension outside
+-- ("ini","cfg","txt","log") and returns nil. This silently destroyed both files
+-- for a day - writeLine's `if not w then return end` meant no error surfaced
+-- anywhere - and _all.log was the only survivor because it already ended ".log".
+-- The full rule, the traps, and why append-capable getFileWriter is the only
+-- viable route live in RDShared (EXT_STREAM / EXT_DOC), which is the single place
+-- to change if TIS moves the allowlist again. Pre-42.20 ".jsonl"/".json" files are
+-- still READABLE (reads are ungated) - MMRestore falls back to them rather than
+-- migrating, since Lua cannot rename or delete.
+--
 -- Nested dirs are ENGINE-GUARANTEED: getFileWriter runs File.mkdirs() on the
--- full parent chain (LuaManager.getFileWriter, verified in the 42.19 decompile),
--- and only ".." paths are refused (safeName can't emit dots). The flat fallback
--- below is retained as free insurance only - it should never fire.
+-- full parent chain (LuaManager.getFileWriter, re-verified in the 42.20
+-- decompile at :5511). Paths are refused for ".." OR a disallowed extension
+-- (safeName can't emit dots). The flat fallback below is retained as free
+-- insurance only - it should never fire. NOTE it cannot distinguish the two
+-- refusals: a bad extension makes both the nested and flat open return nil, so
+-- it reports a "nested folder" failure for what is really an extension problem.
 --
 -- getFileWriter is the ONLY server-side I/O that works in B42 (raw io.open is
 -- silently blocked); open-append-close per line, so a hard-killed server loses
@@ -33,11 +49,22 @@
 
 if not isServer() then return end
 
+-- Explicit, because EXT_STREAM/EXT_DOC are read at file scope below and the client
+-- walks every mod's lua tiers ALPHABETICALLY, so "MMAudit.lua" can run before
+-- Core's "RDShared.lua". Cross-mod require works and the walk skips already-required
+-- files. Safe under the isServer() guard above, which has already returned on the
+-- client. Memoir's mod.info already declares require=RFTDCore, so this adds no new
+-- dependency - it just stops the one constant that must not drift from being copied.
+require "RDShared"
+
 MMAudit = MMAudit or {}
 
 MMAudit.SCHEMA_V = 1
 
 local DIR = "Memoirs/"
+
+local F_EVENTS = "events" .. RDShared.EXT_STREAM   -- append-only
+local F_LATEST = "latest" .. RDShared.EXT_DOC      -- rewritten in place
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Small helpers
@@ -255,7 +282,7 @@ function MMAudit.log(player, event, data)
     for k, v in pairs(data) do rec[k] = v end
     if rec.snap then rec.snap = normalizeSnap(rec.snap) end
     local jsonLine = jsonEncode(rec)
-    writeLine(userWriter(safe, "events.jsonl", true), jsonLine)
+    writeLine(userWriter(safe, F_EVENTS, true), jsonLine)
 
     -- 2) latest.json - THE RECOVERY POINT: the player's last voluntary save.
     --
@@ -275,7 +302,7 @@ function MMAudit.log(player, event, data)
     -- is worth keeping and is where a restore's provenance belongs. They just no
     -- longer move the point MMRestore.readLatest recovers from.
     if rec.snap and event == "WRITE" then
-        writeLine(userWriter(safe, "latest.json", false), jsonLine)
+        writeLine(userWriter(safe, F_LATEST, false), jsonLine)
     end
 
     -- 3) slim pipe timeline

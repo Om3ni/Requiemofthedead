@@ -52,9 +52,13 @@ local function svDoBossBuff(zombie, cfg)
                             if obj and instanceof(obj, "IsoZombie") and not obj:isDead()
                                and obj ~= zombie
                                and not RQSvBoss.buffed[obj] then
-                                RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct))
-                                RQSvBoss.buffed[obj] = true
-                                count = count + 1
+                                -- ownerOnly + latch-on-success: see the matching
+                                -- comment in RQSvJuggernaut's aura. A failed
+                                -- placement simply retries next pass.
+                                if RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct), true) then
+                                    RQSvBoss.buffed[obj] = true
+                                    count = count + 1
+                                end
                             end
                         end
                     end

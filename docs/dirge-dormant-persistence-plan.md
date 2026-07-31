@@ -15,19 +15,30 @@ verification → then Phase 2.
 
 ---
 
-## 1. Engine facts (verified against decompile at `C:\VSCodeProjects\PZMod\PZ_Engine_Decompiled`)
+## 1. Engine facts (re-verified 2026-07-29 against the **42.20** decompile at `c:\VSCodeProjects\RequiemoftheDead\PZ_Engine_Decompiled_42.20.0-a2947723ca`)
 
 These are the ground truth this design is built on. Do not re-litigate without re-checking the source.
 
-| Fact | Evidence |
+**Re-verification status: all 9 facts HOLD on 42.20.** Nothing below changed behaviourally.
+Line numbers drifted and one file moved package, so the citations were rewritten; the
+42.19.1 numbers are kept in parentheses because they are what the original design was
+argued from. 42.20 refactored zombie *networking* (new `NetworkZombieComponent`), which
+looked like a threat to this design - it is not: that component carries network authority
+ownership (`authOwner` / `NetworkZombieAI`) and touches neither `modData` nor `onlineId`.
+
+Regenerate the tree with `tools/decompile-engine.ps1` before re-checking any of this.
+
+| Fact | Evidence (42.20) |
 |---|---|
-| Zombie modData is **wiped** when the object is pooled | `IsoZombie.resetForReuse()` → `getModData().wipe()` (IsoZombie.java:3545, 3630); reached via `IsoZombie.removeFromWorld()` → `VirtualZombieManager.RemoveZombie()` → `reuseZombie()` (VirtualZombieManager.java:87-100, 649-666) |
-| onlineID is reset to -1 on removal and recycled | IsoZombie.java:3527-3529 |
-| Chunk unload virtualizes zombies keeping **only** pos (float), direction, `persistentOutfitID`, state-flag int, pathTarget | `ZombiePopulationManager.removeChunkFromWorld()` → `n_addZombie(x, y, z, dir, persistentOutfitID, state, pathTargetX, pathTargetY)` (ZombiePopulationManager.java:343-392, 129) |
-| Realize restores the same `persistentOutfitID` | `VirtualZombieManager` reuse path calls `setPersistentOutfitID(outfitID)` (VirtualZombieManager.java:~230) |
-| `IsoZombie.save()` (which would include modData) is only used for reanimated-player zombies | Zombies are removed from squares before the chunk save job queues (IsoChunk.java:2888-2960); `ReanimatedPlayers.java` is the only live-zombie serialization consumer |
-| Dedicated servers don't even virtualize `indoorZombie` room-population zombies - they're discarded and re-minted per `RoomDef.indoorZombies` on cell load | ZombiePopulationManager.java:361; ServerMap.java:858-861 → `tryAddIndoorZombies` |
-| `global_mod_data.bin` is a **full atomic rewrite** each save (tmp → copy). No tombstones; nil'd keys vanish from disk at next autosave | GlobalModData.java:221-267; saved from SP world save (GameWindow.java:1108) and server periodic save (ServerMap.java:393) |
+| Zombie modData is **wiped** when the object is pooled | `IsoZombie.resetForReuse()` (IsoZombie.java:3585, was 3545) → `getModData().wipe()` (:3672, was 3630); reached via `IsoZombie.removeFromWorld()` → `VirtualZombieManager.RemoveZombie()` (VirtualZombieManager.java:652, was 649-666) → `reuseZombie()` (:88, was 87-100) |
+| `onlineId` is reset to -1 on removal and recycled | IsoZombie.java:3567-3569 (was 3527-3529); field declared :325, re-minted from `ServerMap.instance.getUniqueZombieId()` :2780-2781. **Field is `onlineId`, lowercase d** - the casing trap |
+| Chunk unload virtualizes zombies keeping **only** pos (float), direction, `persistentOutfitID`, state-flag int, pathTarget | `ZombiePopulationManager.removeChunkFromWorld()` (:348, was 343-392) → `n_addZombie(x, y, z, dir, persistentOutfitID, state, pathTargetX, pathTargetY)` - native decl :133 (was 129), call sites :371/:378/:403. The 8-arg signature is **unchanged**, so the virtualized payload is still exactly this |
+| Realize restores the same `persistentOutfitID` | `VirtualZombieManager` reuse path calls `setPersistentOutfitID(outfitID)` (VirtualZombieManager.java:221 and :230; was ~230) |
+| `IsoZombie.save()` (which would include modData) is only used for reanimated-player zombies | Zombies are removed from the world before the chunk save job queues - `removeChunkFromWorld(this)` (IsoChunk.java:2936) precedes `requestSaveCell(...)` (:2940), both inside the old 2888-2960 window; `ReanimatedPlayers.java` (now `zombie/ReanimatedPlayers.java`) is still the only live-zombie serialization consumer |
+| Dedicated servers don't even virtualize `indoorZombie` room-population zombies - they're discarded and re-minted per `RoomDef.indoorZombies` on cell load | `GameServer.server && ...indoorZombie` skip at ZombiePopulationManager.java:365 (was 361), and also :189, :580, :835; ServerMap.java:868 (was 858-861) → `tryAddIndoorZombies` |
+| `global_mod_data.bin` is a **full atomic rewrite** each save (tmp → copy). No tombstones; nil'd keys vanish from disk at next autosave | **File moved: `zombie/GlobalModData.java` → `zombie/world/moddata/GlobalModData.java`.** `save()` :221, writes `global_mod_data.tmp` :259, `Files.copy` → `global_mod_data.bin` :265-266; saved from SP world save (GameWindow.java:1101, was 1108) and server periodic save (ServerMap.java:397, was 393) |
+| `addZombiesInOutfit` → `dressInPersistentOutfit(name)` → `PersistentOutfits.pickOutfit(outfitName, female)` | LuaManager.java:8381+ (six overloads, unchanged from 42.19.1), `zombie.dressInPersistentOutfit(outfit)` in the shared body; `PersistentOutfits.pickOutfit(String, boolean)` at zombie/PersistentOutfits.java:162 (was 167) |
+| ⚠ `dressInNamedOutfit(String)` does **NOT** set the persistent ID | IsoZombie.java:3876 (was 3835) - body re-read in full on 42.20, it calls `getHumanVisual().dressInNamedOutfit(...)` and never `setPersistentOutfitID` |
 
 **Conclusion:** identity cannot live on the zombie. It must live in global ModData,
 world-anchored, and be **re-bound** to fresh zombie objects on realize using the two
@@ -241,13 +252,16 @@ From the Blackout Predators comparison review (see chat history 2026-07-23):
 The adoption matcher can be made near-deterministic using the engine's own outfit
 persistence:
 
-- `addZombiesInOutfit` → `zombie.dressInPersistentOutfit(name)` (LuaManager.java:~8353
-  impl) → `PersistentOutfits.pickOutfit(outfitName, female)` (PersistentOutfits.java:167)
-  → sets `persistentOutfitId`.
+- `addZombiesInOutfit` → `zombie.dressInPersistentOutfit(name)` (LuaManager.java:8381+,
+  six overloads sharing one body; was ~8353) → `PersistentOutfits.pickOutfit(outfitName,
+  female)` (zombie/PersistentOutfits.java:162, was 167) → sets `persistentOutfitId`.
 - That ID is the one rich field `n_addZombie` preserves through virtualization, and
   realize re-dresses from it. `getOutfitName()` is readable from Lua.
-- ⚠ `dressInNamedOutfit(String)` does **NOT** set the persistent ID (IsoZombie.java:3835
-  - visuals only). Must use `dressInPersistentOutfit`.
+- ⚠ `dressInNamedOutfit(String)` does **NOT** set the persistent ID (IsoZombie.java:3876,
+  was 3835 - visuals only). Must use `dressInPersistentOutfit`.
+- Re-verified on 42.20 (2026-07-29): all three of the above hold unchanged. The overload
+  list (`isCrawler`, `isFakeDead`, `isRagdolling`, `onFire`, `health`, `heightOffset`, ...)
+  is byte-identical to 42.19.1 - it is NOT new surface, despite looking like it.
 
 Design: register one custom outfit per special type (`RQ_Screamer`, etc. - can be
 near-vanilla plus a hidden marker garment: `hidden=true, Weight=0, BodyLocation=ZedDmg`,
@@ -268,5 +282,12 @@ content changes needed), then evaluate this upgrade - it's additive, not a rewor
 
 ---
 
-*Prepared 2026-07-23 from the BP-vs-Dirge comparison session. Engine citations refer to
-`C:\VSCodeProjects\PZMod\PZ_Engine_Decompiled` (B42 decompile).*
+*Prepared 2026-07-23 from the BP-vs-Dirge comparison session, against the 42.19.1 decompile
+at `C:\VSCodeProjects\PZMod\PZ_Engine_Decompiled`.*
+
+*Engine citations re-verified 2026-07-29 against **42.20.0-a2947723ca** and now refer to
+`c:\VSCodeProjects\RequiemoftheDead\PZ_Engine_Decompiled_42.20.0-a2947723ca` (gitignored;
+rebuild with `tools/decompile-engine.ps1 -Version <from the debuglog "version=" line>`).
+All 9 engine facts in §1 survived the version bump - line numbers only, plus
+`GlobalModData` moving to `zombie/world/moddata/`. Citations elsewhere in this document
+outside §1 and §9 have NOT been re-checked line-by-line; treat them as 42.19.1.*

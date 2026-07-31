@@ -1,3 +1,29 @@
+> ## ⚠ 42.20 ERRATUM - added 2026-07-29, read before trusting any engine citation below
+>
+> This document is part working transcript (down to "# The goal"), part authoritative spec
+> (from "# The goal" onward). The transcript half is a HISTORICAL RECORD and has been left
+> exactly as written, typos and stale line numbers included - do not "correct" it. The spec
+> half has been updated in place.
+>
+> Three things below are now wrong, all from PZ **42.20** (released 2026-07-29):
+>
+> 1. **`getFileWriter` refuses most extensions.** Since 42.20 it returns **nil** unless the
+>    extension is in `Set.of("ini","cfg","txt","log")` (LuaManager.java:9884, gate at :5514).
+>    This set does not exist in 42.19.1. It killed every `.jsonl`/`.json`/`.tsv` write in the
+>    family SILENTLY, because our writers all guard `if w then` - so pcall never errored and
+>    `RDLog.chronicle` kept returning true. Live outage 2026-07-29.
+> 2. **File names changed as a result.** `events.jsonl` → `events.jsonl.log`,
+>    `latest.json` → `latest.json.txt`, `slugs.tsv` → `slugs.tsv.log`, `schema.json` →
+>    `schema.json.txt`, ring segments → `NNN.jsonl.log`. `getFileExtension()` reads after the
+>    LAST dot, so the compound name passes the gate while still declaring its real format.
+>    Canonical definition: `RDShared.EXT_STREAM` (append-only) / `RDShared.EXT_DOC`
+>    (rewritten). Pre-42.20 files are never migrated - reads are ungated, so they stay on
+>    disk as history and readers fall back to them.
+> 3. **Line numbers drifted.** `getFileWriter` moved :5445 → :5512. Every other engine
+>    citation in this file predates 42.20 and has NOT been systematically re-checked; the
+>    only tree that was is §1/§9 of `dirge-dormant-persistence-plan.md`. Current decompile:
+>    `PZ_Engine_Decompiled_42.20.0-a2947723ca` (rebuild via `tools/decompile-engine.ps1`).
+
 I feel like we shoudl refine our logging a little bit. 
 
 What would you say to Reclamations own subfolder in LUA. In that folder we break it down per player who claims a vehicle. 
@@ -2800,16 +2826,17 @@ A season is 3-4 months, ending at a server wipe.
 
 ## The logging model to generalize - Dragonfly Memoirs
 `Dragonfly/.../server/Memoirs/MMAudit.lua` is the most developed logger and the intended model:
-- Layout: `Memoirs/<SafeName>/events.jsonl` (append), `Memoirs/<SafeName>/latest.json` (TRUNCATED each write, derived/rebuildable), `Memoirs/_all.log` (append, one GLOBAL slim pipe timeline `<epochSec>|<gameDay>|<EVENT>|user=<name>|k=v...`).
+- Layout: `Memoirs/<SafeName>/events.jsonl.log` (append), `Memoirs/<SafeName>/latest.json.txt` (TRUNCATED each write, derived/rebuildable), `Memoirs/_all.log` (append, one GLOBAL slim pipe timeline `<epochSec>|<gameDay>|<EVENT>|user=<name>|k=v...`). **The compound extensions are forced by the 42.20 write allowlist (see the erratum at the top of this file); the bare `.jsonl`/`.json` names shown elsewhere in this document are pre-42.20.** `_all.log` was the only one of the three that survived the change untouched, because it already ended `.log`.
 - Envelope `{v=SCHEMA_V, t=epoch, day=worldAgeHours/24, event, user}` merged with caller data; key clashes documented as "a caller bug" but NOT enforced.
 - Hand-rolled `jsonEncode` (MMAudit.lua:103) with lexicographically sorted keys for diffability; `jsonEscape` handles only 5 chars (no \b, \f, no \uXXXX for other control bytes).
 - `fmtNum` (MMAudit.lua:53) = `string.format("%.2f", n)` with `.00` trimmed - **loses all precision beyond 2 decimals, including XP values**.
 - `isArray` (MMAudit.lua:57) returns true for an EMPTY table - **empty maps encode as `[]`, not `{}`**, a shape hazard for consumers.
 - `safeName` (MMAudit.lua:46) maps `[^%w%-_]` -> `_`; lossy and collision-prone (`Bob.Smith` and `Bob_Smith` collide). The READ side defends (MMRestore.lua:204) but the WRITE side does not - two colliding usernames interleave into one events.jsonl.
 - `userWriter` (MMAudit.lua:154) has a nested->flat fallback remembered in an in-memory `layoutByUser` table.
-- Nested dirs are engine-guaranteed: `LuaManager.getFileWriter` runs `File.mkdirs()` (verified, PZ_Engine_Decompiled/zombie/Lua/LuaManager.java:5444-5476); signature is `getFileWriter(filename, createIfNull, append)`.
+- Nested dirs are engine-guaranteed: `LuaManager.getFileWriter` runs `File.mkdirs()` (re-verified on 42.20 at LuaManager.java:5511-5543, was :5444-5476); signature is still `getFileWriter(filename, createIfNull, append)` returning `LuaFileWriter`.
+- ⚠ **Since 42.20 `getFileWriter` also returns nil for any extension outside `("ini","cfg","txt","log")`** (allowlist at LuaManager.java:9884, gate at :5514 - absent from 42.19.1). Case-sensitive and unlowercased, so `.TXT` fails too; extensionless names fail; only the final path segment is inspected, so dots in a `<SafeName>.<SteamID>` directory are harmless. `getFileReader`, `getModFileWriter` and `getModFileReader` are NOT gated. `getFileOutput` is ungated but cannot append (no append arg - truncates every open) and parks its stream in one `private static` field, so it is one file process-wide.
 - Writes are open-append-close per line (no buffering) so a hard kill loses nothing already written.
-- **NO rotation, NO size cap, NO retention, NO archiving anywhere.** `_all.log` is one global file for all players forever. PZ Lua exposes no file-delete primitive.
+- **NO rotation, NO size cap, NO retention, NO archiving anywhere.** `_all.log` is one global file for all players forever. PZ Lua exposes no file-delete primitive - and since 42.20 the truncate-as-delete substitute (`getFileWriter(path, true, false)`) is unavailable for any non-allowlisted extension, so pre-42.20 `.jsonl`/`.json` files can no longer even be emptied from Lua. They are permanent until removed out-of-band.
 - `events.jsonl` is written but **never read** by anything. `MMRestore.decode` (MMRestore.lua:133) is a working hand-rolled JSON decoder explicitly exposed "for the future progression-sheet tooling".
 - 14 EVENT names, all memoir-item-triggered or admin-triggered. No login, death, spawn, or periodic event.
 

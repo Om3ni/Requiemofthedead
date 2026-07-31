@@ -78,6 +78,18 @@ local GUARD_RANGE   = 15
 local SCAN_INTERVAL = 60
 local DEATH_CLEANUP_INTERVAL = 18000
 
+-- Delta position granularity, in tiles. Rows still carry true floor() coords --
+-- this only coarsens the DECISION to re-ship a row, so a special walking a
+-- straight line ships roughly 1/POS_BUCKET as often. At per-tile granularity
+-- every walking special re-shipped its whole enriched row to every client on
+-- every snapshot pass, which is most of the steady-state delta volume.
+-- Safe because every consumer already tolerates staleness: the row was up to
+-- 2s old anyway, findZombieByID searches +/-15 tiles, and the only
+-- precision-sensitive reader (RQCore.ensureCastFromSnapshot placing a recovery
+-- ring) is a fallback -- castStart carries exact coords on the primary path.
+-- Do not raise much past 5 or that ring drift becomes visible.
+local POS_BUCKET = 3
+
 -- Inject the shared active-zombie table into the modules that need it
 RQSvShared.setActiveZombies(svActiveZombies)
 RQSvJuggernaut.setActiveZombies(svActiveZombies)
@@ -338,7 +350,11 @@ local function svRowChanged(prev, cur)
     if prev.currentHP    ~= cur.currentHP    then return true end  -- bucketed, not raw
     if prev.peakHP       ~= cur.peakHP       then return true end  -- scav gradient denominator
     if prev.bossSkill    ~= cur.bossSkill    then return true end
-    if prev.x ~= cur.x or prev.y ~= cur.y or prev.z ~= cur.z then return true end
+    -- Bucketed compare, not raw tiles -- see POS_BUCKET. Floor is on the same
+    -- floor as the z check: a floor change is always worth shipping.
+    if math.floor(prev.x / POS_BUCKET) ~= math.floor(cur.x / POS_BUCKET)
+    or math.floor(prev.y / POS_BUCKET) ~= math.floor(cur.y / POS_BUCKET)
+    or prev.z ~= cur.z then return true end
     return false
 end
 
@@ -754,6 +770,19 @@ end
 -- in server-side Lua). Any client may ping; the answer is read-only state.
 local svReflectPingAt = {}
 
+-- Every type an admin may name. Shared by adminConvert and adminSpawnSpecial so
+-- the two can't drift; Boss is admin-only and never spawns organically.
+local ADMIN_VALID_TYPES = {
+    Screamer = true, Juggernaut = true, EMP = true,
+    Glutton  = true, Scavenger  = true, Boss = true,
+}
+
+-- Hard ceiling on a single admin spawn request. The client is never trusted for
+-- a count -- this is clamped server-side. Deliberately far below vanilla
+-- ISSpawnHordeUI's 500: these land on a populated cell that is already shedding
+-- packets, and a horde drop is the exact burst shape this release exists to fix.
+local ADMIN_SPAWN_CAP = 50
+
 Events.OnClientCommand.Add(function(module, command, player, args)
     -- "RFTDDirge" only. The legacy bare token is dead (see RQCommon) - the
     -- bundle ships every client and server atomically and Husbandry took
@@ -851,28 +880,157 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         local zType    = args.zType
         if not onlineID or not zType then return end
 
-        local VALID_TYPES = { Screamer=true, Juggernaut=true, EMP=true, Glutton=true, Scavenger=true, Boss=true }
-        if not VALID_TYPES[zType] then return end
+        if not ADMIN_VALID_TYPES[zType] then return end
 
         local cfg = RQSvShared.getSvConfig()
         local x = args.x or 0
         local y = args.y or 0
         local z = args.z or 0
         -- 15-tile radius to match client findZombieByID; zombie may have wandered a bit
+        -- onlineID rides back on every reply so the client can retire the right
+        -- pending-confirm entry (RQAdmin) instead of guessing.
         local obj = RQSvShared.svFindZombieByOnlineID(onlineID, x, y, z, 15)
         if not obj then
-            RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "missing", zType = zType })
+            RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "missing", zType = zType, onlineID = onlineID })
             return
         end
         if svActiveZombies[obj] then
-            RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "already", zType = svActiveZombies[obj] })
+            RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "already", zType = svActiveZombies[obj], onlineID = onlineID })
             return
         end
         svTryConvert(obj, cfg, zType, true)   -- admin placement: spacing bypassed
         if zType == "Boss" then
             RQSvShared.applyBossSprinter(obj)
         end
-        RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "ok", zType = zType })
+        RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "ok", zType = zType, onlineID = onlineID })
+        return
+    end
+
+    -- ---------------------------------------------------------------------
+    -- Admin toolkit. Shaped as a reusable command layer rather than as
+    -- context-menu callbacks, so a future horde-manager panel can drive the
+    -- same three commands without any server rework.
+    -- ---------------------------------------------------------------------
+
+    if command == "adminSpawnSpecial" then
+        if not RQSvShared.svIsAdminPlayer(player) then return end
+
+        local zType = args and args.zType
+        if not zType or not ADMIN_VALID_TYPES[zType] then return end
+
+        local x = math.floor(tonumber(args.x) or 0)
+        local y = math.floor(tonumber(args.y) or 0)
+        local z = math.floor(tonumber(args.z) or 0)
+
+        local count = math.floor(tonumber(args.count) or 1)
+        if count < 1 then count = 1 end
+        if count > ADMIN_SPAWN_CAP then count = ADMIN_SPAWN_CAP end
+
+        local cfg = RQSvShared.getSvConfig()
+        local converted = 0
+
+        -- Convert AT BIRTH via the spawn callback: the zombie is special before
+        -- it is ever tracked or drawn as an ordinary one, so there is no
+        -- spawn-then-convert step. Passing our own handler is what makes this
+        -- deterministic -- the default (onSummonSpawned) would burn the roll and
+        -- hand out a RANDOM type, which is not what the admin asked for.
+        local spawned = RQSvShared.svDoSpawn(x, y, z, count, function(zed)
+            -- Belt and braces: the conversion scan must never re-roll a
+            -- deliberate placement even if svTryConvert somehow declines.
+            zed:getModData()["RQRolled"] = true
+            -- skipSpacing: a deliberate placement is not subject to the
+            -- same-type spacing veto, exactly as adminConvert does.
+            if svTryConvert(zed, cfg, zType, true) then
+                converted = converted + 1
+                -- Without this a spawned Boss shambles: setWalkType/bSprinter
+                -- are not part of conversion, they're applied per placement.
+                if zType == "Boss" then
+                    RQSvShared.applyBossSprinter(zed)
+                end
+            end
+        end)
+
+        print(string.format(
+            "[Dirge] adminSpawnSpecial by %s: %s x%d requested, %d spawned, %d converted at (%d,%d,%d)",
+            tostring(player and player:getUsername() or "?"),
+            tostring(zType), count, spawned or 0, converted, x, y, z))
+        RQDirgeLog.write(zType, "[INFO] adminSpawnSpecial by "
+            .. tostring(player and player:getUsername() or "?")
+            .. " requested=" .. count .. " spawned=" .. tostring(spawned or 0)
+            .. " converted=" .. converted
+            .. " at (" .. x .. "," .. y .. "," .. z .. ")")
+
+        RQSvShared.sendToPlayer(player, "adminSpawnResult", {
+            status    = converted > 0 and "ok" or "failed",
+            zType     = zType,
+            requested = count,
+            spawned   = spawned or 0,
+            converted = converted,
+        })
+        return
+    end
+
+    if command == "adminScream" then
+        if not RQSvShared.svIsAdminPlayer(player) then return end
+
+        local x = math.floor(tonumber(args and args.x) or 0)
+        local y = math.floor(tonumber(args and args.y) or 0)
+        local z = math.floor(tonumber(args and args.z) or 0)
+        local cfg = RQSvShared.getSvConfig()
+
+        -- Emitter is the admin: the sound should originate from where they are
+        -- standing, and it keeps them out of their own nearby-zombie count.
+        local spawnedCount = RQSvScreamer.screamAt(player, x, y, z, cfg)
+
+        -- Ring id must not collide with a live screamer's. Every organic id is
+        -- "screamer_<onlineID>", so an "admin_" infix can never alias one.
+        local displayRadius = math.min(cfg.screamerSoundRadius, 15)
+        local ringId = "screamer_admin_" .. tostring(getTimestampMs())
+        RQSvShared.broadcast("castStart", RQSvShared.makeCastArgs(
+            ringId, x, y, z,
+            cfg.screamerCastTime, RQSvShared.COLORS.Screamer, "Screaming...", displayRadius))
+        -- An organic screamer retires its own ring from its behaviour tick once
+        -- castDue passes (RQSvScreamer.tick). Nothing ticks an admin scream, so
+        -- schedule the teardown here or the ring lingers on every client forever.
+        RQSvShared.scheduleAction(cfg.screamerCastTime, function()
+            RQSvShared.broadcast("castDone", { ringId = ringId })
+        end)
+
+        print(string.format("[Dirge] adminScream by %s at (%d,%d,%d) spawned=%d",
+            tostring(player and player:getUsername() or "?"), x, y, z, spawnedCount or 0))
+        RQSvShared.sendToPlayer(player, "adminScreamResult", {
+            status = "ok", x = x, y = y, spawned = spawnedCount or 0,
+        })
+        return
+    end
+
+    if command == "adminEMP" then
+        if not RQSvShared.svIsAdminPlayer(player) then return end
+
+        local x = math.floor(tonumber(args and args.x) or 0)
+        local y = math.floor(tonumber(args and args.y) or 0)
+        local z = math.floor(tonumber(args and args.z) or 0)
+        local cfg = RQSvShared.getSvConfig()
+
+        -- "emp_<x>_<y>" is the form the client's detonation regex matches, so
+        -- reusing it here is what makes the blast VFX fire. Cast then detonate,
+        -- mirroring the EMP zombie's own death sequence.
+        local ringId = "emp_" .. x .. "_" .. y
+        RQSvShared.broadcast("castStart", RQSvShared.makeCastArgs(ringId, x, y, z,
+            cfg.empCastTime, RQSvShared.COLORS.EMP, "EMP Detonating...", cfg.empRadius))
+        RQSvShared.scheduleAction(cfg.empCastTime, function()
+            RQSvShared.broadcast("castDone", {
+                ringId = ringId, fixedX = x, fixedY = y, fixedZ = z, radius = cfg.empRadius,
+            })
+            RQSvShared.svApplyEMPBlast(x, y, z, cfg.empRadius, cfg.empBatteryDrain)
+        end)
+
+        print(string.format("[Dirge] adminEMP by %s at (%d,%d,%d) radius=%s",
+            tostring(player and player:getUsername() or "?"), x, y, z, tostring(cfg.empRadius)))
+        RQDirgeLog.write("EMP", "[INFO] adminEMP by "
+            .. tostring(player and player:getUsername() or "?")
+            .. " at (" .. x .. "," .. y .. "," .. z .. ") radius=" .. tostring(cfg.empRadius))
+        RQSvShared.sendToPlayer(player, "adminEMPResult", { status = "ok", x = x, y = y })
         return
     end
 
@@ -1197,13 +1355,13 @@ local function svOnTick()
                 pcall(RQSvEating.svRestoreAI, zombie)
                 RQSvScavenger.state[zid] = nil
             end
-            RQSvShared.broadcast("castDone", { ringId = "screamer_" .. sid })
-            RQSvShared.broadcast("castDone", { ringId = "jugg_"      .. sid })
-            RQSvShared.broadcast("castDone", { ringId = "emp_"        .. sid })
-            RQSvShared.broadcast("castDone", { ringId = "glutton_"   .. sid })
-            RQSvShared.broadcast("castDone", { ringId = "boss_"      .. sid })
-            RQSvShared.broadcast("castDone", { ringId = "boss_emp_"  .. sid })
-            RQSvShared.broadcast("castDone", { ringId = "scav_"      .. sid })
+            -- One packet, not seven. This sweep runs per EVICTION (deaths, stale
+            -- Java refs and grapple husks all land here), so on a loaded cell the
+            -- old form was the second-largest broadcast source in the mod. The
+            -- client expands the id across every cast prefix -- see CAST_PREFIXES
+            -- in RQCore.lua. Behaviour is identical: none of these seven ids could
+            -- ever match castDone's EMP detonation regex, so no VFX is lost.
+            RQSvShared.broadcast("castClearAll", { id = sid })
         end
         svActiveZombies[zombie] = nil
     end
@@ -1239,33 +1397,45 @@ Events.OnTick.Add(svOnTick)
 -- New player connected: resend full state
 -- ========================
 
-local function onPlayerConnect(player)
-    for zombie, zType in pairs(svActiveZombies) do
-        local ok, dead = pcall(zombie.isDead, zombie)
-        if ok and not dead then
-            local ok2, oid = pcall(zombie.getOnlineID, zombie)
-            local ok3, zx  = pcall(zombie.getX, zombie)
-            local ok4, zy  = pcall(zombie.getY, zombie)
-            local ok5, zz  = pcall(zombie.getZ, zombie)
-            if ok2 and ok3 and ok4 and ok5 then
-                RQSvShared.sendToPlayer(player, "zombieConverted", {
-                    onlineID = oid,
-                    x        = math.floor(zx),
-                    y        = math.floor(zy),
-                    z        = math.floor(zz),
-                    zType    = zType,
-                })
-            end
-        end
-    end
-    -- Full snapshot for late-join recovery. This is the BASELINE channel: rebuild
-    -- md.active and push the whole table via ModData so the joiner gets complete
-    -- state in one shot. Steady-state churn after this rides the lighter delta
-    -- broadcast (svOnTick). We ignore svBuildSnapshot's delta return here on purpose
-    -- -- ModData.transmit sends the full md.active regardless, which is what a fresh
-    -- client needs.
+-- ModData.transmit fans the whole blob to EVERY connection, not just the joiner
+-- (GlobalModData.transmit iterates udpEngine.connections; there is no
+-- per-connection form). So N sequential joins after a restart used to fire N
+-- all-connections broadcasts back to back -- a self-inflicted congestion spike
+-- at exactly the moment the server is least able to absorb one. Coalesce them.
+local svLastBaselineTransmit = 0
+local svBaselineQueued       = false
+local BASELINE_TRANSMIT_GAP  = 10000
+
+-- Full snapshot for late-join recovery. This is the BASELINE channel: rebuild
+-- md.active and push the whole table via ModData so joiners get complete state
+-- in one shot. Steady-state churn after this rides the lighter delta broadcast
+-- (svOnTick). We ignore svBuildSnapshot's delta return on purpose -- transmit
+-- sends the full md.active regardless, which is what a fresh client needs.
+local function svTransmitBaseline()
+    svLastBaselineTransmit = getTimestampMs()
+    svBaselineQueued       = false
     svBuildSnapshot()
     ModData.transmit("RQZombieState")
+end
+
+local function onPlayerConnect(player)
+    -- The per-special zombieConverted unicast loop that used to live here is
+    -- gone: RQReconcile.applyRow registers any unknown onlineID straight off the
+    -- baseline this delivers, so those were one redundant packet per active
+    -- special per join.
+    --
+    -- Coalesced, not dropped. A suppressed transmit would leave THAT joiner with
+    -- no baseline (transmit has no per-connection form, so we can't serve one
+    -- client alone), so an over-gap join queues a single trailing transmit
+    -- instead. A burst of N joins therefore costs at most 2 broadcasts rather
+    -- than N, and nobody waits on their own pull to see the world.
+    local now = getTimestampMs()
+    if now - svLastBaselineTransmit >= BASELINE_TRANSMIT_GAP then
+        svTransmitBaseline()
+    elseif not svBaselineQueued then
+        svBaselineQueued = true
+        RQSvShared.scheduleAction(BASELINE_TRANSMIT_GAP, svTransmitBaseline)
+    end
 end
 
 -- Register player-connect handler defensively.
@@ -1313,6 +1483,11 @@ Events.OnGameStart.Add(function()
     svSnapshotTimer   = 0
     svSnapshotDirty   = false
     svJuggBuffTick    = 0
+    -- Must clear alongside svPending below: a queued trailing transmit lives in
+    -- that queue, so wiping the queue without clearing the flag would leave
+    -- svBaselineQueued true forever and block every future coalesced transmit.
+    svLastBaselineTransmit = 0
+    svBaselineQueued       = false
 
     -- Reset shared module state
     RQSvShared.svPending        = {}

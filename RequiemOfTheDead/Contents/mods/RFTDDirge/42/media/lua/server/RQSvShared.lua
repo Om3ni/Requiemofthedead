@@ -203,8 +203,19 @@ end
 -- damage subtraction from racing the cap.
 local MAX_NETWORK_HP = 30.0
 
-local function svSetZombieHP(zombie, targetHP)
-    if not zombie or targetHP == nil then return end
+-- ownerOnly: send to the zombie's owning client instead of broadcasting.
+-- Only the owner's setHealth survives anyway -- every other client's write is
+-- overwritten by the owner's next NetworkZombieManager sync -- so broadcasting
+-- to N clients spends N-1 packets on writes that are immediately clobbered.
+-- That is affordable once at conversion; it is not affordable from the buff
+-- auras, which call this ONCE PER ZOMBIE IN RADIUS every 2s.
+--
+-- Returns true when the value reached an authority (the owning client, or the
+-- server itself when it owns the zombie), false when we could not place it.
+-- Callers that latch a one-shot result must check this -- see the buffed[]
+-- guards in RQSvJuggernaut / RQSvScavenger / RQSvBoss.
+local function svSetZombieHP(zombie, targetHP, ownerOnly)
+    if not zombie or targetHP == nil then return false end
     if targetHP > MAX_NETWORK_HP then
         print(string.format("[Dirge:HP] clamping targetHP=%.2f to %.1f (PZ network short overflows above ~32.7)",
             targetHP, MAX_NETWORK_HP))
@@ -213,14 +224,38 @@ local function svSetZombieHP(zombie, targetHP)
     if targetHP < 0 then targetHP = 0 end
     pcall(function() zombie:setHealth(targetHP) end)
     local oid = zombie:getOnlineID()
-    if not oid or oid < 0 then return end
-    sendServerCommand(RQCommon.MODULE, "applyZombieHP", {
+    if not oid or oid < 0 then return false end
+
+    local payload = {
         onlineID = oid,
         targetHP = targetHP,
         x = math.floor(zombie:getX()),
         y = math.floor(zombie:getY()),
         z = math.floor(zombie:getZ()),
-    })
+    }
+
+    if ownerOnly then
+        -- Colon-call inside the pcall: grabbing zombie.getOwnerPlayer as a value
+        -- can yield nil and pcall would swallow the "call a nil value" error,
+        -- making a missing method look like "no owner" -- the same trap
+        -- documented for knockDown further down this file.
+        local owner
+        local okOwner = pcall(function() owner = zombie:getOwnerPlayer() end)
+        if okOwner then
+            -- nil owner means the SERVER owns this zombie: the setHealth above
+            -- is already authoritative and no packet is needed. Do NOT fall
+            -- back to a broadcast here or the saving is undone.
+            if owner then
+                sendServerCommand(owner, RQCommon.MODULE, "applyZombieHP", payload)
+            end
+            return true
+        end
+        -- getOwnerPlayer itself is missing (engine change): fall back to the
+        -- old broadcast so behaviour degrades rather than breaks.
+    end
+
+    sendServerCommand(RQCommon.MODULE, "applyZombieHP", payload)
+    return true
 end
 
 local function svApplyTypeHealth(zombie, cfg, zType, sourceHealth)
@@ -233,6 +268,10 @@ local function svApplyTypeHealth(zombie, cfg, zType, sourceHealth)
     if zType == "Juggernaut" then
         baseHealth = math.max(baseHealth, JUGGERNAUT_MIN_BASE_HEALTH)
     end
+    -- Deliberately NOT ownerOnly. This fires once, when a zombie becomes a
+    -- special, and nothing recomputes it afterwards -- so it gets the belt-and-
+    -- braces broadcast. The hot repeating callers (buff auras, regen, decay)
+    -- are the ones that pass ownerOnly.
     svSetZombieHP(zombie, baseHealth * mult)
 end
 
@@ -458,11 +497,20 @@ end
 -- organic zombie. addZombiesInOutfit returns ArrayList<IsoZombie>
 -- (engine-verified, LuaManager.GlobalObject), which is what makes direct
 -- marking possible.
-local function svDoSpawn(x, y, z, count)
+-- onSpawned (optional) replaces the default per-newborn handler. Omit it and
+-- newborns get the organic treatment: roll consumed, one random shot at the
+-- special funnel. Pass one and you decide what each newborn becomes -- which is
+-- what makes a DETERMINISTIC admin spawn possible, since onSummonSpawned would
+-- otherwise burn the roll and hand out a random type.
+-- Returns the number actually spawned.
+local function svDoSpawn(x, y, z, count, onSpawned)
     local r = SCREAMER_SPAWN_RADIUS
+    -- Recorded even for admin spawns: it's the fallback that stops the
+    -- conversion scan re-rolling these newborns if the returned list is empty.
     svRecordSummon(x, y, r)
     local cell = getCell()
-    if not cell then return end
+    if not cell then return 0 end
+    local handler  = onSpawned or RQSvShared.onSummonSpawned
     local spawned  = 0
     local attempts = 0
     local rSq = r * r
@@ -476,11 +524,11 @@ local function svDoSpawn(x, y, z, count)
                 local okAdd, added = pcall(addZombiesInOutfit, x + dx, y + dy, z, 1, nil, 50)
                 if okAdd then
                     spawned = spawned + 1
-                    if added and RQSvShared.onSummonSpawned then
+                    if added and handler then
                         pcall(function()
                             for i = 0, added:size() - 1 do
                                 local zed = added:get(i)
-                                if zed then RQSvShared.onSummonSpawned(zed) end
+                                if zed then handler(zed) end
                             end
                         end)
                     end
@@ -488,6 +536,7 @@ local function svDoSpawn(x, y, z, count)
             end
         end
     end
+    return spawned
 end
 
 -- ========================

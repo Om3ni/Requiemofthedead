@@ -124,7 +124,7 @@ function RDMeter.record(dir, key, est, partial)
             key     = tostring(key),
             est     = est,
             partial = partial and true or false,
-        })
+        }, "RFTDCore")
     end
 end
 
@@ -171,7 +171,7 @@ function RDMeter.dump(now, windowSec)
         keys      = #rows,
         shown     = n,
         rows      = out,
-    })
+    }, "RFTDCore")
 
     stats = {}
 end

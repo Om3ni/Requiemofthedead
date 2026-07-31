@@ -13,8 +13,14 @@
 -- move latest.json" is a question about which of two writers got called - so
 -- getFileWriter is stubbed and every write is captured by path.
 --
--- Also runs against the legacy PZMod backport when that tree is present, since
--- the two copies are byte-identical and must stay that way.
+-- Also runs against the legacy PZMod backport when that tree is present. The two
+-- copies WERE byte-identical; they no longer are. 42.20 added a write-extension
+-- allowlist that made getFileWriter refuse ".jsonl"/".json" outright, so the
+-- bundle moved to "events.jsonl.log" / "latest.json.txt" (see RDShared.EXT_*)
+-- while the archived backport keeps the pre-42.20 names. That is a deliberate
+-- divergence - PZMod is frozen and its Workshop item sunsets - so the FILENAMES
+-- are per-target below while the behavioural spec stays shared. Do not "resync"
+-- them; the archived copy is a record of what shipped, not a live target.
 --
 -- Usage (normally via tools\run-tests.bat):
 --   lua5.1.exe tools/tests/test_mmaudit.lua <repo-root>
@@ -23,9 +29,12 @@ local ROOT  = arg[1] or "."
 local PZMOD = os.getenv("PZMOD_ROOT") or (ROOT .. "/../PZMod")
 
 local TARGETS = {
-    { label = "MMAudit (bundle)", required = true,
+    -- enforceExt: is this tree expected to run on 42.20? Only the bundle is.
+    { label = "MMAudit (bundle)", required = true, enforceExt = true,
+      events = "events.jsonl.log", latest = "latest.json.txt",
       path = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDMemoir/42/media/lua/server/Memoirs/MMAudit.lua" },
-    { label = "MMAudit (legacy backport)", required = false,
+    { label = "MMAudit (legacy backport)", required = false, enforceExt = false,
+      events = "events.jsonl", latest = "latest.json",
       path = PZMOD .. "/Dragonfly/Contents/mods/Dragonfly/42/media/lua/server/Memoirs/MMAudit.lua" },
 }
 
@@ -48,6 +57,18 @@ end
 function isServer() return true end
 function isClient() return false end
 require = function() end
+
+-- The bundle copy reads these at file scope. `require` is a no-op stub here, so
+-- the real RDShared never loads and the global has to be supplied outright -
+-- otherwise MMAudit dies with "attempt to index global 'RDShared'". Values must
+-- track RDShared.lua; the per-target filenames above encode the same strings, so
+-- a drift between them shows up as a failed assertion rather than silence.
+RDShared = {
+    EXT_STREAM        = ".jsonl.log",
+    EXT_DOC           = ".json.txt",
+    EXT_STREAM_LEGACY = ".jsonl",
+    EXT_DOC_LEGACY    = ".json",
+}
 Events = setmetatable({}, { __index = function(t, k)
     local e = { Add = function() end }; rawset(t, k, e); return e
 end })
@@ -88,55 +109,58 @@ local SNAP = { perks = { Blacksmith = 16275 }, traits = { "handy" },
 -- The spec
 -- ---------------------------------------------------------------------------
 
-local function runSuite(MA)
+-- EV/LA are the target's history and recovery-point basenames. They differ across
+-- the 42.20 rename (see TARGETS), so the spec below asserts on them rather than on
+-- literals - the behaviour under test is which writer fires, never what it is called.
+local function runSuite(MA, EV, LA, enforceExt)
     -- ---- a voluntary WRITE moves the recovery point ------------------------
     writes = {}
     MA.log("Omen", "WRITE", { snap = SNAP, itemId = 1 })
-    eq("WRITE appends to events.jsonl",      wrote("Omen/events.jsonl"), true)
-    eq("WRITE moves latest.json",            wrote("Omen/latest.json"),  true)
-    eq("WRITE writes the _all.log timeline", wrote("_all.log"),          true)
+    eq("WRITE appends to " .. EV,            wrote("Omen/" .. EV), true)
+    eq("WRITE moves " .. LA,                 wrote("Omen/" .. LA), true)
+    eq("WRITE writes the _all.log timeline", wrote("_all.log"),    true)
 
     -- ---- an admin restore does NOT ----------------------------------------
     -- The whole fix. A restore is history, not a save.
     writes = {}
     MA.log("Omen", "RESTORE_OK", { snap = SNAP, admin = "Kriegan", xpPct = 60 })
-    eq("RESTORE_OK is still recorded in events.jsonl", wrote("Omen/events.jsonl"), true)
-    eq("RESTORE_OK does NOT move latest.json",         wrote("Omen/latest.json"),  false)
-    eq("RESTORE_OK still hits the timeline",           wrote("_all.log"),          true)
+    eq("RESTORE_OK is still recorded in " .. EV, wrote("Omen/" .. EV), true)
+    eq("RESTORE_OK does NOT move " .. LA,        wrote("Omen/" .. LA), false)
+    eq("RESTORE_OK still hits the timeline",     wrote("_all.log"),    true)
 
-    -- The snapshot must survive INTO events.jsonl - dropping it would lose what
-    -- a restore actually applied, which is the point of keeping the record.
+    -- The snapshot must survive INTO the history file - dropping it would lose
+    -- what a restore actually applied, which is the point of keeping the record.
     local sawSnap = false
     for _, w in ipairs(writes) do
-        if w.path:sub(-#"events.jsonl") == "events.jsonl" and w.line:find('"snap"', 1, true) then
+        if w.path:sub(-#EV) == EV and w.line:find('"snap"', 1, true) then
             sawSnap = true
         end
     end
-    eq("RESTORE_OK keeps its snapshot in events.jsonl", sawSnap, true)
+    eq("RESTORE_OK keeps its snapshot in " .. EV, sawSnap, true)
 
     -- ---- other snapshot-bearing events are equally excluded ---------------
     writes = {}
     MA.log("Omen", "READ_RECHECK", { snap = SNAP })
-    eq("READ_RECHECK does not move latest.json", wrote("Omen/latest.json"), false)
+    eq("READ_RECHECK does not move " .. LA, wrote("Omen/" .. LA), false)
 
     -- ---- snapless events touch neither snapshot file ----------------------
     writes = {}
     MA.log("Omen", "WRITE_NOITEM", { itemId = 7 })
-    eq("a snapless WRITE_NOITEM appends history", wrote("Omen/events.jsonl"), true)
-    eq("a snapless event never moves latest.json", wrote("Omen/latest.json"), false)
+    eq("a snapless WRITE_NOITEM appends history",  wrote("Omen/" .. EV), true)
+    eq("a snapless event never moves " .. LA,      wrote("Omen/" .. LA), false)
 
     -- ---- a WRITE with no snapshot is still not a save ---------------------
     -- Belt and braces: the gate is (has snapshot AND is a WRITE), not either.
     writes = {}
     MA.log("Omen", "WRITE", { itemId = 9 })
-    eq("a WRITE carrying no snapshot cannot move latest.json",
-        wrote("Omen/latest.json"), false)
+    eq("a WRITE carrying no snapshot cannot move " .. LA,
+        wrote("Omen/" .. LA), false)
 
     -- ---- per-user separation ----------------------------------------------
     writes = {}
     MA.log("Kriegan", "WRITE", { snap = SNAP })
-    eq("a second user writes its own latest.json", wrote("Kriegan/latest.json"), true)
-    eq("and does not touch the first user's",      wrote("Omen/latest.json"),    false)
+    eq("a second user writes its own " .. LA, wrote("Kriegan/" .. LA), true)
+    eq("and does not touch the first user's",  wrote("Omen/" .. LA),    false)
 
     -- ---- the recovery point is the LAST write, not the first --------------
     writes = {}
@@ -145,17 +169,33 @@ local function runSuite(MA)
     MA.log("Omen", "WRITE", { snap = SNAP })
     local latestCount = 0
     for _, w in ipairs(writes) do
-        if w.path:sub(-#"Omen/latest.json") == "Omen/latest.json" then latestCount = latestCount + 1 end
+        if w.path:sub(-#("Omen/" .. LA)) == "Omen/" .. LA then latestCount = latestCount + 1 end
     end
     eq("two writes and a restore move the point exactly twice", latestCount, 2)
 
-    -- latest.json must be a TRUNCATING write - appending would grow a file the
-    -- reader treats as a single JSON object.
+    -- The recovery point must be a TRUNCATING write - appending would grow a
+    -- file the reader treats as a single JSON object.
     for _, w in ipairs(writes) do
-        if w.path:sub(-#"latest.json") == "latest.json" then
-            eq("latest.json is truncated, not appended", w.append, false)
+        if w.path:sub(-#LA) == LA then
+            eq(LA .. " is truncated, not appended", w.append, false)
             break
         end
+    end
+
+    -- The rename is only safe if the engine would actually accept these names:
+    -- every captured path must end in an allowlisted extension, or 42.20's
+    -- getFileWriter hands back nil and the whole file layer goes quiet again.
+    -- Live targets only. The archived backport genuinely fails this - it predates
+    -- the allowlist and is not being fixed - and asserting against a frozen tree
+    -- would just paint the suite red for a fact already recorded in the header.
+    if enforceExt then
+        local allowed = { ini = true, cfg = true, txt = true, log = true }
+        local badExt
+        for _, w in ipairs(writes) do
+            local ext = w.path:match("%.([^%.]+)$")
+            if not (ext and allowed[ext]) then badExt = w.path; break end
+        end
+        eq("every write target has an engine-allowed extension", badExt, nil)
     end
 end
 
@@ -184,7 +224,7 @@ for _, t in ipairs(TARGETS) do
             fail = fail + 1
         else
             suite = t.label; ran = ran + 1
-            runSuite(MMAudit)
+            runSuite(MMAudit, t.events, t.latest, t.enforceExt)
         end
     end
 end

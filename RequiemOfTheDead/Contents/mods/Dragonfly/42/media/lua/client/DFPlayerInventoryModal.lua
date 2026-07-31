@@ -29,17 +29,38 @@ local OPEN = nil
 -- ─────────────────────────────────────────────────────────────────────────
 
 local COLS = {
-    { key = "name",     label = "Name",     w = 240, align = "left" },
-    { key = "count",    label = "Count",    w = 50,  align = "center" },
-    { key = "kind",     label = "Type",     w = 110, align = "left" },
-    { key = "fullType", label = "Full Type", w = 240, align = "left" },
-    { key = "cond",     label = "Condition", w = 90, align = "right",
+    { key = "name",     label = "Name",      w = 220, align = "left" },
+    { key = "count",    label = "Count",     w = 45,  align = "center" },
+    { key = "kind",     label = "Type",      w = 105, align = "left" },
+    { key = "location", label = "Location",  w = 120, align = "left" },
+    { key = "fullType", label = "Full Type", w = 210, align = "left" },
+    { key = "cond",     label = "Condition", w = 85, align = "right",
       format = function(r)
           if not r.cond then return "-" end
           if r.condMax then return string.format("%d / %d", r.cond, r.condMax) end
           return tostring(r.cond)
       end },
 }
+
+-- Sort order WITHIN a category group. Ranked rather than alphabetical so the gear
+-- a player is actually using floats to the top of its group: hands, then hotbar,
+-- then worn, then loose, then buried in a bag.
+local LOCATION_RANK = { Primary = 1, Secondary = 2, Main = 5 }
+
+local function locationRank(loc)
+    loc = tostring(loc or "")
+    local fixed = LOCATION_RANK[loc]
+    if fixed then return fixed end
+    if loc:match("^Hotbar") then return 3 end
+    if loc:match("^in ")    then return 6 end
+    return 4   -- a worn body location
+end
+
+-- Which category groups are folded shut. Module-level, not per-modal, so an
+-- admin who always collapses Materials does not have to redo it every time they
+-- open someone's inventory. Deliberately not persisted to disk - it is a view
+-- preference for the current session, not configuration.
+local COLLAPSED = {}
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- List widget
@@ -50,6 +71,23 @@ local InvList = ISScrollingListBox:derive("DFInvList")
 function InvList:doDrawItem(y, item, alt)
     local row = item.item
     if not row then return y + self.itemheight end
+
+    -- Group header. Headers sit in the SAME list as data rows so that list indices
+    -- and Modal.rows indices stay aligned - the slot-addressing scheme depends on
+    -- that. They are simply drawn as a band and refuse selection.
+    if row.header then
+        local hot = self:isMouseOver() and self.mouseoverselected == item.index
+        self:drawRect(0, y, self.width, self.itemheight - 1,
+            hot and 0.70 or 0.55, 0.16, 0.13, 0.24)
+        self:drawRectBorder(0, y, self.width, self.itemheight, 0.30, 0.55, 0.60, 0.85)
+        DFColumns.drawInBox(self,
+            string.format("%s %s  (%d)",
+                row.collapsed and "+" or "-", tostring(row.header), row.count or 0),
+            6, y, self.width - 12, self.itemheight,
+            FONT, { 0.80, 0.86, 0.99, 1 }, "left", "middle")
+        return y + self.itemheight
+    end
+
     if self.selected == item.index then
         self:drawRect(0, y, self.width, self.itemheight - 1, 0.35, 0.25, 0.55, 0.85)
     elseif alt then
@@ -60,15 +98,30 @@ function InvList:doDrawItem(y, item, alt)
     return y + self.itemheight
 end
 
+-- Headers carry no slot, so letting the selection land on one would leave Edit and
+-- Remove firing against nothing. Refuse the click outright rather than clearing,
+-- so a mis-click on a header leaves the previous selection intact.
+function InvList:isHeaderAt(idx)
+    local entry = self.items and self.items[idx]
+    local row = entry and entry.item
+    return row ~= nil and row.header ~= nil
+end
+
 function InvList:onMouseDown(x, y)
     local idx = self:rowAt(x, y)
     if idx <= 0 then return end
+    if self:isHeaderAt(idx) then
+        -- Clicking a header folds its group rather than selecting it.
+        local row = self.items[idx].item
+        if self.onToggleGroup then self.onToggleGroup(row.header) end
+        return
+    end
     self.selected = idx
 end
 
 function InvList:onMouseDoubleClick(x, y)
     local idx = self:rowAt(x, y)
-    if idx <= 0 then return end
+    if idx <= 0 or self:isHeaderAt(idx) then return end
     self.selected = idx
     if self.onEditSelected then self.onEditSelected() end
 end
@@ -136,6 +189,7 @@ function Modal:createChildren()
     self.list.itemheight = 22
     self.list.drawBorder = true
     self.list.onEditSelected = function() self:onEdit() end
+    self.list.onToggleGroup  = function(bucket) self:toggleGroup(bucket) end
     self.list:initialise(); self.list:instantiate()
     self:addChild(self.list)
     cursorY = cursorY + listH + PAD
@@ -185,15 +239,110 @@ end
 -- Data
 -- ─────────────────────────────────────────────────────────────────────────
 
+-- Build the display list: category group headers interleaved with their rows.
+--
+-- Headers go into self.rows alongside the data rows so that a list index and a
+-- self.rows index are the same number, which is what selectedRow relies on. The
+-- `slot` used to address an item on the wire travels on the row itself, so
+-- regrouping never disturbs it.
 function Modal:setRows(rows)
-    self.rows = rows or {}
+    self.rawRows = rows or {}
+    self:rebuild()
+end
+
+-- Toggle one category group open/shut. Rebuilds from the cached snapshot rather
+-- than asking the server again - folding a header is a view change, not a data one.
+function Modal:toggleGroup(bucket)
+    if not bucket then return end
+    COLLAPSED[bucket] = (not COLLAPSED[bucket]) or nil
+    self:rebuild()
+end
+
+-- Group, sort and fold the cached snapshot into the display list.
+function Modal:rebuild()
+    -- Capture the selection by identity before rebuilding. Every mutating action
+    -- re-requests the snapshot, and grouping means indices move, so an
+    -- index-preserving refresh would silently point at a different item.
+    local prev = self:selectedRow()
+    local keepSlot = prev and prev.slot or nil
+
+    local byBucket, seenBuckets = {}, {}
+    for _, r in ipairs(self.rawRows or {}) do
+        local b = r.bucket or RDItemKind.FALLBACK
+        local list = byBucket[b]
+        if not list then
+            list = {}
+            byBucket[b] = list
+            seenBuckets[#seenBuckets + 1] = b
+        end
+        list[#list + 1] = r
+    end
+
+    -- RDItemKind.BUCKETS is the on-screen order. Anything with a bucket not in
+    -- that list still gets rendered afterwards - dropping a row silently is worse
+    -- than showing it in an unexpected place.
+    local order = {}
+    local emitted = {}
+    for _, b in ipairs(RDItemKind.BUCKETS) do
+        order[#order + 1] = b
+        emitted[b] = true
+    end
+    for _, b in ipairs(seenBuckets) do
+        if not emitted[b] then order[#order + 1] = b end
+    end
+
+    self.rows = {}
+    self.itemCount = 0
+    for _, bucket in ipairs(order) do
+        local list = byBucket[bucket]
+        if list and #list > 0 then
+            table.sort(list, function(a, b)
+                local ra, rb = locationRank(a.location), locationRank(b.location)
+                if ra ~= rb then return ra < rb end
+                local la, lb = tostring(a.location or ""), tostring(b.location or "")
+                if la ~= lb then return la < lb end
+                return tostring(a.name or "") < tostring(b.name or "")
+            end)
+            -- The header always renders and always reports the full count, so a
+            -- folded group still tells you how much is hidden in it.
+            local folded = COLLAPSED[bucket] == true
+            self.rows[#self.rows + 1] =
+                { header = bucket, count = #list, collapsed = folded }
+            self.itemCount = self.itemCount + #list
+            if not folded then
+                for _, r in ipairs(list) do
+                    self.rows[#self.rows + 1] = r
+                end
+            end
+        end
+    end
+
     if not self.list then return end
     self.list:clear()
     for _, r in ipairs(self.rows) do
         self.list:addItem("", r)
     end
-    -- Weight: sum of item.weight if present, otherwise just count
-    self.weightLabel:setName(string.format("Items: %d", #self.rows))
+
+    -- Restore the selection, or drop it if that item is gone (removed, or moved
+    -- out of the walk). Never leave it pointing at whatever now occupies the index.
+    --
+    -- -1, NOT nil. ISScrollingListBox:prerender guards with
+    --     if self.selected ~= -1 and self.selected > #self.items
+    -- so a nil here passes the first test and then throws "__lt not defined for
+    -- operand" on the comparison, taking the whole list render down. -1 is the
+    -- widget's own sentinel for "nothing selected", and selectedRow's existing
+    -- `idx <= 0` guard already treats it as no selection.
+    self.list.selected = -1
+    if keepSlot ~= nil then
+        for i, r in ipairs(self.rows) do
+            if not r.header and r.slot == keepSlot then
+                self.list.selected = i
+                break
+            end
+        end
+    end
+
+    self.weightLabel:setName(string.format("Items: %d", self.itemCount))
 end
 
 function Modal:requestSnapshot()
@@ -205,7 +354,11 @@ function Modal:selectedRow()
     if not self.list or not self.list.selected then return nil end
     local idx = self.list.selected
     if idx <= 0 or idx > #(self.rows or {}) then return nil end
-    return self.rows[idx]
+    local row = self.rows[idx]
+    -- A group header is not an item. Returning one would hand Edit / Remove a row
+    -- with no slot and no fullType.
+    if not row or row.header then return nil end
+    return row
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -276,7 +429,9 @@ end
 
 function DFPlayerInventoryModal.open(username)
     if OPEN then OPEN:close() end
-    local w = 820
+    -- Wider than the old 820: the Location column is new and the previous width
+    -- already had the columns nearly touching the frame.
+    local w = 900
     local h = 540
     local x = (getCore():getScreenWidth() - w) / 2
     local y = (getCore():getScreenHeight() - h) / 2

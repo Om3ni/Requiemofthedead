@@ -75,7 +75,7 @@ end
 
 local function coreWrite(action, player, kv)
     local data = (type(kv) == "table") and kv or { note = tostring(kv or "") }
-    RDLog.forensic("rc", "RC." .. tostring(action), player or data.user or data.owner, data)
+    RDLog.forensic("rc", "RC." .. tostring(action), player or data.user or data.owner, data, "RFTDReclamation")
     local evt = CHRONICLE[action]
     if evt then
         RDLog.chronicle(evt, RCAudit.chronicleSubject(player, kv), data)

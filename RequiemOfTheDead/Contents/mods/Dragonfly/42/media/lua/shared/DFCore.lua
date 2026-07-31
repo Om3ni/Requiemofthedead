@@ -12,7 +12,12 @@
 DFCore = DFCore or {}
 
 DFCore.MODULE  = "RFTDDragonfly"
-DFCore.VERSION = "0.7.0"   -- 0.7.0: RFTDCore adoption (hard require) - RDAccess/RDRate/RDLife
+DFCore.VERSION = "0.8.0"   -- 0.8.0: timed-action speed scaling extracted to RFTDOddsAndEnds.
+                           --        It was a world rule, not an admin tool, and only lived
+                           --        here because Dragonfly owned a sandbox page. Sandbox keys
+                           --        moved RFTDDragonfly.AS* -> RFTDOddsAndEnds.AS*; any server
+                           --        that had tuned them reverts to vanilla until re-set.
+                           -- 0.7.0: RFTDCore adoption (hard require) - RDAccess/RDRate/RDLife
                            --        delegates, sandbox-tiered panel/debug gates. NOTE: this
                            --        constant previously drifted against mod.info (0.6.2 vs
                            --        0.6.3); keep the pair in sync - RD.HELLO now catches it.

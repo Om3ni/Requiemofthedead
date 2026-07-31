@@ -985,8 +985,12 @@ function ISAdminPanelUI:create()
     local BORDER = 10
     local btnH = FONT_HGT_SMALL + 6
 
+    -- Labelled for what it OPENS, not where it lives. HBDebugPanel.open defers to
+    -- DFPanel's Animals tab whenever Dragonfly is loaded, which in the mono-item
+    -- bundle is always - so "HB Debug" described a window the admin never actually
+    -- saw. The standalone HB window survives only as the Dragonfly-absent fallback.
     local btn = ISButton:new(BORDER + 1, FONT_HGT_MEDIUM + BORDER * 2 + 1,
-                             200, btnH, "** HB Debug **", self, HBDebugPanel.open)
+                             200, btnH, "Dragonfly Panel", self, HBDebugPanel.open)
     btn.internal = ""
     btn:initialise()
     btn:instantiate()

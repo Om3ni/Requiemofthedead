@@ -30,3 +30,15 @@ tools/lua5.1.dll
 
 # Dropped-in client logs for analysis (not repo content)
 debugclientlog*.txt
+
+# --- Engine decompile: reference only, regenerate with tools/decompile-engine.ps1 ---
+PZ_Engine_Decompiled_*/
+IBdebuglog.txt
+
+# Dropped-in server forensic segments for analysis (not repo content)
+*.jsonl.log
+guardiant.log
+
+# Generated forensic reports - rebuild with tools/forensic-report.py, never commit
+# (a single run embeds the whole ring: ~1.9MB for 3.6k records)
+*forensic-report.html

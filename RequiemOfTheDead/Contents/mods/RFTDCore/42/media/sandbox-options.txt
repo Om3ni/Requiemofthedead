@@ -44,6 +44,23 @@ option RFTDCore.ForensicSegmentLines
     translation = RD_ForensicSegmentLines,
 }
 
+option RFTDCore.CmdRelayEnabled
+{
+    type = boolean,
+    default = false,
+    page = RFTDCore,
+    translation = RD_CmdRelayEnabled,
+}
+
+option RFTDCore.CmdRelayScope
+{
+    type = enum,
+    numValues = 3,
+    default = 1,
+    page = RFTDCore,
+    translation = RD_CmdRelayScope,
+}
+
 option RFTDCore.WireProbeEnabled
 {
     type = boolean,

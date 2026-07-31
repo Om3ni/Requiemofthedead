@@ -53,7 +53,7 @@ local function tickRageDecay(zombie, state, now)
         -- observed in the wild. State.hostile stays true (scav is angry
         -- forever, that's the design), only the decay clock is retired.
         if zombie:getHealth() > state.baseHealth then
-            RQSvShared.svSetZombieHP(zombie, state.baseHealth)
+            RQSvShared.svSetZombieHP(zombie, state.baseHealth, true)
         end
         state.rageStartTime = nil
         return
@@ -62,7 +62,9 @@ local function tickRageDecay(zombie, state, now)
     local target   = state.peakHP - (state.peakHP - state.baseHealth) * progress
     local current  = zombie:getHealth()
     if target < current then
-        RQSvShared.svSetZombieHP(zombie, target)
+        -- ownerOnly: recomputed from peakHP every decay tick, so a write lost to
+        -- an ownership handoff is corrected 2s later.
+        RQSvShared.svSetZombieHP(zombie, target, true)
     end
 end
 
@@ -95,8 +97,12 @@ local function tickRageAura(zombie, cfg)
                                and not RQSvScavenger.buffed[obj]
                                and not (RQSvJuggernaut and RQSvJuggernaut.buffed and RQSvJuggernaut.buffed[obj])
                                and not (RQSvBoss and RQSvBoss.buffed and RQSvBoss.buffed[obj]) then
-                                RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct))
-                                RQSvScavenger.buffed[obj] = true
+                                -- ownerOnly + latch-on-success: see the matching
+                                -- comment in RQSvJuggernaut's aura. A failed
+                                -- placement simply retries next pass.
+                                if RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct), true) then
+                                    RQSvScavenger.buffed[obj] = true
+                                end
                             end
                         end
                     end

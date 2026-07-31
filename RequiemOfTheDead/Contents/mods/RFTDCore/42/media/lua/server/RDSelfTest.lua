@@ -8,7 +8,7 @@
 --   * the forensic ring wraps (default 50k records > 2 segments)
 --   * truncation-as-reclaim actually reclaims bytes
 --   * head.txt tracks the segment/line counter
---   * slugs.tsv disambiguates colliding usernames (Bob.Smith vs Bob_Smith)
+--   * slugs.tsv.log disambiguates colliding usernames (Bob.Smith vs Bob_Smith)
 --   * the encoder survives a hostile payload: raw control bytes, \b, \f,
 --     large floats, an empty map, an empty array
 --
@@ -65,7 +65,7 @@ function RDSelfTest.run(player, args)
     for i = 1, count do
         RDLog.forensic("selftest", "RD.TEST", "Bob.Smith", {
             n = i, filler = "synthetic-forensic-record", hostile = (i == 1) and hostile or nil,
-        })
+        }, "RFTDCore")
     end
     RDLog.flush()
 
