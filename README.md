@@ -54,7 +54,7 @@ layer - fourteen patch files, nearly half of Core's file count and a third of it
 | `RFTDDirge` | Special zombie variants: Screamers, Juggernauts, EMP, Gluttons, Scavengers, Bosses | 1.1.0 |
 | `RFTDHusbandry` | Animal taming, breeding, and management | 0.2.0 |
 | `RFTDLastRites` | Client QoL HUD: life-threat indicators (cold, heat, bleeding) | 0.2.0 |
-| `RFTDOddsAndEnds` | Catch-all for small self-contained modules: Reliquary handover stash, RIPIT bulk rip/cut, Sticky Headwear, Timber wood weight, timed-action speed scaling | 0.2.0 |
+| `RFTDOddsAndEnds` | Catch-all for small self-contained modules: Reliquary handover stash, RIPIT bulk rip, Sticky Headwear, Lumberjack forestry (wood weight, tree sweep), timed-action speed scaling | 0.2.0 |
 | `RFTDReaper` | Twin-spawn bloom detector/culler - **pending the 42.20 verdict**; may retire with the Necro tab folding into Dirge | 1.2.0 |
 
 **The migration is complete.** `C:\VSCodeProjects\PZMod` (repo `Om3ni/PZMods`) is the

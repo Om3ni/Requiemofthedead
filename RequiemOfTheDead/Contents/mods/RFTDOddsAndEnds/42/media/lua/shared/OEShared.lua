@@ -22,14 +22,18 @@
 --                                       where it had landed because Dragonfly
 --                                       owned a sandbox page - proximity, not
 --                                       kind.
---   RIPIT          (RipIt/RI*)          Rip All / Cut All on the inventory and
---                                       world right-click menus, scoped to the
+--   RIPIT          (RipIt/RI*)          Rip All on the inventory and world
+--                                       right-click menus, scoped to the
 --                                       containers you have open.
 --   StickyHeadwear (StickyHeadwear/SH*) pins worn headwear so a hit does not
 --                                       knock it off.
---   Timber         (Timber/TB*)         scales the weight of wooden items,
---                                       reversibly, against their vanilla
---                                       values.
+--   Lumberjack     (Lumberjack/LJ*)     forestry. LJWeight scales the weight
+--                                       of wooden items, reversibly, against
+--                                       their vanilla values; LJSweep fells a
+--                                       stand of trees off one context-menu
+--                                       click. Renamed from Timber/TB* when
+--                                       the sweep landed - weight scaling was
+--                                       one feature, forestry is a module.
 --
 -- That second one is the reason this mod earns its id. A feature needing
 -- sandbox dials must pick its home by WHAT IT IS and pay for its own sandbox
@@ -37,11 +41,6 @@
 -- Sandbox namespaces are a gravity well - the same binding that attracts a
 -- feature is what later makes it expensive to move - and before this mod
 -- existed, the only well in the family was the admin panel's.
---
--- Chandler (artisan soap and candle crafting, derived from SoapZ by
--- DarylMasterGG) shares this mod id back in PZMod but is deliberately NOT in
--- the bundle yet - it brings ~3.5k lines, 30 textures, and a third-party
--- attribution obligation, and it migrates on its own turn.
 --
 -- Owns: the wire token, the version handshake, and the per-module enable
 -- reads. Nothing else - behaviour belongs to the modules.
