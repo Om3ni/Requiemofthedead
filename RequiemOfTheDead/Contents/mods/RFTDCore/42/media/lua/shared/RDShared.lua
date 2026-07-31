@@ -17,6 +17,36 @@ RDShared.MODULE  = "RFTDCore"   -- command-module wire token; RD is taken, this 
 RDShared.DIR     = "RFTD/"      -- everything Core writes lives under <cacheDir>/Lua/RFTD/
 
 -- ---------------------------------------------------------------------------
+-- WRITE EXTENSIONS - forced by the engine, not a naming preference.
+--
+-- Since 42.20, getFileWriter returns nil unless the extension is in
+-- Set.of("ini","cfg","txt","log") (LuaManager.java:9884, gate at :5514). The set
+-- does not exist in 42.19.1; it was added mid-season and silently killed every
+-- .jsonl/.json/.tsv write in the family - silently because our writers all guard
+-- `if w then`, so pcall never errored and RDLog.chronicle went on returning true.
+--
+-- getFileExtension() reads the substring after the LAST dot, so a compound name
+-- keeps the real format visible while presenting an allowed extension. Suffix by
+-- WRITE SEMANTICS so the mode is legible on disk:
+--   EXT_STREAM (.log)  append-only, one record per line
+--   EXT_DOC    (.txt)  rewritten whole, in place
+--
+-- Traps: the check is case-sensitive and unlowercased (".LOG" fails);
+-- extensionless names fail; only the last path segment is inspected, so dots in
+-- a "<SafeName>.<SteamID>" directory are harmless. Reads are NOT gated, which is
+-- what makes the *_LEGACY names below readable - see RDLog's header for why
+-- nothing migrates them (Lua cannot rename or delete, and their extension is now
+-- refused for writing, so truncate-as-delete is gone too).
+-- ---------------------------------------------------------------------------
+
+RDShared.EXT_STREAM = ".jsonl.log"
+RDShared.EXT_DOC    = ".json.txt"
+
+-- Pre-42.20 names. Write paths must NEVER use these - readers only.
+RDShared.EXT_STREAM_LEGACY = ".jsonl"
+RDShared.EXT_DOC_LEGACY    = ".json"
+
+-- ---------------------------------------------------------------------------
 -- Clocks. getTimestamp() = epoch seconds, getTimestampMs() = epoch millis;
 -- both engine-provided. gameDay() is in-game world age in days so gameplay
 -- questions ("was that before the horde night?") answer without converting

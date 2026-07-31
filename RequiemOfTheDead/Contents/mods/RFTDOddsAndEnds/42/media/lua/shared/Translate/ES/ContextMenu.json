@@ -1,0 +1,7 @@
+{
+  "ContextMenu_OE_RipAll": "Rasgar Todo (%1)",
+  "ContextMenu_OE_RipAll_Tooltip": "Rasga toda la ropa y sabanas aprovechables de los contenedores que tengas abiertos",
+  "ContextMenu_OE_CutAll": "Cortar Todo (%1)",
+  "ContextMenu_OE_CutAll_Tooltip": "Corta todos los cinturones y cueros curtidos de los contenedores que tengas abiertos",
+  "ContextMenu_OE_RipIt_More": " ...y %1 mas"
+}

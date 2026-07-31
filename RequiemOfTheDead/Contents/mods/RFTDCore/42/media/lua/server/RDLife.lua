@@ -198,7 +198,7 @@ local function handleReady(p)
     -- HELLO: the loaded-mod version set, chronicled only when it CHANGES for
     -- this character (per-connection copies go to the forensic ring instead).
     local sig = helloSignature()
-    RDLog.forensic("hello", "RD.HELLO", p, { mods = RDShared.mods })
+    RDLog.forensic("hello", "RD.HELLO", p, { mods = RDShared.mods }, "RFTDCore")
     if md.RFTD_HelloSig ~= sig then
         md.RFTD_HelloSig = sig
         RDLog.chronicle("RD.HELLO", p, { mods = RDShared.mods })

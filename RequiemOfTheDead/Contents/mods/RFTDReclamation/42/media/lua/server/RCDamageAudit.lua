@@ -118,7 +118,7 @@ local function onClientCommand(module, command, player, args)
             owner = owner, griefing = griefing == true,
             claimId = vehicle and RCClaim.getClaimId and RCClaim.getClaimId(vehicle) or nil,
             x = x, y = y, z = z, part = part, amount = args.amount,
-        })
+        }, "RFTDReclamation")
     end)
 end
 

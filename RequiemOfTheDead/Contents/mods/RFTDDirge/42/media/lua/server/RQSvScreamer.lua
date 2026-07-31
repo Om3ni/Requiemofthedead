@@ -18,20 +18,23 @@ local function svScreamerHasAggro(zombie)
     return true
 end
 
--- fires the actual scream effect: plays the sound and optionally spawns extra zombies nearby
--- only spawns if the nearby zombie count is below the threshold, we dont want to flood the area
-local function svDoScreamerScream(zombie, cfg)
-    local zx = math.floor(zombie:getX())
-    local zy = math.floor(zombie:getY())
-    local zz = math.floor(zombie:getZ())
-    local okSound = pcall(addSound, zombie, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
+-- Fires a scream at an arbitrary point: plays the sound and optionally spawns
+-- extra zombies nearby, only when the local zombie count is under the threshold
+-- so we don't flood an already-packed area. Returns how many it spawned.
+--
+-- `source` is the sound emitter (a screamer zombie normally, the admin's player
+-- for a hand-fired scream, nil if neither) and is also the exclusion for the
+-- nearby count. Coords are explicit rather than read off the source, so the
+-- admin path and the zombie path run the exact same code instead of drifting.
+function RQSvScreamer.screamAt(source, zx, zy, zz, cfg)
+    local okSound = pcall(addSound, source, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
     if not okSound then
         RQDirgeLog.write("Screamer", "[WARN] addSound failed - falling back to WorldSoundManager at (" .. zx .. "," .. zy .. "," .. zz .. ")")
         pcall(function()
-            getWorldSoundManager():addSound(zombie, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius, false)
+            getWorldSoundManager():addSound(source, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius, false)
         end)
     end
-    local nearbyCount = RQSvShared.svCountNearbyAliveZombies(zx, zy, zz, RQSvShared.SCREAMER_SPAWN_RADIUS, zombie)
+    local nearbyCount = RQSvShared.svCountNearbyAliveZombies(zx, zy, zz, RQSvShared.SCREAMER_SPAWN_RADIUS, source)
     if nearbyCount < cfg.screamerSpawnThreshold then
         local count = cfg.screamerSpawnMin + ZombRand(cfg.screamerSpawnMax - cfg.screamerSpawnMin + 1)
         RQDirgeLog.write("Screamer", "[INFO] scream fired at (" .. zx .. "," .. zy .. "," .. zz .. ")"
@@ -39,11 +42,18 @@ local function svDoScreamerScream(zombie, cfg)
             .. " nearby=" .. nearbyCount .. " threshold=" .. cfg.screamerSpawnThreshold
             .. " spawning=" .. count)
         RQSvShared.svDoSpawn(zx, zy, zz, count)
-    else
-        RQDirgeLog.write("Screamer", "[INFO] scream fired at (" .. zx .. "," .. zy .. "," .. zz .. ")"
-            .. " soundOk=" .. tostring(okSound)
-            .. " nearby=" .. nearbyCount .. " >= threshold=" .. cfg.screamerSpawnThreshold .. " NO spawn")
+        return count
     end
+    RQDirgeLog.write("Screamer", "[INFO] scream fired at (" .. zx .. "," .. zy .. "," .. zz .. ")"
+        .. " soundOk=" .. tostring(okSound)
+        .. " nearby=" .. nearbyCount .. " >= threshold=" .. cfg.screamerSpawnThreshold .. " NO spawn")
+    return 0
+end
+
+-- Zombie-driven scream: same effect, coords taken from the screamer itself.
+local function svDoScreamerScream(zombie, cfg)
+    RQSvScreamer.screamAt(zombie,
+        math.floor(zombie:getX()), math.floor(zombie:getY()), math.floor(zombie:getZ()), cfg)
 end
 
 -- main tick, called each alive behavior pass for screamer zombies

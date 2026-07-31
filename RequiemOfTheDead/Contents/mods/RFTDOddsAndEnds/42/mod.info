@@ -1,0 +1,6 @@
+name=Requiem of the Dead: Odds and Ends
+id=RFTDOddsAndEnds
+modversion=0.2.0
+require=RFTDCore
+description=Odds and Ends - the family's catch-all for small self-contained modules, each with its own kill switch. Reliquary: a staff-placed, whitelist-gated stash that holds a handover for one named player and dissolves once it has been emptied. RIPIT: Rip All and Cut All on the right-click menu, working through the containers you have open. Sticky Headwear: your worn hat stays on when you take a hit. Timber: reversible weight scaling for logs, planks and other wooden items. Action Speed: per-family timed-action scaling (reading, foraging, cleaning, repair, dismantle, vehicle hood, vehicle mechanics, thread picking, ripping and cutting), moved here from Dragonfly because it is a world rule rather than an admin tool. Requires Requiem of the Dead: Core.
+pzversion=42

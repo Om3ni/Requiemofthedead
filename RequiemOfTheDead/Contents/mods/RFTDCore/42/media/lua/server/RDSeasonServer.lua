@@ -73,7 +73,8 @@ end
 
 local function emitSchema()
     pcall(function()
-        local w = getFileWriter(DIR .. "schema.json", true, false)
+        -- Rewritten whole, so EXT_DOC; the bare ".json" is refused since 42.20.
+        local w = getFileWriter(DIR .. "schema" .. RDShared.EXT_DOC, true, false)
         if w then
             w:write(RDJson.encode(RDEvents.schemaTable()) .. "\n")
             w:close()
@@ -86,11 +87,17 @@ function RDSeasonServer.markSchemaDirty()
     schemaDirty = true
 end
 
+-- Must recognise BOTH eras. This probe is what arms the "you wiped but the season
+-- name is unchanged" warning, and a season whose records predate the 42.20
+-- rename would otherwise read as empty - the one case where a false negative
+-- silently mixes two worlds' records together.
 local function seasonHasRecords(name)
-    local ok, exists = pcall(function()
-        return cacheFileExists(DIR .. "season/" .. name .. "/chronicle/world.jsonl")
-    end)
-    return ok and exists == true
+    local base = DIR .. "season/" .. name .. "/chronicle/world"
+    for _, ext in ipairs({ RDShared.EXT_STREAM, RDShared.EXT_STREAM_LEGACY }) do
+        local ok, exists = pcall(function() return cacheFileExists(base .. ext) end)
+        if ok and exists == true then return true end
+    end
+    return false
 end
 
 -- Idempotent; safe to call from any write path. Does nothing until the world

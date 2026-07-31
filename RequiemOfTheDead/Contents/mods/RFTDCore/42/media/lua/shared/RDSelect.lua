@@ -71,8 +71,18 @@ function RDSelect:count()
     return n
 end
 
+-- pairs(), NOT next(). B42's Kahlua registers no global `next` - BaseLib exposes
+-- pcall/print/select/type/tostring/tonumber/getmetatable/setmetatable/error/
+-- unpack/setfenv/getfenv/rawequal/rawset/rawget/collectgarbage/debugstacktrace/
+-- bytecodeloader and nothing more - so `next(t) == nil` throws "Object tried to
+-- call nil" the moment it runs in game. This had no callers yet, so it was latent
+-- rather than broken; test_rdselect asserts it and passes, because the harness
+-- runs real Lua 5.1 where next exists. The harness cannot catch this class of bug,
+-- which is why the family documents the rule in RDWire, RQCastBar, RQSvDormant,
+-- RCRegistry and DFPlayerRoles_Server as well.
 function RDSelect:isEmpty()
-    return next(self.ids) == nil
+    for _ in pairs(self.ids) do return false end
+    return true
 end
 
 function RDSelect:clear()

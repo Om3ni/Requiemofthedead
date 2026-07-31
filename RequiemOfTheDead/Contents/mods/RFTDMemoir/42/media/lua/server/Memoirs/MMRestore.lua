@@ -24,6 +24,7 @@ if not isServer() then return end
 
 require "MMSvShared"
 require "MMSnapshotCodec"
+require "RDShared"   -- EXT_DOC / EXT_DOC_LEGACY, read at file scope below
 
 MMRestore = MMRestore or {}
 
@@ -174,8 +175,19 @@ local function readAll(path)
     return content
 end
 
+-- Four candidates, and every one of them is load-bearing. Two layouts (nested
+-- preferred, flat fallback - mirrors MMAudit's userWriter) x two eras: the 42.20
+-- write allowlist forced ".json" -> ".json.txt" (see RDShared), so any player whose
+-- last WRITE predates that rename has their recovery point under the legacy name.
+-- Reads are NOT gated, so the old files open fine and nothing needs migrating.
+-- CURRENT FIRST: if both exist the newer name is the fresher save, and silently
+-- restoring an older snapshot over a newer one is the one failure this file must
+-- never have. Drop the legacy pair only once no season on disk predates 42.20.
 local function readLatest(safe)
-    return readAll(safe .. "/latest.json") or readAll(safe .. ".latest.json")
+    return readAll(safe .. "/latest" .. RDShared.EXT_DOC)
+        or readAll(safe .. ".latest" .. RDShared.EXT_DOC)
+        or readAll(safe .. "/latest" .. RDShared.EXT_DOC_LEGACY)
+        or readAll(safe .. ".latest" .. RDShared.EXT_DOC_LEGACY)
 end
 
 local function findOnlineByUsername(name)

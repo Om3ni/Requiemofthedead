@@ -84,6 +84,27 @@ Events.OnZombieDead.Add(onZombieDead)
 local mpCastBars = {}
 local mpCastTrackers = {}
 
+-- Every ring id prefix the server can open a cast under. Used by castClearAll
+-- to wipe one zombie's rings without the server having to name each one.
+local CAST_PREFIXES = {
+    "screamer_", "jugg_", "emp_", "glutton_", "boss_", "boss_emp_", "scav_",
+}
+
+-- Tear down one ring id: cancel its bar, drop its tracker, clear the ring and
+-- any flash, and clear the EMP inner ring (a no-op when there isn't one).
+-- Shared by castDone and castClearAll so the two can't drift.
+local function clearCastRing(ringId)
+    local barData = mpCastBars[ringId]
+    if barData then
+        RQCastBar.cancel(barData.barId)
+        mpCastBars[ringId] = nil
+    end
+    mpCastTrackers[ringId] = nil
+    RQRing.clear(ringId)
+    RQRing.stopFlash(ringId)
+    RQRing.clear(ringId .. "_inner")
+end
+
 -- Search for living zombie by onlineID near specified coordinates.
 -- Expanded to 15 tiles to account for zombie movement between
 -- server conversion and client receiving the broadcast.
@@ -325,18 +346,10 @@ local function onServerCommand(module, command, args)
     elseif command == "castDone" then
         local ringId = args.ringId
         if not ringId then return end
-        local barData = mpCastBars[ringId]
-        if barData then
-            RQCastBar.cancel(barData.barId)
-            mpCastBars[ringId] = nil
-        end
-        mpCastTrackers[ringId] = nil
-        RQRing.clear(ringId)
-        RQRing.stopFlash(ringId)
+        clearCastRing(ringId)
 
-        -- EMP family: clear inner ring and play detonation VFX when countdown completes.
+        -- EMP family: play detonation VFX when countdown completes.
         if ringId:sub(1, 4) == "emp_" or ringId:sub(1, 8) == "boss_emp" then
-            RQRing.clear(ringId .. "_inner")
             local bx, by = ringId:match("^emp_(-?%d+)_(-?%d+)$")
             bx = tonumber(args.fixedX) or tonumber(bx)
             by = tonumber(args.fixedY) or tonumber(by)
@@ -357,6 +370,19 @@ local function onServerCommand(module, command, args)
             end
         end
 
+
+    elseif command == "castClearAll" then
+        -- One packet replaces the seven castDone broadcasts the eviction sweep
+        -- used to send per zombie. Carries no blast coords ON PURPOSE: the old
+        -- sweep's ids were "emp_<oid>" / "boss_emp_<oid>", which never matched
+        -- castDone's "^emp_(-?%d+)_(-?%d+)$" detonation regex (the real blast
+        -- ring is "emp_<x>_<y>"), so no VFX ever fired from that path. Clearing
+        -- without VFX is exactly what it already did.
+        local sid = args and args.id
+        if not sid then return end
+        for i = 1, #CAST_PREFIXES do
+            clearCastRing(CAST_PREFIXES[i] .. sid)
+        end
 
     elseif command == "gluttonAnimate" then
         local onlineID = tonumber(args.onlineID)

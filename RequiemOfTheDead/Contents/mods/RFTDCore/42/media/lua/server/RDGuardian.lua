@@ -9,7 +9,38 @@
 --
 -- Why this sees what the engine's cmd.txt does not: cmd.txt drops the
 -- argument table and is gated by a CCFilter; the Lua OnClientCommand event
--- fires OUTSIDE that filter and WITH the args, server-side.
+-- fires OUTSIDE that filter and WITH the args, server-side. Re-verified against
+-- the 42.20 decompile: the cmd.txt writer is unchanged (GameServer.java:2133,
+-- was :2239 in 42.19.1) - still no args, still CCFilter-gated.
+--
+-- WHAT THIS CANNOT SEE, and it grew in 42.20. There are TWO client->server
+-- channels, and this sensor watches one of them:
+--
+--   sendClientCommand  -> fires OnClientCommand -> recorded here.
+--   INetworkPacket     -> typed packet, NO OnClientCommand, NO cmd.txt entry,
+--                         and nothing here or anywhere in server-side Lua sees it.
+--
+-- 42.20 moved factions onto the second channel and gave them a full lifecycle:
+-- create, disband, changeOwner, changeTag, changeTitle, removeMember, each an
+-- INetworkPacket.send(PacketTypes.PacketType.Faction*, ...) from the client. So
+-- disbanding a faction or seizing its ownership - destructive, authority-shaped
+-- acts, exactly this sensor's subject matter - leaves NO trace on this channel.
+--
+-- It is worse than "no command record": there is no server-side Lua hook at all.
+-- Every faction Lua event (SyncFaction, AcceptedFactionInvite,
+-- ReceiveFactionInvite) fires in processClient. FactionCreatePacket,
+-- FactionChangeOwnerPacket and FactionRemoveMemberPacket fire NO event on either
+-- side. And 42.19.1's one server-side hook, SyncFactionServer - triggered from
+-- GameServer.receiveSyncFaction - was DROPPED in 42.20 when that hand-rolled
+-- handler became the packet family; the event name survives only as a dead
+-- LuaEventManager.AddEvent (:812) that nothing fires. Do not "fix" faction
+-- coverage by listening for it. It will never arrive.
+--
+-- This is the scope boundary the Guardian spec already states (covers the
+-- client-command channel; blind to movement-stream, inventory-packet spawns and
+-- client-local cheats). Recorded here because the boundary MOVED OUTWARD and a
+-- reader of this file would otherwise assume client-command coverage is total.
+-- Closing it needs interception below Lua - the shelved Java agent - not a hook.
 --
 -- Output: envelope JSONL into the "guardian" forensic ring stream (bounded,
 -- rotating - volume control is the ring, not discipline).
@@ -108,8 +139,20 @@ if not RDGuardian._hooked then
                 args     = RDGuardian.serializeArgs(args),
                 est      = est,
                 partial  = partial or nil,   -- omitted unless the size walk ran out of budget
-            })
+            }, "RFTDCore")
             RDMeter.record("C2S", tostring(module) .. ":" .. tostring(command), est, partial)
+
+            -- Live staff console feed. Deliberately called from INSIDE this
+            -- handler rather than registering its own listener - see the "OSN
+            -- registered its OWN OnClientCommand listener" note above; that is the
+            -- mistake this guard exists to avoid repeating. Removable-file idiom
+            -- (as MMAudit): delete RDCmdRelay.lua and the feed is gone with no
+            -- other edit. It is default-OFF and returns on its first line when
+            -- disarmed, so the cost here is one table lookup and one call.
+            if RDCmdRelay then
+                RDCmdRelay.offer(module, command, player,
+                    (player and player:getAccessLevel()) or "", est)
+            end
         end)
     end)
 end

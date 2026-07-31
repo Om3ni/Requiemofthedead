@@ -48,10 +48,10 @@ end
 local function listAddressableItems(target)
     local out = {}
     local seen = {}
-    local function add(it, source, prefix)
+    local function add(it, source, prefix, loc)
         if not it or seen[it] then return end
         seen[it] = true
-        out[#out + 1] = { item = it, source = source, prefix = prefix }
+        out[#out + 1] = { item = it, source = source, prefix = prefix, loc = loc }
     end
 
     -- 1) Main inventory
@@ -71,14 +71,18 @@ local function listAddressableItems(target)
         local n = 0
         pcall(function() n = worn:size() end)
         for i = 0, n - 1 do
-            local item
+            local item, loc
             pcall(function() item = worn:getItemByIndex(i) end)
-            if not item then
-                local entry
-                pcall(function() entry = worn:get(i) end)
-                if entry then pcall(function() item = entry:getItem() end) end
+            -- The WornItem carries the body location, which the modal's Location
+            -- column needs. Fetch it regardless of which accessor produced the
+            -- item, and leave the item-resolution order alone.
+            local entry
+            pcall(function() entry = worn:get(i) end)
+            if entry then
+                if not item then pcall(function() item = entry:getItem() end) end
+                pcall(function() loc = entry:getLocation() end)
             end
-            add(item, "worn", "[Worn] ")
+            add(item, "worn", "[Worn] ", loc)
         end
     end
 
@@ -173,6 +177,40 @@ local function syncRemoved(container, item)
     pcall(function() sendRemoveItemFromContainer(container, item) end)
 end
 
+-- Where an item sits on the target, for the modal's Location column.
+--
+-- PRIORITY MATTERS and is not arbitrary. Hand-held items and hotbar-attached
+-- items both live in the MAIN inventory - that is why they used to read as
+-- missing from this panel - so both checks have to win over the "Main" default or
+-- they would be indistinguishable from loose gear. Worn comes from the WornItem's
+-- body location, captured in listAddressableItems.
+local function resolveLocation(entry, primary, secondary)
+    local it = entry.item
+    if it == primary   then return "Primary"   end
+    if it == secondary then return "Secondary" end
+
+    local slot = nil
+    pcall(function() slot = it:getAttachedSlot() end)
+    if type(slot) == "number" and slot > -1 then
+        return "Hotbar " .. tostring(slot)
+    end
+
+    if entry.source == "worn" then
+        local loc = entry.loc and tostring(entry.loc) or ""
+        if loc ~= "" then return loc end
+        return "Worn"
+    end
+
+    if entry.source == "bag" then
+        -- entry.prefix is already "[in <bagname>] "; strip the decoration rather
+        -- than re-deriving the container name.
+        local name = tostring(entry.prefix or ""):match("^%[in (.+)%]%s*$")
+        return name and ("in " .. name) or "in bag"
+    end
+
+    return "Main"
+end
+
 -- ─────────────────────────────────────────────────────────────────────────
 -- Handler registration (deferred so DFServer is loaded - same fix pattern
 -- as DFPlayersTab_Server.lua).
@@ -209,34 +247,53 @@ Events.OnServerStarted.Add(function()
 
             local rows = listAddressableItems(target)
             local out = {}
-            local wornCount = 0
+            local wornCount, hiddenCount = 0, 0
             for i, entry in ipairs(rows) do
                 local it = entry.item
-                local tag = entry.prefix or ""
-                if it == primary   then tag = "[Primary] "   end
-                if it == secondary then tag = "[Secondary] " end
-                if entry.source == "worn" then wornCount = wornCount + 1 end
-                local ft, name, kind, cond, condMax, count
-                pcall(function() ft      = it:getFullType()     end)
-                pcall(function() name    = it:getName()         end)
-                pcall(function() kind    = it:getCategory()     end)
-                pcall(function() cond    = it:getCondition()    end)
-                pcall(function() condMax = it:getConditionMax() end)
-                pcall(function() count   = it:getCount()        end)
-                out[#out + 1] = {
-                    slot     = i - 1,
-                    fullType = ft or "?",
-                    name     = tag .. (name or ft or "?"),
-                    kind     = tostring(kind or "Item"),
-                    count    = count or 1,
-                    cond     = cond,
-                    condMax  = condMax,
-                }
+
+                -- ZedDmg / Hidden pseudo-items exist only as equipped models and
+                -- are skipped by both the vanilla and CleanUI inventory panes. Skip
+                -- them HERE rather than in listAddressableItems: `slot` must stay
+                -- the index into the unfiltered walk, because resolveItem re-walks
+                -- that same function to map an edit back to an item, and DFBanBox's
+                -- login scrub shares it.
+                local hidden = false
+                pcall(function() hidden = it:isHidden() == true end)
+
+                if hidden then
+                    hiddenCount = hiddenCount + 1
+                else
+                    if entry.source == "worn" then wornCount = wornCount + 1 end
+                    local ft, name, cond, condMax, count
+                    pcall(function() ft      = it:getFullType()     end)
+                    pcall(function() name    = it:getName()         end)
+                    pcall(function() cond    = it:getCondition()    end)
+                    pcall(function() condMax = it:getConditionMax() end)
+                    pcall(function() count   = it:getCount()        end)
+
+                    local bucket, baseCat, weaponCapable = RDItemKind.classify(it)
+
+                    out[#out + 1] = {
+                        slot     = i - 1,
+                        fullType = ft or "?",
+                        -- Location is its own column now, so the name is no longer
+                        -- prefixed with [Primary] / [in bag] decoration.
+                        name     = name or ft or "?",
+                        kind     = RDItemKind.typeLabel(it),
+                        bucket   = bucket,
+                        baseCat  = baseCat,
+                        weaponCapable = weaponCapable == true,
+                        location = resolveLocation(entry, primary, secondary),
+                        count    = count or 1,
+                        cond     = cond,
+                        condMax  = condMax,
+                    }
+                end
             end
 
             print(string.format(
-                "[Dragonfly] playerInventorySnapshot target=%s items=%d worn=%d primary=%s secondary=%s",
-                args.username or "?", #out, wornCount,
+                "[Dragonfly] playerInventorySnapshot target=%s items=%d worn=%d hidden=%d primary=%s secondary=%s",
+                args.username or "?", #out, wornCount, hiddenCount,
                 primary   and tostring(primary:getFullType())   or "-",
                 secondary and tostring(secondary:getFullType()) or "-"))
 
@@ -279,6 +336,10 @@ Events.OnServerStarted.Add(function()
                 else failed[#failed + 1] = label .. ":" .. tostring(ferr) end
             end
             if applied > 0 then syncItem(item) end
+            -- Clothing blood / dirt / holes / patches live on the ItemVisual, which
+            -- sendItemStats does not carry. Editing Wetness or Holes without this
+            -- lands on the server and is never seen by the owning client.
+            if applied > 0 and RDClothing.isClothing(item) then RDClothing.sync(target) end
             syncTarget(target)
             DFCore.audit("playerInventoryEdit", player,
                 string.format("target=%s slot=%d ft=%s applied=%d",
@@ -305,6 +366,9 @@ Events.OnServerStarted.Add(function()
             local ok, aerr = DFItemProbes.runAction(item, args.actionId)
             if not ok then return { ok = false, reason = aerr } end
             syncItem(item)
+            -- Same ItemVisual gap as playerInventoryEdit: the Repair action clears
+            -- blood and dirt, neither of which sendItemStats propagates.
+            if RDClothing.isClothing(item) then RDClothing.sync(target) end
             syncTarget(target)
             DFCore.audit("playerInventoryAction", player,
                 string.format("target=%s slot=%d ft=%s action=%s",
@@ -379,8 +443,14 @@ Events.OnServerStarted.Add(function()
     }
 
     -- Bulk Repair: walk every addressable item (main + worn + one-level bag
-    -- contents) and run Repair on anything with getCondition. Skips items
-    -- where the action isn't applicable silently.
+    -- contents) and restore anything with a condition. Skips items where nothing
+    -- is applicable, silently.
+    --
+    -- Clothing goes through the engine's own fullyRestore() rather than the
+    -- generic Repair action, because Repair could not touch holes or patches:
+    -- getHolesNumber has no setter, and Clothing.patches is a private HashMap with
+    -- no public remover. fullyRestore does condition, blood, dirt, holes AND
+    -- patches in one call.
     DFServer.registerHandler{
         action     = "playerInventoryRepairAll",
         capability = Capability.EditItem,
@@ -388,10 +458,16 @@ Events.OnServerStarted.Add(function()
             local target, err = resolveTarget(args.username)
             if not target then return { ok = false, reason = err } end
 
-            local repaired = 0
+            local repaired, clothing = 0, 0
             for _, entry in ipairs(listAddressableItems(target)) do
                 local it = entry.item
-                if it and type(it.getCondition) == "function" then
+                if it and RDClothing.isClothing(it) then
+                    local ok = pcall(function() it:fullyRestore() end)
+                    if ok then
+                        repaired = repaired + 1
+                        clothing = clothing + 1
+                    end
+                elseif it and type(it.getCondition) == "function" then
                     local ok = DFItemProbes.runAction(it, "Repair")
                     if ok then
                         repaired = repaired + 1
@@ -400,9 +476,18 @@ Events.OnServerStarted.Add(function()
                 end
             end
 
+            -- fullyRestore sends SyncClothing itself, but only via getOwner(),
+            -- which is nil for clothing sitting in a bag rather than worn. This is
+            -- the net that catches those, and it is also the fix for the older bug
+            -- where blood/dirt clearing never reached other clients at all:
+            -- sendItemStats covers item stat fields, not the ItemVisual the
+            -- blood/dirt/hole arrays live on. Once for the batch, not per item.
+            if clothing > 0 then RDClothing.sync(target) end
+
             syncTarget(target)
             DFCore.audit("playerInventoryRepairAll", player,
-                string.format("target=%s repaired=%d", args.username, repaired))
+                string.format("target=%s repaired=%d clothing=%d",
+                    args.username, repaired, clothing))
             return { ok = true,
                 message = string.format("Repaired %d item(s) on %s.",
                     repaired, args.username) }

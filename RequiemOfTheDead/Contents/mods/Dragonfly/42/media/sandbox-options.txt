@@ -39,58 +39,6 @@ option RFTDDragonfly.OpenKeyRequiresShift
     page = RFTDDragonfly,
     translation = DF_OpenKeyRequiresShift,
 }
-option RFTDDragonfly.ActionSpeedEnabled
-{
-    type = boolean,
-    default = true,
-    page = RFTDDragonflyActions,
-    translation = DF_ActionSpeedEnabled,
-}
-option RFTDDragonfly.ASReading
-{
-    type = enum,
-    numValues = 6,
-    default = 1,
-    page = RFTDDragonflyActions,
-    translation = DF_ASReading,
-    valueTranslation = DF_ASpeed,
-}
-option RFTDDragonfly.ASForaging
-{
-    type = enum,
-    numValues = 6,
-    default = 1,
-    page = RFTDDragonflyActions,
-    translation = DF_ASForaging,
-    valueTranslation = DF_ASpeed,
-}
-option RFTDDragonfly.ASCleaning
-{
-    type = enum,
-    numValues = 6,
-    default = 1,
-    page = RFTDDragonflyActions,
-    translation = DF_ASCleaning,
-    valueTranslation = DF_ASpeed,
-}
-option RFTDDragonfly.ASRepair
-{
-    type = enum,
-    numValues = 6,
-    default = 1,
-    page = RFTDDragonflyActions,
-    translation = DF_ASRepair,
-    valueTranslation = DF_ASpeed,
-}
-option RFTDDragonfly.ASDismantle
-{
-    type = enum,
-    numValues = 6,
-    default = 1,
-    page = RFTDDragonflyActions,
-    translation = DF_ASDismantle,
-    valueTranslation = DF_ASpeed,
-}
 option RFTDDragonfly.DebugGateEnabled
 {
     type = boolean,

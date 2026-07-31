@@ -31,14 +31,39 @@
 -- no stat). Existence probing would use cacheFileExists (roots at
 -- cacheDir/Lua/); fileExists and serverFileExists root elsewhere.
 --
+-- 42.20 WRITE-EXTENSION ALLOWLIST - why these files are named ".jsonl.log":
+-- getFileWriter returns nil unless the extension is in
+-- Set.of("ini","cfg","txt","log") (LuaManager.java:9884, gate at :5514; the set
+-- does not exist in 42.19.1). getFileExtension() takes the substring after the
+-- LAST dot, so "events.jsonl.log" presents as "log" and passes while the name
+-- still declares its real format. This was NOT a cosmetic choice: it is the
+-- only route that keeps append=true, and the chronicle's per-line durability
+-- depends on appending. getFileOutput() is ungated but cannot append at all
+-- (no append arg - it truncates every open) and parks its stream in a single
+-- private static field, so it is one file process-wide; getModFileWriter is
+-- ungated but roots inside the mod dir, which is replaced on every update.
+-- The check is CASE-SENSITIVE and unlowercased: ".LOG" fails. Extensionless
+-- names fail too. Only the final path segment is inspected, so the dots in a
+-- "<SafeName>.<SteamID>" DIRECTORY are irrelevant.
+-- Reads are NOT gated - getFileReader still opens the pre-42.20 ".jsonl"
+-- files, which is why nothing here migrates them: they stay on disk as
+-- immutable history and a reader concatenates legacy-then-current. Lua cannot
+-- rename or delete, and truncating them is impossible anyway now that their
+-- extension is refused.
+--
 -- Layout (under <cacheDir>/Lua/). Every player owns ONE directory per season
 -- (<SafeName>.<SteamID>, see RDIdentity) holding their permanent record and
 -- their derived-state index side by side:
---   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/events.jsonl  permanent
---   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/index.json    rewritten
---   RFTD/season/<SeasonName>/chronicle/world.jsonl                server scope
---   RFTD/forensic/<stream>/head.txt                             "<segment> <lines>"
---   RFTD/forensic/<stream>/000.jsonl .. NNN.jsonl               ring segments
+--   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/events.jsonl.log  permanent
+--   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/index.json.txt    rewritten
+--   RFTD/season/<SeasonName>/chronicle/world.jsonl.log                server scope
+--   RFTD/forensic/<stream>/head.txt                          "<segment> <lines>"
+--   RFTD/forensic/<stream>/000.<stream>.jsonl.log ..         ring segments
+--     e.g. forensic/guardian/000.guardian.jsonl.log - the name repeats the
+--     stream so a segment stays identifiable once copied out of its folder.
+--
+-- The trailing ".log"/".txt" is forced by the 42.20 allowlist (see below).
+-- ".log" marks an append-only stream, ".txt" a file rewritten in place.
 --
 -- Envelope (one JSON object per line, keys sorted by RDJson):
 --   {"v":2,"t":<epoch>,"d":<gameDay>,"s":"<seasonName>","e":"<NS.EVENT>",
@@ -162,9 +187,10 @@ end
 
 local function chroniclePath(seasonId, def, subj)
     if def.scope == "w" then
-        return DIR .. "season/" .. seasonId .. "/chronicle/world.jsonl"
+        return DIR .. "season/" .. seasonId .. "/chronicle/world" .. RDShared.EXT_STREAM
     end
-    return DIR .. "season/" .. seasonId .. "/chronicle/p/" .. RDIdentity.dirFor(subj) .. "/events.jsonl"
+    return DIR .. "season/" .. seasonId .. "/chronicle/p/" .. RDIdentity.dirFor(subj)
+        .. "/events" .. RDShared.EXT_STREAM
 end
 
 -- Write one chronicle record for the CURRENT season. Returns true on accept.
@@ -203,7 +229,7 @@ function RDLog.state(subj, tbl)
     if not usernameOf(subj) then return end
     RDSeasonServer.ensure()
     local path = DIR .. "season/" .. RDSeasonServer.current()
-        .. "/chronicle/p/" .. RDIdentity.dirFor(subj) .. "/index.json"
+        .. "/chronicle/p/" .. RDIdentity.dirFor(subj) .. "/index" .. RDShared.EXT_DOC
     rewrite(path, RDJson.encode(tbl or {}) .. "\n")
 end
 
@@ -213,8 +239,27 @@ end
 
 local streams = {}   -- name -> { seg, lines, buf, lastMs, headDirty, loaded }
 
+-- "000.guardian.jsonl.log", not the old bare "000.jsonl.log". The stream name was
+-- only ever carried by the parent DIRECTORY, so a segment copied out of its folder
+-- - dragged into a ticket, mailed to someone, opened in an editor - was an
+-- anonymous "000". Self-describing filenames cost nothing and survive being moved.
+--
+-- THE EXTENSION IS NOT NEGOTIABLE: ".jsonl" alone is REFUSED since 42.20, which
+-- allows only ini/cfg/txt/log and reads the substring after the LAST dot. So the
+-- name declares its real format in the middle and presents "log" at the end.
+-- "000.guardian.jsonl" would silently return nil from getFileWriter and write
+-- nothing at all.
+--
+-- MIGRATION, which needs no code: existing streams have a head.txt naming an
+-- OLD-style segment. The boot probe below (cacheFileExists on this path) will not
+-- find it, so the ring resets to 0/0 and rewrites head - exactly the self-healing
+-- path already built for the 42.20 outage. Old "000.jsonl.log" files stay on disk
+-- as immutable history; Lua cannot delete or rename them, and the ring will never
+-- reclaim them, so they are a one-time orphan per stream. Readers wanting full
+-- history concatenate old-then-new.
 local function segPath(name, seg)
-    return DIR .. "forensic/" .. name .. "/" .. string.format("%03d", seg) .. ".jsonl"
+    return DIR .. "forensic/" .. name .. "/"
+        .. string.format("%03d", seg) .. "." .. name .. RDShared.EXT_STREAM
 end
 
 local function headPath(name)
@@ -237,6 +282,21 @@ local function stream(name)
         if seg then
             st.seg   = tonumber(seg) or 0
             st.lines = tonumber(lines) or 0
+            -- head.txt can describe a segment that does not exist, and the 42.20
+            -- allowlist outage is exactly how: head.txt is ".txt" so it stayed
+            -- writable while every ".jsonl" segment write returned nil, leaving
+            -- the counter advancing over records that never landed. A pre-42.20
+            -- head also points at the old ".jsonl" segment names. Either way the
+            -- counter is not describing the file it names, so trust the disk and
+            -- restart the ring rather than resuming at a fabricated offset.
+            -- Probed once per stream per boot, and only when a head exists - a
+            -- fresh install never gets here. cacheFileExists roots at
+            -- cacheDir/Lua/, the same root these paths are relative to.
+            local ok, exists = pcall(function() return cacheFileExists(segPath(name, st.seg)) end)
+            if not ok or exists ~= true then
+                st.seg, st.lines = 0, 0
+                st.headDirty = HEAD_SYNC_LINES   -- force a rewrite so disk stops lying
+            end
         end
     end
     streams[name] = st
@@ -274,8 +334,14 @@ end
 
 -- High-volume telemetry. evt is free-form (namespaced "NS.NAME" by
 -- convention); no enum gate - the ring bounds the volume instead.
-function RDLog.forensic(streamName, evt, subj, payload)
-    push(streamName, envelope(evt, "?", subj, payload))
+-- modId names the PRODUCING mod, the envelope's "m". Chronicle gets it free from
+-- RDEvents.get(evt) because that enum is closed and knows who registered each
+-- event; forensic events are deliberately outside it, so the producer has to say.
+-- It was hardcoded "?" here, which meant every forensic record in the family - not
+-- just Guardian's - shipped an empty attribution field. Optional so an unconverted
+-- caller degrades to the old behaviour rather than erroring.
+function RDLog.forensic(streamName, evt, subj, payload, modId)
+    push(streamName, envelope(evt, modId or "?", subj, payload))
 end
 
 -- Escape hatch for consolidating pre-Core writers incrementally: reroute an

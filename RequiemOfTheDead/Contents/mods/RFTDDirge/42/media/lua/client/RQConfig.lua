@@ -121,6 +121,19 @@ function RQConfig.get()
         -- We invert it here so the rest of the code can keep treating the result as a plain
         -- damage multiplier (1.0 = full damage, 0.5 = half, 0.0 = none). Flipping it at this
         -- boundary means every consumer (jugg, boss, scav) keeps its math unchanged.
+        --
+        -- ONE KNOB, THREE FEATURES: Boss and Scavenger auras reuse this exact value
+        -- (RQJuggernaut ORs their playerInAura flags into its own), so changing it moves
+        -- all three specials' weapon debuffs together.
+        --
+        -- The shipped default is 40 (declared in media/sandbox-options.txt), i.e. weapons
+        -- deal 60% damage inside an aura. The `or 0` below is NOT a second copy of that
+        -- default and must NOT be "aligned" to 40 - it is a deliberate fail-SAFE for the
+        -- case where SandboxVars.RFTDDirge is unreadable (the duplicate-mod-id trap: a
+        -- client subscribed to both a legacy per-mod item and the bundle loads the legacy
+        -- copy, which may not declare this option at all). Silently nerfing a player's
+        -- weapon because we could not read the server's config is worse than leaving it
+        -- alone, so an unreadable sandbox means NO debuff. The asymmetry is the point.
         juggernautAuraMultiplier = (100 - math.max(0, math.min(100,
             tonumber(sv and sv.JuggernautAuraMultiplier) or 0))) / 100.0,
 

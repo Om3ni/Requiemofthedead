@@ -1,0 +1,7 @@
+{
+  "ContextMenu_OE_RipAll": "Rip All (%1)",
+  "ContextMenu_OE_RipAll_Tooltip": "Rip every rippable garment and sheet in the containers you have open",
+  "ContextMenu_OE_CutAll": "Cut All (%1)",
+  "ContextMenu_OE_CutAll_Tooltip": "Cut up every belt and tanned hide in the containers you have open",
+  "ContextMenu_OE_RipIt_More": " ...and %1 more"
+}

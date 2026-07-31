@@ -100,6 +100,18 @@ local function showIdentifyResult(message, zType)
     player:setHaloNote(message, r, g, b, 300)
 end
 
+-- Conversions the admin has asked for but not yet seen confirmed.
+-- onlineID -> { zType, at }. On a congested server BOTH feedback packets (the
+-- adminConvertResult unicast and the zombieConverted broadcast) ride the same
+-- saturated connection and drop together, which is the "I clicked Convert and
+-- nothing happened at all" report. Rather than add retries, resolve locally:
+-- RQRegistry is fed by three independent channels (the zombieConverted
+-- broadcast, the snapshot delta, and the baseline pull), so whichever one
+-- survives confirms the conversion at zero extra wire cost.
+local pendingConvert  = {}
+local CONVERT_TIMEOUT = 10000   -- ~5 delta passes at the 2s snapshot cadence
+local convertTick     = 0
+
 -- does the actual conversion - marks the zombie, boosts HP,
 -- sets up type-specific stuff like sprinter for Boss or
 -- base health tracking for Glutton/Scavenger
@@ -125,7 +137,49 @@ local function convertZombie(zombie, zType)
         z        = math.floor(zombie:getZ()),
         zType    = zType,
     })
+
+    -- Immediate local ack: the admin must never see literally nothing while the
+    -- round trip is in flight. The definitive answer follows from whichever
+    -- channel lands first (see pendingConvert above).
+    showIdentifyResult("Dirge: Converting to " .. zType .. "...", zType)
+    if oid then
+        pendingConvert[oid] = { zType = zType, at = getTimestampMs() }
+    end
 end
+
+-- Resolve outstanding conversions from local registry state. Costs nothing on
+-- the wire; it only reads what reconcile already delivered.
+local function pollPendingConverts()
+    convertTick = convertTick + 1
+    if convertTick < 60 then return end   -- ~1s
+    convertTick = 0
+
+    local now = getTimestampMs()
+    local done, n = {}, 0
+    for oid, p in pairs(pendingConvert) do
+        local zType = RQRegistry.getType(oid)
+        if zType then
+            if zType == p.zType then
+                showIdentifyResult("Dirge: Converted to " .. zType, zType)
+            else
+                showIdentifyResult("Dirge: Already " .. zType, zType)
+            end
+            n = n + 1; done[n] = oid
+        elseif now - p.at >= CONVERT_TIMEOUT then
+            -- Honest timeout rather than silence. The conversion may well have
+            -- applied server-side; what failed is our knowledge of it.
+            showIdentifyResult("Dirge: No confirmation in "
+                .. math.floor(CONVERT_TIMEOUT / 1000)
+                .. "s - zombie may have moved, or sync is lagging")
+            n = n + 1; done[n] = oid
+        end
+    end
+    -- collect-then-delete: mutating during pairs() is the pattern RQReconcile
+    -- avoids for the same reason.
+    for i = 1, n do pendingConvert[done[i]] = nil end
+end
+
+Events.OnTick.Add(pollPendingConverts)
 
 local function getZombieSpecialType(zombie)
     if not zombie or zombie:isDead() then return nil end
@@ -195,6 +249,10 @@ local function onAdminServerCommand(module, command, args)
     elseif command == "adminConvertResult" then
         local status = args and args.status or "missing"
         local zType  = args and args.zType or "?"
+        -- The reply is an accelerator, not a dependency: retire the pending
+        -- entry so the 1Hz poller doesn't report the same conversion again.
+        local rid = args and tonumber(args.onlineID)
+        if rid then pendingConvert[rid] = nil end
         if status == "ok" then
             showIdentifyResult("Dirge: Converted to " .. zType, zType)
         elseif status == "already" then
@@ -202,6 +260,30 @@ local function onAdminServerCommand(module, command, args)
         else
             showIdentifyResult("Dirge: Zombie not found - may have moved")
         end
+
+    elseif command == "adminSpawnResult" then
+        -- Spawn confirms off the reply count rather than the registry: the
+        -- spawned zombie's onlineID isn't known client-side until it arrives, so
+        -- there's nothing to pre-register a pending entry against.
+        local zType     = args and args.zType or "?"
+        local converted = args and args.converted or 0
+        local requested = args and args.requested or 0
+        if converted > 0 then
+            local msg = "Dirge: Spawned " .. converted .. " " .. zType
+            if converted < requested then
+                msg = msg .. " (of " .. requested .. " - no room for the rest)"
+            end
+            showIdentifyResult(msg, zType)
+        else
+            showIdentifyResult("Dirge: Spawn failed - no valid ground near that spot")
+        end
+
+    elseif command == "adminScreamResult" then
+        showIdentifyResult(string.format("Dirge: Scream called in %d zombies",
+            args and args.spawned or 0))
+
+    elseif command == "adminEMPResult" then
+        showIdentifyResult("Dirge: EMP detonating")
 
     elseif command == "adminRerollResult" then
         -- Reply to the Necro-tab "Reroll Dirge" button (server adminReroll):
@@ -219,9 +301,51 @@ end
 
 Events.OnServerCommand.Add(onAdminServerCommand)
 
--- context menu hook - if a zombie is within 3 tiles of the click,
--- offer Identify and (if not already special) the Convert submenu.
--- Admin only.
+-- MP-disruptive actions go through Dragonfly's confirmation popup, which fires
+-- straight through when nobody else is online and otherwise names the players
+-- who are about to be affected. Dirge only soft-depends on Dragonfly, so fall
+-- through to firing directly when it isn't installed.
+local function confirmed(label, fn)
+    if DFConfirm and DFConfirm.askIfOthersOnline then
+        DFConfirm.askIfOthersOnline(label, fn)
+    else
+        fn()
+    end
+end
+
+local function spawnSpecial(coords, zType)
+    confirmed("Spawn a " .. zType .. " at your location.", function()
+        sendClientCommand(RQCommon.MODULE, "adminSpawnSpecial", {
+            x = coords.x, y = coords.y, z = coords.z,
+            zType = zType, count = 1,
+        })
+        showIdentifyResult("Dirge: Spawning " .. zType .. "...", zType)
+    end)
+end
+
+local function fireScream(coords)
+    confirmed("Fire a Screamer scream at your location. This calls in zombies.", function()
+        sendClientCommand(RQCommon.MODULE, "adminScream", {
+            x = coords.x, y = coords.y, z = coords.z,
+        })
+        -- Fire-and-forget by nature: no ack packet, just say it went. The server
+        -- logs the real outcome, and the scream is its own confirmation.
+        showIdentifyResult(string.format("Dirge: Scream fired at (%d,%d)", coords.x, coords.y))
+    end)
+end
+
+local function fireEMP(coords)
+    confirmed("Detonate an EMP at your location. This drains nearby electronics.", function()
+        sendClientCommand(RQCommon.MODULE, "adminEMP", {
+            x = coords.x, y = coords.y, z = coords.z,
+        })
+        showIdentifyResult(string.format("Dirge: EMP armed at (%d,%d)", coords.x, coords.y))
+    end)
+end
+
+-- context menu hook - one "Dirge" parent holding the whole admin toolkit.
+-- Identify/Convert need a zombie within 3 tiles; Spawn/Scream/EMP act on the
+-- clicked square and so are offered even in an empty field. Admin only.
 local function onFillWorldObjectContextMenu(playerNum, context, worldObjects)
     if not isAdmin() then return end
 
@@ -241,23 +365,40 @@ local function onFillWorldObjectContextMenu(playerNum, context, worldObjects)
         end
     end
 
+    local coords = { x = math.floor(wx), y = math.floor(wy), z = math.floor(wz) }
     local zombie = findNearestZombie(wx, wy, wz, 3)
 
+    -- The parent is built unconditionally. It used to live inside `if zombie`,
+    -- which meant no menu at all with nothing in range -- that would now hide
+    -- Spawn/Scream/EMP, none of which need a zombie.
+    local dirgeMenu   = context:getNew(context)
+    local dirgeOption = context:addOption("Dirge")
+    context:addSubMenu(dirgeOption, dirgeMenu)
+
     if zombie then
-        context:addOption("Dirge - Identify Zombie", zombie, identifyZombie)
+        dirgeMenu:addOption("Identify Zombie", zombie, identifyZombie)
 
         local zType = getZombieSpecialType(zombie)
         if not zType then
-            local rqMenu = context:getNew(context)
-            local rqOption = context:addOption("Dirge - Convert Zombie")
-            context:addSubMenu(rqOption, rqMenu)
+            local convertMenu   = context:getNew(context)
+            local convertOption = dirgeMenu:addOption("Convert Zombie")
+            context:addSubMenu(convertOption, convertMenu)
 
             for _, adminType in ipairs(ADMIN_TYPES) do
-                local label = "Convert to " .. adminType
-                rqMenu:addOption(label, zombie, convertZombie, adminType)
+                convertMenu:addOption(adminType, zombie, convertZombie, adminType)
             end
         end
     end
+
+    local spawnMenu   = context:getNew(context)
+    local spawnOption = dirgeMenu:addOption("Spawn Special Zombie")
+    context:addSubMenu(spawnOption, spawnMenu)
+    for _, adminType in ipairs(ADMIN_TYPES) do
+        spawnMenu:addOption(adminType, coords, spawnSpecial, adminType)
+    end
+
+    dirgeMenu:addOption("Scream", coords, fireScream)
+    dirgeMenu:addOption("EMP", coords, fireEMP)
 end
 
 Events.OnFillWorldObjectContextMenu.Add(onFillWorldObjectContextMenu)

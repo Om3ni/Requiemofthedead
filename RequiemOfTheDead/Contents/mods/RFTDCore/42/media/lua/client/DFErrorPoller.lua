@@ -9,7 +9,7 @@
 
 if isServer() then return end
 
-DFErrorPoller = DFErrorPoller or { seen = {}, lastSize = 0 }
+DFErrorPoller = DFErrorPoller or { seen = {}, seenCount = 0, lastSize = 0, lastTail = nil, tick = 0 }
 
 local function extractModTag(text)
     local tag = string.match(tostring(text or ""), "%(%(MOD:([^)]+)%)%)")
@@ -41,15 +41,53 @@ local function normalize(text)
     return clean
 end
 
+-- THE BUG THIS REPLACES, because it looked reasonable and was silently fatal:
+-- the old gate was `if size == lastSize then return end`. getLuaDebuggerErrors
+-- reads KahluaThread.m_errors_list, which is a RING CAPPED AT 40
+-- (KahluaThread.java:916 - `while (m_errors_list.size() >= 40) remove(0)`), so
+-- once a session has produced 40 errors the size is pinned at 40 forever and that
+-- gate returns early on every subsequent tick. Errors were captured until the
+-- buffer saturated and then never again - "sometimes it dumps a stack trace,
+-- sometimes it doesn't".
+--
+-- Detect change by the TAIL entry instead: a new error always appends there.
+-- One Java call per poll instead of forty, and it stays correct once size pins.
+-- Two identical consecutive errors read as no change, which is fine - `seen`
+-- would have suppressed the second anyway.
+--
+-- Throttled because getLuaDebuggerErrors() returns `new ArrayList<>(...)`, a fresh
+-- 40-element copy on every call; at OnTickEvenPaused rates that is pure GC churn
+-- for something nobody needs frame-accurate.
+local POLL_INTERVAL = 10
+local SEEN_LIMIT    = 200
+
 local function poll()
     if not DFLog then return end
+
+    DFErrorPoller.tick = (DFErrorPoller.tick or 0) + 1
+    if DFErrorPoller.tick % POLL_INTERVAL ~= 0 then return end
+
     local errors
     local ok = pcall(function() errors = getLuaDebuggerErrors() end)
     if not ok or not errors then return end
 
-    local size = errors:size()
-    if size == DFErrorPoller.lastSize then return end
+    local size = 0
+    pcall(function() size = errors:size() end)
+    if size <= 0 then return end
+
+    local tail
+    pcall(function() tail = tostring(errors:get(size - 1)) end)
+    if size == DFErrorPoller.lastSize and tail == DFErrorPoller.lastTail then return end
     DFErrorPoller.lastSize = size
+    DFErrorPoller.lastTail = tail
+
+    -- `seen` only ever needs to cover the 40 entries the ring can hold; letting it
+    -- grow unbounded across a long session is a slow leak. Resetting risks
+    -- re-pushing at most those 40.
+    if DFErrorPoller.seenCount and DFErrorPoller.seenCount > SEEN_LIMIT then
+        DFErrorPoller.seen = {}
+        DFErrorPoller.seenCount = 0
+    end
 
     for i = 0, size - 1 do
         local entry
@@ -59,6 +97,7 @@ local function poll()
             local hash = #raw .. ":" .. string.sub(raw, 1, 80)
             if not DFErrorPoller.seen[hash] then
                 DFErrorPoller.seen[hash] = true
+                DFErrorPoller.seenCount = (DFErrorPoller.seenCount or 0) + 1
                 DFLog.push{
                     source = extractModTag(raw),
                     level  = levelFor(raw),

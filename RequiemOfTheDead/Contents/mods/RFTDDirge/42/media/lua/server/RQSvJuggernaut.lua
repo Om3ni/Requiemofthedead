@@ -45,9 +45,17 @@ function RQSvJuggernaut.tick(zombie)
                                and not _activeZombies[obj]
                                and not RQSvJuggernaut.buffed[obj]
                                and not (RQSvBoss and RQSvBoss.buffed and RQSvBoss.buffed[obj]) then
-                                RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct))
-                                RQSvJuggernaut.buffed[obj] = true
-                                buffCount = buffCount + 1
+                                -- ownerOnly: this fires once per zombie in radius,
+                                -- so a broadcast here is the mod's peak burst.
+                                -- Only latch buffed[] when the write actually
+                                -- placed -- ownership can flip between passes, and
+                                -- an unconditional latch would leave that zombie
+                                -- permanently unbuffed. Failing means "retry next
+                                -- aura pass", which costs nothing.
+                                if RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct), true) then
+                                    RQSvJuggernaut.buffed[obj] = true
+                                    buffCount = buffCount + 1
+                                end
                             end
                         end
                     end
@@ -68,7 +76,9 @@ function RQSvJuggernaut.tick(zombie)
             local hp = zombie:getHealth()
             if hp < maxHP then
                 local newHP = math.min(maxHP, hp + maxHP * (mitigation / 100.0))
-                RQSvShared.svSetZombieHP(zombie, newHP)
+                -- ownerOnly: repeats every 2s and recomputes its target, so it
+                -- self-corrects through an ownership handoff.
+                RQSvShared.svSetZombieHP(zombie, newHP, true)
                 RQDirgeLog.write("Juggernaut", "[INFO] id=" .. tostring(jid)
                     .. " mitigation regen hp=" .. string.format("%.2f", hp)
                     .. " -> " .. string.format("%.2f", newHP)

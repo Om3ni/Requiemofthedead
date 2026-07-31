@@ -41,9 +41,22 @@ local function rebuildList(list, filter)
         list:addItem("", e)
     end
     if #list.items > 0 then
+        -- ensureVisible, not just `selected`. Setting selected only moves the
+        -- highlight; the view stays scrolled wherever it was, which for a buffer
+        -- of up to DFLog.capacity (500) lines means you are looking at the OLDEST
+        -- entries while every new one lands below the fold. That is why admin
+        -- audit lines appeared to never arrive - they were arriving, off screen.
         list.selected = #list.items
+        pcall(function() list:ensureVisible(#list.items) end)
     end
 end
+
+-- The tab is rebuilt every time the panel opens, and each build subscribed a
+-- fresh listener closing over that build's widgets. They accumulated for the
+-- session, every one of them firing rebuildList against a dead list on every log
+-- push (swallowed by the pcall in DFLog.notify, so it looked harmless). Track the
+-- live one and drop it on rebuild.
+local activeListener = nil
 
 local function build(spec, panel, x, y, w, h)
     local PADDING = 6
@@ -97,6 +110,32 @@ local function build(spec, panel, x, y, w, h)
     copyBtn:instantiate()
     panel:addChild(copyBtn)
 
+    -- Deliberately throw one non-fatal Lua error, to prove the whole error path is
+    -- alive: engine catches -> KahluaThread.m_errors_list -> DFErrorPoller ->
+    -- DFLog -> this list. Worth having as a button because every link in that
+    -- chain has failed silently at least once, and there is no other way to tell
+    -- "no errors happening" from "error capture is broken".
+    --
+    -- NON-FATAL BY CONSTRUCTION: the throw happens inside an event callback, and
+    -- the engine catches Lua errors there, logs the trace and carries on - which is
+    -- exactly why modded PZ spams traces without dying. The handler removes itself
+    -- before throwing, so it fires once and cannot loop.
+    local testBtn = ISButton:new(x + PADDING + 370, y + PADDING, 90, BTN_H,
+        "Test error", panel, function()
+            local function boom()
+                Events.OnTick.Remove(boom)
+                error("[Dragonfly] simulated console test error - safe to ignore")
+            end
+            Events.OnTick.Add(boom)
+            if DFFeedback then
+                DFFeedback.good("Simulated error thrown; it should appear below within a second.")
+            end
+        end)
+    testBtn.borderColor = { r = 0.75, g = 0.65, b = 0.35, a = 1 }
+    testBtn:initialise()
+    testBtn:instantiate()
+    panel:addChild(testBtn)
+
     local clearBtn = ISButton:new(x + PADDING + 280, y + PADDING, 80, BTN_H,
         "Clear", panel, function() DFLog.clear(); refresh() end)
     clearBtn.borderColor.a = 0.3
@@ -104,10 +143,9 @@ local function build(spec, panel, x, y, w, h)
     clearBtn:instantiate()
     panel:addChild(clearBtn)
 
-    local listener = function() refresh() end
-    DFLog.subscribe(listener)
-    -- (Listener leaks when the tab is rebuilt; acceptable for v0.1.
-    --  Cleanup hook lives in v0.2 polish.)
+    if activeListener then DFLog.unsubscribe(activeListener) end
+    activeListener = function() refresh() end
+    DFLog.subscribe(activeListener)
 
     -- Z-order: combo's dropdown popup must render above the scrolling list.
     -- ISUI draws siblings in addChild order (later = on top); the list was
