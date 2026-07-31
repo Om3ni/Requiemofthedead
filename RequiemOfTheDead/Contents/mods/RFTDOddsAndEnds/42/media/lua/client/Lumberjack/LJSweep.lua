@@ -21,24 +21,42 @@
 -- for free: a tree someone else felled while you worked is skipped rather than
 -- swung at.
 --
--- HOW THE CHAIN IS ACTUALLY HELD TOGETHER. There is no setOnComplete to hang
--- the next tree off. It is NOT on ISBaseTimedAction - only eight unrelated
--- subclasses declare one of their own (ISCraftAction, ISWalkToTimedAction,
--- ISHandcraftAction, ...), and ISChopTreeAction is not among them, so
--- chop:setOnComplete is a nil call that pcall swallows into a silent no-op:
--- one tree falls and the sweep quietly ends.
--- The engine's own answer is ISQueueActionsAction - a zero-duration action
--- whose start() calls a function of yours to queue the NEXT actions, wrapped in
--- beginAddingActions/endAddingActions so ISTimedActionQueue.add
--- (ISTimedActionQueue.lua:191) splices them in behind the running action
--- instead of appending to the end. Queue chop, then queue one of these; when
--- the chop performs, our step() runs and lays down the next tree.
+-- HOW THE CHAIN IS HELD TOGETHER - third design, with the receipts, because
+-- the first two both failed SILENTLY and someone will be tempted back to them.
 --
--- That also hands us abort for free, and better than the hand-rolled version:
--- any interruption calls ISBaseTimedAction:stop, which calls resetQueue on the
--- whole queue - so a cancelled chop takes the pending chain link with it and
--- the sweep cannot march on. Only a chop that genuinely completes ever reaches
--- step() again.
+-- Design one used chop:setOnComplete. Not on ISBaseTimedAction - eight
+-- unrelated subclasses each declare their own, which is exactly why it reads
+-- like base API - so on ISChopTreeAction it is a nil call that pcall swallows
+-- into a one-tree sweep.
+--
+-- Design two queued the engine's own ISQueueActionsAction behind the chop, and
+-- died on MP to a race vanilla structurally cannot lose. A net-synced chop
+-- ENDS by whichever of two packets lands first. If the ActionManager "done"
+-- packet is first, forceComplete is set and the driver
+-- (IsoGameCharacter.java:8284-8296) calls perform() - the queue advances and
+-- a queued chain link runs. But the tree's REMOVAL travels on the world-sync
+-- channel, and the moment the client tree's getObjectIndex() goes -1,
+-- ISChopTreeAction:isValid() is false and the same driver takes its OTHER
+-- exit: stop(), which is ISBaseTimedAction.stop, which is resetQueue - the
+-- pending chain link cancelled with everything else. Removal-first = sweep
+-- over after one tree, not one line in the log. In SP both signals are set in
+-- the same call stack (animEvent forceCompletes the instant the index goes -1)
+-- so the race does not exist there; in vanilla MP nothing is ever queued
+-- behind a chop, so the race has no victim. Our chain was precisely the thing
+-- that made it fatal.
+--
+-- So the chain is NOT A QUEUED THING AT ALL. The next step rides the chop's
+-- own ending: perform and stop are wrapped on the INSTANCE (rawget-visible to
+-- LuaTimedActionNew's pcalls; the metatable is untouched, so the
+-- rawget("complete") probe that keeps the action net-synced still passes), and
+-- success is decided by the WORLD, not the lifecycle - however the action
+-- ended, tree down means continue, tree standing means a genuine interruption
+-- and the sweep is over. Abort therefore stays structural: an interrupt stops
+-- a chop with its tree still up, nothing new is ever queued, done.
+--
+-- One flag (ljAdvanced) makes advancing exactly-once, because the driver can
+-- legally run perform() AND stop() for the same action in the same tick - the
+-- two conditions at IsoGameCharacter.java:8285/8293 are not exclusive.
 --
 -- THE SELECTION SEAM: LJSweep.run takes a LIST of trees and does not care where
 -- it came from. The radius scan below is one supplier. A drag-selected area is
@@ -51,7 +69,6 @@
 if isServer() then return end
 
 require "OEShared"
-require "TimedActions/ISQueueActionsAction"
 
 Lumberjack = Lumberjack or {}
 Lumberjack.Sweep = Lumberjack.Sweep or {}
@@ -193,14 +210,17 @@ local function stillStanding(entry)
     return ok and alive == true
 end
 
--- step queues a chain link that calls onChopped, which calls step. Forward
--- declared because Lua resolves neither one at parse time.
+-- step queues the walk and the chop; the chop's own ending calls step again
+-- through the wrappers below. Forward declared for the closures.
 local step
 
--- Reached ONLY by a chop that performed - an interrupted one resets the queue
--- and takes this along with it - so arriving here IS the tree coming down.
--- First argument is the character, handed over by ISQueueActionsAction.
-local function onChopped(_character, state)
+-- The single advance point, however the chop's life ended. Exactly-once via
+-- ljAdvanced: perform() and stop() can BOTH run for one action in one tick
+-- (the driver's two exit conditions are not exclusive), and advancing twice
+-- would double-count the tree and queue the next one twice.
+local function fellAndContinue(chop, state)
+    if chop.ljAdvanced then return end
+    chop.ljAdvanced = true
     state.felled = state.felled + 1
     step(state)
 end
@@ -230,14 +250,16 @@ step = function(state)
 
     if not stillStanding(entry) then return step(state) end  -- felled by someone else; move on
 
-    -- Walk, equip, chop, chain - queued in that order because that is the order
-    -- they must run in, and vanilla's doChopTree walks before it equips too.
+    -- Walk, equip, chop - queued in that order because that is the order they
+    -- must run in, and vanilla's doChopTree walks before it equips too.
     local ok, reachable = pcall(function()
         -- walkAdj over a raw AdjacentFreeTileFinder.Find: it skips the walk
         -- entirely when you are already standing in range, which on a dense
-        -- stand is most trees. keepActions=true is NOT optional - the default
-        -- clears the action queue first, and inside a chain link that queue is
-        -- the sweep itself, so the sweep would delete its own chop mid-build.
+        -- stand is most trees. keepActions=true because the default CLEARS the
+        -- queue first: called from a perform wrapper that would only re-wipe
+        -- an already-advanced queue, but called from stop's race path it would
+        -- fire resetQueue a second time mid-teardown, and from the menu click
+        -- it would eat whatever the player had queued.
         if not luautils.walkAdj(playerObj, entry.square, true) then return false end
 
         -- ISChopTreeAction:isValid tests the item in the PRIMARY HAND, not the
@@ -247,8 +269,35 @@ step = function(state)
                                            not playerObj:getSecondaryHandItem())
         end
 
-        ISTimedActionQueue.add(ISChopTreeAction:new(playerObj, entry.tree))
-        ISTimedActionQueue.add(ISQueueActionsAction:new(playerObj, onChopped, state))
+        local chop = ISChopTreeAction:new(playerObj, entry.tree)
+        local basePerform, baseStop = chop.perform, chop.stop
+
+        chop.perform = function(self)
+            basePerform(self)
+            fellAndContinue(self, state)
+        end
+
+        chop.stop = function(self)
+            -- perform already advanced: the queue now holds the NEXT tree's
+            -- walk and chop, and baseStop's resetQueue would wipe them. Fully
+            -- swallowing loses nothing - perform already reset the job delta
+            -- and the farming flag; the only work left in stop is the reset
+            -- that must not happen. (Vanilla runs this stop-after-perform
+            -- every SP chop - harmless there because nothing is ever queued
+            -- behind a chop.)
+            if self.ljAdvanced then return end
+            baseStop(self)
+            -- Stopped rather than performed - but if the tree is DOWN, that
+            -- was the removal packet outrunning the done packet, not an
+            -- interruption: keep going. A standing tree is a real interrupt
+            -- (damage, player input, queue cleared) and ends the sweep.
+            local ok, down = pcall(function()
+                return self.tree == nil or self.tree:getObjectIndex() < 0
+            end)
+            if ok and down then fellAndContinue(self, state) end
+        end
+
+        ISTimedActionQueue.add(chop)
         return true
     end)
 
