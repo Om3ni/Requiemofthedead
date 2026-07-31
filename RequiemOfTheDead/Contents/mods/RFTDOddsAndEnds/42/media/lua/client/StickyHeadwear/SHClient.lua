@@ -48,16 +48,30 @@ end
 -- their own memory open.
 SH.original = SH.original or {}
 
-local function pin(item)
+-- getChanceToFall/setChanceToFall live on Clothing (Clothing.java:872), and a
+-- worn slot can hold something that is not Clothing. Test for the METHOD
+-- before calling rather than letting pcall catch the miss: a caught error is
+-- still an error to the engine, and PZ's poller logged one per non-clothing
+-- worn item on every clothing change - a wall of "Tried to call nil" from code
+-- that was technically working.
+local function chanceOf(item)
+    if not item or not item.getChanceToFall then return nil end
     local ok, chance = pcall(function() return item:getChanceToFall() end)
-    if not ok or type(chance) ~= "number" then return end
-    if chance <= 0 then return end          -- already sticky, or has no such behaviour
+    if not ok or type(chance) ~= "number" then return nil end
+    return chance
+end
+
+local function pin(item)
+    local chance = chanceOf(item)
+    if not chance or chance <= 0 then return end   -- already sticky, or no such behaviour
+    if not item.setChanceToFall then return end
     local id = item:getID()
     if SH.original[id] == nil then SH.original[id] = chance end
     pcall(function() item:setChanceToFall(0) end)
 end
 
 local function unpin(item)
+    if not item or not item.setChanceToFall then return end
     local id = item:getID()
     local was = SH.original[id]
     if was == nil then return end
