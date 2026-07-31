@@ -133,24 +133,19 @@ local function health(playerObj)
 end
 
 -- ---------------------------------------------------------------------------
--- Axe selection. bestAxe mirrors vanilla's own choice in
--- ISWorldObjectContextMenu - best available chopper by TreeDamage - but the
--- sweep asks it ONCE and then holds on, and the reason is a 42.20 change:
+-- Axe selection - mirrors vanilla's own choice in ISWorldObjectContextMenu:
+-- the best available chopper by TreeDamage, not the first one found.
 --
--- getTreeDamage() is no longer the static script value. It is scaled by the
--- blade's CURRENT sharpness (HandWeapon.java:1523-1528, treeDamage *
--- getSharpnessMultiplier()). So "re-pick the best axe before every tree",
--- which was a harmless refinement under static values, becomes a PING-PONG
--- with two similar axes: the one in use dulls until the spare scores strictly
--- higher, swap, the spare dulls below the first, swap back - a re-equip every
--- few trees, each one putting a fresh-looking axe in the player's hand.
--- Host testing read that exactly as you would: "the sweep auto-sharpened and
--- repaired my axe without materials". Nothing was sharpened; it was the spare,
--- arriving with its own bars.
---
--- So: pick at sweep start, keep until SPENT (broken, gone, or under the
--- condition floor), then hand over to the spare exactly once, with a toast.
--- Dull-but-working never triggers a swap; a handover is always announced.
+-- RE-PICKED BEFORE EVERY TREE, ON PURPOSE (owner decision, 2026-07-31).
+-- 42.20 scales getTreeDamage() by the blade's current sharpness
+-- (HandWeapon.java:1523-1528), so as the axe in use dulls, the sweep hands
+-- you the sharpest chopper you carry - with two similar axes it will even
+-- alternate as each dulls below the other. That is the INTENDED model: the
+-- sweep always swings the best tool you have, like a worker who owns both.
+-- In play it can look like the axe was sharpened or repaired for free; it was
+-- not - that is the spare arriving with its own bars. A sticky-axe version
+-- (pick once, hold until spent, announce the handover) was built and rolled
+-- back the same morning as over-engineering a non-problem. Do not rebuild it.
 -- ---------------------------------------------------------------------------
 
 local function isAxe(item)
@@ -163,9 +158,9 @@ end
 -- place a lumberjack's spare axe is NOT: it is in the bag. getAllEvalRecurse
 -- descends into containers, which is why vanilla's own chop option uses it.
 --
--- Seeded with the axe already in hand so that ties keep it - for the INITIAL
--- pick, this is what makes "the axe I equipped on purpose" beat an identical
--- one in the bag on iteration order.
+-- Seeded with the axe already in hand so that ties keep it. Strictly-better
+-- still wins, but without the seed a second axe of identical TreeDamage sorts
+-- ahead on iteration order alone and the sweep re-equips between every tree.
 function LJS.bestAxe(playerObj)
     local best = nil
     local ok = pcall(function()
@@ -181,19 +176,6 @@ function LJS.bestAxe(playerObj)
     end)
     if not ok then return nil end
     return best
-end
-
--- Is the sweep's chosen axe still something we can swing: on the character
--- (hand or any bag, by identity - it may have been dropped, stashed, or eaten
--- by an MP mishap) and not spent.
-local function axeStillGood(playerObj, axe)
-    if not axe or axeSpent(axe) then return false end
-    local ok, carried = pcall(function()
-        if playerObj:getPrimaryHandItem() == axe then return true end
-        local found = playerObj:getInventory():getAllEvalRecurse(function(it) return it == axe end)
-        return found ~= nil and found:size() > 0
-    end)
-    return ok and carried == true
 end
 
 -- ---------------------------------------------------------------------------
@@ -268,25 +250,8 @@ step = function(state)
     end
 
     -- Stop rules, in the order you would want to hear about them.
-    --
-    -- The axe is STICKY: state.axe is chosen on the first tree and kept while
-    -- it works. Only when it is spent (or gone) do we shop for a replacement,
-    -- and a genuine mid-sweep handover is announced - see the note on the axe
-    -- selection section for why re-picking every tree is a bug, not a
-    -- refinement, under 42.20's sharpness-scaled getTreeDamage.
-    local axe = state.axe
-    if not axeStillGood(playerObj, axe) then
-        local pick = LJS.bestAxe(playerObj)
-        if pick and pick ~= axe and not axeSpent(pick) then
-            -- Announce only a real handover; the first tree's initial pick
-            -- (axe == nil) is the player's own choice being honoured, not news.
-            if axe and DFFeedback then DFFeedback.good(getText("IGUI_OE_SweepNewAxe")) end
-            state.axe = pick
-            axe = pick
-        else
-            return halt(getText("IGUI_OE_SweepStoppedAxe"))
-        end
-    end
+    local axe = LJS.bestAxe(playerObj)
+    if axeSpent(axe) then return halt(getText("IGUI_OE_SweepStoppedAxe")) end
     if tooTired(playerObj) then return halt(getText("IGUI_OE_SweepStoppedTired")) end
     local hp = health(playerObj)
     if hp and state.health and hp < state.health then
@@ -357,10 +322,7 @@ end
 -- one way to build it, a selected area would be another.
 function LJS.run(playerObj, trees)
     if not playerObj or not trees or #trees == 0 then return end
-    -- axe = nil on purpose: the first step() performs the initial pick, so the
-    -- sticky logic has exactly one code path for choosing.
-    step({ player = playerObj, trees = trees, index = 0, felled = 0,
-           health = health(playerObj), axe = nil })
+    step({ player = playerObj, trees = trees, index = 0, felled = 0, health = health(playerObj) })
 end
 
 -- ---------------------------------------------------------------------------
