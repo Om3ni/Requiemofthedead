@@ -1,6 +1,6 @@
 name=Requiem of the Dead: Dirge
 id=RFTDDirge
-modversion=1.1.0
+modversion=1.0.0
 require=RFTDCore
 description=Dirge - Special zombie variants with unique abilities. Screamers, Juggernauts, EMP zombies, Gluttons, Scavengers, and admin-spawnable Bosses. Requires Requiem of the Dead: Core.
 pzversion=42
