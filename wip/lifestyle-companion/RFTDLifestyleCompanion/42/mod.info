@@ -1,0 +1,7 @@
+name=Requiem of the Dead: Lifestyle Companion
+id=RFTDLifestyleCompanion
+modversion=0.1.0
+require=RFTDCore
+require=LifestyleHobbies
+pzversion=42
+description=Server-side hardening companion for "Lifestyle: Hobbies". Routes the mod's "LS" network command token through RFTDCore's single-dispatcher permission wall (RDNet): per-command rate limiting, capability gates on admin/debug commands, default-deny for unregistered commands, and forensic logging. Also fixes the item-duplication path in the mod's transfer helper and the NeuralHat reading crash. No gameplay content of its own; loads after Lifestyle: Hobbies and overrides only its networking and known bugs. Designed for dedicated multiplayer servers; degrades to a no-op in single player.
