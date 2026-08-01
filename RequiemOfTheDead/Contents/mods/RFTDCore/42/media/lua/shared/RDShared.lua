@@ -12,7 +12,7 @@
 
 RDShared = RDShared or {}
 
-RDShared.VERSION = "0.1.0"
+RDShared.VERSION = "1.0.0"   -- suite version: every RFTD mod moves in lockstep (README > Conventions)
 RDShared.MODULE  = "RFTDCore"   -- command-module wire token; RD is taken, this is not
 RDShared.DIR     = "RFTD/"      -- everything Core writes lives under <cacheDir>/Lua/RFTD/
 

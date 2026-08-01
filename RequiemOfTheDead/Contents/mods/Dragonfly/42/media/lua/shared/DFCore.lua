@@ -12,7 +12,7 @@
 DFCore = DFCore or {}
 
 DFCore.MODULE  = "RFTDDragonfly"
-DFCore.VERSION = "0.8.0"   -- 0.8.0: timed-action speed scaling extracted to RFTDOddsAndEnds.
+DFCore.VERSION = "1.0.0"   -- 1.0.0: suite lockstep. 0.8.0: timed-action speed scaling extracted to RFTDOddsAndEnds.
                            --        It was a world rule, not an admin tool, and only lived
                            --        here because Dragonfly owned a sandbox page. Sandbox keys
                            --        moved RFTDDragonfly.AS* -> RFTDOddsAndEnds.AS*; any server

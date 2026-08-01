@@ -21,7 +21,7 @@ local MODULE = "RFTDReaper"
 
 require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
 
-RDShared.registerMod(MODULE, "1.2.0")   -- keep in sync with mod.info
+RDShared.registerMod(MODULE, "1.0.0")   -- keep in sync with mod.info
 
 -- Staff gate: RDAccess capability model (RFTDCore adoption) - the old
 -- four-level access allowlist is retired; any role holding at least one

@@ -8,7 +8,7 @@
 -- require=, so this only bites clients.)
 require "RDShared"
 
-RDShared.registerMod("RFTDHusbandry", "0.2.0")   -- keep in sync with mod.info
+RDShared.registerMod("RFTDHusbandry", "1.0.0")   -- keep in sync with mod.info
 
 HBCmd = {}
 

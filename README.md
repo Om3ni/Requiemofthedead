@@ -42,20 +42,23 @@ layer - fourteen patch files, nearly half of Core's file count and a third of it
 
 ## Mods in the bundle
 
-| Mod id | What it is | Version |
-|---|---|---|
-| `RFTDCore` | The harness (required by everything) | 0.1.0 |
-| `Dragonfly` | Admin command center: tabbed panel, item editor, Longstrider map/tours, debug gate | 0.8.0 |
-| `RFTDStaffTools` | Extended ESC scoreboard + unlocked role editor + role persistence | 0.7.0 |
-| `RFTDMemoir` | Craftable character snapshot/restore journal | 0.7.0 |
-| `RFTDBanBox` | Item ban engine (loot-strip + login confiscation) | 0.7.0 |
-| `BBLibrary` | RotD default ban list for RFTDBanBox (opt-in) | 0.1.0 |
-| `RFTDReclamation` | Reclaimation - vehicle lifecycle: claims, permissions, fleet panel, dismantling, the Janitor | 0.7.0 |
-| `RFTDDirge` | Special zombie variants: Screamers, Juggernauts, EMP, Gluttons, Scavengers, Bosses | 1.1.0 |
-| `RFTDHusbandry` | Animal taming, breeding, and management | 0.2.0 |
-| `RFTDLastRites` | Client QoL HUD: life-threat indicators (cold, heat, bleeding) | 0.2.0 |
-| `RFTDOddsAndEnds` | Catch-all for small self-contained modules: Reliquary handover stash, RIPIT bulk rip, Sticky Headwear, Lumberjack forestry (wood weight, tree sweep), timed-action speed scaling | 0.2.0 |
-| `RFTDReaper` | Twin-spawn bloom detector/culler - **pending the 42.20 verdict**; may retire with the Necro tab folding into Dirge | 1.2.0 |
+All mods carry the **suite version: 1.0.0** (lockstep - see Conventions).
+
+| Mod id | What it is |
+|---|---|
+| `RFTDCore` | The harness (required by everything) |
+| `Dragonfly` | Admin command center: tabbed panel, item editor, Longstrider map/tours, debug gate |
+| `RFTDStaffTools` | Extended ESC scoreboard + unlocked role editor + role persistence |
+| `RFTDMemoir` | Craftable character snapshot/restore journal |
+| `RFTDBanBox` | Item ban engine (loot-strip + login confiscation) |
+| `BBLibrary` | RotD default ban list for RFTDBanBox (opt-in) |
+| `RFTDReclamation` | Reclaimation - vehicle lifecycle: claims, permissions, fleet panel, dismantling, the Janitor, vanilla-spawn suppression |
+| `RFTDDirge` | Special zombie variants: Screamers, Juggernauts, EMP, Gluttons, Scavengers, Bosses |
+| `RFTDHusbandry` | Animal taming, breeding, and management |
+| `RFTDLastRites` | Client QoL HUD: life-threat indicators (cold, heat, bleeding) |
+| `RFTDOddsAndEnds` | Catch-all for small self-contained modules: Reliquary handover stash, RIPIT bulk rip, Sticky Headwear, Lumberjack forestry (wood weight, tree sweep), timed-action speed scaling |
+| `RFTDReaper` | Twin-spawn bloom detector/culler - **pending the 42.20 verdict**; may retire with the Necro tab folding into Dirge |
+| `RFTDEchoes` | Musician zombies (Wasteland Musicians fork) - **in construction**; songbook pending |
 
 **The migration is complete.** `C:\VSCodeProjects\PZMod` (repo `Om3ni/PZMods`) is the
 frozen archive: history, tooling, the engine decompile, retired test forks, and what stays
@@ -75,6 +78,17 @@ Husbandry and Last Rites. Display names are free text; mod ids are frozen.
 
 ## Conventions
 
+- **Versioning is suite-wide lockstep** (established at 1.0.0, 2026-08-01): every mod,
+  Core included, carries the same `modversion`, bumped once per Workshop upload - not per
+  commit. The bundle is the unit of release (one `workshop.txt`, one upload), so the number
+  names the RELEASE, not the mod; untouched mods move anyway. That is what the Workshop
+  description already promises ("the family's versions always match"). Severity is set by
+  the biggest change in the batch: fixes/tuning/translations bump 0.0.1; any new feature,
+  module, or sandbox option bumps 0.1.0; save/modData format breaks, sandbox option
+  renames, or a mod joining/leaving the bundle bump 1.0.0. Per-release history lives in the
+  `*Shared.VERSION` changelog comments and git log, never in diverging numbers. Bump sites:
+  every `mod.info` (both copies), the `*.VERSION` constants, and the literal
+  `registerMod(id, "x.y.z")` calls - grep `modversion=` and `registerMod(` before upload.
 - Layout: `RequiemOfTheDead/Contents/mods/<modid>/mod.info` + `<modid>/42/media/...`;
   the two mod.info copies per mod stay byte-identical; one `workshop.txt`/`preview.png`
   at the bundle root.

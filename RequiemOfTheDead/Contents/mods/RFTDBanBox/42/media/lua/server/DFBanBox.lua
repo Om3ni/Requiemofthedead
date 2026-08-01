@@ -24,7 +24,7 @@
 require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
 
 DFBanBox = DFBanBox or {}
-RDShared.registerMod("RFTDBanBox", "0.7.0")   -- keep in sync with mod.info
+RDShared.registerMod("RFTDBanBox", "1.0.0")   -- keep in sync with mod.info
 DFBanBox._bans = DFBanBox._bans or {}   -- fullType -> true
 
 local function cfg() return SandboxVars.RFTDBanBox or {} end
