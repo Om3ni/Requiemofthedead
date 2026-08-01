@@ -75,7 +75,6 @@ RQSvShared.svPendingSummons = {}
 -- ========================
 
 local E = RQCommon.ENUMS
-local SE_SPAWN_CHANCE       = E.SPAWN_CHANCE        -- default idx=4 -> 10%
 local SE_SCREAMER_INTERVAL  = E.SCREAMER_INTERVAL   -- default idx=4 -> 60s
 local SE_SCREAMER_CAST      = E.SCREAMER_CAST
 local SE_SCREAMER_RANGE     = E.SCREAMER_RANGE
@@ -94,7 +93,8 @@ local SE_GLUTTON_MULT       = E.GLUTTON_MULT
 local SE_BOSS_COOLDOWN      = E.BOSS_COOLDOWN
 local SE_CAST_4             = E.CAST_4
 
-local sev = RQCommon.ev
+local sev  = RQCommon.ev
+local spct = RQCommon.pct
 
 local svConfig = nil
 
@@ -107,7 +107,9 @@ local function getSvConfig()
     svConfig = {
         enabled              = not (sv and sv.Enabled == false),
         debugMode            = (sv and sv.DebugMode == true),
-        spawnChance          = sev(SE_SPAWN_CHANCE, sv and sv.SpawnChance, 4),
+        -- Raw percent, 1% steps (0-100). 0 = no zombie ever converts, 100 =
+        -- every one does; the roll is ZombRand(100) >= spawnChance.
+        spawnChance          = spct(sv and sv.SpawnChance, 10),
 
         -- Per-type spacing (integer sandbox options, 0-150 tiles).
         -- Each type only checks distance against OTHER zombies of the
@@ -157,12 +159,13 @@ local function getSvConfig()
         bossCastTime      = sev(SE_CAST_4,        sv and sv.BossCastTime,      3) * 1000,
         bossSkillCooldown = sev(SE_BOSS_COOLDOWN, sv and sv.BossSkillCooldown, 3) * 1000,
 
-        -- Per-type spawn weights
-        screamerWeight    = sev(E.TYPE_WEIGHT, sv and sv.ScreamerWeight,    2),
-        juggernautWeight  = sev(E.TYPE_WEIGHT, sv and sv.JuggernautWeight,  4),
-        empWeight         = sev(E.TYPE_WEIGHT, sv and sv.EMPWeight,         5),
-        gluttonWeight     = sev(E.TYPE_WEIGHT, sv and sv.GluttonWeight,     6),
-        scavengerWeight   = sev(E.TYPE_WEIGHT, sv and sv.ScavengerWeight,   2),
+        -- Per-type spawn weights, raw percent (0-100, 1% steps). 0 takes the
+        -- type out of the lottery exactly like its Enabled toggle would.
+        screamerWeight    = spct(sv and sv.ScreamerWeight,    5),
+        juggernautWeight  = spct(sv and sv.JuggernautWeight,  15),
+        empWeight         = spct(sv and sv.EMPWeight,         20),
+        gluttonWeight     = spct(sv and sv.GluttonWeight,     30),
+        scavengerWeight   = spct(sv and sv.ScavengerWeight,   5),
     }
     return svConfig
 end

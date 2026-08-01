@@ -153,13 +153,28 @@ function RQCore.playFalloffSound(name, x, y, z, baseGain)
     local dx = player:getX() - x
     local dy = player:getY() - y
     local dist = math.sqrt(dx * dx + dy * dy)
-    local vol = (baseGain or 1.0) * (1.0 - dist / RQCore.SOUND_FALLOFF_RANGE)
-    if vol <= 0.05 then return end
+    -- The 0.05 skip is a DISTANCE test, not a gain test: it exists to avoid
+    -- spawning an emitter for a sound nobody can hear from here (~66 tiles
+    -- out). Testing the post-gain volume instead would make a low
+    -- ScreamerVolume read as "too far" at point-blank range and mute the
+    -- howl outright, turning the volume slider into a cliff at 5%.
+    local falloff = 1.0 - dist / RQCore.SOUND_FALLOFF_RANGE
+    if falloff <= 0.05 then return end
+    local vol = (baseGain or 1.0) * falloff
+    if vol <= 0 then return end   -- volume knob at 0: nothing to play
     pcall(function()
         local emitter = getWorld():getFreeEmitter(x + 0.5, y + 0.5, z or 0)
         local handle  = emitter:playSound(name)
         emitter:setVolume(handle, vol)
     end)
+end
+
+-- The Screamer howl. Three separate things play this exact clip -- a Screamer
+-- casting, the Boss Scream skill, and a Scavenger flipping to rage -- and the
+-- volume knob has to move all three together, so they share one entry point
+-- rather than three copies of the gain lookup.
+function RQCore.playScreamSound(x, y, z)
+    RQCore.playFalloffSound("RQScreamerScream", x, y, z, RQConfig.get().screamerVolume)
 end
 
 function RQCore.ensureCastFromSnapshot(row, serverTime)
@@ -322,7 +337,7 @@ local function onServerCommand(module, command, args)
         -- client hears it at a volume scaled by its own distance -- fixes the
         -- "screamers in my base with no zombies around" reports.
         if isScreamerCast then
-            RQCore.playFalloffSound("RQScreamerScream", fx, fy, fz, 1.0)
+            RQCore.playScreamSound(fx, fy, fz)
             local player = getPlayer()
             if player then
                 -- Pass blast position so onCastStart can range-check
@@ -336,7 +351,7 @@ local function onServerCommand(module, command, args)
         -- Without the onCastStart call the boss just plays a sound and the player
         -- gets no actual screamer effect.
         if args.skill == "Scream" and ringId and ringId:sub(1, 5) == "boss_" then
-            RQCore.playFalloffSound("RQScreamerScream", fx, fy, fz, 1.0)
+            RQCore.playScreamSound(fx, fy, fz)
             local player = getPlayer()
             if player then
                 RQScreamer.onCastStart(player, nil, fx, fy)
@@ -447,7 +462,7 @@ local function onServerCommand(module, command, args)
         local fx = tonumber(args.x) or 0
         local fy = tonumber(args.y) or 0
         local fz = tonumber(args.z) or 0
-        RQCore.playFalloffSound("RQScreamerScream", fx, fy, fz, 1.0)
+        RQCore.playScreamSound(fx, fy, fz)
         local player = getPlayer()
         if player then
             RQScreamer.onCastStart(player, nil, fx, fy)

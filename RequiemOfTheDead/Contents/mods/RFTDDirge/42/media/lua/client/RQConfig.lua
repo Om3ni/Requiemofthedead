@@ -26,10 +26,9 @@ RQConfig.SCREAMER_SPAWN_RADIUS = 8  -- Radius for spawning new zombies
 -- of DEVOUR_TIME had drifted to {10,...} against the server's {15,...}: the
 -- cast bar showed 10s for a 15s devour at defaults. Server values are truth.
 local E = RQCommon.ENUMS
-local E_SPAWN_CHANCE        = E.SPAWN_CHANCE        -- default idx=4 -> 10%
--- (per-type spacing is now integer sandbox options, no enum table needed)
+-- (per-type spacing and every spawn-chance % are integer sandbox options now,
+--  no enum table needed)
 local E_CAST_4              = E.CAST_4
-local E_TYPE_WEIGHT         = E.TYPE_WEIGHT
 local E_SCREAMER_INTERVAL   = E.SCREAMER_INTERVAL
 local E_SCREAMER_CAST       = E.SCREAMER_CAST
 local E_SCREAMER_RANGE      = E.SCREAMER_RANGE
@@ -48,7 +47,8 @@ local E_GLUTTON_MULT        = E.GLUTTON_MULT
 local E_DEVOUR_TIME         = E.DEVOUR_TIME
 local E_BOSS_COOLDOWN       = E.BOSS_COOLDOWN
 
-local ev = RQCommon.ev
+local ev  = RQCommon.ev
+local pct = RQCommon.pct
 
 -- Cached config singleton (avoids creating new table on each call)
 local cachedConfig = nil
@@ -74,16 +74,19 @@ function RQConfig.get()
         -- General
         enabled              = not (sv and sv.Enabled == false),
         debugMode            = (sv and sv.DebugMode == true),
-        spawnChance          = ev(E_SPAWN_CHANCE, sv and sv.SpawnChance, 4),
+        -- Straight percent, 1% steps (0-100). Same for the five weights below;
+        -- PhunZones' per-zone overrides were already raw percentages, so these
+        -- reads now speak the overlay's language directly.
+        spawnChance          = pct(sv and sv.SpawnChance, 10),
 
         -- Per-type spawn weight (% chance once the initial spawn roll passes)
         -- Under 100 leaves remainder = no spawn. Over 100 is normalized
         -- server-side so enabled types keep proportional odds.
-        screamerWeight       = ev(E_TYPE_WEIGHT, sv and sv.ScreamerWeight, 2),     -- 5%
-        juggernautWeight     = ev(E_TYPE_WEIGHT, sv and sv.JuggernautWeight, 4),   -- 15%
-        empWeight            = ev(E_TYPE_WEIGHT, sv and sv.EMPWeight, 5),           -- 20%
-        gluttonWeight        = ev(E_TYPE_WEIGHT, sv and sv.GluttonWeight, 6),      -- 30%
-        scavengerWeight      = ev(E_TYPE_WEIGHT, sv and sv.ScavengerWeight, 2),    -- 5%
+        screamerWeight       = pct(sv and sv.ScreamerWeight, 5),
+        juggernautWeight     = pct(sv and sv.JuggernautWeight, 15),
+        empWeight            = pct(sv and sv.EMPWeight, 20),
+        gluttonWeight        = pct(sv and sv.GluttonWeight, 30),
+        scavengerWeight      = pct(sv and sv.ScavengerWeight, 5),
 
         -- Per-type spacing (integer sandbox options, 0-150 tiles).
         -- Each type checks its own spacing independently of other types:
@@ -178,6 +181,13 @@ function RQConfig.get()
         -- Screamer screen effect strengths (0-1 scale; sandbox exposes as 0-100 integer)
         screamerBlurStrength   = math.max(0, math.min(100, tonumber(sv and sv.ScreamerBlurStrength) or 100)) / 100.0,
         screamerDarkStrength   = math.max(0, math.min(100, tonumber(sv and sv.ScreamerDarkStrength) or 100)) / 100.0,
+
+        -- Scream loudness, same 0-1 scale. Purely the audio gain: 0 mutes the
+        -- howl and changes nothing else, so the cast bar, ring, disorientation
+        -- and the zombie-attracting world sound all still fire. Client-side
+        -- knob by nature (each client scales its own playback), but it sits in
+        -- sandbox so a server can hold the whole lobby to one volume.
+        screamerVolume         = pct(sv and sv.ScreamerVolume, 100) / 100.0,
     }
     return cachedConfig
 end

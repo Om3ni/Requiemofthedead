@@ -24,7 +24,7 @@
 RQCommon = RQCommon or {}
 
 RQCommon.MODULE  = "RFTDDirge"   -- wire token = mod id
-RQCommon.VERSION = "1.1.0"
+RQCommon.VERSION = "1.0.0"
 
 -- Receive-side gate. The legacy "RQ" token is DEAD: the bundle is a brand-new
 -- Workshop item, so no subscriber can ever hold old-wire clients, and
@@ -54,9 +54,14 @@ RDEvents.registerNamespace("RQ", RQCommon.MODULE, {
 -- Sandbox enum arrays (index -> value) - SERVER-TRUTH VALUES, single copy.
 -- ---------------------------------------------------------------------------
 
+-- SPAWN_CHANCE and TYPE_WEIGHT used to live here as 7- and 8-step enums. Both
+-- are plain 0-100 integer sandbox options now (1% granularity), so the tables
+-- are gone rather than left to rot -- see RQCommon.pct below. The one thing
+-- that broke in the move: a saved SpawnChance/*Weight is a raw PERCENT now,
+-- where it used to be a 1-based index into those arrays. Servers upgrading
+-- from 1.1.0 must re-set those six options once; nothing can migrate them for
+-- us, because index 5 and 5% are indistinguishable in the saved file.
 RQCommon.ENUMS = {
-    SPAWN_CHANCE       = {1, 3, 5, 10, 15, 20, 30},        -- default idx=4 -> 10%
-    TYPE_WEIGHT        = {0, 5, 10, 15, 20, 30, 40, 50},   -- per-type spawn weight %
     CAST_4             = {1, 2, 3, 5},                     -- 4-tier cast time (seconds)
     SCREAMER_INTERVAL  = {15, 30, 45, 60, 90, 120},        -- default idx=4 -> 60s
     SCREAMER_CAST      = {1, 2, 3, 5, 8},                  -- default idx=3 -> 3s
@@ -81,6 +86,16 @@ RQCommon.ENUMS = {
 function RQCommon.ev(tbl, idx, defaultIdx)
     local i = idx or defaultIdx
     return tbl[i] or tbl[defaultIdx]
+end
+
+-- Read a 0-100 percent sandbox option, clamped, with a percent default.
+-- Every spawn-chance knob (global + the five type weights) reads through this
+-- on BOTH sides, so the clamp exists once instead of twelve times -- the same
+-- reason the enum tables were pulled up here.
+function RQCommon.pct(v, defaultPct)
+    local n = tonumber(v)
+    if n == nil then return defaultPct end
+    return math.max(0, math.min(100, n))
 end
 
 -- Base health multipliers per type (was duplicated client + server).
