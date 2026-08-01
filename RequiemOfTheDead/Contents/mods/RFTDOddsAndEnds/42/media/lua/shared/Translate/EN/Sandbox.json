@@ -2,6 +2,8 @@
   "Sandbox_OE_Reliquary": "Odds & Ends: Reliquary",
   "Sandbox_OE_RipIt": "Odds & Ends: RIPIT",
   "Sandbox_OE_Lumberjack": "Odds & Ends: Lumberjack",
+  "Sandbox_OE_ContainerOrder": "Odds & Ends: Container Order",
+  "Sandbox_OE_InventoryCollapse": "Odds & Ends: Inventory Collapse",
   "Sandbox_OE_StickyHeadwear": "Odds & Ends: Sticky Headwear",
   "Sandbox_OE_ActionSpeed": "Odds & Ends: Action Speed",
 
@@ -23,6 +25,12 @@
   "Sandbox_OE_LumberjackSweepAxeFloor_tooltip": "Stop the sweep when the axe drops to this fraction of its condition. 0.05 is five percent. Checked between trees, never mid-swing, so a sweep never abandons a half-felled trunk.",
   "Sandbox_OE_LumberjackSweepEnduranceFloor": "Stop at endurance",
   "Sandbox_OE_LumberjackSweepEnduranceFloor_tooltip": "Stop the sweep when endurance drops this low, so you can still walk home. Without a floor the sweep does not pause politely: every remaining swing fails the game's own endurance check instantly and the whole sweep evaporates with trees still standing.",
+
+  "Sandbox_OE_ContainerOrderEnable": "Enable Container Order",
+  "Sandbox_OE_ContainerOrderEnable_tooltip": "Lets players drag the container buttons down the left of their own inventory into whatever order they like, and keeps that order as they change bags. It is stored per character and nothing moves until a player drags something themselves. Turn this off if the collection includes a container mod that arranges those same buttons - Better Containers and Clean UI both do - so the two are not deciding the order at once.",
+
+  "Sandbox_OE_InventoryCollapseEnable": "Enable Inventory Collapse",
+  "Sandbox_OE_InventoryCollapseEnable_tooltip": "Adds Equipped and Hotbar buttons to the control row under a player's own inventory, each folding that block of items out of the list so only loose gear is shown. The two fold independently and the choice is remembered per character; nothing is hidden until a player presses one. Turn this off if the collection includes a UI mod that rearranges that control row - Clean UI does - so the buttons are not competing for space in it.",
 
   "Sandbox_OE_StickyHeadwearEnable": "Enable Sticky Headwear",
   "Sandbox_OE_StickyHeadwearEnable_tooltip": "Stops your worn headwear being knocked off when you take a hit. Applies to the items you are wearing, not to the item definitions, so zombies still spawn with the usual share of missing hats and the loot table is unchanged. Switching this off restores the original values without a restart.",

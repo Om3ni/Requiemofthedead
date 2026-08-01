@@ -34,6 +34,48 @@
 --                                       click. Renamed from Timber/TB* when
 --                                       the sweep landed - weight scaling was
 --                                       one feature, forestry is a module.
+--   ContainerOrder (ContainerOrder/CO*) drag the container buttons in your own
+--                                       inventory sidebar into the order you
+--                                       want. Lived in Core until 2026-07-31,
+--                                       parked there waiting on Wardrobe - and
+--                                       it is the case study for why that rule
+--                                       exists. Core cannot be switched off, and
+--                                       this reorders a column that Better
+--                                       Containers and Clean UI also reorder, so
+--                                       players who wanted Dirge got a silent
+--                                       fight over their sidebar with no error
+--                                       to point at. Its kill switch is
+--                                       therefore a compatibility control, not
+--                                       a taste one.
+--   InventoryCollapse                   fold the equipped and hotbar blocks out
+--                  (InventoryCollapse/IC*)  of your own inventory list. Came out
+--                                       of Core with ContainerOrder on the same
+--                                       day and the same argument: it puts two
+--                                       buttons in the inventory control row that
+--                                       third-party UI mods also arrange. Note
+--                                       that unlike its sibling it was never
+--                                       dormant - the filtering was conditional
+--                                       but the button registration never was,
+--                                       so every player carried it whether they
+--                                       used it or not.
+--   Bookmark       (Bookmark/BM*)       a public-domain literature quote in a
+--                                       popup on login. Client-only with no
+--                                       counterpart on the other side, so it
+--                                       is the one deliberate exception to the
+--                                       "own sandbox kill switch" rule above -
+--                                       its switch is a "Welcome Message"
+--                                       tick-box on the vanilla Client panel,
+--                                       because the whole point is a toggle
+--                                       the player controls, not a server-wide
+--                                       dial.
+--
+-- OEPrefs.lua is mod-wide infrastructure (not a module of its own - no
+-- subfolder, prefix, or kill switch): a flat key=value client-prefs file for
+-- player-facing cosmetic toggles, mirroring RFTDLastRites' LRPrefs. Toggles go
+-- on the vanilla Client panel (ISUserPanelUI) the way Reclamation's "My
+-- Vehicles" and Last Rites' hub buttons do - a module that needs one hooks
+-- that panel itself (see Bookmark/BMUserPanel.lua) and persists through
+-- OEPrefs.get/set. Never PZAPI.ModOptions; this family does not use it.
 --
 -- That second one is the reason this mod earns its id. A feature needing
 -- sandbox dials must pick its home by WHAT IT IS and pay for its own sandbox
@@ -59,7 +101,7 @@ require "RDShared"
 -- in this mod, from any module, travels under this one token and is
 -- dispatched by RDNet's default-deny registry.
 OEShared.MODULE  = "RFTDOddsAndEnds"
-OEShared.VERSION = "0.2.0"   -- keep in sync with mod.info
+OEShared.VERSION = "1.0.0"   -- keep in sync with mod.info
 
 RDShared.registerMod(OEShared.MODULE, OEShared.VERSION)
 

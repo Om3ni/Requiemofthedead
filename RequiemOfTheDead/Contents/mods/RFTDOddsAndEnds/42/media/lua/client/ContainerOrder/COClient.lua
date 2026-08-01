@@ -1,14 +1,24 @@
--- RDContainerOrder.lua - drag the container buttons in your own inventory sidebar
--- into the order you want, and have it stick.
+-- COClient.lua - Container Order: drag the container buttons in your own
+-- inventory sidebar into the order you want, and have it stick.
 --
--- PARKED IN CORE, NOT AT HOME HERE. This is a leaf feature with no consumers, so
--- by the family's own rule it belongs in the mod that uses it - and that mod is
--- RFTD Wardrobe, which owns player-facing inventory presentation (its tab 1 is
--- the equipped set this pane hides). Wardrobe is specced but not yet scoped, so
--- this and RDEquippedCollapse.lua wait here rather than blocking on it. MOVE BOTH
--- when Wardrobe is scoped. Do not take their presence as precedent for putting
--- more leaf UI in Core: Core is hard-required by every mod in the family, so
--- anything living here can never be switched off.
+-- MOVED OUT OF CORE 2026-07-31, and the reason is the whole point of this mod.
+-- It lived in RFTDCore as RDContainerOrder.lua, parked there because it was a
+-- leaf feature waiting on RFTD Wardrobe to be scoped. Core is hard-required by
+-- every mod in the family, so anything parked there can never be switched off -
+-- and this one reorders a UI surface that popular third-party mods also reorder.
+-- A workshop report: "conflict with container reorder mod (better container,
+-- clean ui...). i just want Dirge, but maybe RFTDCore cause error. there no
+-- error code, but only that container reorder function doesn't work when
+-- RFTDCore is activated." Exactly right, and there was no error to find: apply()
+-- ran after the other mod on every refreshBackpacks and restacked every button,
+-- so their layout was overwritten with a result identical to vanilla.
+--
+-- Here it is optional twice over - don't install Odds & Ends, or leave
+-- ContainerOrderEnable off - so wanting Dirge no longer means taking this.
+-- It landed here rather than waiting for Wardrobe because O&E is the catch-all
+-- and this is exactly what the catch-all is for. Its fellow lodger in Core,
+-- RDEquippedCollapse.lua, moved out the same day and now sits beside it as
+-- InventoryCollapse/ICClient.lua.
 --
 -- Vanilla has no ordering concept at all: refreshBackpacks wipes self.backpacks,
 -- walks the worn containers in engine order, and addContainerButton lays each one
@@ -32,13 +42,29 @@
 -- setScrollHeight(self.backpacks[#self.backpacks]:getBottom()) correct again,
 -- since after the sort the last element really is the bottom one.
 --
+-- DORMANT UNTIL USED, and this is a compatibility contract, not an optimisation.
+-- apply() returns immediately unless the player has actually dragged something,
+-- because the restack is an unconditional `setY` over EVERY button that forces
+-- one vertical column at our buttonSize. With no saved order every container
+-- falls back to DEFAULT + index, so we would compute vanilla order and then write
+-- it over a third-party grid or sort for no gain at all. That is the shipped bug
+-- above. The kill switch is the coarse answer; this is the one that matters,
+-- because it means a player who never touches the feature never collides with
+-- anything even with the module enabled.
+--
+-- The drag handlers stay installed while dormant - they pass through to the
+-- captured originals unless a drag crosses the threshold, which is how a first
+-- drag creates the order that wakes apply() up. So a player running both this and
+-- a reorder mod can still collide by dragging deliberately; that is what
+-- ContainerOrderEnable is for.
+--
 -- TWO VANILLA BEHAVIOURS THE HANDLERS HAVE TO RESPECT:
 --
 --   1. Buttons are POOLED. refreshBackpacks pushes them into self.buttonPool and
 --      addContainerButton pulls them back out, so the same button object is reused
 --      across refreshes and any handler we install persists. Installing blindly
 --      would wrap our own wrapper a little more on every refresh until the call
---      chain is hundreds deep. Hence the rdDragReady tag.
+--      chain is hundreds deep. Hence the coDragReady tag.
 --
 --   2. addContainerButton REASSIGNS button.onMouseUp every call
 --      (= ISInventoryPage.onBackpackMouseUp). So that one must be re-captured and
@@ -53,13 +79,28 @@
 
 if isServer() then return end
 
+require "OEShared"
 require "ISUI/ISInventoryPage"
 
-RDContainerOrder = RDContainerOrder or {}
+ContainerOrder = ContainerOrder or {}
 
+-- Deliberately still "RDContainerOrder": this is a live player-modData key, and
+-- every player who has already dragged a button on the RotD server has an order
+-- stored under it. Renaming it to match the new module prefix would silently drop
+-- all of them back to engine order for nothing but cosmetic consistency.
 local MD_KEY    = "RDContainerOrder"
 local DEFAULT   = 1000          -- unranked containers sort after ranked ones
 local STEP      = 10
+
+-- ---------------------------------------------------------------------------
+-- Kill switch
+-- ---------------------------------------------------------------------------
+
+-- Read at use time, not at load: SandboxVars is not up when this file is walked,
+-- and OEShared.enabled defaults ON until it is. Same idiom as RipIt/RIClient.
+function ContainerOrder.isEnabled()
+    return OEShared.enabled("ContainerOrderEnable")
+end
 
 -- ---------------------------------------------------------------------------
 -- Persistence
@@ -90,7 +131,22 @@ local function orderTable(playerObj, create)
     return md[MD_KEY]
 end
 
-function RDContainerOrder.priorityOf(playerObj, container, fallbackIndex)
+-- Has this player actually dragged anything? Everything in apply() is gated on
+-- this, and MUST be - see DORMANT UNTIL USED in the header.
+--
+-- pairs(), NOT next(): B42's Kahlua registers no global `next`, so `next(t) == nil`
+-- throws "Object tried to call nil" at runtime while passing tools/run-tests under
+-- real Lua 5.1. Same trap InventoryCollapse/ICClient.lua documents at length.
+local function hasOrder(playerObj)
+    local t = orderTable(playerObj, false)
+    if not t then return false end
+    for _, v in pairs(t) do
+        if type(v) == "number" then return true end
+    end
+    return false
+end
+
+function ContainerOrder.priorityOf(playerObj, container, fallbackIndex)
     local t = orderTable(playerObj, false)
     local k = keyFor(container)
     if t and k and type(t[k]) == "number" then return t[k] end
@@ -99,7 +155,7 @@ function RDContainerOrder.priorityOf(playerObj, container, fallbackIndex)
 end
 
 -- Persist the current visual order. Called once on drop, not per frame.
-function RDContainerOrder.commit(page)
+function ContainerOrder.commit(page)
     local playerObj = getSpecificPlayer(page.player)
     local t = orderTable(playerObj, true)
     if not t then return end
@@ -122,16 +178,22 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Sort the ARRAY (see header) and restack the buttons to match.
-function RDContainerOrder.apply(page)
+function ContainerOrder.apply(page)
+    if not ContainerOrder.isEnabled() then return end
     if not page.onCharacter then return end
     if type(page.backpacks) ~= "table" or #page.backpacks == 0 then return end
 
     local playerObj = getSpecificPlayer(page.player)
     if not playerObj then return end
 
+    -- DORMANT UNTIL USED. Without a saved order there is nothing to impose, and
+    -- the restack below would be an unconditional write over another mod's layout
+    -- for a result identical to vanilla. Bail before touching anything.
+    if not hasOrder(playerObj) then return end
+
     local rank = {}
     for i, b in ipairs(page.backpacks) do
-        rank[b] = RDContainerOrder.priorityOf(playerObj, b.inventory, i)
+        rank[b] = ContainerOrder.priorityOf(playerObj, b.inventory, i)
     end
 
     table.sort(page.backpacks, function(a, b)
@@ -154,7 +216,7 @@ end
 
 -- Where a drop would land: the count of visible buttons whose midpoint sits above
 -- the dragged button's midpoint. 0 means "above everything".
-function RDContainerOrder.insertPosition(page, dragged)
+function ContainerOrder.insertPosition(page, dragged)
     local others = {}
     for _, b in ipairs(page.backpacks) do
         if b ~= dragged and b:getIsVisible() then others[#others + 1] = b end
@@ -179,75 +241,75 @@ end
 
 local function onMouseDown(self, x, y)
     local page = pageOf(self)
-    self.rdDragStartY = self:getY()
-    self.rdDragStartMouseY = getMouseY()
-    self.rdCanDrag = page ~= nil and page.onCharacter == true
-    self.rdDragging = false
-    if self.rdDownOrig then return self.rdDownOrig(self, x, y) end
+    self.coDragStartY = self:getY()
+    self.coDragStartMouseY = getMouseY()
+    self.coCanDrag = ContainerOrder.isEnabled() and page ~= nil and page.onCharacter == true
+    self.coDragging = false
+    if self.coDownOrig then return self.coDownOrig(self, x, y) end
 end
 
 local function onMouseMove(self, dx, dy, skipOriginal)
-    if not skipOriginal and self.rdMoveOrig then self.rdMoveOrig(self, dx, dy) end
-    if not (self.pressed and self.rdCanDrag) then return end
+    if not skipOriginal and self.coMoveOrig then self.coMoveOrig(self, dx, dy) end
+    if not (self.pressed and self.coCanDrag) then return end
 
     local page = pageOf(self)
     if not page then return end
 
     local size = page.buttonSize or 32
     -- Threshold so a normal click to SELECT a container is never read as a drag.
-    if math.abs((self.rdDragStartMouseY or 0) - getMouseY()) > size / 6 then
-        self.rdDragging = true
+    if math.abs((self.coDragStartMouseY or 0) - getMouseY()) > size / 6 then
+        self.coDragging = true
     end
-    if not self.rdDragging then return end
+    if not self.coDragging then return end
 
     local panel = self:getParent()
     local newY = getMouseY() - panel:getAbsoluteY() - self:getHeight() / 2
     self:setY(math.max(0, newY))
     self:bringToTop()
 
-    page.rdDragButton = self
-    page.rdDropIndex = RDContainerOrder.insertPosition(page, self)
+    page.coDragButton = self
+    page.coDropIndex = ContainerOrder.insertPosition(page, self)
 end
 
 local function onMouseMoveOutside(self, dx, dy)
-    if self.rdOutOrig then self.rdOutOrig(self, dx, dy) end
-    if not self.rdDragging then return end
+    if self.coOutOrig then self.coOutOrig(self, dx, dy) end
+    if not self.coDragging then return end
     onMouseMove(self, dx, dy, true)
     -- Released off the panel: the button never gets a real onMouseUp, so finish
     -- here or it stays stuck to the cursor.
     if not isMouseButtonDown(0) then
         self.pressed = false
-        RDContainerOrder.finishDrag(self)
+        ContainerOrder.finishDrag(self)
     end
 end
 
 local function onMouseUp(self, x, y)
-    if self.rdDragging then
+    if self.coDragging then
         self.pressed = false
-        RDContainerOrder.finishDrag(self)
+        ContainerOrder.finishDrag(self)
         return
     end
     -- Not a drag: let vanilla select the container as usual.
-    if self.rdUpOrig then return self.rdUpOrig(self, x, y) end
+    if self.coUpOrig then return self.coUpOrig(self, x, y) end
 end
 
-function RDContainerOrder.finishDrag(button)
+function ContainerOrder.finishDrag(button)
     local page = pageOf(button)
-    button.rdDragging = false
+    button.coDragging = false
     if not page then return end
 
-    page.rdDragButton = nil
-    page.rdDropIndex  = nil
+    page.coDragButton = nil
+    page.coDropIndex  = nil
 
     -- A nudge shorter than half a slot is a mis-click, not a reorder: snap back
     -- rather than silently resequencing everything.
     local size = page.buttonSize or 32
-    if button.rdDragStartY and math.abs(button:getY() - button.rdDragStartY) <= size / 2 then
-        button:setY(button.rdDragStartY)
+    if button.coDragStartY and math.abs(button:getY() - button.coDragStartY) <= size / 2 then
+        button:setY(button.coDragStartY)
         return
     end
 
-    RDContainerOrder.commit(page)
+    ContainerOrder.commit(page)
     if page.refreshBackpacks then pcall(function() page:refreshBackpacks() end) end
 end
 
@@ -256,14 +318,14 @@ end
 -- alone and are installed once per pooled button object.
 local function attach(button)
     if button.onMouseUp ~= onMouseUp then
-        button.rdUpOrig = button.onMouseUp
+        button.coUpOrig = button.onMouseUp
         button.onMouseUp = onMouseUp
     end
-    if button.rdDragReady then return end
-    button.rdDragReady = true
-    button.rdDownOrig = button.onMouseDown
-    button.rdMoveOrig = button.onMouseMove
-    button.rdOutOrig  = button.onMouseMoveOutside
+    if button.coDragReady then return end
+    button.coDragReady = true
+    button.coDownOrig = button.onMouseDown
+    button.coMoveOrig = button.onMouseMove
+    button.coOutOrig  = button.onMouseMoveOutside
     button.onMouseDown        = onMouseDown
     button.onMouseMove        = onMouseMove
     button.onMouseMoveOutside = onMouseMoveOutside
@@ -284,7 +346,7 @@ local function install()
     local origAdd = ISInventoryPage.addContainerButton
     function ISInventoryPage:addContainerButton(container, texture, name, tooltip)
         local button = origAdd(self, container, texture, name, tooltip)
-        if button and self.onCharacter then
+        if button and self.onCharacter and ContainerOrder.isEnabled() then
             pcall(attach, button)
         end
         return button
@@ -293,7 +355,7 @@ local function install()
     local origRefresh = ISInventoryPage.refreshBackpacks
     function ISInventoryPage:refreshBackpacks(...)
         local r = origRefresh(self, ...)
-        pcall(RDContainerOrder.apply, self)
+        pcall(ContainerOrder.apply, self)
         return r
     end
 
@@ -303,11 +365,13 @@ local function install()
         function ISInventoryPageContainerButtonPanel:render(...)
             local r = origRender(self, ...)
             local page = self.parent
-            if page and page.rdDragButton and page.rdDropIndex then
+            -- No enabled() check: coDragButton is only ever set by a live drag,
+            -- which cannot start while the module is off.
+            if page and page.coDragButton and page.coDropIndex then
                 -- Flat bar rather than a texture: no art to ship, and it reads
                 -- clearly against every container icon.
                 local size = page.buttonSize or 32
-                local y = page.rdDropIndex * size - 1
+                local y = page.coDropIndex * size - 1
                 pcall(function()
                     self:drawRect(1, y, self:getWidth() - 2, 2, 0.9, 0.55, 0.75, 1.0)
                 end)
@@ -320,4 +384,4 @@ end
 install()
 Events.OnGameStart.Add(install)
 
-return RDContainerOrder
+return ContainerOrder

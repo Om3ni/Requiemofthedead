@@ -2,6 +2,8 @@
   "Sandbox_OE_Reliquary": "Odds & Ends: Reliquary",
   "Sandbox_OE_RipIt": "Odds & Ends: RIPIT",
   "Sandbox_OE_Lumberjack": "Odds & Ends: Lumberjack",
+  "Sandbox_OE_ContainerOrder": "Odds & Ends: Container Order",
+  "Sandbox_OE_InventoryCollapse": "Odds & Ends: Inventory Collapse",
   "Sandbox_OE_StickyHeadwear": "Odds & Ends: Sticky Headwear",
   "Sandbox_OE_ActionSpeed": "Odds & Ends: Action Speed",
 
@@ -23,6 +25,12 @@
   "Sandbox_OE_LumberjackSweepAxeFloor_tooltip": "Detiene la tala cuando al hacha le queda esta fraccion de estado. 0.05 es un cinco por ciento. Se comprueba entre arboles, nunca a mitad de golpe, asi que nunca abandona un tronco a medio talar.",
   "Sandbox_OE_LumberjackSweepEnduranceFloor": "Parar segun resistencia",
   "Sandbox_OE_LumberjackSweepEnduranceFloor_tooltip": "Detiene la tala cuando la resistencia baja a este nivel, para que puedas volver a casa. Sin un limite no se detiene con elegancia: cada golpe restante falla al instante la comprobacion de resistencia del juego y la tala entera se evapora con arboles aun en pie.",
+
+  "Sandbox_OE_ContainerOrderEnable": "Activar Container Order",
+  "Sandbox_OE_ContainerOrderEnable_tooltip": "Permite arrastrar los botones de contenedor de la izquierda del inventario propio al orden que cada jugador prefiera, y lo mantiene aunque cambie de bolsa. Se guarda por personaje y nada se mueve hasta que el jugador arrastra algo el mismo. Desactivalo si la coleccion incluye un mod de contenedores que ordene esos mismos botones - Better Containers y Clean UI lo hacen - para que no decidan el orden los dos a la vez.",
+
+  "Sandbox_OE_InventoryCollapseEnable": "Activar Inventory Collapse",
+  "Sandbox_OE_InventoryCollapseEnable_tooltip": "Anade los botones Equipped y Hotbar a la fila de controles bajo el inventario propio; cada uno pliega ese bloque de objetos y lo saca de la lista, dejando a la vista solo el equipo suelto. Los dos se pliegan por separado y la eleccion se recuerda por personaje: no se oculta nada hasta que el jugador pulsa uno. Desactivalo si la coleccion incluye un mod de interfaz que reorganice esa fila de controles - Clean UI lo hace - para que los botones no compitan por el espacio.",
 
   "Sandbox_OE_StickyHeadwearEnable": "Activar Sticky Headwear",
   "Sandbox_OE_StickyHeadwearEnable_tooltip": "Evita que el sombrero que llevas puesto salga volando al recibir un golpe. Se aplica a las prendas que llevas, no a las definiciones de objeto, asi que los zombies siguen apareciendo con la proporcion habitual de sombreros perdidos y el botin no cambia. Desactivarlo restaura los valores originales sin reiniciar.",
