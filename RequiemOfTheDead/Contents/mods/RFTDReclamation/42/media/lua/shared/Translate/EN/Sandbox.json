@@ -65,5 +65,11 @@
     "Sandbox_RC_SpawnerAccessValues_option3": "All staff (incl. Overseer / GM / Observer)",
 
     "Sandbox_RC_SpawnerMissingPartsMax": "Spawner: Max Missing Parts",
-    "Sandbox_RC_SpawnerMissingPartsMax_tooltip": "Upper bound on how many parts the 'Missing parts' tick strips from a manually-spawned vehicle. Each spawn rolls a random 1..this many (capped at the parts the vehicle actually has). The engine is never eligible. Affects ONLY vehicles placed through the staff spawner - never world, player, or reclaimed vehicles."
+    "Sandbox_RC_SpawnerMissingPartsMax_tooltip": "Upper bound on how many parts the 'Missing parts' tick strips from a manually-spawned vehicle. Each spawn rolls a random 1..this many (capped at the parts the vehicle actually has). The engine is never eligible. Affects ONLY vehicles placed through the staff spawner - never world, player, or reclaimed vehicles.",
+
+    "Sandbox_RC_NoVanillaVehicles": "Suppress Vanilla Map Vehicle Spawns",
+    "Sandbox_RC_NoVanillaVehicles_tooltip": "Vanilla drivable vehicles no longer spawn on the map: parking stalls, traffic jams, dealership lots, business fleets. Applies from the very first chunk of a fresh world; on an existing world only not-yet-visited areas are affected and nothing already spawned is removed. Burnt/smashed wrecks and trailers still spawn, and vehicles added by mods are untouched - including packs that register under the Base module. Story set-pieces are handled by the option below.",
+
+    "Sandbox_RC_NoVanillaStoryVehicles": "Story Vehicles Spawn As Burnt Hulls",
+    "Sandbox_RC_NoVanillaStoryVehicles_tooltip": "Randomized stories that hardcode a vanilla vehicle (police blockades, crash scenes, camps, sieges) spawn the burnt hull of that vehicle instead, so the scene keeps its shape without gifting a drivable car. Modded vehicles - including story-swap mods that redirect to a vehicle pack - are never touched, and neither are staff-spawner vehicles. To remove the scenes entirely, use the vanilla 'Vehicle Story' / 'Zone Story' frequency options instead."
 }

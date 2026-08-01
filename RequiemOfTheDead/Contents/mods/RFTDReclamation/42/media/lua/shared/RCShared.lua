@@ -10,8 +10,9 @@ RCShared = RCShared or {}
 -- Net-command module string. Every client<->server command for this mod
 -- travels under this token: sendClientCommand(player, RCShared.MODULE, cmd, args).
 RCShared.MODULE  = "RFTDReclamation"
-RCShared.VERSION = "0.7.0"   -- 0.7.0: RFTDCore adoption (hard require) - dual-write audit
-                             -- logging + RC.* chronicle events. 0.6.0: pre-Core baseline.
+RCShared.VERSION = "1.0.0"   -- 1.0.0: suite lockstep; NoVanilla - vanilla-spawn suppression
+                             -- (zone strip + story burnt-swap). 0.7.0: RFTDCore adoption
+                             -- (hard require) - dual-write audit + RC.* chronicle events.
 
 -- ---------------------------------------------------------------------------
 -- RFTDCore adoption (hard require - no guards, per family law). Register with
@@ -91,6 +92,9 @@ function RCShared.cfg()
         spawnerEnabled = sv.SpawnerEnabled ~= false,             -- default true
         spawnerAccess  = tonumber(sv.SpawnerAccess) or 2,        -- 1=admin, 2=+moderator, 3=all staff
         spawnerMissingMax = tonumber(sv.SpawnerMissingPartsMax) or 6, -- "Missing parts" tick: max N stripped/spawn
+        -- vanilla-spawn suppression (RCNoVanilla.lua)
+        noVanillaVehicles = sv.NoVanillaVehicles ~= false,       -- default true; map spawns
+        noVanillaStories  = sv.NoVanillaStoryVehicles ~= false,  -- default true; story spawns -> burnt hulls
     }
     return cfg
 end

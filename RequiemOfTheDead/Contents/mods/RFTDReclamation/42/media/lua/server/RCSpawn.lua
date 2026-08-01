@@ -22,6 +22,8 @@
 
 if not isServer() then return end
 
+require "RCNoVanilla"
+
 RCSpawn = RCSpawn or {}
 
 local COND = { random = true, perfect = true, average = true, low = true }
@@ -70,7 +72,11 @@ function RCSpawn.spawn(spec)
     local noBattery   = spec.noBattery == true
     local keyGlovebox = spec.keyGlovebox == true
 
+    -- Latched so RCNoVanilla's story interceptor never burns a staff spawn:
+    -- OnSpawnVehicleStart fires synchronously inside addVehicleDebug.
+    RCNoVanilla.beginExempt()
     local ok, vehicle = pcall(addVehicleDebug, model, direction, nil, square)
+    RCNoVanilla.endExempt()
     if not ok or not vehicle then return nil, "failed" end
 
     -- Wreck hulls (Burnt/Smashed) keep their as-spawned state: dressing a

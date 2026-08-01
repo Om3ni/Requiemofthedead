@@ -195,3 +195,21 @@ option RFTDReclamation.SpawnerMissingPartsMax
     page = RFTDReclamation,
     translation = RC_SpawnerMissingPartsMax,
 }
+
+/* ---------------------- vanilla-spawn suppression ------------------- */
+
+option RFTDReclamation.NoVanillaVehicles
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_NoVanillaVehicles,
+}
+
+option RFTDReclamation.NoVanillaStoryVehicles
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_NoVanillaStoryVehicles,
+}
