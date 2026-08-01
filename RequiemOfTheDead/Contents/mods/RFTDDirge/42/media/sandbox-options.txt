@@ -49,11 +49,15 @@ option RFTDDirge.Enabled
     translation = RQ_Enabled,
 }
 
+/* Percent, 1% steps. Was a 7-step enum through 1.1.0; a saved value from
+   then is an INDEX, not a percent, and reads as a much lower chance after
+   this change. Same applies to the five per-type *Weight options below. */
 option RFTDDirge.SpawnChance
 {
-    type = enum,
-    numValues = 7,
-    default = 4,
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 10,
     page = RFTDDirge,
     translation = RQ_SpawnChance,
 }
@@ -235,9 +239,10 @@ option RFTDDirge.EMPTriggerRange
 
 option RFTDDirge.EMPWeight
 {
-    type = enum,
-    numValues = 8,
-    default = 5,
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 20,
     page = RFTDDirge,
     translation = RQ_EMPWeight,
 }
@@ -307,9 +312,10 @@ option RFTDDirge.GluttonSpacing
 
 option RFTDDirge.GluttonWeight
 {
-    type = enum,
-    numValues = 8,
-    default = 6,
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 30,
     page = RFTDDirge,
     translation = RQ_GluttonWeight,
 }
@@ -400,9 +406,10 @@ option RFTDDirge.JuggernautSpacing
 
 option RFTDDirge.JuggernautWeight
 {
-    type = enum,
-    numValues = 8,
-    default = 4,
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 15,
     page = RFTDDirge,
     translation = RQ_JuggernautWeight,
 }
@@ -445,9 +452,10 @@ option RFTDDirge.ScavengerSpacing
 
 option RFTDDirge.ScavengerWeight
 {
-    type = enum,
-    numValues = 8,
-    default = 2,
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 5,
     page = RFTDDirge,
     translation = RQ_ScavengerWeight,
 }
@@ -571,11 +579,22 @@ option RFTDDirge.ScreamerTriggerRange
     translation = RQ_ScreamerTriggerRange,
 }
 
+option RFTDDirge.ScreamerVolume
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 100,
+    page = RFTDDirge,
+    translation = RQ_ScreamerVolume,
+}
+
 option RFTDDirge.ScreamerWeight
 {
-    type = enum,
-    numValues = 8,
-    default = 2,
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 5,
     page = RFTDDirge,
     translation = RQ_ScreamerWeight,
 }
