@@ -1,12 +1,28 @@
--- RDEquippedCollapse.lua - fold the equipped and hotbar blocks out of your own
--- inventory list, independently.
+-- ICClient.lua - Inventory Collapse: fold the equipped and hotbar blocks out of
+-- your own inventory list, independently.
 --
--- PARKED IN CORE, NOT AT HOME HERE. Same note as RDContainerOrder.lua: a leaf
--- feature with no consumers belongs in RFTD Wardrobe, which owns player-facing
--- inventory presentation - and this one especially, since Wardrobe's tab 1 is the
--- canonical view of the equipped set that this hides from the main pane. It lives
--- here only because the toggle was minutes of work and Wardrobe is days. MOVE
--- BOTH when Wardrobe is scoped; not precedent for more leaf UI in Core.
+-- MOVED OUT OF CORE 2026-07-31, alongside ContainerOrder/COClient.lua and for the
+-- same reason. It was parked in RFTDCore as RDEquippedCollapse.lua waiting on RFTD
+-- Wardrobe to be scoped, and Core is hard-required by every mod in the family, so
+-- it could never be switched off.
+--
+-- IT IS NOT DORMANT THE WAY ITS SIBLING WAS, and that distinction is worth being
+-- precise about because it is what makes this a collision risk rather than a
+-- tidiness question. Only the FILTERING is conditional - applyToPane returns at
+-- `#active == 0` unless the player has actually collapsed a block. Registration is
+-- not: registerHandlers() calls ISInventoryWindowContainerControls.AddHandler at
+-- install time, unconditionally, so every player gets two buttons added to the
+-- inventory control row forever. The refreshContainer wrap is unconditional too.
+-- That control row is contested surface - it is packed and re-arranged by the same
+-- third-party UI mods (Clean UI and friends) that this file already patches BY
+-- NAME below, which is the tell. Two permanent buttons on someone else's arranged
+-- row, from a mod nobody can uninstall, is the same shape of problem that got
+-- reported against RDContainerOrder.
+--
+-- So the kill switch here does its work in shouldBeVisible(): with
+-- InventoryCollapseEnable off, the handlers stay registered (vanilla's AddHandler
+-- has no unregister, and SandboxVars is not up when it runs) but report themselves
+-- invisible, so no button is ever laid out and the row is untouched.
 --
 -- WHAT VANILLA ALREADY DOES, so this file does not redo it: B42 sorts equipped
 -- items to the BOTTOM of the pane by itself. All four of its comparators open with
@@ -39,18 +55,19 @@
 -- row after it, which is why selection is remapped by item identity below rather
 -- than clamped - a clamp only works for tail truncation.
 --
--- WHY IN CORE: Core is already installed on every client (everything requires it),
--- so this needs no server-side mod-list change to reach players. It already ships
--- player-facing client files (RDSeasonNotice) and it already owns inventory-pane
--- patching (DFPatch_CleanUI), so this is not a new kind of thing for Core to hold.
---
 -- NO FORK. Two hooks, both narrow:
 --   * buttons register through ISInventoryWindowContainerControls.AddHandler,
 --     which is VANILLA API (media/lua/client/ISUI/InventoryWindow/) - CleanUI only
 --     extends that registry, so they show up in both worlds.
 --   * the hiding wraps refreshContainer on the pane CLASS TABLE, patching all
---     three known tables by reference the way DFPatch_CleanUI does, because
---     CleanUI swaps the live ISInventoryPane between two classes at runtime.
+--     three known tables by reference, because CleanUI swaps the live
+--     ISInventoryPane between two classes at runtime.
+--
+-- The two CleanUI_* probes in patchAll are kept although CleanUI was retired from
+-- the server collection on 2026-07-31 (its logic reimplemented in-house, and
+-- Core's DFPatch_CleanUI deleted in the same cleanup). They are rawget lookups
+-- that return nil and cost one comparison, so keeping them means a client who
+-- runs CleanUI on their own is still covered.
 --
 -- Preferences live in player modData, not a written file: since 42.20 getFileWriter
 -- refuses anything outside ini/cfg/txt/log (see RDShared.EXT_*), and a UI toggle is
@@ -58,14 +75,30 @@
 
 if isServer() then return end
 
+require "OEShared"
 require "ISUI/InventoryWindow/ISInventoryWindowControlHandler"
 require "ISUI/InventoryWindow/ISInventoryWindowContainerControls"
 
-RDEquippedCollapse = RDEquippedCollapse or {}
+InventoryCollapse = InventoryCollapse or {}
+
+-- ---------------------------------------------------------------------------
+-- Kill switch
+-- ---------------------------------------------------------------------------
+
+-- Read at use time, not at load: SandboxVars is not up when this file is walked,
+-- and OEShared.enabled defaults ON until it is. Same idiom as RipIt/RIClient.
+function InventoryCollapse.isEnabled()
+    return OEShared.enabled("InventoryCollapseEnable")
+end
 
 -- Group definitions. Adding a third block here is a table entry plus one
 -- AddHandler call at the bottom; nothing else in the file is group-specific.
-RDEquippedCollapse.GROUPS = {
+--
+-- modKey values are deliberately still "RD*": they are live player-modData keys,
+-- and anyone who has already collapsed a block on the RotD server has their
+-- preference stored under them. Renaming to match the new module prefix would
+-- silently reset all of them for nothing but cosmetic consistency.
+InventoryCollapse.GROUPS = {
     worn = {
         key      = "worn",
         modKey   = "RDEquippedCollapsed",
@@ -92,14 +125,14 @@ RDEquippedCollapse.GROUPS = {
 -- Preference
 -- ---------------------------------------------------------------------------
 
-function RDEquippedCollapse.isCollapsed(playerObj, group)
+function InventoryCollapse.isCollapsed(playerObj, group)
     if not playerObj or not group then return false end
     local md = nil
     pcall(function() md = playerObj:getModData() end)
     return md ~= nil and md[group.modKey] == true
 end
 
-function RDEquippedCollapse.setCollapsed(playerObj, group, collapsed)
+function InventoryCollapse.setCollapsed(playerObj, group, collapsed)
     if not playerObj or not group then return end
     local md = nil
     pcall(function() md = playerObj:getModData() end)
@@ -121,7 +154,7 @@ end
 -- Items start at index 2. Vanilla appends a dummy duplicate of items[1] at the
 -- front of every entry ("Adding the first item in list additionally at front as a
 -- dummy" in refreshContainer), so summing from 1 double-counts one item per stack.
-function RDEquippedCollapse.summarize(itemslist, group)
+function InventoryCollapse.summarize(itemslist, group)
     local count, weight = 0, 0
     for _, v in ipairs(itemslist or {}) do
         if group.matches(v) and v.items then
@@ -191,7 +224,8 @@ local function reindexSelection(pane, items)
     pane.selected = out
 end
 
-function RDEquippedCollapse.applyToPane(pane)
+function InventoryCollapse.applyToPane(pane)
+    if not InventoryCollapse.isEnabled() then return end
     if not pane or not pane.itemslist then return end
 
     -- The player's own inventory only. The loot pane has nothing equipped in it,
@@ -200,14 +234,14 @@ function RDEquippedCollapse.applyToPane(pane)
 
     -- Summarise BEFORE filtering - once the entries are gone the buttons have
     -- nothing left to count.
-    pane.rdGroupStats = pane.rdGroupStats or {}
+    pane.icGroupStats = pane.icGroupStats or {}
     local playerObj = getSpecificPlayer(pane.player)
     local active = {}
 
-    for key, group in pairs(RDEquippedCollapse.GROUPS) do
-        local count, weight = RDEquippedCollapse.summarize(pane.itemslist, group)
-        pane.rdGroupStats[key] = { count = count, weight = weight }
-        if count > 0 and RDEquippedCollapse.isCollapsed(playerObj, group) then
+    for key, group in pairs(InventoryCollapse.GROUPS) do
+        local count, weight = InventoryCollapse.summarize(pane.itemslist, group)
+        pane.icGroupStats[key] = { count = count, weight = weight }
+        if count > 0 and InventoryCollapse.isCollapsed(playerObj, group) then
             active[#active + 1] = group
         end
     end
@@ -243,10 +277,20 @@ end
 -- One handler class per group. They must be distinct class tables: vanilla's
 -- AddHandler dedupes on handlerClass.Type, so a shared class would register once
 -- and only ever draw one button.
+--
+-- The Type string stays "RDCollapseHandler_*" from the Core days on purpose. If a
+-- player ends up with a stale RFTDCore and this mod at the same time - the two
+-- ship together, but workshop subscribers do update out of step - matching Types
+-- make vanilla's dedupe collapse them to ONE set of buttons. A fresh "IC*" name
+-- would register alongside the old one and draw "Equipped (5)" twice.
 local function defineHandler(group)
     local H = ISInventoryWindowControlHandler:derive("RDCollapseHandler_" .. group.key)
 
     function H:shouldBeVisible()
+        -- The kill switch lives here: AddHandler has no unregister and runs before
+        -- SandboxVars exists, so "off" means every button reports itself invisible
+        -- and the control row is laid out exactly as if this mod were absent.
+        if not InventoryCollapse.isEnabled() then return false end
         if getCore():getGameMode() == "Tutorial" then return false end
         local win = self.inventoryWindow
         if not (win and win.onCharacter == true) then return false end
@@ -263,7 +307,7 @@ local function defineHandler(group)
         local pane = self:pane()
         if not pane then return { count = 0, weight = 0 } end
 
-        local s = pane.rdGroupStats and pane.rdGroupStats[group.key]
+        local s = pane.icGroupStats and pane.icGroupStats[group.key]
         if s then return s end
 
         -- No cache yet. arrange() can run before the first refreshContainer, and
@@ -271,12 +315,12 @@ local function defineHandler(group)
         -- would be missing until something else forced a rebuild. Safe to compute
         -- straight off itemslist here precisely BECAUSE applyToPane has not run,
         -- so nothing has been filtered out of it yet.
-        local count, weight = RDEquippedCollapse.summarize(pane.itemslist, group)
+        local count, weight = InventoryCollapse.summarize(pane.itemslist, group)
         return { count = count, weight = weight }
     end
 
     function H:getControl()
-        local collapsed = RDEquippedCollapse.isCollapsed(self.playerObj, group)
+        local collapsed = InventoryCollapse.isCollapsed(self.playerObj, group)
         local s = self:stats()
 
         -- +/- prefix rather than differing words: the two states render at the SAME
@@ -291,8 +335,8 @@ local function defineHandler(group)
     end
 
     function H:perform()
-        RDEquippedCollapse.setCollapsed(self.playerObj, group,
-            not RDEquippedCollapse.isCollapsed(self.playerObj, group))
+        InventoryCollapse.setCollapsed(self.playerObj, group,
+            not InventoryCollapse.isCollapsed(self.playerObj, group))
 
         local pane = self:pane()
         if pane and pane.refreshContainer then
@@ -307,7 +351,7 @@ local function defineHandler(group)
     end
 
     function H:handleJoypadContextMenu(context)
-        local collapsed = RDEquippedCollapse.isCollapsed(self.playerObj, group)
+        local collapsed = InventoryCollapse.isCollapsed(self.playerObj, group)
         self:addJoypadContextMenuOption(context,
             string.format("%s %s items", collapsed and "Show" or "Hide", group.label))
     end
@@ -321,7 +365,7 @@ local function defineHandler(group)
     return H
 end
 
-RDEquippedCollapse.HANDLERS = {}
+InventoryCollapse.HANDLERS = {}
 
 -- ---------------------------------------------------------------------------
 -- Install
@@ -340,7 +384,7 @@ local function patchPane(cls)
     cls.refreshContainer = function(self, ...)
         local r = orig(self, ...)
         -- pcall so a failure here can never take down the inventory pane.
-        pcall(RDEquippedCollapse.applyToPane, self)
+        pcall(InventoryCollapse.applyToPane, self)
         return r
     end
     return true
@@ -358,22 +402,22 @@ local function patchAll()
 end
 
 local function registerHandlers()
-    if RDEquippedCollapse.registered then return end
+    if InventoryCollapse.registered then return end
     if not ISInventoryWindowContainerControls then return end
     if type(ISInventoryWindowContainerControls.AddHandler) ~= "function" then return end
 
     -- Sorted so button order on screen is stable rather than pairs() order.
     local ordered = {}
-    for _, group in pairs(RDEquippedCollapse.GROUPS) do ordered[#ordered + 1] = group end
+    for _, group in pairs(InventoryCollapse.GROUPS) do ordered[#ordered + 1] = group end
     table.sort(ordered, function(a, b) return a.order < b.order end)
 
     for _, group in ipairs(ordered) do
         local H = defineHandler(group)
-        RDEquippedCollapse.HANDLERS[group.key] = H
+        InventoryCollapse.HANDLERS[group.key] = H
         -- Vanilla AddHandler dedupes on handlerClass.Type, so this is idempotent.
         ISInventoryWindowContainerControls.AddHandler(H)
     end
-    RDEquippedCollapse.registered = true
+    InventoryCollapse.registered = true
 end
 
 local function install()
@@ -397,4 +441,4 @@ local function sweep()
 end
 Events.OnTick.Add(sweep)
 
-return RDEquippedCollapse
+return InventoryCollapse

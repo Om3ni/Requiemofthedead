@@ -251,6 +251,47 @@ option RFTDOddsAndEnds.LumberjackSweepEnduranceFloor
 }
 
 /* ============================================================
+   Container Order - drag the container buttons in your own
+   inventory sidebar into the order you want.
+
+   Moved out of RFTDCore 2026-07-31. It is the only module here
+   whose kill switch exists for COMPATIBILITY rather than taste:
+   third-party container mods (Better Containers, Clean UI and
+   friends) reorder the same button column, and while COClient is
+   dormant until the player drags something, a player who wants
+   both should be able to say which one wins. Turn this off on a
+   server that ships one of those in its collection.
+   ============================================================ */
+
+option RFTDOddsAndEnds.ContainerOrderEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_ContainerOrder,
+    translation = OE_ContainerOrderEnable,
+}
+
+/* ============================================================
+   Inventory Collapse - fold the equipped and hotbar blocks out
+   of your own inventory list, independently.
+
+   Moved out of RFTDCore 2026-07-31 with Container Order. Same
+   compatibility argument: it adds two buttons to the inventory
+   control row, which third-party UI mods pack and re-arrange,
+   and it patches Clean UI's pane classes by name. Off means the
+   buttons never appear and the row is laid out as if the module
+   were not installed.
+   ============================================================ */
+
+option RFTDOddsAndEnds.InventoryCollapseEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_InventoryCollapse,
+    translation = OE_InventoryCollapseEnable,
+}
+
+/* ============================================================
    Sticky Headwear - your hat stays on your head
    ============================================================ */
 
