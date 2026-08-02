@@ -1,0 +1,112 @@
+return {
+  groups = {
+
+  },
+  data = {
+    default = {
+      name = "default",
+      categories = {
+
+      },
+      items = {
+
+      },
+      default = 0
+    },
+    ["Gun's Unlimited"] = {
+      name = "Gun's Unlimited",
+      categories = {
+        Ammo = 57,
+        Weapon = 30,
+        ProtectiveGear = 80
+      },
+      items = {
+        ["Base.3030Box"] = 60,
+        ["Base.Bullets357Box"] = 60,
+        ["Base.Bullets38Box"] = 60,
+        ["Base.Bullets44Box"] = 60,
+        ["Base.Bullets45Box"] = 60,
+        ["Base.ShotgunShellsBox"] = 60,
+        ["Base.556Box"] = 60,
+        ["Base.308Box"] = 60,
+        ["Base.Bullets9mmBox"] = 60,
+        ["JM3.Arrow_box"] = 30,
+        ["Base.3030Carton"] = 70,
+        ["Base.Bullets357Carton"] = 70,
+        ["Base.Bullets38Carton"] = 70,
+        ["Base.Bullets44Carton"] = 70,
+        ["Base.Bullets45Carton"] = 70,
+        ["Base.ShotgunShellsCarton"] = 70,
+        ["Base.556Carton"] = 70,
+        ["Base.308Carton"] = 70,
+        ["Base.Bullets9mmCarton"] = 70,
+        ["JM3.Explosivearrow"] = 70,
+        ["JM3.Incendiaryarrow"] = 70
+      },
+      inherit = "",
+      onempty = "",
+      hours = 4,
+      default = 60
+    },
+    ["Gun Stores"] = {
+      name = "Gun Stores",
+      categories = {
+        Ammo = 50,
+        Weapon = 30,
+        ProtectiveGear = 50,
+        Bag = 40
+      },
+      items = {
+
+      },
+      inherit = "",
+      onempty = "",
+      hours = 5
+    },
+    ["No Pillows"] = {
+      name = "No Pillows",
+      categories = {
+
+      },
+      items = {
+        ["Base.Pillow_Heart"] = 100
+      },
+      inherit = "",
+      default = 100,
+      onempty = ""
+    },
+    ["No Pillows/Ammos"] = {
+      name = "No Pillows/Ammos",
+      categories = {
+
+      },
+      items = {
+        ["Base.Pillow_Heart"] = 100,
+        ["Base.ShotgunShells"] = 100,
+        ["Base.DoubleBarrelShotgun"] = 100
+      },
+      inherit = "",
+      default = 100,
+      onempty = ""
+    },
+    ["No Pillows/Ammos/Candle/Tarot"] = {
+      name = "No Pillows/Ammos/Candle/Tarot",
+      categories = {
+
+      },
+      items = {
+        ["Base.Pillow_Heart"] = 100,
+        ["Base.ShotgunShells"] = 100,
+        ["Base.DoubleBarrelShotgun"] = 100,
+        ["Base.Candle"] = 100,
+        ["Base.TarotCardDeck"] = 100
+      },
+      inherit = "",
+      default = 100,
+      onempty = ""
+    }
+  },
+  defaults = {
+
+  }
+}

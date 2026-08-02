@@ -126,8 +126,8 @@ function RQConfig.get()
         -- boundary means every consumer (jugg, boss, scav) keeps its math unchanged.
         --
         -- ONE KNOB, THREE FEATURES: Boss and Scavenger auras reuse this exact value
-        -- (RQJuggernaut ORs their playerInAura flags into its own), so changing it moves
-        -- all three specials' weapon debuffs together.
+        -- (RQSuppress reads all three playerInAura flags into its "aura" term
+        -- group), so changing it moves all three specials' weapon debuffs together.
         --
         -- The shipped default is 40 (declared in media/sandbox-options.txt), i.e. weapons
         -- deal 60% damage inside an aura. The `or 0` below is NOT a second copy of that
@@ -139,6 +139,18 @@ function RQConfig.get()
         -- alone, so an unreadable sandbox means NO debuff. The asymmetry is the point.
         juggernautAuraMultiplier = (100 - math.max(0, math.min(100,
             tonumber(sv and sv.JuggernautAuraMultiplier) or 0))) / 100.0,
+
+        -- Reach (tiles) of the weapon debuff while holding a FIREARM near a
+        -- Juggernaut, Boss, or enraged Scavenger -- the kiting counter
+        -- (RQSuppress "aura"/"ranged" source). Firearms out-range the 3-tile
+        -- melee aura by nature, so gating their debuff on that ring made it
+        -- free to step out and shoot; this radius is the honest engagement
+        -- band for ranged play. 0 disables the band (old behavior). If the
+        -- sandbox is unreadable the default still applies, but the aura
+        -- multiplier above fail-safes to 1.0 in that case, so the band
+        -- composes to a no-op -- same asymmetry, one gate.
+        rangedProtectRadius    = math.max(0, math.min(50,
+            tonumber(sv and sv.RangedProtectRadius) or 15)),
 
         -- EMP
         empTriggerRange        = ev(E_EMP_RANGE, sv and sv.EMPTriggerRange, 3),

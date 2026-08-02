@@ -44,6 +44,16 @@ option RFTDCore.ForensicSegmentLines
     translation = RD_ForensicSegmentLines,
 }
 
+option RFTDCore.ForensicSegmentKB
+{
+    type = integer,
+    min = 256,
+    max = 65536,
+    default = 4096,
+    page = RFTDCore,
+    translation = RD_ForensicSegmentKB,
+}
+
 option RFTDCore.CmdRelayEnabled
 {
     type = boolean,
@@ -84,7 +94,7 @@ option RFTDCore.WireProbeTopN
     type = integer,
     min = 1,
     max = 50,
-    default = 12,
+    default = 25,
     page = RFTDCore,
     translation = RD_WireProbeTopN,
 }

@@ -348,6 +348,16 @@ option RFTDDirge.JuggernautAuraMultiplier
     translation = RQ_JuggernautAuraMultiplier,
 }
 
+option RFTDDirge.RangedProtectRadius
+{
+    type = integer,
+    min = 0,
+    max = 50,
+    default = 15,
+    page = RFTDDirge,
+    translation = RQ_RangedProtectRadius,
+}
+
 option RFTDDirge.JuggernautBuffPercent
 {
     type = enum,

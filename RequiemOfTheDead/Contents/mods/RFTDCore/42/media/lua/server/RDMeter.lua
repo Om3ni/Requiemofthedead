@@ -54,7 +54,7 @@ local RATE_CALLS_SEC  = 20   -- calls/sec in a window past which a key is flagge
 local ALERTS_PER_KEY  = 2    -- storm guard: instant alerts per key per window
 
 local cfg       = nil        -- resolved once on first tick
-local stats     = {}         -- key -> { calls, bytes, maxSingle, alerts, dir, partial }
+local stats     = {}         -- "dir|key" -> { calls, bytes, maxSingle, alerts, dir, key, partial }
 local lastDump  = 0
 local installed = false
 
@@ -85,7 +85,11 @@ local function resolveConfig()
     return {
         enabled   = (sb("WireProbeEnabled") == true),
         dumpMs    = sbNum("WireProbeDumpSeconds", 30, 5, 600) * 1000,
-        topN      = sbNum("WireProbeTopN", 12, 1, 50),
+        -- 25, not 12. At 12 the 2026-08-02 live capture truncated 194 of 722
+        -- windows (one held 37 distinct keys), so better than a quarter of the
+        -- reports silently under-counted the tail - and the tail is where a new
+        -- offender shows up first. `keys` vs `shown` still records when it bites.
+        topN      = sbNum("WireProbeTopN", 25, 1, 50),
         oversized = sbNum("WireProbeOversizedKB", 8, 1, 1024) * 1024,
     }
 end
@@ -99,30 +103,67 @@ end
 -- ---------------------------------------------------------------------------
 
 -- dir: "C2S" | "S2C" | "MDATA"   key: "module:command" | "ModData:<tag>"
-function RDMeter.record(dir, key, est, partial)
+--
+-- `args` is the payload itself and is optional, but pass it wherever it is in
+-- hand: it is what lets RDWire tell a correctly-paged chunk from an unsplit
+-- blob. Without it a declared stream still classifies (the declaration is keyed
+-- by name), but an undeclared one carrying seq/total cannot be recognised.
+function RDMeter.record(dir, key, est, partial, args)
     if not (cfg and cfg.enabled) then return end
     est = est or 0
 
-    local s = stats[key]
+    -- Bucketed by DIRECTION AND key, never key alone. The same command name
+    -- legitimately travels both ways - a client asks, the server answers - and
+    -- those are different payloads with different costs. Keyed by name only they
+    -- merged into one row whose `dir` was whichever side recorded last, summing
+    -- a 40-byte request into a 30 KB response and reporting the total under one
+    -- arbitrary direction. That is how PhunZonesPlayerSetup read as a 693 KB
+    -- C2S key in the 2026-08-02 capture while its own oversized events, which
+    -- take dir straight from the call, correctly said S2C.
+    local id = dir .. "|" .. key
+    local s = stats[id]
     if not s then
-        s = { calls = 0, bytes = 0, maxSingle = 0, alerts = 0, dir = dir, partial = false }
-        stats[key] = s
+        s = { calls = 0, bytes = 0, maxSingle = 0, alerts = 0,
+              dir = dir, key = key, partial = false }
+        stats[id] = s
     end
     s.calls     = s.calls + 1
     s.bytes     = s.bytes + est
-    s.dir       = dir
     if est > s.maxSingle then s.maxSingle = est end
     if partial then s.partial = true end
 
-    -- A single payload over the threshold is worth knowing about now, not in up
+    local v = RDWire.classify(key, est, partial, args, cfg.oversized)
+
+    -- Chunk bookkeeping. `over` is the TRUE breach count for the window, which
+    -- the alert counter below is not and was never able to be - it stops at
+    -- ALERTS_PER_KEY, so a reader treating alert hits as a breach count reads
+    -- back the cap (11 windows x 2 = "22 failures" on a key that breached 64
+    -- times out of 64). Both numbers ship; only this one means what it says.
+    if v.chunked ~= "no" then
+        s.chunked = v.chunked
+        s.chunks  = (s.chunks or 0) + 1
+        if v.budget then s.chunkBudget = v.budget end
+        if v.streamStart then s.streams = (s.streams or 0) + 1 end
+    end
+    if v.over then s.over = (s.over or 0) + 1 end
+
+    -- A single payload over its ceiling is worth knowing about now, not in up
     -- to a full window's time. partial always alerts: too big to finish
     -- measuring is strictly worse news than merely large.
-    if (est > cfg.oversized or partial) and s.alerts < ALERTS_PER_KEY then
+    if v.reason and s.alerts < ALERTS_PER_KEY then
         s.alerts = s.alerts + 1
         RDLog.forensic("wire", "RD.WIRE_OVERSIZED", nil, {
             dir     = tostring(dir),
             key     = tostring(key),
             est     = est,
+            -- reason is the field to read. `partial` stays for the existing
+            -- readers, but it answers "could we measure it", never "was it split".
+            reason  = v.reason,
+            chunked = v.chunked,
+            budget  = v.budget,
+            ceiling = v.ceiling,
+            seq     = v.seq,
+            total   = v.total,
             partial = partial and true or false,
         }, "RFTDCore")
     end
@@ -139,10 +180,10 @@ function RDMeter.dump(now, windowSec)
     if not (cfg and cfg.enabled) then return end
     if type(windowSec) ~= "number" or windowSec <= 0 then windowSec = cfg.dumpMs / 1000 end
 
+    -- s.key is set at creation; the table key is "dir|key" and is not the label.
     local rows = {}
-    for key, s in pairs(stats) do
+    for _, s in pairs(stats) do
         rows[#rows + 1] = s
-        s.key = key
     end
     if #rows == 0 then return end
 
@@ -163,6 +204,14 @@ function RDMeter.dump(now, windowSec)
             maxSingle = r.maxSingle,
             highRate  = (rate > RATE_CALLS_SEC) or nil,
             partial   = r.partial or nil,
+            -- Paging shape, so a report can say "declared paged, 4096 B budget,
+            -- 64 of 64 chunks over, 3 streams" instead of guessing from size.
+            -- All nil-when-absent: a key that never paged adds no fields.
+            chunked     = r.chunked or nil,
+            chunkBudget = r.chunkBudget or nil,
+            chunks      = r.chunks or nil,
+            streams     = r.streams or nil,
+            over        = r.over or nil,
         }
     end
 
@@ -192,7 +241,7 @@ local function installWraps()
                 local m, c, args = RDWire.parseSend(a1, a2, a3, a4)
                 if m and c then
                     local est, partial = RDWire.commandEstimate(m, c, args)
-                    RDMeter.record("S2C", tostring(m) .. ":" .. tostring(c), est, partial)
+                    RDMeter.record("S2C", tostring(m) .. ":" .. tostring(c), est, partial, args)
                 end
             end)
             return orig(...)

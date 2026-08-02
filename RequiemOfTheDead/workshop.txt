@@ -8,7 +8,7 @@ description=
 description=[h2]Install and load order[/h2]
 description=
 description=[list]
-description=[*]Subscribe once. All twelve mod IDs arrive together.
+description=[*]Subscribe once. All fifteen mod IDs arrive together.
 description=[*][b]Enable RFTDCore and load it first.[/b] Nothing else works correctly without it.
 description=[*]Enable whichever siblings you want; their order relative to each other does not matter.
 description=[*]Keep the family near the bottom of your load order, so Core's patches land on top of the mods they target.
@@ -167,6 +167,6 @@ description=
 description=[url=https://discord.gg/UMSj4vQs2P]Join the Discord[/url]
 description=
 description=[b]Workshop ID:[/b] 3772176444 | [b]Build:[/b] 42
-description=[b]Mod IDs:[/b] RFTDCore, Dragonfly, RFTDStaffTools, RFTDMemoir, RFTDBanBox, BBLibrary, RFTDReclamation, RFTDDirge, RFTDHusbandry, RFTDLastRites, RFTDReaper, RFTDOddsAndEnds
+description=[b]Mod IDs:[/b] RFTDCore, Dragonfly, RFTDStaffTools, RFTDMemoir, RFTDBanBox, BBLibrary, RFTDReclamation, RFTDDirge, RFTDHusbandry, RFTDLastRites, RFTDReaper, RFTDOddsAndEnds, RFTDEchoes, RFTDLimes, RFTDDragonfly
 tags=Build 42
 visibility=public

@@ -11,7 +11,9 @@
 --   FORENSIC   bounded ring for high-volume telemetry ("what happened last
 --              Tuesday"). Rotates; volume is bounded by segment size x ring
 --              length, not by discipline. Buffered (<=25 lines or ~1s) because
---              the traffic is continuous and replaceable.
+--              the traffic is continuous and replaceable. Segments roll on
+--              BYTES or lines, whichever trips first - see flushStream for why
+--              a line count alone never bounded the disk.
 --
 -- Durability model: nothing here may depend on a graceful exit. The restart
 -- scripts force-kill java (documented data-loss history), and while the
@@ -57,7 +59,7 @@
 --   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/events.jsonl.log  permanent
 --   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/index.json.txt    rewritten
 --   RFTD/season/<SeasonName>/chronicle/world.jsonl.log                server scope
---   RFTD/forensic/<stream>/head.txt                          "<segment> <lines>"
+--   RFTD/forensic/<stream>/head.txt                    "<segment> <lines> <bytes>"
 --   RFTD/forensic/<stream>/000.<stream>.jsonl.log ..         ring segments
 --     e.g. forensic/guardian/000.guardian.jsonl.log - the name repeats the
 --     stream so a segment stays identifiable once copied out of its folder.
@@ -266,22 +268,60 @@ local function headPath(name)
     return DIR .. "forensic/" .. name .. "/head.txt"
 end
 
+-- "<seg> <lines> <bytes>". The third field is an EXTENSION: pre-2026-08-02 heads
+-- carry only two, parse fine, and resume with bytes=0 - which under-counts the
+-- current segment exactly once, then self-corrects at the next rotation. Do not
+-- "fix" that by measuring the file; there is no stat and a read is O(segment).
 local function writeHead(st, name)
-    rewrite(headPath(name), tostring(st.seg) .. " " .. tostring(st.lines) .. "\n")
+    rewrite(headPath(name),
+        tostring(st.seg) .. " " .. tostring(st.lines) .. " " .. tostring(st.bytes) .. "\n")
     st.headDirty = 0
+end
+
+-- Reclaim segments that fell OUTSIDE the ring, which nothing else can do.
+-- `seg = (seg + 1) % ring` only ever visits 0..ring-1, so lowering
+-- ForensicRingSegments (8 -> 4) strands 004..007 holding their bytes forever -
+-- the ring silently stops bounding the thing it exists to bound. Truncation is
+-- the only reclaim Lua has, so walk the directory once per stream per boot and
+-- zero anything at or above the current ring size.
+--
+-- Filenames are matched by EXACT reconstruction rather than a pattern: safePath
+-- allows "-", which is a magic character in a Lua pattern class, so a stream
+-- named "a-b" would build a broken matcher. Rebuilding the expected name and
+-- comparing strings has no such failure mode and cannot match head.txt or a
+-- legacy ".jsonl" orphan by accident.
+local function reclaimOutsideRing(name, ring)
+    pcall(function()
+        local files = listFilesInZomboidLuaDirectory(DIR .. "forensic/" .. name)
+        if not files then return end
+        local n = files:size()
+        for i = 0, n - 1 do
+            local f = files:get(i)
+            if f then
+                f = tostring(f)
+                local num = f:match("^(%d+)%.")
+                local seg = tonumber(num)
+                if seg and seg >= ring
+                   and f == string.format("%03d", seg) .. "." .. name .. RDShared.EXT_STREAM then
+                    rewrite(DIR .. "forensic/" .. name .. "/" .. f, "")
+                end
+            end
+        end
+    end)
 end
 
 local function stream(name)
     name = safePath(name)
     local st = streams[name]
     if st then return st, name end
-    st = { seg = 0, lines = 0, buf = {}, lastMs = 0, headDirty = 0 }
+    st = { seg = 0, lines = 0, bytes = 0, buf = {}, lastMs = 0, headDirty = 0 }
     local head = readFirstLine(headPath(name))
     if head then
-        local seg, lines = head:match("^(%d+)%s+(%d+)")
+        local seg, lines, bytes = head:match("^(%d+)%s+(%d+)%s*(%d*)")
         if seg then
             st.seg   = tonumber(seg) or 0
             st.lines = tonumber(lines) or 0
+            st.bytes = tonumber(bytes) or 0
             -- head.txt can describe a segment that does not exist, and the 42.20
             -- allowlist outage is exactly how: head.txt is ".txt" so it stayed
             -- writable while every ".jsonl" segment write returned nil, leaving
@@ -294,29 +334,60 @@ local function stream(name)
             -- cacheDir/Lua/, the same root these paths are relative to.
             local ok, exists = pcall(function() return cacheFileExists(segPath(name, st.seg)) end)
             if not ok or exists ~= true then
-                st.seg, st.lines = 0, 0
+                st.seg, st.lines, st.bytes = 0, 0, 0
                 st.headDirty = HEAD_SYNC_LINES   -- force a rewrite so disk stops lying
             end
         end
     end
+    -- A head written under a LARGER ring can name a segment outside the current
+    -- one. Left alone the stream would keep appending to it until it filled, then
+    -- wrap inside the ring and never return - so the file it was writing becomes
+    -- an orphan holding a full segment. Clamp before any write happens.
+    local ring = cfgNum("ForensicRingSegments", 8)
+    if st.seg >= ring then
+        st.seg, st.lines, st.bytes = 0, 0, 0
+        st.headDirty = HEAD_SYNC_LINES
+    end
+    reclaimOutsideRing(name, ring)
     streams[name] = st
     return st, name
 end
 
+-- Rotate on LINES OR BYTES, whichever trips first.
+--
+-- Lines alone never bounded the thing that actually fills a disk. Record size
+-- across these streams spans more than an order of magnitude - a legacyLine is a
+-- couple of hundred bytes, an RD.WIRE_TOP envelope carrying its full row list is
+-- kilobytes - so one "20000 lines" segment is 4 MB for one stream and 30+ MB for
+-- another, and the operator setting it cannot tell which they are getting. The
+-- 2026-08-02 wire capture averaged ~900 B/line at topN=12; raising topN to 25 the
+-- same day roughly doubled it, silently doubling the ring's disk footprint
+-- without touching the setting that supposedly governs it. Bytes are the resource,
+-- so bytes get a bound; the line cap stays as a secondary guard.
+--
+-- Counted, not measured: `#s` is bytes in Lua 5.1 (and Kahlua), so the buffer is
+-- summed as it is written. There is no stat call and reading the file back to
+-- size it would be O(segment) on the tick thread.
 local function flushStream(st, name)
     if #st.buf == 0 then return end
     local ring  = cfgNum("ForensicRingSegments", 8)
     local segLn = cfgNum("ForensicSegmentLines", 20000)
+    local segBy = cfgNum("ForensicSegmentKB", 4096) * 1024
+
+    local added = 0
+    for i = 1, #st.buf do added = added + #st.buf[i] + 1 end   -- +1 = the newline
 
     appendMany(segPath(name, st.seg), st.buf)
     st.lines     = st.lines + #st.buf
+    st.bytes     = st.bytes + added
     st.headDirty = st.headDirty + #st.buf
     st.buf       = {}
     st.lastMs    = RDShared.nowMs()
 
-    if st.lines >= segLn then
+    if st.lines >= segLn or st.bytes >= segBy then
         st.seg   = (st.seg + 1) % ring
         st.lines = 0
+        st.bytes = 0
         rewrite(segPath(name, st.seg), "")   -- truncate-to-zero IS the reclaim
         writeHead(st, name)
     elseif st.headDirty >= HEAD_SYNC_LINES then
