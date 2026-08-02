@@ -1,0 +1,1738 @@
+return {
+  version = 2,
+  data = {
+    Brandenburg = {
+      difficulty = 4,
+      minSprinterRisk = "18",
+      maxSprinterRisk = "25",
+      points = {
+        {
+          1165,
+          5623,
+          2630,
+          6655
+        },
+        {
+          2613,
+          6144,
+          2894,
+          6482
+        },
+        {
+          1349,
+          5458,
+          1682,
+          5687
+        }
+      },
+      dirgeSpawnChance = "15",
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautWeight = "30",
+      dirgeGluttonWeight = "40",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeEMPWeight = "0",
+      dirgeScavengerWeight = "20",
+      dirgeEMPSpacing = "0",
+      dirgeScavengerSpacing = "30",
+      inherits = "Hard"
+    },
+    BrandenburgGunStore = {
+      title = "Brandenburg Gun Store",
+      inherits = "Brandenburg",
+      points = {
+        {
+          2033,
+          5828,
+          2055,
+          5847
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true
+    },
+    CoalField = {
+      nosafehouse = true,
+      difficulty = 3,
+      dirgeSpawnChance = "10",
+      dirgeScreamerWeight = "5",
+      dirgeJuggernautWeight = "20",
+      dirgeGluttonWeight = "65",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      minSprinterRisk = "10",
+      maxSprinterRisk = "16",
+      dirgeEMPWeight = "0",
+      dirgeScavengerWeight = "10",
+      dirgeEMPSpacing = "60",
+      dirgeScavengerSpacing = "30",
+      points = {
+        {
+          3399,
+          8140,
+          3575,
+          8267
+        }
+      },
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      noscrap = true,
+      inherits = "Intermediate"
+    },
+    CountryAgriculture = {
+      title = "Country Agriculture",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          3448,
+          11495,
+          3480,
+          11529
+        }
+      },
+      inherits = "ProtectedCountryAreas"
+    },
+    CountryGunStore = {
+      title = "Country Gun Store",
+      points = {
+        {
+          3799,
+          8506,
+          3820,
+          8523
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      inherits = "ProtectedCountryAreas"
+    },
+    CountrySurplusStore = {
+      title = "Country Surplus Store",
+      points = {
+        {
+          5436,
+          9487,
+          5486,
+          9534
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      inherits = "ProtectedCountryAreas"
+    },
+    DarkswallowResort = {
+      title = "Darkwallow Resort",
+      minSprinterRisk = "10",
+      nobuilding = false,
+      nodestruction = false,
+      nofire = true,
+      nopickup = false,
+      nosafehouse = false,
+      noscrap = false,
+      points = {
+        {
+          8469,
+          14392,
+          8597,
+          14457
+        }
+      },
+      maxSprinterRisk = "16",
+      difficulty = 3,
+      dirgeSpawnChance = "10",
+      dirgeScreamerWeight = "5",
+      dirgeJuggernautWeight = "20",
+      dirgeEMPWeight = "5",
+      dirgeGluttonWeight = "60",
+      dirgeScavengerWeight = "10",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "0",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      inherits = "Intermediate"
+    },
+    EchoPark = {
+      minSprinterRisk = "5",
+      maxSprinterRisk = "8",
+      points = {
+        {
+          3340,
+          10818,
+          3921,
+          11294
+        }
+      },
+      title = "Echo Creek",
+      noannounce = false,
+      difficulty = 2,
+      dirgeSpawnChance = "5",
+      dirgeGluttonWeight = "75",
+      dirgeScavengerWeight = "0",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeEMPWeight = "5",
+      dirgeScreamerSpacing = "0",
+      dirgeGluttonSpacing = "30",
+      dirgeJuggernautWeight = "20",
+      dirgeScreamerWeight = "0",
+      dirgeScavengerSpacing = "0"
+    },
+    Ekron = {
+      minSprinterRisk = "5",
+      maxSprinterRisk = "8",
+      points = {
+        {
+          180,
+          9236,
+          1124,
+          10138
+        }
+      },
+      difficulty = 2,
+      dirgeSpawnChance = "5",
+      dirgeScreamerWeight = "5",
+      dirgeJuggernautWeight = "20",
+      dirgeGluttonWeight = "75",
+      dirgeScavengerWeight = "0",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeEMPWeight = "0",
+      dirgeEMPSpacing = "0",
+      dirgeScavengerSpacing = "0"
+    },
+    EkronCommunityCenter = {
+      title = "Ekron Community Center",
+      inherits = "Ekron",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          715,
+          9810,
+          823,
+          9864
+        }
+      },
+      noannounce = true
+    },
+    EkronGunStore = {
+      title = "Ekron Gun Store",
+      inherits = "Ekron",
+      noannounce = true,
+      points = {
+        {
+          398,
+          9856,
+          444,
+          9874
+        }
+      },
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true
+    },
+    FallasLake = {
+      minSprinterRisk = "2",
+      maxSprinterRisk = "4",
+      difficulty = 1,
+      points = {
+        {
+          6840,
+          8013,
+          7607,
+          8638
+        }
+      },
+      dirgeScreamerWeight = "2",
+      dirgeJuggernautWeight = "0",
+      dirgeEMPWeight = "0",
+      dirgeGluttonWeight = "98",
+      dirgeScavengerWeight = "0",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "0",
+      dirgeEMPSpacing = "0",
+      dirgeGluttonSpacing = "30",
+      dirgeSpawnChance = "5",
+      dirgeScavengerSpacing = "0",
+      inherits = "Easy"
+    },
+    BellesBookStore = {
+      title = "Book Store",
+      inherits = "FallasLake",
+      points = {
+        {
+          7250,
+          8433,
+          7266,
+          8440
+        }
+      },
+      noannounce = true,
+      nosafehouse = true,
+      noscrap = true,
+      nopickup = true,
+      nofire = true,
+      nodestruction = true,
+      nobuilding = false
+    },
+    FallasLakeGunStore = {
+      title = "Fallas Lake Gun Store",
+      inherits = "FallasLake",
+      points = {
+        {
+          7242,
+          8313,
+          7256,
+          8318
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true
+    },
+    GunsUnlimited = {
+      title = "Guns Unlimited",
+      minSprinterRisk = "30",
+      maxSprinterRisk = "45",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          2372,
+          10804,
+          2724,
+          10996
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun's Unlimited",
+      dirgeSpawnChance = "30",
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeGluttonWeight = "20",
+      dirgeScavengerWeight = "30",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      inherits = "Very_Hard"
+    },
+    Haven = {
+      title = "Haven",
+      minSprinterRisk = "5",
+      maxSprinterRisk = "10",
+      noannounce = true,
+      inherits = "_default",
+      dirgeSpawnChance = "5",
+      nobuilding = false
+    },
+    HavenCompound = {
+      title = "Haven Compound",
+      inherits = "Haven",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          3738,
+          12138,
+          3904,
+          12389
+        }
+      },
+      noannounce = true
+    },
+    HavenFerry = {
+      title = "Haven Ferry",
+      inherits = "Brandenburg",
+      minSprinterRisk = "18",
+      maxSprinterRisk = "25",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = false,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          2028,
+          5676,
+          2066,
+          5765
+        }
+      },
+      noannounce = true,
+      dirgeSpawnChance = "25",
+      difficulty = 4,
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "0"
+    },
+    McCoyFarm = {
+      title = "Haven Homestead",
+      inherits = "Haven",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = false,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          10060,
+          8228,
+          10134,
+          8293
+        }
+      },
+      noannounce = true
+    },
+    HavenOutpost = {
+      title = "Haven Outpost",
+      points = {
+        {
+          8616,
+          7476,
+          8662,
+          7540
+        },
+        {
+          3558,
+          7282,
+          3598,
+          7317
+        }
+      },
+      noannounce = false,
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      noplacing = false,
+      nosafehouse = true,
+      noscrap = true,
+      subtitle = "No Trespassing",
+      disabled = true,
+      inherits = "Haven"
+    },
+    HogWallowResearch = {
+      title = "Hog Wallow Research",
+      minSprinterRisk = "30",
+      difficulty = 5,
+      points = {
+        {
+          5469,
+          12347,
+          5875,
+          12615
+        }
+      },
+      nobuilding = false,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      maxSprinterRisk = "45",
+      noannounce = true,
+      dirgeSpawnChance = "30",
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeGluttonWeight = "20",
+      dirgeScavengerWeight = "30",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      inherits = "Very_Hard"
+    },
+    Irvington = {
+      minSprinterRisk = "10",
+      maxSprinterRisk = "16",
+      points = {
+        {
+          1659,
+          13785,
+          2981,
+          14246
+        },
+        {
+          1659,
+          14246,
+          3229,
+          15018
+        }
+      },
+      dirgeSpawnChance = "10",
+      dirgeScreamerWeight = "5",
+      dirgeJuggernautWeight = "20",
+      dirgeGluttonWeight = "60",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      dirgeScavengerWeight = "10",
+      dirgeEMPWeight = "5",
+      inherits = "Intermediate"
+    },
+    IrvingtonGunClub = {
+      title = "Irvington Gun Club",
+      inherits = "Irvington",
+      points = {
+        {
+          1829,
+          14107,
+          1874,
+          14174
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true
+    },
+    IrvingtonSurplusStore = {
+      title = "Irvington Gun Store",
+      inherits = "Irvington",
+      points = {
+        {
+          1738,
+          14777,
+          1784,
+          14810
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true
+    },
+    IrvingtonSpeedway = {
+      difficulty = 4,
+      minSprinterRisk = "18",
+      maxSprinterRisk = "25",
+      points = {
+        {
+          796,
+          12687,
+          1372,
+          13434
+        }
+      },
+      nobuilding = false,
+      nodestruction = false,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      dirgeSpawnChance = "15",
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeGluttonWeight = "30",
+      dirgeScavengerWeight = "20",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      inherits = "Hard",
+      zeds = "none"
+    },
+    Louisville = {
+      minSprinterRisk = "30",
+      difficulty = 5,
+      maxSprinterRisk = "45",
+      points = {
+        {
+          11907,
+          993,
+          14695,
+          4206
+        },
+        {
+          14695,
+          3324,
+          15685,
+          4069
+        }
+      },
+      dirgeSpawnChance = "30",
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeGluttonWeight = "20",
+      dirgeScavengerWeight = "30",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      lewtkey = "Gun Stores",
+      inherits = "Very_Hard"
+    },
+    BrooksLibrary = {
+      title = "Brooks Library",
+      inherits = "Louisville",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      minSprinterRisk = "30",
+      points = {
+        {
+          12547,
+          1453,
+          12589,
+          1492
+        }
+      },
+      maxSprinterRisk = "45",
+      noannounce = false
+    },
+    GrandOhioMall = {
+      title = "Grand Ohio Mall",
+      inherits = "Louisville",
+      nobuilding = true,
+      nodestruction = false,
+      nofire = true,
+      nopickup = false,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          13511,
+          1258,
+          13778,
+          1495
+        }
+      },
+      noannounce = false
+    },
+    LouisvilleSouthGunStore = {
+      title = "Louisville South Gun Store",
+      inherits = "Louisville",
+      points = {
+        {
+          13953,
+          3224,
+          13969,
+          3240
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true
+    },
+    Louisville_Airport = {
+      inherits = "Louisville",
+      points = {
+        {
+          15251,
+          2418,
+          15684,
+          3324
+        }
+      },
+      nobuilding = true,
+      nodestruction = false,
+      nofire = true,
+      nopickup = false,
+      nosafehouse = true,
+      noscrap = false,
+      noannounce = false,
+      difficulty = 5
+    },
+    Louisville_Trainyard = {
+      inherits = "Louisville",
+      points = {
+        {
+          12607,
+          4206,
+          12859,
+          4469
+        },
+        {
+          12548,
+          4355,
+          12607,
+          4468
+        }
+      },
+      nobuilding = true,
+      nodestruction = false,
+      nofire = true,
+      nopickup = false,
+      nosafehouse = true,
+      noscrap = false
+    },
+    LVArmySurplus = {
+      title = "LV Army Surplus",
+      inherits = "Louisville",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          12201,
+          1308,
+          12247,
+          1335
+        }
+      },
+      lewtkey = "Gun Stores"
+    },
+    LVCashandJewelry = {
+      title = "LV Cash and Jewelry",
+      inherits = "Louisville",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          12478,
+          1370,
+          12500,
+          1399
+        }
+      },
+      lewtkey = "Gun Stores"
+    },
+    LVCentralGunStore = {
+      title = "LV Central Gun Store",
+      inherits = "Louisville",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          12354,
+          1713,
+          12384,
+          1741
+        }
+      },
+      lewtkey = "Gun Stores"
+    },
+    LVGunStoreEast = {
+      title = "LV Gun Store East",
+      inherits = "Louisville",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          13578,
+          1530,
+          13602,
+          1545
+        }
+      },
+      lewtkey = "Gun Stores"
+    },
+    UniversityLibrary = {
+      title = "University Library",
+      inherits = "Louisville",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          12324,
+          2112,
+          12358,
+          2168
+        }
+      },
+      noannounce = false
+    },
+    MarchRidgeSchool = {
+      title = "March Ridge School",
+      nobuilding = true,
+      nodestruction = true,
+      noplacing = false,
+      noplayers = false,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          10001,
+          12710,
+          10064,
+          12755
+        }
+      },
+      inherits = "MarchRidge"
+    },
+    MarchRidge = {
+      difficulty = 4,
+      maxSprinterRisk = "25",
+      minSprinterRisk = "18",
+      points = {
+        {
+          9738,
+          12533,
+          10517,
+          12870
+        },
+        {
+          9759,
+          12870,
+          10093,
+          13197
+        },
+        {
+          10307,
+          12309,
+          10419,
+          12555
+        }
+      },
+      dirgeSpawnChance = "15",
+      dirgeScreamerWeight = "0",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeGluttonWeight = "40",
+      dirgeScreamerSpacing = "0",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerWeight = "20",
+      dirgeScavengerSpacing = "30",
+      inherits = "Hard"
+    },
+    MarchridgeBunker = {
+      title = "Marchridge Bunker",
+      nobuilding = true,
+      nodestruction = false,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          9901,
+          12588,
+          9952,
+          12663
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      inherits = "MarchRidge"
+    },
+    Muldraugh = {
+      difficulty = 3,
+      minSprinterRisk = "10",
+      maxSprinterRisk = "16",
+      points = {
+        {
+          10531,
+          9176,
+          11067,
+          10719
+        },
+        {
+          10136,
+          9177,
+          10534,
+          9738
+        }
+      },
+      noannounce = false,
+      subtitle = "Such a Shithole",
+      dirgeSpawnChance = "10",
+      dirgeScreamerWeight = "5",
+      dirgeJuggernautWeight = "10",
+      dirgeGluttonWeight = "65",
+      dirgeScavengerWeight = "10",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      dirgeEMPWeight = "0",
+      dirgeEMPSpacing = "60",
+      noplacing = false,
+      inherits = "Intermediate"
+    },
+    MuldraughPoliceStation = {
+      title = "Muldraugh Police Station",
+      inherits = "Muldraugh",
+      points = {
+        {
+          10628,
+          10396,
+          10674,
+          10433
+        },
+        {
+          10628,
+          10433,
+          10658,
+          10449
+        }
+      },
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      lewtkey = "Gun Stores"
+    },
+    SunstarMotel = {
+      title = "Sunstar Motel",
+      inherits = "Muldraugh",
+      points = {
+        {
+          10612,
+          9806,
+          10632,
+          9836
+        },
+        {
+          10632,
+          9806,
+          10654,
+          9834
+        },
+        {
+          10626,
+          9798,
+          10654,
+          9806
+        },
+        {
+          10611,
+          9823,
+          10612,
+          9835
+        },
+        {
+          10613,
+          9836,
+          10618,
+          9837
+        },
+        {
+          10635,
+          9834,
+          10651,
+          9835
+        },
+        {
+          10654,
+          9821,
+          10655,
+          9831
+        },
+        {
+          10654,
+          9800,
+          10655,
+          9807
+        },
+        {
+          10630,
+          9797,
+          10652,
+          9798
+        }
+      },
+      nofire = true,
+      nosafehouse = true,
+      noscrap = false,
+      zeds = "remove",
+      minSprinterRisk = "0",
+      maxSprinterRisk = "0",
+      difficulty = 0,
+      noannounce = false,
+      subtitle = "",
+      nopickup = true,
+      nodestruction = false,
+      nobuilding = false,
+      noplayers = false
+    },
+    VainsLair = {
+      title = "Vain's Lair",
+      inherits = "SunstarMotel",
+      noscrap = false,
+      nosafehouse = false,
+      difficulty = 0,
+      points = {
+        {
+          10612,
+          9795,
+          10626,
+          9806
+        }
+      },
+      noannounce = false,
+      nobuilding = false,
+      nodestruction = false
+    },
+    NewEllroy = {
+      title = "New Ellroy",
+      points = {
+        {
+          4982,
+          9341,
+          6319,
+          10647
+        }
+      },
+      difficulty = 2,
+      dirgeSpawnChance = "5",
+      minSprinterRisk = "5",
+      maxSprinterRisk = "8",
+      dirgeScreamerWeight = "0",
+      dirgeJuggernautWeight = "20",
+      dirgeEMPWeight = "5",
+      dirgeGluttonWeight = "75",
+      dirgeScavengerWeight = "0",
+      dirgeScreamerSpacing = "0",
+      dirgeJuggernautSpacing = "60",
+      inherits = "Medium",
+      dirgeScavengerSpacing = "0",
+      dirgeGluttonSpacing = "30",
+      disabled = true
+    },
+    NewElroyGas = {
+      title = "New Elroy Gas",
+      inherits = "NewEllroy",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          5415,
+          10250,
+          5444,
+          10267
+        }
+      },
+      disabled = true
+    },
+    Riverside = {
+      minSprinterRisk = "2",
+      maxSprinterRisk = "4",
+      points = {
+        {
+          5670,
+          5133,
+          6911,
+          5622
+        }
+      },
+      difficulty = 1,
+      dirgeSpawnChance = "5",
+      dirgeScreamerWeight = "0",
+      dirgeJuggernautWeight = "28",
+      dirgeJuggernautSpacing = "60",
+      dirgeGluttonWeight = "72",
+      dirgeGluttonSpacing = "30",
+      dirgeEMPWeight = "0",
+      dirgeScavengerWeight = "0",
+      dirgeScreamerSpacing = "0",
+      dirgeEMPSpacing = "0",
+      dirgeScavengerSpacing = "0",
+      inherits = "Easy"
+    },
+    RiversideSouth = {
+      title = "Riverside (South)",
+      inherits = "Riverside",
+      points = {
+        {
+          5245,
+          5833,
+          5674,
+          6167
+        },
+        {
+          5585,
+          5620,
+          5911,
+          5840
+        }
+      }
+    },
+    Rosewood = {
+      maxSprinterRisk = "0",
+      minSprinterRisk = "0",
+      points = {
+        {
+          7842,
+          11459,
+          8663,
+          12523
+        },
+        {
+          7861,
+          11026,
+          8390,
+          11489
+        }
+      },
+      dirgeSpawnChance = "10",
+      dirgeScreamerWeight = "0",
+      dirgeJuggernautWeight = "0",
+      dirgeEMPWeight = "0",
+      dirgeGluttonWeight = "100",
+      dirgeScavengerWeight = "0",
+      dirgeGluttonSpacing = "30",
+      dirgeScreamerSpacing = "0",
+      dirgeJuggernautSpacing = "0",
+      dirgeEMPSpacing = "0",
+      dirgeScavengerSpacing = "0",
+      difficulty = 0
+    },
+    RosewoodCommercial = {
+      title = "Rosewood Commercial",
+      inherits = "Rosewood",
+      noannounce = true,
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = false,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          8278,
+          12202,
+          8326,
+          12262
+        },
+        {
+          8124,
+          11724,
+          8174,
+          11772
+        },
+        {
+          8038,
+          11583,
+          8099,
+          11766
+        },
+        {
+          8115,
+          11537,
+          8161,
+          11564
+        },
+        {
+          8124,
+          11465,
+          8153,
+          11508
+        },
+        {
+          8079,
+          11484,
+          8098,
+          11571
+        },
+        {
+          8042,
+          11399,
+          8092,
+          11469
+        },
+        {
+          7987,
+          11420,
+          8034,
+          11458
+        },
+        {
+          8061,
+          11301,
+          8087,
+          11360
+        },
+        {
+          8143,
+          11312,
+          8168,
+          11348
+        },
+        {
+          8321,
+          11595,
+          8369,
+          11633
+        }
+      },
+      minSprinterRisk = "0",
+      maxSprinterRisk = "0"
+    },
+    ClarityStation = {
+      title = "Clarity's Station",
+      inherits = "RosewoodCommercial",
+      noannounce = true,
+      nofire = true,
+      nosafehouse = true,
+      points = {
+        {
+          8129,
+          11248,
+          8193,
+          11289
+        }
+      },
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      dirgeScreamerWeight = "0",
+      dirgeGluttonWeight = "100",
+      dirgeGluttonSpacing = "30",
+      dirgeJuggernautWeight = "0",
+      subtitle = "",
+      noscrap = true,
+      disabled = true
+    },
+    Rosewood_Prison = {
+      inherits = "Medium",
+      difficulty = 2,
+      minSprinterRisk = "5",
+      maxSprinterRisk = "8",
+      points = {
+        {
+          7213,
+          11570,
+          7843,
+          12034
+        }
+      },
+      nobuilding = true,
+      nodestruction = false,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      lewtkey = "Gun Stores",
+      dirgeScreamerWeight = "5",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautWeight = "20",
+      dirgeJuggernautSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeGluttonWeight = "75",
+      dirgeSpawnChance = "5",
+      dirgeEMPSpacing = "0",
+      dirgeScavengerSpacing = "0",
+      dirgeEMPWeight = "0",
+      dirgeScavengerWeight = "0"
+    },
+    AngrisPeace = {
+      title = "Sunstars Peace",
+      points = {
+        {
+          10612,
+          9807,
+          10614,
+          9815
+        },
+        {
+          10652,
+          9811,
+          10654,
+          9817
+        },
+        {
+          12566,
+          949,
+          12637,
+          964
+        }
+      },
+      noplayers = true,
+      disabled = false
+    },
+    ValleyStation = {
+      difficulty = 3,
+      minSprinterRisk = "10",
+      maxSprinterRisk = "16",
+      points = {
+        {
+          12397,
+          4642,
+          14737,
+          6477
+        }
+      },
+      dirgeSpawnChance = "10",
+      dirgeScreamerWeight = "5",
+      dirgeJuggernautWeight = "20",
+      dirgeEMPWeight = "5",
+      dirgeGluttonWeight = "60",
+      dirgeScavengerWeight = "10",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      inherits = "Intermediate"
+    },
+    Louisville_Mall = {
+      subtitle = "",
+      title = "Crossroads Mall",
+      nobuilding = true,
+      nodestruction = false,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      inherits = "Hard",
+      minSprinterRisk = "18",
+      maxSprinterRisk = "25",
+      dirgeSpawnChance = "15",
+      dirgeGluttonWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeScavengerWeight = "20",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautWeight = "30",
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30",
+      points = {
+        {
+          13519,
+          5625,
+          14169,
+          6029
+        }
+      }
+    },
+    KnobCreekHuntingClub = {
+      title = "Knob Creek Hunting Lodge",
+      inherits = "ValleyStation",
+      noannounce = true,
+      points = {
+        {
+          13089,
+          5293,
+          13123,
+          5321
+        }
+      },
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true
+    },
+    PolePosition = {
+      title = "Pole Position",
+      inherits = "ValleyStation",
+      subtitle = "~ Good Girl ~",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          12651,
+          6392,
+          12698,
+          6428
+        }
+      }
+    },
+    ValleyStationShootingRange = {
+      title = "Valley Station Shooting Range",
+      inherits = "ValleyStation",
+      noannounce = true,
+      points = {
+        {
+          13253,
+          5426,
+          13287,
+          5457
+        }
+      },
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true
+    },
+    WestPointGunEmporium9 = {
+      title = "West Point Gun Emporium",
+      points = {
+        {
+          12052,
+          6779,
+          12105,
+          6808
+        }
+      },
+      noannounce = true,
+      lewtkey = "Gun Stores",
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      inherits = "WestPoint",
+      dirgeScreamerSpacing = "0",
+      dirgeJuggernautSpacing = "60",
+      dirgeGluttonSpacing = "30"
+    },
+    WestPointPoliceStation = {
+      title = "West Point Police Station",
+      nobuilding = true,
+      nodestruction = false,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      difficulty = 4,
+      points = {
+        {
+          11776,
+          6776,
+          11845,
+          6834
+        }
+      },
+      lewtkey = "Gun's Unlimited",
+      inherits = "WestPoint",
+      dirgeJuggernautSpacing = "60",
+      dirgeGluttonSpacing = "30"
+    },
+    WestPoint = {
+      difficulty = 4,
+      minSprinterRisk = "18",
+      maxSprinterRisk = "25",
+      points = {
+        {
+          11224,
+          6888,
+          12373,
+          7189
+        },
+        {
+          10858,
+          6570,
+          12237,
+          6902
+        }
+      },
+      dirgeSpawnChance = "15",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeGluttonWeight = "40",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScreamerWeight = "0",
+      dirgeScavengerWeight = "20",
+      dirgeScreamerSpacing = "0",
+      dirgeScavengerSpacing = "30",
+      order = 6,
+      inherits = "Hard"
+    },
+    _default = {
+      minSprinterRisk = "5",
+      maxSprinterRisk = "10",
+      difficulty = 2,
+      dirgeSpawnChance = "5",
+      dirgeJuggernautWeight = "20",
+      dirgeScreamerWeight = "5",
+      dirgeEMPWeight = "5",
+      dirgeGluttonWeight = "50",
+      dirgeScavengerWeight = "20",
+      dirgeScreamerSpacing = "60",
+      dirgeJuggernautSpacing = "60",
+      dirgeEMPSpacing = "60",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "30"
+    },
+    Easy = {
+      difficulty = 1
+    },
+    Hard = {
+      difficulty = 4,
+      dirgeSpawnChance = "15",
+      minSprinterRisk = "18",
+      maxSprinterRisk = "25",
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeGluttonWeight = "40",
+      dirgeScavengerWeight = "20"
+    },
+    Medium = {
+      difficulty = 2,
+      minSprinterRisk = "6",
+      maxSprinterRisk = "10",
+      dirgeScreamerWeight = "5",
+      dirgeSpawnChance = "5"
+    },
+    Very_Easy = {
+      difficulty = 0,
+      dirgeSpawnChance = "10",
+      minSprinterRisk = "0",
+      maxSprinterRisk = "0",
+      dirgeScreamerWeight = "0",
+      dirgeJuggernautWeight = "0",
+      dirgeEMPWeight = "0",
+      dirgeGluttonWeight = "100",
+      dirgeScavengerWeight = "0",
+      dirgeScreamerSpacing = "0",
+      dirgeJuggernautSpacing = "0",
+      dirgeEMPSpacing = "0",
+      dirgeGluttonSpacing = "30",
+      dirgeScavengerSpacing = "0"
+    },
+    Very_Hard = {
+      difficulty = 5,
+      minSprinterRisk = "30",
+      dirgeSpawnChance = "30",
+      maxSprinterRisk = "45",
+      dirgeScreamerWeight = "10",
+      dirgeJuggernautWeight = "30",
+      dirgeEMPWeight = "10",
+      dirgeGluttonWeight = "20",
+      dirgeScavengerWeight = "30"
+    },
+    void = {
+      nosafehouse = true,
+      noannounce = true,
+      minSprinterRisk = "0",
+      maxSprinterRisk = "0"
+    },
+    NoBuild = {
+      title = "Stash House",
+      inherits = "Greenport",
+      nobuilding = true,
+      nodestruction = true,
+      points = {
+        {
+          8588,
+          7604,
+          8694,
+          7625
+        }
+      },
+      nosafehouse = true,
+      noscrap = true,
+      nopickup = true,
+      subtitle = "",
+      noannounce = true,
+      lewtkey = "No Pillows/Ammos",
+      disabled = true
+    },
+    ReservedRPSpace = {
+      title = "Reserved RP Space",
+      inherits = "_default",
+      points = {
+        {
+          7130,
+          6139,
+          7148,
+          6161
+        },
+        {
+          7329,
+          5945,
+          7353,
+          5957
+        }
+      },
+      nobuilding = true,
+      nodestruction = true,
+      nosafehouse = true,
+      nopickup = true,
+      noscrap = true,
+      disabled = false
+    },
+    HavenHomestead = {
+      title = "Haven Homestead",
+      inherits = "Haven",
+      points = {
+        {
+          9501,
+          9001,
+          9957,
+          9782
+        }
+      },
+      nofire = true,
+      nosafehouse = true,
+      disabled = true
+    },
+    LVCheckpoint = {
+      title = "LV Checkpoint",
+      inherits = "Louisville",
+      points = {
+        {
+          12437,
+          4206,
+          12607,
+          4355
+        }
+      },
+      lewtkey = "Gun's Unlimited"
+    },
+    TowerStation = {
+      title = "Tower Station",
+      inherits = "HavenOutpost",
+      zeds = "remove",
+      points = {
+        {
+          3191,
+          7305,
+          3220,
+          7315
+        },
+        {
+          3191,
+          7315,
+          3229,
+          7338
+        },
+        {
+          3191,
+          7338,
+          3252,
+          7396
+        },
+        {
+          3202,
+          7397,
+          3277,
+          7477
+        }
+      },
+      nobuilding = false,
+      nodestruction = false,
+      nopickup = false,
+      nosafehouse = false,
+      noscrap = false,
+      disabled = true
+    },
+    ExclusionZone = {
+      title = "Exclusion Zone",
+      inherits = "_default",
+      zeds = "remove",
+      points = {
+
+      }
+    },
+    WPReservedRPSpace = {
+      title = "WP Reserved RP Space",
+      inherits = "WestPoint",
+      points = {
+        {
+          9274,
+          6566,
+          10361,
+          6903
+        }
+      },
+      nobuilding = true,
+      nodestruction = true,
+      nopickup = true,
+      noplacing = false,
+      nosafehouse = true,
+      noscrap = true
+    },
+    RSReservedRPSpace = {
+      title = "RS Reserved RP Space",
+      inherits = "Riverside",
+      nobuilding = true,
+      nodestruction = true,
+      nofire = true,
+      nopickup = true,
+      nosafehouse = true,
+      noscrap = true,
+      points = {
+        {
+          6194,
+          5177,
+          6298,
+          5266
+        }
+      }
+    }
+  }
+}

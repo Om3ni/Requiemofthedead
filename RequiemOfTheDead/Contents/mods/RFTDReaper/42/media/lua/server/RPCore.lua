@@ -13,6 +13,11 @@
 --
 -- IMPORTANT: do NOT virtualizeZombie() culled duplicates - that re-feeds the
 -- DLL pool and reseeds the bug. We use removeFromWorld/removeFromSquare only.
+--
+-- Detection is event-driven: OnZombieCreate fires inside createRealZombieAlways
+-- for every materialization (popman chunk-load spawns, hordes, Lua creates), so
+-- a bloom's twins arrive the frame they exist. The full sweep remains as a slow
+-- safety net. Engine notes: engine-popman-observability-42.20.md at repo root.
 
 if not isServer() then return end
 
@@ -42,6 +47,9 @@ local function cfg()
         outfitIdGap         = r.outfitIdGap     or s.OutfitIdGap     or 15,
         outfitMinCluster    = r.outfitMinCluster or s.OutfitMinCluster or 3,
         outfitProximity     = r.outfitProximity  or s.OutfitProximity  or 75,
+        -- Full-sweep cadence in ticks (~2min at 30Hz). OnZombieCreate carries
+        -- newborn detection now; the sweep is a safety net, not the detector.
+        sweepTicks          = r.sweepTicks or s.SweepTicks or 3600,
     }
 end
 
@@ -93,11 +101,10 @@ local function tileKey(z)
     return x .. "," .. y .. "," .. zc, x, y, zc
 end
 
-local function fingerprintFull(z)
-    local key, x, y, zc = tileKey(z)
-    if not key then return nil end
-    return key .. "|" .. safeOutfit(z) .. "|" .. inventorySig(z), x, y, zc
-end
+-- Two-stage fingerprint: tile+outfit is the cheap key; the inventory walk in
+-- inventorySig only runs when a cheap key collides, to confirm the template
+-- match. Twins share empty-ish inventories at birth, so the cheap key does
+-- the discriminating and the signature does the confirming.
 
 -- -------------------------------------------------------------------------
 -- Removal - defensive; multiple known APIs, pcall each
@@ -121,10 +128,15 @@ end
 
 local knownIds     = {}   -- [OnlineID] = birthTileKey; recorded at first-seen time
 local bootstrapped = false
-local stats        = { culled = 0, ticks = 0 }
+local stats        = { culled = 0, ticks = 0, births = 0 }
 
-local LIVE_INTERVAL    = 200  -- ticks; ~7s at 30Hz - catches twins before they wander
+-- The FIRST sweep stays early - it is the bootstrap that registers the
+-- world's existing zombies. After bootstrap the cadence relaxes to
+-- cfg().sweepTicks, because OnZombieCreate now catches twins at birth.
+local BOOTSTRAP_TICKS  = 200
+local sweepTicks       = BOOTSTRAP_TICKS
 local tickCount        = 0
+local tickTotal        = 0    -- monotone; never resets (ages recentBirths)
 local bloomMinuteCount = 0
 
 local function isValidId(id)
@@ -217,37 +229,120 @@ local function drainCullQueue()
 end
 
 -- -------------------------------------------------------------------------
--- Zombie enumeration - server-side getCell() only exposes one cell, so a
--- bloom in a remote player's loaded area is invisible to it. We instead
--- walk every online player's cell and dedupe by OnlineID. This covers all
--- loaded chunks across all connected players.
+-- Zombie enumeration - the server runs ONE IsoCell world-wide. Every
+-- player's loaded area feeds that same cell, and its zombie list holds all
+-- loaded real zombies regardless of who loaded them (the engine's own
+-- cell-save snapshot filters this one list by cell coords -
+-- ZombiePopulationManager.requestSaveCell). One pass covers everything;
+-- the old per-player walk visited the same list once per online player.
 -- -------------------------------------------------------------------------
 
 local function forEachLoadedZombie(visitor)
-    local players = getOnlinePlayers()
-    if not players then return end
-    local seen = {}
-    for pi = 0, players:size() - 1 do
-        local p = players:get(pi)
-        if p then
-            local pcell
-            pcall(function() pcell = p:getCell() end)
-            if pcell then
-                local zlist
-                pcall(function() zlist = pcell:getZombieList() end)
-                if zlist then
-                    local zsize = zlist:size()
-                    for zi = 0, zsize - 1 do
-                        local z = zlist:get(zi)
-                        if z then
-                            local id = z:getOnlineID()
-                            if isValidId(id) and not seen[id] then
-                                seen[id] = true
-                                visitor(z, id)
-                            end
-                        end
+    local zlist
+    pcall(function() zlist = getCell():getZombieList() end)
+    if not zlist then return end
+    local zsize = zlist:size()
+    for zi = 0, zsize - 1 do
+        local z = zlist:get(zi)
+        if z then
+            local id = z:getOnlineID()
+            if isValidId(id) then
+                visitor(z, id)
+            end
+        end
+    end
+end
+
+-- -------------------------------------------------------------------------
+-- Newborn intake - OnZombieCreate fires inside createRealZombieAlways for
+-- every real-zombie materialization, so twins arrive here the frame they
+-- exist. Two engine facts shape the flow:
+--   * The event fires BEFORE the OnlineID is assigned (VirtualZombieManager
+--     triggers at :325, assigns at :335) - getOnlineID() returns -1 in the
+--     handler. Refs are queued and resolved on the following ticks.
+--   * A bloom's twins all emit from one n_updateMain drain, so they land in
+--     the same batch; recentBirths keeps a short tail for stragglers.
+-- A side benefit: birth tiles recorded here are exact (the zombie has not
+-- moved yet), which sharpens the wandered-bloom scan's birth-tile buckets.
+-- -------------------------------------------------------------------------
+
+local pendingNewborns = {}   -- { z = ref, tries = n } awaiting an OnlineID
+local recentBirths    = {}   -- [birthTile|outfit] = { {id, z, inv, tick}, ... }
+local RECENT_TICKS    = 300  -- ~10s at 30Hz; how long a birth key stays hot
+
+local function onZombieCreate(z)
+    if z then pendingNewborns[#pendingNewborns + 1] = { z = z, tries = 0 } end
+end
+
+local function pruneRecentBirths(now)
+    for key, list in pairs(recentBirths) do
+        local keep = {}
+        for _, e in ipairs(list) do
+            if now - e.tick <= RECENT_TICKS then keep[#keep + 1] = e end
+        end
+        if #keep > 0 then recentBirths[key] = keep else recentBirths[key] = nil end
+    end
+end
+
+local function processNewborns(now)
+    if #pendingNewborns == 0 then return end
+    local batch = pendingNewborns
+    pendingNewborns = {}
+
+    local c = cfg()
+    if not c.enabled then return end
+
+    -- Resolve ids; re-queue refs the engine has not numbered yet. A ref
+    -- that never resolves was removed before it mattered - drop it.
+    local resolved = {}
+    for _, e in ipairs(batch) do
+        local id
+        local ok = pcall(function() id = e.z:getOnlineID() end)
+        if ok and isValidId(id) then
+            resolved[#resolved + 1] = { z = e.z, id = id }
+        elseif e.tries < 3 then
+            e.tries = e.tries + 1
+            pendingNewborns[#pendingNewborns + 1] = e
+        end
+    end
+    if #resolved == 0 then return end
+
+    pruneRecentBirths(now)
+    stats.births = stats.births + #resolved
+
+    for _, e in ipairs(resolved) do
+        local key = tileKey(e.z)
+        if not key then
+            -- No square yet; nothing to fingerprint against. Register only.
+            knownIds[e.id] = "?"
+        else
+            local birthKey = key .. "|" .. safeOutfit(e.z)
+            local siblings = recentBirths[birthKey]
+            local twin = false
+            if siblings and bootstrapped and c.cullEnabled then
+                -- Cheap key collided with a recent birth on the same tile
+                -- with the same outfit template: escalate to the inventory
+                -- signature to confirm. Sibling refs may have been recycled
+                -- by the engine pool - only trust one that still answers to
+                -- the id it was recorded under.
+                local myInv
+                for _, s in ipairs(siblings) do
+                    local sid
+                    local sok = pcall(function() sid = s.z:getOnlineID() end)
+                    if sok and sid == s.id then
+                        if s.inv == nil then s.inv = inventorySig(s.z) end
+                        if myInv == nil then myInv = inventorySig(e.z) end
+                        if s.inv == myInv then twin = true; break end
                     end
                 end
+            end
+            if twin then
+                enqueueCull(e.z, e.id, "newborn")
+            else
+                knownIds[e.id] = key
+                local list = recentBirths[birthKey]
+                if not list then list = {}; recentBirths[birthKey] = list end
+                list[#list + 1] = { id = e.id, z = e.z, inv = nil, tick = now }
             end
         end
     end
@@ -259,20 +354,23 @@ local function newbornSweep()
 
     stats.ticks = stats.ticks + 1
 
-    local bucketByFp = {}
-    local newborns   = {}
-    local seenIds    = {}
+    -- Two-stage: bucket by the cheap key (tile|outfit); the inventory walk
+    -- only runs when a newborn actually collides with a bucket.
+    local byCheap  = {}
+    local newborns = {}
+    local seenIds  = {}
 
     forEachLoadedZombie(function(z, id)
         seenIds[id] = true
-        local fp = fingerprintFull(z)
-        if fp then
+        local key = tileKey(z)
+        if key then
+            local cheap = key .. "|" .. safeOutfit(z)
             if knownIds[id] then
-                local b = bucketByFp[fp]
-                if not b then b = {}; bucketByFp[fp] = b end
-                b[#b + 1] = z
+                local b = byCheap[cheap]
+                if not b then b = {}; byCheap[cheap] = b end
+                b[#b + 1] = { z = z, inv = nil }
             else
-                newborns[#newborns + 1] = { z = z, id = id, fp = fp, birthTile = tileKey(z) }
+                newborns[#newborns + 1] = { z = z, id = id, cheap = cheap, birthTile = key }
             end
         end
     end)
@@ -285,14 +383,22 @@ local function newbornSweep()
     end
 
     for _, nb in ipairs(newborns) do
-        local twins = bucketByFp[nb.fp]
-        if twins and #twins > 0 and c.cullEnabled then
+        local bucket = byCheap[nb.cheap]
+        local twin = false
+        if bucket and #bucket > 0 and c.cullEnabled then
+            local myInv = inventorySig(nb.z)
+            for _, e in ipairs(bucket) do
+                if e.inv == nil then e.inv = inventorySig(e.z) end
+                if e.inv == myInv then twin = true; break end
+            end
+        end
+        if twin then
             enqueueCull(nb.z, nb.id, "newborn")
         else
             knownIds[nb.id] = nb.birthTile or "?"
-            local b = bucketByFp[nb.fp]
-            if not b then b = {}; bucketByFp[nb.fp] = b end
-            b[#b + 1] = nb.z
+            local b = byCheap[nb.cheap]
+            if not b then b = {}; byCheap[nb.cheap] = b end
+            b[#b + 1] = { z = nb.z, inv = nil }
         end
     end
 
@@ -529,10 +635,15 @@ end
 
 local function onTick()
     drainCullQueue()
+    tickTotal = tickTotal + 1
+    processNewborns(tickTotal)
     tickCount = tickCount + 1
-    if tickCount < LIVE_INTERVAL then return end
+    if tickCount < sweepTicks then return end
     tickCount = 0
     newbornSweep()
+    -- Re-read after each sweep so live tuning lands; the first sweep ran at
+    -- BOOTSTRAP_TICKS and this switches to the relaxed safety-net cadence.
+    sweepTicks = cfg().sweepTicks
 end
 
 local function onMinute()
@@ -547,6 +658,10 @@ end
 
 Events.OnTick.Add(onTick)
 Events.EveryOneMinute.Add(onMinute)
+-- Engine-registered event (LuaEventManager AddEvent at boot), safe to hook
+-- directly. RPCore only loads server-side (guard at top of file), so this
+-- never binds on clients, where the same creation funnel also runs.
+Events.OnZombieCreate.Add(onZombieCreate)
 
 -- -------------------------------------------------------------------------
 -- Force full scan - runs all three bloom scans on demand instead of waiting
@@ -571,10 +686,26 @@ end
 -- would fire on the next scan (clean / seq / stack / cluster), plus
 -- position, outfit, birth tile, and Dirge type when present. Returns a
 -- pure-Lua table safe to send via sendServerCommand.
+--
+-- SUSPECTS ONLY BY DEFAULT. Verdicts still get tagged across the WHOLE loaded
+-- population - they have to be, a bucket cannot be judged from a subset - but
+-- only rows worth looking at are returned. At bloom scale the difference is the
+-- whole problem: a 5,300-zombie snapshot shipped every row at ~106 estimated
+-- bytes (~40% of it the key names, repeated per row) for a tab whose entire job
+-- is triage, when perhaps dozens were suspect. The rest ship as a count.
+--
+-- Dirge specials are kept even when clean: the tab filters on them, and there
+-- are never many.
+--
+-- opts.includeClean sends everything anyway, for the tab's explicit "All
+-- zombies" / "Clean only" views. Still chunked, so it is slow rather than
+-- oversized - the size ceiling is enforced by the chunker in RPServer, not by
+-- hoping the caller asks for little.
 -- -------------------------------------------------------------------------
 
-function RPCore.snapshot()
+function RPCore.snapshot(opts)
     local c = cfg()
+    local includeClean = opts and opts.includeClean == true
     local seqGap   = c.sequentialThreshold
     local stackMin = c.stackThreshold
     local idGap    = c.outfitIdGap
@@ -688,11 +819,23 @@ function RPCore.snapshot()
         end
     end
 
+    -- Scope the payload AFTER tagging, never before.
+    local out, cleanCount = {}, 0
+    for _, e in ipairs(zombies) do
+        if includeClean or e.verdict ~= "clean" or e.dirgeType then
+            out[#out + 1] = e
+        else
+            cleanCount = cleanCount + 1
+        end
+    end
+
     return {
-        zombies   = zombies,
-        cfg       = c,
-        stats     = { culled = stats.culled, ticks = stats.ticks, queued = queueSize() },
-        timestamp = getTimestampMs and getTimestampMs() or 0,
+        zombies    = out,
+        cleanCount = cleanCount,   -- tagged clean and not sent
+        loaded     = #zombies,     -- everything the scan actually walked
+        cfg        = c,
+        stats      = { culled = stats.culled, ticks = stats.ticks, queued = queueSize(), births = stats.births },
+        timestamp  = getTimestampMs and getTimestampMs() or 0,
     }
 end
 

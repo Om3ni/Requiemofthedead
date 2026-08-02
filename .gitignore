@@ -42,3 +42,12 @@ guardiant.log
 # Generated forensic reports - rebuild with tools/forensic-report.py, never commit
 # (a single run embeds the whole ring: ~1.9MB for 3.6k records)
 *forensic-report.html
+
+# --- RFTDEchoes binary assets: forked from Wasteland Musicians, NOT in git ---
+# 129.9MB of .ogg plus the .fbx anims - permanent history bloat for files that
+# are never hand-edited, and third-party audio we do not republish. The payload
+# folder and the Mosaic copy carry them; git carries the code that drives them.
+# CONSEQUENCE: git is NOT a complete backup of the payload. Keep a second copy
+# of RFTDEchoes\42\media\sound before anything destructive (see 2026-08-02).
+RequiemOfTheDead/Contents/mods/RFTDEchoes/42/media/sound/
+RequiemOfTheDead/Contents/mods/RFTDEchoes/42/media/anims_X/

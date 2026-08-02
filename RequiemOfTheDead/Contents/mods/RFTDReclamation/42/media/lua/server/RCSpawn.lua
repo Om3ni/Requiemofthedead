@@ -45,11 +45,17 @@ function RCSpawn.spawn(spec)
     spec = spec or {}
 
     -- Model: the ScriptManager IS the whitelist - length-capped like every
-    -- other client-supplied string in this mod.
+    -- other client-supplied string in this mod. The lookup is getVehicle
+    -- (ScriptManager.java:831). ScriptManager has NO getVehicleScript in 42.20
+    -- - the only getVehicleScript in the engine is UI3DScene's fromLua verb -
+    -- so naming it that raised inside the pcall, script stayed nil, and every
+    -- single spawn died here as "badmodel". getVehicle takes the full name and
+    -- resolves a dotless one against the Base module on its own
+    -- (ScriptBucketCollection.java:78-88).
     local model = spec.model
     if type(model) ~= "string" or model == "" or #model > 128 then return nil, "badmodel" end
     local script
-    pcall(function() script = getScriptManager():getVehicleScript(model) end)
+    pcall(function() script = getScriptManager():getVehicle(model) end)
     if not script then return nil, "badmodel" end
 
     -- Square: loaded-or-nothing.

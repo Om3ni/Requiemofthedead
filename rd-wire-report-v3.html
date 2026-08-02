@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RD.WIRE — traffic report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#0E141B;
+  --panel:#18212B;
+  --panel-hi:#1E2935;
+  --rule:#2B3846;
+  --rule-hi:#3C4E60;
+  --text:#CBD8E4;
+  --dim:#78899A;
+  --dimmer:#4E5F70;
+  --s2c:#4FB8D4;
+  --c2s:#E8974A;
+  --alarm:#FF6B63;
+  --ok:#6FCF97;
+  --disp:'Barlow Condensed',ui-sans-serif,system-ui,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'SF Mono','Cascadia Mono','Roboto Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--void);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:13px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  padding:0 0 64px;
+}
+h1,h2,h3,.disp{font-family:var(--disp);font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin:0}
+
+/* ---------- masthead ---------- */
+.mast{
+  border-bottom:1px solid var(--rule);
+  padding:22px 20px 0;
+  position:sticky;top:0;z-index:20;
+  background:linear-gradient(180deg,var(--void) 82%,rgba(14,20,27,.88));
+  backdrop-filter:blur(6px);
+}
+.mast-row{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.mast h1{font-size:26px;line-height:1;letter-spacing:.14em}
+.mast .sub{color:var(--dim);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-family:var(--disp);letter-spacing:.14em}
+.legend{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:10px;color:var(--dim);font-family:var(--disp);letter-spacing:.12em;text-transform:uppercase}
+.swatch{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:-1px}
+.sw-s2c{background:var(--s2c)}
+.sw-c2s{background:var(--c2s)}
+
+/* global trace under masthead */
+.global-wrap{margin:16px 0 0;padding-bottom:14px}
+.global-trace{display:block;width:100%;height:56px}
+.global-meta{display:flex;gap:22px;flex-wrap:wrap;margin-top:8px;font-size:10px;color:var(--dimmer);font-family:var(--disp);letter-spacing:.12em;text-transform:uppercase}
+.global-meta b{color:var(--text);font-family:var(--mono);font-weight:500;font-size:11px;letter-spacing:0;text-transform:none}
+
+/* ---------- intake ---------- */
+.intake{max-width:1400px;margin:56px auto;padding:0 20px}
+.drop{
+  border:1px dashed var(--rule-hi);
+  background:var(--panel);
+  padding:56px 28px;
+  text-align:center;
+  transition:border-color .15s,background .15s;
+}
+.drop.hot{border-color:var(--s2c);background:var(--panel-hi)}
+.drop h2{font-size:20px;letter-spacing:.12em;margin-bottom:10px}
+.drop p{color:var(--dim);max-width:52ch;margin:0 auto 22px;font-size:12px}
+.btn{
+  font-family:var(--disp);font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+  background:transparent;color:var(--text);border:1px solid var(--rule-hi);
+  padding:9px 20px;cursor:pointer;transition:border-color .15s,color .15s;
+}
+.btn:hover{border-color:var(--s2c);color:var(--s2c)}
+.btn:focus-visible{outline:2px solid var(--s2c);outline-offset:2px}
+.err{color:var(--alarm);margin-top:18px;font-size:12px}
+
+/* ---------- controls ---------- */
+.controls{
+  max-width:1400px;margin:0 auto;padding:16px 20px;
+  display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+  border-bottom:1px solid var(--rule);
+}
+.controls label{font-family:var(--disp);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dimmer)}
+select,input[type=search]{
+  font-family:var(--mono);font-size:12px;
+  background:var(--panel);color:var(--text);
+  border:1px solid var(--rule);padding:6px 9px;
+}
+select:focus,input[type=search]:focus{outline:none;border-color:var(--s2c)}
+input[type=search]{min-width:170px}
+.spacer{margin-left:auto}
+
+/* ---------- cards ---------- */
+.grid{
+  max-width:1400px;margin:0 auto;padding:22px 20px;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px;
+}
+.card{
+  background:var(--panel);
+  border:1px solid var(--rule);
+  display:flex;flex-direction:column;
+}
+.card-head{display:flex;align-items:flex-start;gap:12px;padding:14px 16px 10px}
+.rank{
+  font-family:var(--disp);font-size:30px;font-weight:700;line-height:.8;
+  color:var(--dimmer);letter-spacing:.02em;min-width:38px;
+}
+.card-id{flex:1;min-width:0}
+.mod{font-size:14px;font-weight:700;color:var(--text);word-break:break-all;line-height:1.25}
+.mod .self{color:var(--s2c)}
+.share{font-family:var(--disp);font-size:11px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;margin-top:2px}
+.bytes-big{font-family:var(--disp);font-size:24px;font-weight:600;line-height:1;text-align:right;letter-spacing:.02em}
+.bytes-big span{display:block;font-size:10px;letter-spacing:.14em;color:var(--dimmer);margin-top:4px}
+
+.flags{display:flex;gap:5px;flex-wrap:wrap;padding:0 16px 12px}
+.flag{
+  font-family:var(--disp);font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  padding:2px 7px;border:1px solid currentColor;
+}
+.f-alarm{color:var(--alarm)}
+.f-warn{color:var(--c2s)}
+.f-info{color:var(--s2c)}
+.f-mute{color:var(--dimmer)}
+.f-ok{color:var(--ok)}
+
+.trace-wrap{padding:0 16px 6px;position:relative}
+.trace{display:block;width:100%;height:62px}
+.trace-peak{
+  position:absolute;right:18px;top:2px;
+  font-size:9px;color:var(--dimmer);letter-spacing:.04em;
+}
+
+.stats{
+  display:grid;grid-template-columns:repeat(3,1fr);
+  border-top:1px solid var(--rule);
+}
+.stat{padding:9px 12px;border-right:1px solid var(--rule)}
+.stat:nth-child(3n){border-right:0}
+.stat:nth-child(n+4){border-top:1px solid var(--rule)}
+.stat k{display:block;font-family:var(--disp);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--dimmer)}
+.stat v{display:block;font-size:13px;color:var(--text);margin-top:1px}
+
+.splitbar{display:flex;height:4px;background:var(--rule)}
+.splitbar i{display:block;height:100%}
+
+.acts{
+  display:flex;gap:0;align-items:center;flex-wrap:wrap;
+  border-top:1px solid var(--rule);
+}
+.act{
+  background:transparent;border:0;border-right:1px solid var(--rule);
+  color:var(--dim);font-family:var(--disp);font-size:10px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;
+  padding:9px 13px;cursor:pointer;transition:color .15s,background .15s;
+}
+.act:hover{color:var(--s2c);background:var(--panel-hi)}
+.act:focus-visible{outline:2px solid var(--s2c);outline-offset:-2px}
+.act-msg{
+  font-family:var(--disp);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ok);padding:0 12px;
+}
+.rpt{
+  margin:0;padding:14px 16px;border-top:1px solid var(--rule);
+  background:var(--void);color:var(--dim);
+  font-family:var(--mono);font-size:10px;line-height:1.55;
+  white-space:pre;overflow-x:auto;max-height:420px;overflow-y:auto;
+  -webkit-user-select:text;user-select:text;
+}
+
+.keys-toggle{
+  width:100%;text-align:left;background:transparent;border:0;border-top:1px solid var(--rule);
+  color:var(--dim);font-family:var(--disp);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  padding:9px 16px;cursor:pointer;
+}
+.keys-toggle:hover{color:var(--s2c)}
+.keys-toggle:focus-visible{outline:2px solid var(--s2c);outline-offset:-2px}
+.keys{display:none;border-top:1px solid var(--rule);overflow-x:auto}
+.card.open .keys{display:block}
+table{border-collapse:collapse;width:100%;font-size:11px}
+th{
+  font-family:var(--disp);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dimmer);
+  text-align:right;padding:7px 8px;font-weight:600;border-bottom:1px solid var(--rule);white-space:nowrap;
+}
+th:first-child{text-align:left}
+td{padding:5px 8px;text-align:right;color:var(--dim);border-bottom:1px solid rgba(43,56,70,.5);white-space:nowrap}
+td:first-child{text-align:left;color:var(--text);white-space:normal;word-break:break-all}
+tr:last-child td{border-bottom:0}
+.dirtag{font-size:9px;letter-spacing:.06em;padding:1px 4px;border:1px solid currentColor}
+.d-S2C{color:var(--s2c)}
+.d-C2S{color:var(--c2s)}
+.d-mix{color:var(--dim)}
+.hot-cell{color:var(--alarm)}
+
+/* ---------- oversized ---------- */
+.section{max-width:1400px;margin:0 auto;padding:10px 20px 0}
+.section h2{font-size:16px;letter-spacing:.14em;padding-bottom:8px;border-bottom:1px solid var(--rule);color:var(--dim)}
+.section h2 em{font-style:normal;color:var(--alarm)}
+.ovr{background:var(--panel);border:1px solid var(--rule);border-top:0;overflow-x:auto}
+.notes{
+  max-width:1400px;margin:26px auto 0;padding:0 20px;
+  color:var(--dimmer);font-size:11px;line-height:1.7;
+}
+.notes b{color:var(--dim);font-weight:500}
+
+@media (max-width:640px){
+  .grid{grid-template-columns:1fr;padding:14px 12px}
+  .mast{padding:16px 12px 0}
+  .controls{padding:12px}
+  .section{padding:10px 12px 0}
+  .mast h1{font-size:21px}
+  .legend{margin-left:0;width:100%;padding-bottom:6px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+@media print{
+  body{background:#fff;color:#000}
+  .mast{position:static;background:#fff}
+  .controls,.keys-toggle,.intake{display:none}
+  .card{break-inside:avoid;border-color:#999}
+  .keys{display:block!important}
+}
+</style>
+</head>
+<body>
+
+<div id="intake" class="intake">
+  <div class="drop" id="drop">
+    <h2>Load a wire capture</h2>
+    <p>Drop an <b>RD.WIRE</b> NDJSON log here — one JSON object per line, <code>RD.WIRE_TOP</code> and <code>RD.WIRE_OVERSIZED</code> events. Everything is parsed in this browser; nothing is uploaded.</p>
+    <button class="btn" id="pick">Choose file</button>
+    <input type="file" id="file" accept=".txt,.json,.ndjson,.log" hidden>
+    <div class="err" id="err"></div>
+  </div>
+</div>
+
+<div id="report" hidden>
+  <header class="mast">
+    <div class="mast-row">
+      <h1>RD.WIRE</h1>
+      <div class="sub" id="mastsub"></div>
+      <div class="legend">
+        <span><i class="swatch sw-s2c"></i>S2C down</span>
+        <span><i class="swatch sw-c2s"></i>C2S up</span>
+      </div>
+    </div>
+    <div class="global-wrap">
+      <svg class="global-trace" id="globalTrace" preserveAspectRatio="none" aria-label="Total wire throughput over the capture"></svg>
+      <div class="global-meta" id="globalMeta"></div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <label for="sort">Rank by</label>
+    <select id="sort">
+      <option value="est">Bytes</option>
+      <option value="calls">Calls</option>
+      <option value="peak">Peak rate</option>
+      <option value="winPct">Persistence</option>
+      <option value="perCall">Bytes / call</option>
+      <option value="name">Name</option>
+    </select>
+    <label for="q">Filter</label>
+    <input type="search" id="q" placeholder="mod or key…">
+    <button class="btn spacer" id="exportAll">Save all reports</button>
+    <button class="btn" id="expandAll">Expand all</button>
+    <button class="btn" id="reset">New file</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+  <div id="oversized"></div>
+
+  <div class="notes" id="notes"></div>
+</div>
+
+<script>
+/* ==CORE_START== */
+/* Pure analysis core — no DOM. Takes raw NDJSON text, returns a report object. */
+function analyzeWire(text){
+  const windows=[], oversized=[];
+  let parsed=0, skipped=0, otherEvents={};
+
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line) continue;
+    let o;
+    try{ o=JSON.parse(line); }catch(e){ skipped++; continue; }
+    parsed++;
+    if(o.e==='RD.WIRE_TOP' && o.x && Array.isArray(o.x.rows)) windows.push(o);
+    else if(o.e==='RD.WIRE_OVERSIZED' && o.x) oversized.push(o);
+    else otherEvents[o.e||'(no e)']=(otherEvents[o.e||'(no e)']||0)+1;
+  }
+  if(!windows.length && !oversized.length) return null;
+
+  const modOf=k=>{const i=String(k).indexOf(':');return i<0?'(unprefixed)':k.slice(0,i);};
+  const leafOf=k=>{const i=String(k).indexOf(':');return i<0?String(k):k.slice(i+1);};
+
+  const times=windows.map(w=>w.t).filter(t=>typeof t==='number');
+  const tMin=times.length?Math.min(...times):0;
+  const tMax=times.length?Math.max(...times):0;
+  const span=Math.max(tMax-tMin,1);
+
+  const NB=140;
+  const bucketOf=t=>Math.min(NB-1,Math.floor((t-tMin)/span*NB));
+  const bucketSecs=new Array(NB).fill(0);
+
+  const mods=new Map();
+  const getMod=n=>{
+    if(!mods.has(n)) mods.set(n,{
+      name:n,est:0,calls:0,maxSingle:0,peakRate:0,
+      dirCalls:{},dirEst:{},windows:new Set(),keys:new Map(),
+      bins:Array.from({length:NB},()=>({S2C:0,C2S:0,other:0})),
+      truncatedWindows:0
+    });
+    return mods.get(n);
+  };
+
+  let totalEst=0,totalCalls=0,truncWindows=0,maxKeysSeen=0,shownCap=0;
+  const globalBins=Array.from({length:NB},()=>({S2C:0,C2S:0,other:0}));
+
+  for(const w of windows){
+    const b=bucketOf(w.t);
+    const ws=(w.x&&typeof w.x.windowSec==='number')?w.x.windowSec:30;
+    bucketSecs[b]+=ws;
+    const keysN=w.x.keys??w.x.rows.length, shownN=w.x.shown??w.x.rows.length;
+    maxKeysSeen=Math.max(maxKeysSeen,keysN);
+    shownCap=Math.max(shownCap,shownN);
+    const truncated=keysN>shownN;
+    if(truncated) truncWindows++;
+
+    const perModRate={};
+    for(const r of w.x.rows){
+      const mn=modOf(r.key), m=getMod(mn);
+      const est=r.est||0, calls=r.calls||0, dir=r.dir||'other';
+      const rate=r.estPerSec||(ws?est/ws:0);
+      m.est+=est; m.calls+=calls; totalEst+=est; totalCalls+=calls;
+      m.maxSingle=Math.max(m.maxSingle,r.maxSingle||0);
+      m.dirCalls[dir]=(m.dirCalls[dir]||0)+calls;
+      m.dirEst[dir]=(m.dirEst[dir]||0)+est;
+      m.windows.add(w.t);
+      const slot=(dir==='S2C'||dir==='C2S')?dir:'other';
+      m.bins[b][slot]+=est;
+      globalBins[b][slot]+=est;
+      perModRate[mn]=(perModRate[mn]||0)+rate;
+
+      let k=m.keys.get(r.key);
+      if(!k){k={key:r.key,leaf:leafOf(r.key),est:0,calls:0,maxSingle:0,peakRate:0,dirs:new Set(),windows:new Set(),
+                chunked:null,chunkBudget:null,chunks:0,streams:0,over:0};m.keys.set(r.key,k);}
+      k.est+=est;k.calls+=calls;
+      k.maxSingle=Math.max(k.maxSingle,r.maxSingle||0);
+      k.peakRate=Math.max(k.peakRate,rate);
+      k.dirs.add(dir);k.windows.add(w.t);
+      if(r.chunked&&r.chunked!=='no') k.chunked=r.chunked;
+      if(r.chunkBudget) k.chunkBudget=r.chunkBudget;
+      k.chunks+=r.chunks||0; k.streams+=r.streams||0; k.over+=r.over||0;
+    }
+    for(const mn in perModRate){
+      const m=mods.get(mn);
+      m.peakRate=Math.max(m.peakRate,perModRate[mn]);
+      if(truncated) m.truncatedWindows++;
+    }
+  }
+
+  // oversized events fold into their mod's flag set
+  const ovrByKey=new Map();
+  for(const o of oversized){
+    const key=o.x.key||'(unknown)';
+    let e=ovrByKey.get(key);
+    if(!e){e={key,mod:modOf(key),leaf:leafOf(key),count:0,minEst:Infinity,maxEst:0,dirs:new Set(),
+              partial:0,reasons:{},classified:0,chunked:null,budget:null,first:o.t,last:o.t};ovrByKey.set(key,e);}
+    e.count++;
+    e.minEst=Math.min(e.minEst,o.x.est||0);
+    e.maxEst=Math.max(e.maxEst,o.x.est||0);
+    e.dirs.add(o.x.dir||'?');
+    if(o.x.partial) e.partial++;
+    // reason is the emitter's own classification (RDWire.classify). Its absence
+    // means a capture from before chunk-awareness, NOT a healthy key - see the
+    // UNCLASSIFIED finding.
+    if(o.x.reason){ e.classified++; e.reasons[o.x.reason]=(e.reasons[o.x.reason]||0)+1; }
+    if(o.x.chunked&&o.x.chunked!=='no') e.chunked=o.x.chunked;
+    if(o.x.budget) e.budget=o.x.budget;
+    e.first=Math.min(e.first,o.t);e.last=Math.max(e.last,o.t);
+  }
+
+  const nWin=windows.length;
+  const out=[];
+  for(const m of mods.values()){
+    const s2cC=m.dirCalls.S2C||0, c2sC=m.dirCalls.C2S||0;
+    const winCount=m.windows.size;
+    const winPct=nWin?winCount/nWin*100:0;
+    const perCall=m.calls?m.est/m.calls:0;
+    const meanRate=winCount?m.est/Math.max(winCount*30,1):0;
+    const flags=[];
+
+    // Judge each key against ITS OWN ceiling. A stream that deliberately pages
+    // at 16 KB is not broken, and a stream that pages at 3 KB is broken at 4.
+    const GEN_LIMIT=8000;
+    let worstOver=0,breaches=0,anyChunked=false,declBudget=null,chunkTotal=0,streamTotal=0;
+    for(const k of m.keys.values()){
+      const ceil=k.chunkBudget||GEN_LIMIT;
+      if(k.chunked){anyChunked=true;chunkTotal+=k.chunks;streamTotal+=k.streams;}
+      if(k.chunkBudget) declBudget=k.chunkBudget;
+      breaches+=k.over||0;
+      if(k.maxSingle>ceil) worstOver=Math.max(worstOver,k.maxSingle);
+    }
+    // Merge the emitter's classifications. These come from alert records, which
+    // are capped per key per window, so they say WHICH kind of breach happened;
+    // `breaches` above says how many actually did.
+    const reasons={};let unclassified=0;
+    for(const e of ovrByKey.values()){
+      if(e.mod!==m.name) continue;
+      for(const rs in e.reasons) reasons[rs]=(reasons[rs]||0)+e.reasons[rs];
+      if(!e.classified) unclassified+=e.count;
+      if(e.chunked) anyChunked=true;
+      if(e.budget) declBudget=declBudget||e.budget;
+    }
+    const nChunkOver=reasons['chunk-oversize']||0,nUnsplit=reasons['unsplit']||0,
+          nUnmeas=reasons['unmeasurable']||0;
+    const single=([nChunkOver,nUnsplit].filter(x=>x>0).length===1)&&breaches?breaches:null;
+
+    m._chunk={breaches,anyChunked,declBudget,chunkTotal,streamTotal,
+              nChunkOver,nUnsplit,nUnmeas,unclassified,worstOver};
+
+    if(worstOver>0) flags.push({t:'OVERSIZE '+fmtBytes(worstOver),c:'f-alarm'});
+    if(nChunkOver)  flags.push({t:'CHUNK OVER BUDGET \u00d7'+(single||nChunkOver),c:'f-alarm'});
+    if(nUnsplit)    flags.push({t:'UNSPLIT \u00d7'+(single||nUnsplit),c:'f-alarm'});
+    if(nUnmeas)     flags.push({t:'UNMEASURABLE \u00d7'+nUnmeas,c:'f-alarm'});
+    if(unclassified)flags.push({t:'UNCLASSIFIED \u00d7'+unclassified,c:'f-alarm'});
+    if(anyChunked&&!worstOver&&!nChunkOver&&!nUnsplit) flags.push({t:'PAGED',c:'f-ok'});
+    if(c2sC>=25&&s2cC>=100&&s2cC/c2sC>=4) flags.push({t:'FANOUT ×'+(s2cC/c2sC).toFixed(1),c:'f-warn'});
+    if(c2sC===0&&s2cC>=50&&winPct>=20) flags.push({t:'PUSH ONLY',c:'f-warn'});
+    if(c2sC>=100&&s2cC>=100){
+      const r=s2cC/c2sC;
+      if(r>=0.9&&r<=1.1&&winPct>=50&&perCall<80) flags.push({t:'POLLING',c:'f-warn'});
+    }
+    if(m.calls>=5000&&perCall<120) flags.push({t:'CHATTY',c:'f-info'});
+    // A declared paged stream inside its budget has a large per-call size BY
+    // DESIGN - that number is the chunk budget, not state riding along on every
+    // send. Flagging it tells the author to go fix the thing they just fixed.
+    const pagedHealthy=anyChunked&&!worstOver&&!breaches;
+    if(m.calls>=25&&perCall>800&&!pagedHealthy) flags.push({t:'FAT '+fmtNum(perCall)+' B/CALL',c:'f-info'});
+    if(winCount>=10&&meanRate>0&&m.peakRate/meanRate>=20) flags.push({t:'BURSTY ×'+Math.round(m.peakRate/meanRate),c:'f-info'});
+    if(winCount>=20&&winPct>=65) flags.push({t:'ALWAYS ON',c:'f-mute'});
+    if(m.truncatedWindows/Math.max(winCount,1)>0.5&&m.est/totalEst<0.02) flags.push({t:'UNDERCOUNTED',c:'f-mute'});
+    if(!flags.length) flags.push({t:'no pattern flagged',c:'f-mute'});
+
+    out.push({
+      name:m.name,est:m.est,calls:m.calls,pct:totalEst?m.est/totalEst*100:0,
+      perCall,maxSingle:m.maxSingle,peakRate:m.peakRate,meanRate,
+      winCount,winPct,dirCalls:m.dirCalls,dirEst:m.dirEst,flags,bins:m.bins,
+      chunk:m._chunk,
+      keys:[...m.keys.values()].map(k=>({
+        key:k.key,leaf:k.leaf,est:k.est,calls:k.calls,maxSingle:k.maxSingle,
+        peakRate:k.peakRate,perCall:k.calls?k.est/k.calls:0,
+        dir:k.dirs.size===1?[...k.dirs][0]:'mixed',winCount:k.windows.size,
+        chunked:k.chunked,chunkBudget:k.chunkBudget,chunks:k.chunks,streams:k.streams,over:k.over
+      })).sort((a,b)=>b.est-a.est)
+    });
+  }
+  out.sort((a,b)=>b.est-a.est);
+  out.forEach((m,i)=>{m.byteRank=i+1;});
+
+  return {
+    mods:out,
+    chunkAware:[...ovrByKey.values()].some(e=>e.classified>0)
+             || out.some(m=>m.chunk&&m.chunk.anyChunked),
+    totals:{est:totalEst,calls:totalCalls,windows:nWin,parsed,skipped,otherEvents,
+            tMin,tMax,span,truncWindows,maxKeysSeen,shownCap,
+            sessions:[...new Set(windows.map(w=>w.s).filter(Boolean))],
+            emitters:[...new Set(windows.map(w=>w.m).filter(Boolean))],
+            versions:[...new Set(windows.map(w=>w.v).filter(v=>v!=null))]},
+    globalBins,bucketSecs,NB,
+    oversized:[...ovrByKey.values()].sort((a,b)=>b.count-a.count),
+    oversizedRaw:oversized
+  };
+}
+
+function fmtBytes(n){
+  if(n==null||isNaN(n)) return '—';
+  if(n<1024) return Math.round(n)+' B';
+  if(n<1048576) return (n/1024).toFixed(n<10240?2:1)+' KB';
+  return (n/1048576).toFixed(n<10485760?2:1)+' MB';
+}
+function fmtNum(n){
+  if(n==null||isNaN(n)||!isFinite(n)) return '—';
+  return Math.round(n).toLocaleString('en-US');
+}
+function fmtDur(s){
+  const h=Math.floor(s/3600),m=Math.round(s%3600/60);
+  return h?h+'h '+String(m).padStart(2,'0')+'m':m+'m';
+}
+
+/* ---- plain-text narrative report ---- */
+const RULE='-'.repeat(80), HRULE='='.repeat(80);
+function wrap(s,w,indent){
+  const pad=' '.repeat(indent||0),out=[];let line='';
+  for(const word of s.split(/\s+/)){
+    if(!line) line=word;
+    else if((line+' '+word).length<=w-(indent||0)) line+=' '+word;
+    else {out.push(pad+line);line=word;}
+  }
+  if(line) out.push(pad+line);
+  return out.join('\n');
+}
+function stamp(t){return new Date(t*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+
+function describeKey(k,m,R){
+  const bits=[],share=m.est?k.est/m.est*100:0,nWin=R.totals.windows;
+  bits.push(share.toFixed(share<1?2:1)+'% of this mod\u2019s traffic.');
+  if(k.dir==='S2C') bits.push('Server push.');
+  else if(k.dir==='C2S') bits.push('Client send.');
+  else bits.push('Travels both directions.');
+  if(k.maxSingle>=8000) bits.push('Single messages reach '+fmtBytes(k.maxSingle)+', well past a safe packet size.');
+  else if(k.perCall>800) bits.push('Heavy payload at '+fmtNum(k.perCall)+' B per message.');
+  else if(k.calls>=3000&&k.perCall<120) bits.push('High frequency, small payload \u2014 '+fmtNum(k.calls)+' messages at '+fmtNum(k.perCall)+' B.');
+  if(nWin&&k.winCount/nWin>=0.6) bits.push('Runs continuously across the capture.');
+  else if(nWin&&k.winCount/nWin<=0.05&&k.est>0) bits.push('Only appears in '+fmtNum(k.winCount)+' window'+(k.winCount===1?'':'s')+' \u2014 event-driven, not ambient.');
+  const meanRate=k.winCount?k.est/(k.winCount*30):0;
+  if(meanRate>0&&k.peakRate/meanRate>=10) bits.push('Arrives in bursts; peak is '+Math.round(k.peakRate/meanRate)+'\u00d7 its own average.');
+  return bits.join(' ');
+}
+
+const FINDING_TEXT={
+  'OVERSIZE':m=>'A single message reached '+fmtBytes(m.chunk.worstOver||m.maxSingle)+', past the ceiling that applies to its key'+(m.chunk.declBudget?' (a declared chunk budget of '+fmtBytes(m.chunk.declBudget)+')':' (the general 8 KB limit)')+'. Payloads this large stall the tick when they serialize and are the usual source of lag spikes that look like server-side freezes.',
+  'CHUNK OVER BUDGET':m=>'This key IS paged \u2014 '+(m.chunk.chunkTotal?fmtNum(m.chunk.chunkTotal)+' chunks'+(m.chunk.streamTotal?' across '+fmtNum(m.chunk.streamTotal)+' streams':''):'the emitter declares it chunked')+' \u2014 and its chunks are individually too big'+(m.chunk.declBudget?', against a declared budget of '+fmtBytes(m.chunk.declBudget):'')+'. The chunker is running; its budget is wrong. This is usually one constant, and the common cause is a budget counted in ROWS rather than bytes \u2014 fixed row counts drift into oversized payloads the moment a row grows.',
+  'UNSPLIT':m=>'Large payloads going out whole, with no paging declared and no seq/total on the wire. Unlike a budget breach this needs a chunker written, not retuned: split the payload at the emitter and carry seq/total so the receiver can reassemble and so this report can tell the two cases apart.',
+  'UNMEASURABLE':m=>'The size estimator ran out of walk budget before finishing these payloads, so every byte figure for them is a floor rather than an estimate. A payload too big to measure is its own finding \u2014 treat the numbers as lower bounds and look at what is being serialized.',
+  'UNCLASSIFIED':m=>'Oversized payloads were logged, but this capture predates chunk classification so there is no way to tell a correctly-paged chunk from an unsplit blob. Do NOT read the partial flag as an answer: partial means the size walk ran out of budget, never that a payload was split, and it reads false for healthy and broken keys alike. Re-capture with a chunk-aware emitter to classify these.',
+  'PAGED':m=>'Declared as a paged stream and every chunk landed inside its budget'+(m.chunk.declBudget?' of '+fmtBytes(m.chunk.declBudget):'')+(m.chunk.chunkTotal?' \u2014 '+fmtNum(m.chunk.chunkTotal)+' chunks'+(m.chunk.streamTotal?' across '+fmtNum(m.chunk.streamTotal)+' streams':''):'')+'. Volume may still be worth attention, but the transport shape is correct.',
+  'FANOUT':m=>'The server sends '+ (( (m.dirCalls.C2S||0) ? ((m.dirCalls.S2C||0)/(m.dirCalls.C2S||1)).toFixed(1) : '?') )+' messages for every one a client sends. That is broadcast amplification: one player\u2019s action is being relayed to everyone regardless of whether they can see it. Add a proximity or relevance filter before the send loop.',
+  'PUSH ONLY':m=>'The server sends with no matching client request path in this capture. Traffic is on a timer rather than driven by demand. Confirm the interval is necessary and that it stops when nobody is listening.',
+  'POLLING':m=>'Requests and responses run one-to-one at a steady beat with small payloads. Clients are asking \u201canything new?\u201d on a loop. Converting to push-on-change removes the traffic entirely and frees a slot in the sampler\u2019s top-N window.',
+  'CHATTY':m=>'High message count at small size \u2014 '+fmtNum(m.calls)+' calls averaging '+fmtNum(m.perCall)+' B. Bandwidth cost is low but per-message overhead and handler dispatch are not. Batching adjacent sends is the win here.',
+  'FAT':m=>'Averaging '+fmtNum(m.perCall)+' B per message. Something large is riding along on every send. Check whether full state is being transmitted where an identifier plus a client-side cache would do.',
+  'BURSTY':m=>'Peak throughput is '+Math.round(m.peakRate/Math.max(m.meanRate,1))+'\u00d7 this mod\u2019s own average. Sustained load is fine; the spikes are what players feel.',
+  'ALWAYS ON':m=>'Present in '+Math.round(m.winPct)+'% of sampled windows. Never idles. Low priority to fix on bandwidth grounds, but it permanently occupies a slot in the capture\u2019s top-N list, which hides quieter mods.',
+  'UNDERCOUNTED':m=>'This mod sat below the sampler\u2019s cutoff in most windows where it appeared. The figures above are floors, not totals. Raise the sampler\u2019s top-N limit before drawing conclusions about it.',
+  'no pattern':m=>'No traffic pattern crossed a heuristic threshold. Volume alone may still warrant attention \u2014 review the key table above on its merits.'
+};
+
+function buildModReport(m,R){
+  const T=R.totals,L=[];
+  const s2cC=m.dirCalls.S2C||0,c2sC=m.dirCalls.C2S||0;
+  const s2cE=m.dirEst.S2C||0,c2sE=m.dirEst.C2S||0;
+  const other=m.calls-s2cC-c2sC;
+
+  L.push(HRULE);
+  L.push(' RD.WIRE MOD REPORT \u2014 '+m.name);
+  L.push(' '+[T.sessions.length?'session '+T.sessions.join(', '):'',T.emitters.join(', '),T.versions.length?'v'+T.versions.join('/'):''].filter(Boolean).join(' \u00b7 '));
+  L.push(' '+stamp(T.tMin)+' \u2192 '+stamp(T.tMax)+'  ('+fmtDur(T.span)+', '+fmtNum(T.windows)+' windows)');
+  L.push(HRULE);
+  L.push('');
+  const row=(k,v)=>L.push('  '+k.padEnd(14)+v);
+  row('RANK',m.byteRank+' of '+R.mods.length+' by bytes');
+  row('VOLUME',fmtBytes(m.est)+'   ('+m.pct.toFixed(m.pct<0.1?3:1)+'% of all captured traffic)');
+  row('CALLS',fmtNum(m.calls)+' messages, '+fmtNum(m.perCall)+' B per call average');
+  row('DIRECTION',fmtNum(s2cC)+' S2C / '+fmtNum(c2sC)+' C2S'+(other?' / '+fmtNum(other)+' other':'')
+      +(c2sC&&s2cC?'   ('+(s2cC/c2sC).toFixed(1)+' server sends per client send)':''));
+  row('',fmtBytes(s2cE)+' down / '+fmtBytes(c2sE)+' up');
+  row('PRESENCE',fmtNum(m.winCount)+' of '+fmtNum(T.windows)+' windows ('+Math.round(m.winPct)+'%)');
+  row('RATE','mean '+fmtNum(m.meanRate)+' B/s while active, peak '+fmtNum(m.peakRate)+' B/s');
+  row('LARGEST MSG',fmtBytes(m.maxSingle));
+  L.push('');
+  L.push('KEYS  ('+m.keys.length+')');
+  L.push(RULE);
+  for(const k of m.keys){
+    L.push('  '+k.leaf);
+    L.push('    '+[k.dir,fmtBytes(k.est),fmtNum(k.calls)+' calls',fmtNum(k.perCall)+' B/call',
+                   'max '+fmtNum(k.maxSingle),'peak '+fmtNum(k.peakRate)+' B/s'].join(' \u00b7 '));
+    if(k.chunked){
+      L.push('    paging: '+k.chunked+(k.chunkBudget?', budget '+fmtBytes(k.chunkBudget):', no declared budget')
+             +(k.chunks?' \u00b7 '+fmtNum(k.chunks)+' chunks':'')
+             +(k.streams?' \u00b7 '+fmtNum(k.streams)+' streams':'')
+             +' \u00b7 '+(k.over?fmtNum(k.over)+' over budget':'none over budget'));
+    }
+    L.push(wrap(describeKey(k,m,R),80,4));
+    L.push('');
+  }
+  L.push('FINDINGS');
+  L.push(RULE);
+  for(const f of m.flags){
+    const base=Object.keys(FINDING_TEXT).find(p=>f.t.toUpperCase().startsWith(p)||f.t.startsWith(p));
+    L.push('  ['+f.t.toUpperCase()+']');
+    L.push(wrap(base?FINDING_TEXT[base](m):'No description available.',80,4));
+    L.push('');
+  }
+  if(T.truncWindows){
+    L.push('SAMPLING NOTE');
+    L.push(RULE);
+    L.push(wrap('The capture recorded at most '+fmtNum(T.shownCap)+' keys per window while observing up to '
+      +fmtNum(T.maxKeysSeen)+'. '+fmtNum(T.truncWindows)+' of '+fmtNum(T.windows)
+      +' windows lost their tail, so any key that ranked below the cutoff is under-reported here.',80,2));
+    L.push('');
+  }
+  L.push(HRULE);
+  L.push(' From '+fmtNum(T.parsed)+' captured lines. Byte counts are the emitter\u2019s estimates.');
+  L.push(HRULE);
+  return L.join('\n');
+}
+
+function buildAllReports(R){
+  return R.mods.map(m=>buildModReport(m,R)).join('\n\n\n');
+}
+/* ==CORE_END== */
+
+/* ---------- rendering ---------- */
+let REPORT=null;
+const $=id=>document.getElementById(id);
+
+function traceSVG(svg,bins,bucketSecs,color2,color1,height){
+  const NB=bins.length,H=height,mid=H/2,W=1000;
+  const rate=b=>({
+    S2C:bucketSecs[b]?bins[b].S2C/bucketSecs[b]:0,
+    C2S:bucketSecs[b]?(bins[b].C2S+bins[b].other)/bucketSecs[b]:0
+  });
+  let peak=0;
+  const rates=[];
+  for(let b=0;b<NB;b++){const r=rate(b);rates.push(r);peak=Math.max(peak,r.S2C,r.C2S);}
+  const bw=W/NB;
+  let html='<line x1="0" y1="'+mid+'" x2="'+W+'" y2="'+mid+'" stroke="var(--rule)" stroke-width="1" vector-effect="non-scaling-stroke"/>';
+  if(peak>0){
+    for(let b=0;b<NB;b++){
+      const x=(b*bw).toFixed(2),w=Math.max(bw-0.6,0.4).toFixed(2);
+      const hs=rates[b].S2C/peak*(mid-2),hc=rates[b].C2S/peak*(mid-2);
+      if(hs>0.15) html+='<rect x="'+x+'" y="'+mid+'" width="'+w+'" height="'+hs.toFixed(2)+'" fill="'+color1+'"/>';
+      if(hc>0.15) html+='<rect x="'+x+'" y="'+(mid-hc).toFixed(2)+'" width="'+w+'" height="'+hc.toFixed(2)+'" fill="'+color2+'"/>';
+    }
+  }
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);
+  svg.innerHTML=html;
+  return peak;
+}
+
+function modCard(m,i){
+  const el=document.createElement('article');
+  el.className='card';
+  el.dataset.name=m.name.toLowerCase();
+  el.dataset.keys=m.keys.map(k=>k.key.toLowerCase()).join(' ');
+
+  const s2cE=m.dirEst.S2C||0,c2sE=m.dirEst.C2S||0,othE=m.est-s2cE-c2sE;
+  const pc=v=>m.est?(v/m.est*100).toFixed(3)+'%':'0%';
+  const isRFTD=/^RFTD/i.test(m.name);
+
+  el.innerHTML=`
+    <div class="card-head">
+      <div class="rank">${String(i+1).padStart(2,'0')}</div>
+      <div class="card-id">
+        <div class="mod ${isRFTD?'self':''}">${esc(m.name)}</div>
+        <div class="share">${m.keys.length} key${m.keys.length===1?'':'s'} · ${m.pct.toFixed(m.pct<0.1?2:1)}% of wire</div>
+      </div>
+      <div class="bytes-big">${fmtBytes(m.est)}<span>estimated</span></div>
+    </div>
+    <div class="flags">${m.flags.map(f=>`<span class="flag ${f.c}">${esc(f.t)}</span>`).join('')}</div>
+    <div class="trace-wrap">
+      <svg class="trace" preserveAspectRatio="none" role="img" aria-label="Throughput trace for ${esc(m.name)}"></svg>
+      <div class="trace-peak"></div>
+    </div>
+    <div class="splitbar">
+      <i style="width:${pc(s2cE)};background:var(--s2c)"></i>
+      <i style="width:${pc(c2sE)};background:var(--c2s)"></i>
+      <i style="width:${pc(othE)};background:var(--dimmer)"></i>
+    </div>
+    <div class="stats">
+      <div class="stat"><k>Calls</k><v>${fmtNum(m.calls)}</v></div>
+      <div class="stat"><k>Bytes / call</k><v>${fmtNum(m.perCall)}</v></div>
+      <div class="stat"><k>Max single</k><v class="${m.maxSingle>=8000?'hot-cell':''}">${fmtBytes(m.maxSingle)}</v></div>
+      <div class="stat"><k>Peak rate</k><v>${fmtNum(m.peakRate)} B/s</v></div>
+      <div class="stat"><k>Windows</k><v>${fmtNum(m.winCount)} · ${Math.round(m.winPct)}%</v></div>
+      <div class="stat"><k>S2C / C2S</k><v>${fmtNum(m.dirCalls.S2C||0)} / ${fmtNum(m.dirCalls.C2S||0)}</v></div>
+    </div>
+    <button class="keys-toggle" aria-expanded="false">▸ ${m.keys.length} key${m.keys.length===1?'':'s'}</button>
+    <div class="keys">
+      <table>
+        <thead><tr><th>Key</th><th>Dir</th><th>Bytes</th><th>Calls</th><th>B/call</th><th>Max</th><th>Peak B/s</th><th>Wins</th></tr></thead>
+        <tbody>${m.keys.map(k=>`<tr>
+          <td>${esc(k.leaf)}</td>
+          <td><span class="dirtag d-${k.dir==='mixed'?'mix':esc(k.dir)}">${esc(k.dir)}</span></td>
+          <td>${fmtBytes(k.est)}</td>
+          <td>${fmtNum(k.calls)}</td>
+          <td>${fmtNum(k.perCall)}</td>
+          <td class="${k.maxSingle>=8000?'hot-cell':''}">${fmtNum(k.maxSingle)}</td>
+          <td>${fmtNum(k.peakRate)}</td>
+          <td>${fmtNum(k.winCount)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div class="acts">
+      <button class="act" data-act="view">Read report</button>
+      <button class="act" data-act="copy">Copy</button>
+      <button class="act" data-act="save">Save .txt</button>
+      <span class="act-msg" role="status" aria-live="polite"></span>
+    </div>
+    <pre class="rpt" hidden></pre>`;
+
+  const svg=el.querySelector('.trace');
+  const peak=traceSVG(svg,m.bins,REPORT.bucketSecs,'var(--c2s)','var(--s2c)',62);
+  el.querySelector('.trace-peak').textContent='full scale '+fmtNum(peak)+' B/s';
+
+  const btn=el.querySelector('.keys-toggle');
+  btn.addEventListener('click',()=>{
+    const open=el.classList.toggle('open');
+    btn.setAttribute('aria-expanded',String(open));
+    btn.textContent=(open?'▾ ':'▸ ')+m.keys.length+' key'+(m.keys.length===1?'':'s');
+  });
+
+  const pre=el.querySelector('.rpt'), msg=el.querySelector('.act-msg');
+  el.querySelector('.acts').addEventListener('click',async e=>{
+    const act=e.target.dataset.act;
+    if(!act) return;
+    const txt=buildModReport(m,REPORT);
+    if(act==='view'){
+      pre.textContent=txt;
+      const open=pre.hidden;
+      pre.hidden=!open;
+      e.target.textContent=open?'Hide report':'Read report';
+      return;
+    }
+    if(act==='save'){ saveText(txt,'wire-'+safeName(m.name)+'.txt'); flash(msg,'Saved'); return; }
+    if(act==='copy'){
+      const ok=await copyText(txt);
+      if(ok) flash(msg,'Copied');
+      else { pre.textContent=txt; pre.hidden=false; flash(msg,'Clipboard blocked — select the text below'); }
+    }
+  });
+  return el;
+}
+
+function safeName(s){return String(s).replace(/[^A-Za-z0-9._-]+/g,'_');}
+function flash(node,text){
+  node.textContent=text;
+  clearTimeout(node._t);
+  node._t=setTimeout(()=>{node.textContent='';},2600);
+}
+async function copyText(txt){
+  try{
+    if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(txt);return true;}
+  }catch(e){}
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=txt; ta.setAttribute('readonly','');
+    ta.style.cssText='position:fixed;top:0;left:-9999px';
+    document.body.appendChild(ta); ta.select();
+    const ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  }catch(e){ return false; }
+}
+function saveText(txt,name){
+  const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=name;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+function render(){
+  const T=REPORT.totals;
+  const d0=new Date(T.tMin*1000),d1=new Date(T.tMax*1000);
+  const fmtT=d=>d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+
+  $('mastsub').textContent=[
+    T.sessions.length?'session '+T.sessions.join(', '):null,
+    T.emitters.length?T.emitters.join(', '):null,
+    T.versions.length?'v'+T.versions.join('/'):null
+  ].filter(Boolean).join(' · ');
+
+  const peak=traceSVG($('globalTrace'),REPORT.globalBins,REPORT.bucketSecs,'var(--c2s)','var(--s2c)',56);
+  $('globalMeta').innerHTML=[
+    ['Capture',fmtT(d0)+' → '+fmtT(d1)],
+    ['Duration',fmtDur(T.span)],
+    ['Windows',fmtNum(T.windows)],
+    ['Total',fmtBytes(T.est)],
+    ['Mean',fmtNum(T.est/T.span)+' B/s'],
+    ['Peak',fmtNum(peak)+' B/s'],
+    ['Mods',fmtNum(REPORT.mods.length)]
+  ].map(([k,v])=>`${k} <b>${v}</b>`).join('');
+
+  sortAndFill();
+
+  // oversized
+  const ov=$('oversized');
+  if(REPORT.oversized.length){
+    ov.innerHTML=`<div class="section"><h2>Oversized events \u2014 <em>${fmtNum(REPORT.oversizedRaw.length)}</em> alert${REPORT.oversizedRaw.length===1?'':'s'}${REPORT.chunkAware?'':' (unclassified capture)'}</h2></div>
+    <div class="section" style="padding-top:0"><div class="ovr"><table>
+      <thead><tr><th>Key</th><th>Mod</th><th>Dir</th><th>Alerts</th><th>Smallest</th><th>Largest</th><th>Paging</th><th>Budget</th><th>Reason</th><th>First \u2192 last</th></tr></thead>
+      <tbody>${REPORT.oversized.map(e=>{
+        const rs=Object.entries(e.reasons||{}).sort((a,b)=>b[1]-a[1]);
+        const reasonCell=e.classified
+          ? rs.map(([r,n])=>esc(r)+(rs.length>1?' \u00d7'+fmtNum(n):'')).join(', ')
+          : '<span title="capture predates chunk classification">unclassified</span>';
+        return `<tr>
+        <td>${esc(e.leaf)}</td><td>${esc(e.mod)}</td>
+        <td><span class="dirtag d-${e.dirs.size===1?esc([...e.dirs][0]):'mix'}">${esc([...e.dirs].join('/'))}</span></td>
+        <td>${fmtNum(e.count)}</td>
+        <td>${fmtBytes(e.minEst)}</td>
+        <td class="hot-cell">${fmtBytes(e.maxEst)}</td>
+        <td>${e.chunked?esc(e.chunked):'\u2014'}</td>
+        <td>${e.budget?fmtBytes(e.budget):'\u2014'}</td>
+        <td class="${e.classified?'':'hot-cell'}">${reasonCell}</td>
+        <td>${new Date(e.first*1000).toLocaleTimeString()} \u2192 ${new Date(e.last*1000).toLocaleTimeString()}</td>
+      </tr>`;}).join('')}</tbody></table></div></div>`;
+  } else ov.innerHTML='';
+
+  const other=Object.entries(T.otherEvents);
+  $('notes').innerHTML=`
+    <b>How to read this.</b> Each trace is a bipolar throughput plot across the capture: server-to-client below the rail in cyan, client-to-server above it in amber. Every card is scaled to its own peak, printed at the trace's top right, so shapes are comparable but heights are not.<br>
+    <b>Coverage.</b> ${fmtNum(T.parsed)} lines parsed${T.skipped?', '+fmtNum(T.skipped)+' unparseable':''}. The sampler recorded at most ${fmtNum(T.shownCap)} keys per window while seeing up to ${fmtNum(T.maxKeysSeen)}; ${fmtNum(T.truncWindows)} of ${fmtNum(T.windows)} windows lost their tail. Totals for low-volume mods are floors, not sums — cards marked <span class="flag f-mute">UNDERCOUNTED</span> are the ones most affected.${other.length?'<br><b>Other events.</b> '+other.map(([k,v])=>esc(k)+' ×'+fmtNum(v)).join(', '):''}<br>
+    <b>Alert counts are capped.</b> The emitter logs at most two oversized alerts per key per window, so the Alerts column is a floor, not a breach count \u2014 a key alerting 22 times across 11 windows has simply hit the cap. The true count is the per-key <b>over budget</b> figure in each mod's text report.<br>
+    <b>Flags.</b> OVERSIZE \u2014 a single message past its key's own ceiling (a declared chunk budget where one exists, otherwise 8 KB). CHUNK OVER BUDGET \u2014 the key is paged and the chunker works, but its chunks are too big; retune the budget. UNSPLIT \u2014 large payloads with no paging at all; write a chunker. UNMEASURABLE \u2014 the size walk ran out of budget, so figures are floors. UNCLASSIFIED \u2014 oversized payloads from a capture predating chunk classification; unknowable, not healthy. PAGED \u2014 declared paged and every chunk inside budget. FANOUT — four or more server sends per client request. PUSH ONLY — server sends with no client request path. POLLING — matched request/response at a steady beat with tiny payloads. CHATTY — high call count, small messages. FAT — over 800 bytes per call. BURSTY — peak at least 20× the mod's own average.`;
+}
+
+function sortAndFill(){
+  const key=$('sort').value;
+  const q=$('q').value.trim().toLowerCase();
+  const arr=[...REPORT.mods];
+  const cmp={
+    est:(a,b)=>b.est-a.est, calls:(a,b)=>b.calls-a.calls,
+    peak:(a,b)=>b.peakRate-a.peakRate, winPct:(a,b)=>b.winPct-a.winPct,
+    perCall:(a,b)=>b.perCall-a.perCall, name:(a,b)=>a.name.localeCompare(b.name)
+  }[key];
+  arr.sort(cmp);
+  const grid=$('grid');
+  grid.innerHTML='';
+  let shown=0;
+  arr.forEach((m,i)=>{
+    if(q && !m.name.toLowerCase().includes(q) && !m.keys.some(k=>k.key.toLowerCase().includes(q))) return;
+    grid.appendChild(modCard(m,i));
+    shown++;
+  });
+  if(!shown) grid.innerHTML='<p style="color:var(--dimmer);padding:30px 0">No mod or key matches that filter.</p>';
+}
+
+/* ---------- intake wiring ---------- */
+function load(text){
+  const r=analyzeWire(text);
+  if(!r){ $('err').textContent='No RD.WIRE_TOP or RD.WIRE_OVERSIZED events found. Check that this is an RDNet wire capture in NDJSON form.'; return; }
+  REPORT=r;
+  $('err').textContent='';
+  $('intake').hidden=true;
+  $('report').hidden=false;
+  render();
+  window.scrollTo(0,0);
+}
+function readFile(f){
+  if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>load(rd.result);
+  rd.onerror=()=>{$('err').textContent='Could not read that file.';};
+  rd.readAsText(f);
+}
+$('pick').addEventListener('click',()=>$('file').click());
+$('file').addEventListener('change',e=>readFile(e.target.files[0]));
+const drop=$('drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+drop.addEventListener('drop',e=>readFile(e.dataTransfer.files[0]));
+$('sort').addEventListener('change',sortAndFill);
+$('q').addEventListener('input',sortAndFill);
+$('expandAll').addEventListener('click',e=>{
+  const cards=[...document.querySelectorAll('.card')];
+  const open=!cards.every(c=>c.classList.contains('open'));
+  cards.forEach(c=>{
+    c.classList.toggle('open',open);
+    const b=c.querySelector('.keys-toggle');
+    if(b){b.setAttribute('aria-expanded',String(open));b.textContent=(open?'▾ ':'▸ ')+b.textContent.slice(2);}
+  });
+  e.target.textContent=open?'Collapse all':'Expand all';
+});
+$('exportAll').addEventListener('click',()=>{
+  if(!REPORT) return;
+  const d=new Date(REPORT.totals.tMin*1000).toISOString().slice(0,10);
+  saveText(buildAllReports(REPORT),'wire-report-'+safeName(REPORT.totals.sessions.join('-')||'all')+'-'+d+'.txt');
+});
+$('reset').addEventListener('click',()=>{
+  REPORT=null;$('report').hidden=true;$('intake').hidden=false;$('file').value='';
+});
+</script>
+</body>
+</html>

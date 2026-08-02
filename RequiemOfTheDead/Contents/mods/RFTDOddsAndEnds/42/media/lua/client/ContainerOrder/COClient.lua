@@ -71,6 +71,30 @@
 --      re-wrapped on every refresh, while onMouseDown / onMouseMove /
 --      onMouseMoveOutside are only ever set by us and are installed once.
 --
+-- A GESTURE IS EITHER A REORDER OR A CLICK, NEVER NEITHER. Fixed 2026-08-01 after
+-- a report that moving a bag "changes the position of the icon, but not the
+-- inventory - when you open the duffel you are actually looking at the fanny
+-- pack". Two thresholds were doing one job and disagreeing about it: onMouseMove
+-- ARMED a drag once the mouse had travelled size/6 (five pixels on a 32px
+-- button), while finishDrag only COMMITTED one past size/2, and onMouseUp
+-- returned unconditionally the moment coDragging was set. Everything in between
+-- - which is to say most real clicks, since five pixels of drift is nothing -
+-- reordered nothing and swallowed the selection on its way out, so the pane went
+-- on showing whichever container was already open while the icon under the
+-- cursor visibly hopped and snapped back. Clicking a bag left you in a different
+-- bag, exactly as reported.
+--
+-- The rule now: finishDrag REPORTS whether it resequenced anything, and
+-- onMouseUp falls through to vanilla's handler when it did not. A drag that ends
+-- where it began is a click, and is treated as one.
+--
+-- The test for "did it move" is slots, not pixels: dropIndexAt() is asked where
+-- the button would land and where it started, and they are compared. That is the
+-- same question the on-screen drop indicator answers during the drag, so what
+-- the player was shown is what they get. Arming now waits for size/2 as well -
+-- buttons sit a full size apart, so no drop can change anything until the mouse
+-- has moved a whole button, and arming six times sooner only bought the flicker.
+--
 -- Order lives in player modData keyed by the container's ITEM id ("i" .. getID()),
 -- with "main" for the character's own inventory. A bag destroyed and recreated
 -- gets a new id and therefore a default slot; that is correct - it is a different
@@ -92,6 +116,12 @@ local MD_KEY    = "RDContainerOrder"
 local DEFAULT   = 1000          -- unranked containers sort after ranked ones
 local STEP      = 10
 
+-- Vanilla addContainerButton lays the first button at ((1 - 1) * buttonSize) - 1,
+-- so the top of the column is -1, NOT 0. apply() reproduces that origin and the
+-- drag clamp is measured from it - see the clamp in onMouseMove for why the
+-- difference of one pixel mattered.
+local ORIGIN_Y  = -1
+
 -- ---------------------------------------------------------------------------
 -- Kill switch
 -- ---------------------------------------------------------------------------
@@ -108,14 +138,19 @@ end
 
 -- Stable key for a container. The player's own inventory has no containing item,
 -- which is exactly what distinguishes it.
+--
+-- A FAILED lookup is not the same as "no containing item". Both used to fall
+-- through to `return "main"`, which would quietly alias a bag onto the player's
+-- own inventory key: commit() would write both to t["main"], apply() would hand
+-- them the same rank, and the order would collapse to the name tie-break. Only
+-- treat a call that SUCCEEDED and returned nil as the character's inventory.
 local function keyFor(container)
     if not container then return nil end
-    local item
-    pcall(function() item = container:getContainingItem() end)
+    local ok, item = pcall(function() return container:getContainingItem() end)
+    if not ok then return nil end
     if not item then return "main" end
-    local id
-    pcall(function() id = item:getID() end)
-    if id then return "i" .. tostring(id) end
+    local gotId, id = pcall(function() return item:getID() end)
+    if gotId and id then return "i" .. tostring(id) end
     return nil
 end
 
@@ -203,7 +238,7 @@ function ContainerOrder.apply(page)
 
     local size = page.buttonSize or 32
     for i, b in ipairs(page.backpacks) do
-        b:setY(((i - 1) * size) - 1)
+        b:setY(((i - 1) * size) + ORIGIN_Y)
     end
 
     -- Vanilla set this before we moved anything; the bottom button changed.
@@ -214,20 +249,25 @@ function ContainerOrder.apply(page)
     end
 end
 
--- Where a drop would land: the count of visible buttons whose midpoint sits above
--- the dragged button's midpoint. 0 means "above everything".
-function ContainerOrder.insertPosition(page, dragged)
-    local others = {}
+-- Where a drop would land if the dragged button sat at pixel `y`: the count of
+-- visible buttons whose midpoint is at or above that midpoint. 0 means "above
+-- everything". Parameterised on y rather than reading dragged:getY() so
+-- finishDrag can ask the same question of the position the drag STARTED from
+-- and compare the two - see there.
+local function dropIndexAt(page, dragged, y)
+    local mid = y + dragged:getHeight() / 2
+    local n = 0
     for _, b in ipairs(page.backpacks) do
-        if b ~= dragged and b:getIsVisible() then others[#others + 1] = b end
+        if b ~= dragged and b:getIsVisible()
+            and (b:getY() + b:getHeight() / 2) <= mid then
+            n = n + 1
+        end
     end
-    table.sort(others, function(a, b) return a:getY() < b:getY() end)
+    return n
+end
 
-    local mid = dragged:getY() + dragged:getHeight() / 2
-    for i, b in ipairs(others) do
-        if mid < b:getY() + b:getHeight() / 2 then return i - 1, others end
-    end
-    return #others, others
+function ContainerOrder.insertPosition(page, dragged)
+    return dropIndexAt(page, dragged, dragged:getY())
 end
 
 -- ---------------------------------------------------------------------------
@@ -257,14 +297,27 @@ local function onMouseMove(self, dx, dy, skipOriginal)
 
     local size = page.buttonSize or 32
     -- Threshold so a normal click to SELECT a container is never read as a drag.
-    if math.abs((self.coDragStartMouseY or 0) - getMouseY()) > size / 6 then
+    --
+    -- Half a button, not size/6. Buttons are a full `size` apart, so the dragged
+    -- midpoint cannot cross a neighbour's midpoint - the only thing that changes
+    -- the order - until the mouse has travelled a whole `size`. A threshold of
+    -- size/6 armed the drag six times sooner than any reorder was reachable, so
+    -- every click with a few pixels of drift lifted the icon off its slot and
+    -- then put it straight back.
+    if math.abs((self.coDragStartMouseY or 0) - getMouseY()) > size / 2 then
         self.coDragging = true
     end
     if not self.coDragging then return end
 
     local panel = self:getParent()
     local newY = getMouseY() - panel:getAbsoluteY() - self:getHeight() / 2
-    self:setY(math.max(0, newY))
+    -- Clamp from the layout origin, not from 0. The top button sits at ORIGIN_Y
+    -- (-1), so a floor of 0 left the dragged button permanently one pixel BELOW
+    -- it and its midpoint could never win the comparison in dropIndexAt: no
+    -- container could be placed above the character's own inventory, however far
+    -- up you dragged. Half a button above the origin is enough to take slot 0
+    -- and never puts more than half the icon past the top edge.
+    self:setY(math.max(ORIGIN_Y - size / 2, newY))
     self:bringToTop()
 
     page.coDragButton = self
@@ -284,33 +337,53 @@ local function onMouseMoveOutside(self, dx, dy)
 end
 
 local function onMouseUp(self, x, y)
-    if self.coDragging then
+    if self.coDragging and ContainerOrder.finishDrag(self) then
+        -- A real reorder consumes the click: refreshBackpacks has already rebuilt
+        -- the column and the player did not ask to change container.
         self.pressed = false
-        ContainerOrder.finishDrag(self)
         return
     end
-    -- Not a drag: let vanilla select the container as usual.
+    -- Either never a drag, or a drag that resolved to the slot it started in.
+    -- Either way it was a click, so let vanilla select the container.
+    --
+    -- Falling through here is the fix for the reported bug. Arming a drag and
+    -- committing one used to be two different tests - `> size/6` to arm,
+    -- `> size/2` to commit - and this branch returned unconditionally as soon as
+    -- coDragging was set. Every gesture between the two thresholds therefore
+    -- reordered nothing AND swallowed the selection: the icon lifted and dropped
+    -- back while the pane went on showing whichever container was already open,
+    -- so clicking a bag left you looking at a different bag. self.pressed is
+    -- deliberately left alone on this path - vanilla's onBackpackMouseUp bails
+    -- out early on `not self.pressed` and would eat the click all over again.
     if self.coUpOrig then return self.coUpOrig(self, x, y) end
 end
 
+-- Returns true if the drop actually resequenced the column, false if it was a
+-- click in disguise and the button has been put back. Callers use that to decide
+-- whether the click still needs handling.
 function ContainerOrder.finishDrag(button)
     local page = pageOf(button)
     button.coDragging = false
-    if not page then return end
+    if not page then return false end
 
     page.coDragButton = nil
     page.coDropIndex  = nil
 
-    -- A nudge shorter than half a slot is a mis-click, not a reorder: snap back
-    -- rather than silently resequencing everything.
-    local size = page.buttonSize or 32
-    if button.coDragStartY and math.abs(button:getY() - button.coDragStartY) <= size / 2 then
-        button:setY(button.coDragStartY)
-        return
+    -- Does this drop land anywhere other than where it started? That is the only
+    -- honest test of "was this a reorder", and it is the same question the drop
+    -- indicator answered on screen, so what the player was shown is what they
+    -- get. The old test - "did the button move more than half a slot" - measured
+    -- pixels instead of slots and disagreed with both.
+    local startY = button.coDragStartY
+    if startY and dropIndexAt(page, button, button:getY())
+               == dropIndexAt(page, button, startY) then
+        button:setY(startY)
+        return false
     end
 
     ContainerOrder.commit(page)
     if page.refreshBackpacks then pcall(function() page:refreshBackpacks() end) end
+    return true
 end
 
 -- Install on one button. See header note 2: onMouseUp is reassigned by vanilla on

@@ -11,10 +11,13 @@
     "Sandbox_RD_DeathCaptureEnabled_tooltip": "Records player deaths server-side. Kill switch: the capture hook fires for every character in the world (players, zombies, animals), so if a horde-night performance problem is ever traced here, turn this off and report it.",
 
     "Sandbox_RD_ForensicRingSegments": "Forensic log: ring segments",
-    "Sandbox_RD_ForensicRingSegments_tooltip": "How many segments each rotating forensic log stream keeps before the oldest is overwritten. Disk ceiling per stream is roughly segments x segment lines x 200 bytes; the default 8 x 20000 is ~40 MB.",
+    "Sandbox_RD_ForensicRingSegments_tooltip": "How many segments each rotating forensic log stream keeps before the oldest is overwritten. Disk ceiling per stream is segments x size per segment - the default 8 x 4 MB is 32 MB. Lowering this reclaims the segments that fall outside the new ring on the next server start.",
 
     "Sandbox_RD_ForensicSegmentLines": "Forensic log: lines per segment",
-    "Sandbox_RD_ForensicSegmentLines_tooltip": "How many lines a forensic segment holds before rolling to the next one. Line-counted rather than byte-counted; after an unclean restart the counter can be up to 500 lines stale, which is expected and harmless.",
+    "Sandbox_RD_ForensicSegmentLines_tooltip": "Secondary cap: roll to the next segment after this many lines even if the size limit has not been reached. Size is the main bound - see 'size per segment'. After an unclean restart the counter can be up to 500 lines stale, which is expected and harmless.",
+
+    "Sandbox_RD_ForensicSegmentKB": "Forensic log: size per segment (KB)",
+    "Sandbox_RD_ForensicSegmentKB_tooltip": "How large a forensic segment grows before rolling to the next one. This is the real disk bound, because record sizes differ hugely between streams - a traffic-report line can be ten times the size of a simple event line, so a line count alone tells you very little about disk use.",
 
     "Sandbox_RD_CmdRelayEnabled": "Live client-command feed",
     "Sandbox_RD_CmdRelayEnabled_tooltip": "Streams inbound client commands to staff consoles as they happen - the Console tab of the Dragonfly panel. A WATCH feature, not a block: the engine has already accepted a command by the time any mod is told about it, so nothing can be refused here. OFF by default because client commands are a firehose (every inventory move, every action sync, from every player). Armed, staff receive ONE batched packet per second, capped at 40 commands per window, and any overflow is reported in the feed rather than silently dropped. Command arguments are NOT sent - those stay in the rotating 'guardian' forensic log, which is the searchable record.",

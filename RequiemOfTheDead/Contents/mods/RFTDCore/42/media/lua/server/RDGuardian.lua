@@ -140,7 +140,11 @@ if not RDGuardian._hooked then
                 est      = est,
                 partial  = partial or nil,   -- omitted unless the size walk ran out of budget
             }, "RFTDCore")
-            RDMeter.record("C2S", tostring(module) .. ":" .. tostring(command), est, partial)
+            -- args rides along so RDMeter can classify a chunked C2S stream
+            -- (seq/total) rather than seeing only its size. Already in hand here;
+            -- the alternative is a second walk or a second listener, and the
+            -- note above is about not adding either.
+            RDMeter.record("C2S", tostring(module) .. ":" .. tostring(command), est, partial, args)
 
             -- Live staff console feed. Deliberately called from INSIDE this
             -- handler rather than registering its own listener - see the "OSN

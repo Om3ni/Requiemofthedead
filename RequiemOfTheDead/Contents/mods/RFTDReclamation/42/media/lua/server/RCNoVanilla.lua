@@ -177,17 +177,17 @@ local function scriptIsVanilla(script)
     return ok and vanilla == true
 end
 
--- Zone keys are script names. Vanilla ships one unprefixed key
--- ("PickUpTruckLightsRanger" in the ranger zone), so retry under the Base
--- module when the bare name doesn't resolve. Unresolvable entries are left
--- alone - they can never spawn anyway.
+-- Zone keys are script names. The lookup is getVehicle (ScriptManager.java:831)
+-- - there is no getVehicleScript on ScriptManager in 42.20, and naming it that
+-- made this function return false for EVERY key, so Layer 1 stripped nothing.
+-- Vanilla ships one unprefixed key ("PickUpTruckLightsRanger" in the ranger
+-- zone) and getVehicle resolves a dotless name against the Base module on its
+-- own (ScriptBucketCollection.java:78-88), so one lookup covers both forms.
+-- Unresolvable entries are left alone - they can never spawn anyway.
 function RCNoVanilla.isVanillaScriptName(name)
     if type(name) ~= "string" then return false end
     local script
-    pcall(function() script = getScriptManager():getVehicleScript(name) end)
-    if not script and not string.find(name, ".", 1, true) then
-        pcall(function() script = getScriptManager():getVehicleScript("Base." .. name) end)
-    end
+    pcall(function() script = getScriptManager():getVehicle(name) end)
     if not script then return false end
     return scriptIsVanilla(script)
 end

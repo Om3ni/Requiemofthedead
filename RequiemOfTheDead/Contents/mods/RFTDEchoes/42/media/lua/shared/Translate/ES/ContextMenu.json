@@ -1,0 +1,9 @@
+{
+  "ContextMenu_EC_Songbook": "Cancionero",
+  "ContextMenu_EC_PretendPlay": "Fingir que Tocas",
+  "ContextMenu_EC_StartGroupSong": "Iniciar Canción de Grupo",
+  "ContextMenu_EC_JoinGroup": "Unirse al Grupo",
+  "ContextMenu_EC_LearnSong": "Aprender Canción",
+  "ContextMenu_EC_TranscribeMusic": "Transcribir Música",
+  "ContextMenu_EC_PlayWorldInstrument": "Tocar %1"
+}
