@@ -160,6 +160,38 @@ function RCRegistry.slice(username)
     return out
 end
 
+-- EVERY claim in the index, flattened and stamped with its owner (2026-08-02).
+--
+-- The staff fleet view's only route to a car nobody has streamed in: the engine
+-- exposes no enumerator for unloaded vehicles, so an index walk is the whole
+-- of what is knowable about them.
+--
+-- This does NOT breach the "never transmitted" rule above. That rule protects
+-- the registry TABLE - its shape, per-player lastSeen, pending releases, the
+-- token pools - none of which appear here. What comes out is a derived
+-- projection of exactly the fields a fleet list renders, and RCFleet is
+-- admin-gated before it ever calls this. Bounded by MaxClaims x players and
+-- built on demand, never on a timer, so the second rule holds too.
+function RCRegistry.allClaims()
+    local out = {}
+    local r = ensure()
+    for username, e in pairs(r.players) do
+        if e.claims then
+            for id, rec in pairs(e.claims) do
+                out[#out + 1] = {
+                    claimId = id,
+                    owner   = username,
+                    name    = rec.name,
+                    x = rec.x, y = rec.y, z = rec.z,
+                    seen    = rec.seen,
+                    trailer = rec.trailer or false,
+                }
+            end
+        end
+    end
+    return out
+end
+
 -- Deferred release: an owner released an UNLOADED car from My Vehicles. We can't
 -- touch its (unloaded) modData now, so we flag the claimId; syncFromVehicle
 -- clears the modData the next time that vehicle loads. Stored in registry
@@ -452,6 +484,23 @@ end
 function RCRegistry.tokens()
     local t = ensure().meta.tokens
     return (t and t.vehicle) or 0, (t and t.trailer) or 0
+end
+
+-- Spend one token. The redemption half of the pool, added 2026-08-03 when
+-- RCRespawn became the first spender.
+--
+-- Returns true only if a token was actually taken, and the caller must treat
+-- false as "do nothing" rather than "spawn anyway". Deliberately spends BEFORE
+-- the placement rather than after: a placement that then fails costs the pool
+-- one token, which is the harmless direction. The reverse - place first, spend
+-- after - lets a failure between the two mint free cars forever.
+function RCRegistry.spendToken(kind)
+    local m = ensure().meta
+    local k = (kind == "trailer") and "trailer" or "vehicle"
+    local have = m.tokens and m.tokens[k] or 0
+    if have <= 0 then return false end
+    m.tokens[k] = have - 1
+    return true
 end
 
 -- Orphan prune (cap-correctness, NOT a storage fix - the index is already

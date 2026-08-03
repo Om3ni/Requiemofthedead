@@ -114,9 +114,12 @@ function HutchList:render()
     self:clearStencilRect()
 end
 
-local function attachHeader(panel, listX, headerY)
+-- Reads its origin from HutchesTab each frame rather than closing over the
+-- coords it was built with, so a reflow can move the header without rebuilding
+-- the panel (a rebuild would re-wrap prerender).
+local function attachHeader(panel)
     panel.drawColumnsHeader = function(self_)
-        DFColumns.drawHeader(self_, COLS, listX, headerY, FONT)
+        DFColumns.drawHeader(self_, COLS, HutchesTab.headerX or 8, HutchesTab.headerY or 8, FONT)
     end
     local origPrerender = panel.prerender
     panel.prerender = function(self_)
@@ -257,59 +260,64 @@ end
 -- Tab build
 -- ─────────────────────────────────────────────────────────────────────────
 
+-- Positioning only. Geometry is identical to the hand-rolled version it
+-- replaced; the win is that PAD/BTN_H/HEADER_H now come from DFKit.metrics,
+-- so this tab can no longer drift away from the rest of the family.
+local function layout(panel, x, y, w, h)
+    local m = DFKit.metrics
+    local R = DFKit.layout(panel, x, y, w, h)
+
+    local bar = R:header(m.btnH + m.pad)
+    local bx  = bar.x
+    HutchesTab.btnRefresh:setX(bx);       HutchesTab.btnRefresh:setY(bar.y)
+    HutchesTab.btnTeleport:setX(bx + 100); HutchesTab.btnTeleport:setY(bar.y)
+    HutchesTab.btnHay:setX(bx + 220);      HutchesTab.btnHay:setY(bar.y)
+    HutchesTab.btnHayAll:setX(bx + 320);   HutchesTab.btnHayAll:setY(bar.y)
+
+    local hdr = R:header(m.headerH)
+    HutchesTab.headerX, HutchesTab.headerY = hdr.x, hdr.y
+
+    local foot = R:footer(22 + m.pad)
+    HutchesTab.statsLabel:setX(foot.x)
+    HutchesTab.statsLabel:setY(foot.y + m.pad)
+
+    local list = HutchesTab.listBox
+    list:setX(R.x); list:setY(R.y)
+    list:setWidth(R.w); list:setHeight(R.h)
+end
+
 local function build(spec, panel, x, y, w, h)
     HutchesTab.selectedKey = nil
 
-    local PAD      = 8
-    local BTN_H    = 24
-    local HEADER_H = 20
+    HutchesTab.btnRefresh  = DFKit.button(panel, 0, 0, 90,  "Refresh",      panel, refresh)
+    HutchesTab.btnTeleport = DFKit.button(panel, 0, 0, 110, "Teleport to",  panel, teleportToSelected)
+    HutchesTab.btnHay      = DFKit.button(panel, 0, 0, 90,  "Add Hay",      panel, addHaySelected)
+    HutchesTab.btnHayAll   = DFKit.button(panel, 0, 0, 110, "Add Hay: all", panel, addHayAll)
 
-    local cursorY = PAD
+    attachHeader(panel)
 
-    local function mkBtn(label, bx, bw, handler)
-        local b = ISButton:new(bx, cursorY, bw, BTN_H, label, panel, handler)
-        b.borderColor.a = 0.4
-        b:initialise(); b:instantiate()
-        panel:addChild(b)
-        return b
-    end
-
-    mkBtn("Refresh",      PAD,        90,  refresh)
-    mkBtn("Teleport to",  PAD + 100,  110, teleportToSelected)
-    mkBtn("Add Hay",      PAD + 220,  90,  addHaySelected)
-    mkBtn("Add Hay: all", PAD + 320,  110, addHayAll)
-
-    cursorY = cursorY + BTN_H + PAD
-
-    local headerY = cursorY
-    attachHeader(panel, PAD, headerY)
-    cursorY = cursorY + HEADER_H
-
-    local listH = h - cursorY - (PAD * 2 + 22)
-    local list = HutchList:new(PAD, cursorY, w - PAD * 2, listH)
+    local list = HutchList:new(0, 0, 10, 10)
     list.itemheight = 28
     list.drawBorder = true
+    DFKit.well(list)
     list:initialise(); list:instantiate()
     panel:addChild(list)
     HutchesTab.listBox = list
-    cursorY = cursorY + listH + PAD
 
-    local stats = ISLabel:new(PAD, cursorY, 16, "Loaded hutches near you: -",
-        0.75, 0.85, 0.95, 1, UIFont.Small, true)
-    stats:initialise(); stats:instantiate()
-    panel:addChild(stats)
-    HutchesTab.statsLabel = stats
+    HutchesTab.statsLabel = DFKit.label(panel, 0, 0, "Loaded hutches near you: -")
 
+    layout(panel, x, y, w, h)
     refresh()
 end
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
     DFRegistry.registerTab{
-        id    = "hutches",
-        label = "Hutches",
-        order = 7,  -- just after the Animals tab (order 6)
-        build = build,
+        id     = "hutches",
+        label  = "Hutches",
+        order  = 7,  -- just after the Animals tab (order 6)
+        build  = build,
+        resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
     }
     print("[Husbandry] HBHutchesTab registered into Dragonfly")
 end)

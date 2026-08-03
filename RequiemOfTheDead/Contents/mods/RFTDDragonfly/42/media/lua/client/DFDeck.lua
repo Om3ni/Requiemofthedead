@@ -60,8 +60,17 @@ local TITLE_H  = 40
 local ROSTER_W = 148
 local ROW_H    = 30
 local PAD      = 8
-local SWEEP_MS = 1800
+local SWEEP_MS    = 1800  -- duration of one sweep, top to bottom
+local SWEEP_EVERY = 15000 -- rest between sweeps. The deck is a watch, not a
+                          -- strobe: long enough that the sweep reads as the
+                          -- panel breathing rather than as an animation.
 local BEAT     = 30      -- frames between status/capability refreshes
+
+-- Titlebar icon strip, measured from the right edge. GEAR_X is the wheel's
+-- CENTRE; GEAR_COL is how much horizontal room it claims, which the status
+-- line subtracts so the two can never overlap.
+local GEAR_X   = 46
+local GEAR_COL = 26
 
 -- ---------------------------------------------------------------------------
 -- Construction
@@ -78,7 +87,7 @@ function DFDeck:new(x, y, w, h)
     o.hoverRow      = nil
     o.contentArea   = nil
     o.clockMs       = 0
-    o.openedMs      = 0
+    o.sweepMs       = 0
     o.beat          = 0
     o.statusText    = ""
     o.dragging      = false
@@ -161,8 +170,9 @@ end
 function DFDeck:prerender()
     local d  = DFTheme.delta()
     local ms = d * 33.3
-    self.clockMs  = self.clockMs + ms
-    self.openedMs = self.openedMs + ms
+    self.clockMs = self.clockMs + ms
+    self.sweepMs = self.sweepMs + ms
+    if self.sweepMs > SWEEP_MS + SWEEP_EVERY then self.sweepMs = 0 end
     self.beat = self.beat - 1
     if self.beat <= 0 then
         self.beat = BEAT
@@ -172,10 +182,22 @@ function DFDeck:prerender()
     local w, h = self.width, self.height
 
     -- frame: void ground, scar outline, murk strips
-    DFTheme.roundFrame(self, 0, 0, w, h, DFTheme.radius, 1, C.scar, C.void)
-    self:drawRect(1, 1, w - 2, TITLE_H - 1, 1, C.murk.r, C.murk.g, C.murk.b)
+    -- Translucent to the same weight as the classic panel: vanilla
+    -- ISCollapsableWindow initialises backgroundColor a = 0.8, and DFPanel
+    -- inherits it. The deck was drawing at a = 1, which read as a solid wall
+    -- sitting next to a window you can see the world through.
+    local A = DFKit.alpha
+    DFTheme.roundFrame(self, 0, 0, w, h, DFTheme.radius, A.window, C.scar, C.void)
+    self:drawRect(1, 1, w - 2, TITLE_H - 1, A.chrome, C.murk.r, C.murk.g, C.murk.b)
+    self:drawRect(1, TITLE_H + 1, ROSTER_W - 1, h - TITLE_H - 2, A.chrome, C.murk.r, C.murk.g, C.murk.b)
+
+    -- Veil: laid over the ground and chrome, UNDER the hairlines, vein, mark,
+    -- type and roster rows - so it darkens the world showing through without
+    -- dulling the content drawn on top of it. Both hairlines sit below it so
+    -- they read at the same weight as each other.
+    DFTheme.roundRect(self, 1, 1, w - 2, h - 2, DFTheme.radius, A.veil, C.black)
+
     DFTheme.hairline(self, 1, TITLE_H, w - 2)
-    self:drawRect(1, TITLE_H + 1, ROSTER_W - 1, h - TITLE_H - 2, 1, C.murk.r, C.murk.g, C.murk.b)
     DFTheme.hairlineV(self, ROSTER_W, TITLE_H + 1, h - TITLE_H - 2)
     DFTheme.vein(self, 1, TITLE_H + 1, ROSTER_W - 1, math.min(560, h - TITLE_H - 2), 0.06)
 
@@ -188,11 +210,26 @@ function DFDeck:prerender()
     DFTheme.text(self, "DRAGONFLY", mx + mr + 12, 10, DFTheme.font.label, C.bone)
     DFTheme.text(self, "ADMIN COMMAND DECK", mx + mr + 108, 10, DFTheme.font.label, C.ash, 0.8)
 
-    -- watch pulse + status, right side
+    -- watch pulse + status, right side. Shifted left by the gear's column so
+    -- the status line cannot run underneath it - the wheel is fixed-width, the
+    -- status text is not, so the text is what moves.
     local pulse = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(self.clockMs / 4000 * 6.283))
     local sw = DFTheme.strW(DFTheme.font.label, self.statusText)
-    self:drawRect(w - sw - 46, 17, 6, 6, pulse, C.sight.r, C.sight.g, C.sight.b)
-    DFTheme.text(self, self.statusText, w - sw - 34, 10, DFTheme.font.label, C.ash)
+    self:drawRect(w - sw - 46 - GEAR_COL, 17, 6, 6, pulse, C.sight.r, C.sight.g, C.sight.b)
+    DFTheme.text(self, self.statusText, w - sw - 34 - GEAR_COL, 10, DFTheme.font.label, C.ash)
+
+    -- settings wheel: drawn, not typed. PZ's bitmap fonts carry no gear
+    -- glyph, and the deck's standing contract is custom-drawn chrome anyway -
+    -- a hub with four teeth reads as a gear at this size and costs five rects.
+    local gearHot = self.hoverRow == "gear"
+    local gc = gearHot and C.sight or C.ash
+    local gx, gy, gr = w - GEAR_X, math.floor(TITLE_H / 2), 5
+    DFTheme.roundRect(self, gx - gr, gy - gr, gr * 2, gr * 2, gr, 1, gc)
+    DFTheme.roundRect(self, gx - 2, gy - 2, 4, 4, 2, 1, C.murk)
+    self:drawRect(gx - 1, gy - gr - 3, 2, 3, 1, gc.r, gc.g, gc.b)   -- N tooth
+    self:drawRect(gx - 1, gy + gr,     2, 3, 1, gc.r, gc.g, gc.b)   -- S
+    self:drawRect(gx - gr - 3, gy - 1, 3, 2, 1, gc.r, gc.g, gc.b)   -- W
+    self:drawRect(gx + gr,     gy - 1, 3, 2, 1, gc.r, gc.g, gc.b)   -- E
 
     -- close: a scar X that arms on hover
     local closeHot = self.hoverRow == "close"
@@ -237,9 +274,9 @@ function DFDeck:prerender()
     DFTheme.grain(self, 1, 1, ROSTER_W - 1, h - 2)
     DFTheme.grain(self, 1, 1, w - 2, TITLE_H - 1)
 
-    -- the sweep: once, on open (rule 4)
-    if self.openedMs < SWEEP_MS then
-        local t = self.openedMs / SWEEP_MS
+    -- the sweep: on open, then idling every SWEEP_EVERY (rule 4)
+    if self.sweepMs < SWEEP_MS then
+        local t = self.sweepMs / SWEEP_MS
         local a = (t < 0.12) and (t / 0.12) * 0.5 or (1 - t) * 0.5
         self:drawRect(1, math.floor(t * (h - 2)), w - 2, 2, a, C.sight.r, C.sight.g, C.sight.b)
     end
@@ -262,7 +299,13 @@ end
 function DFDeck:onMouseMove(dx, dy)
     local x, y = self:getMouseX(), self:getMouseY()
     if y < TITLE_H then
-        self.hoverRow = (x > self.width - 28) and "close" or nil
+        if x > self.width - 28 then
+            self.hoverRow = "close"
+        elseif x > self.width - GEAR_X - 10 and x < self.width - GEAR_X + 10 then
+            self.hoverRow = "gear"
+        else
+            self.hoverRow = nil
+        end
     else
         self.hoverRow = rowAt(self, x, y)
     end
@@ -284,6 +327,15 @@ function DFDeck:onMouseDown(x, y)
     if y < TITLE_H then
         if x > self.width - 28 then
             DFDeck.close()
+            return
+        end
+        -- The wheel opens Core's settings window, not one of the deck's own.
+        -- Presentation preferences belong to every tab in the family, so the
+        -- deck's job here is to be a door, not to own the room.
+        if x > self.width - GEAR_X - 10 and x < self.width - GEAR_X + 10 then
+            if DFSettingsWindow then
+                DFSettingsWindow.toggle(self:getAbsoluteX() + x, self:getAbsoluteY() + TITLE_H)
+            end
             return
         end
         self.dragging = true
@@ -321,12 +373,19 @@ function DFDeck.open()
     if DFDeckState.instance then
         DFDeckState.instance:setVisible(true)
         DFDeckState.instance:addToUIManager()
-        DFDeckState.instance.openedMs = 0
+        DFDeckState.instance.sweepMs = 0
         DFDeckState.instance:rebuild()
         return
     end
     local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
-    local w, h = 1040, 680
+    -- 1092x714: the 1456x952 it grew to, taken back down 25%. Net effect is
+    -- roughly the original 1040x680 plus 5%.
+    --
+    -- Clamped with a margin so the deck can never open larger than the screen
+    -- it lands on - an off-screen titlebar is an unmovable window. The clamp
+    -- still matters at this size: 1092 wide overflows a 1024x768 display.
+    local w = math.min(1292, sw - 80)
+    local h = math.min(714,  sh - 80)
     local inst = DFDeck:new(math.floor((sw - w) / 2), math.floor((sh - h) / 2), w, h)
     inst:initialise()
     inst:addToUIManager()

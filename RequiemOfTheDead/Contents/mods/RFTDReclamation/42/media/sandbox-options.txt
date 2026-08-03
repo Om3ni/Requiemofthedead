@@ -213,3 +213,69 @@ option RFTDReclamation.NoVanillaStoryVehicles
     page = RFTDReclamation,
     translation = RC_NoVanillaStoryVehicles,
 }
+
+/* ---------------------- replacement lifecycle ----------------------- */
+
+option RFTDReclamation.RespawnEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_RespawnEnabled,
+}
+
+option RFTDReclamation.RespawnPerSweep
+{
+    type = integer,
+    min = 0,
+    max = 20,
+    default = 2,
+    page = RFTDReclamation,
+    translation = RC_RespawnPerSweep,
+}
+
+option RFTDReclamation.RespawnMinDistance
+{
+    type = integer,
+    min = 0,
+    max = 400,
+    default = 40,
+    page = RFTDReclamation,
+    translation = RC_RespawnMinDistance,
+}
+
+option RFTDReclamation.RespawnMaxDistance
+{
+    type = integer,
+    min = 20,
+    max = 1000,
+    default = 250,
+    page = RFTDReclamation,
+    translation = RC_RespawnMaxDistance,
+}
+
+option RFTDReclamation.RespawnModdedOnly
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_RespawnModdedOnly,
+}
+
+option RFTDReclamation.RespawnCondition
+{
+    type = enum,
+    numValues = 4,
+    default = 4,
+    page = RFTDReclamation,
+    translation = RC_RespawnCondition,
+    valueTranslation = RC_RespawnConditionValues,
+}
+
+option RFTDReclamation.RespawnOnDestruction
+{
+    type = boolean,
+    default = true,
+    page = RFTDReclamation,
+    translation = RC_RespawnOnDestruction,
+}

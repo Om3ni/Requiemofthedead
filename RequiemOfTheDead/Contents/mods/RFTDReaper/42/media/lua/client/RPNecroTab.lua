@@ -403,14 +403,174 @@ end
 -- Header row above the list (manual prerender on the content panel)
 -- ─────────────────────────────────────────────────────────────────────────
 
-local function attachHeader(panel, listX, headerY)
-    panel.drawColumnsHeader = function(self_)
-        DFColumns.drawHeader(self_, COLS, listX, headerY, FONT)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Triage model
+--
+-- Reaper already renders a verdict for every row. The tab's job is to SAY it,
+-- not to hand the admin a column of identical "clean" cells to re-derive it
+-- from. Everything below is computed from the snapshot the server already
+-- sends - drift from tile vs birthTile, siblings from the row set itself - so
+-- none of this costs a byte on the wire.
+-- ─────────────────────────────────────────────────────────────────────────
+
+local SEVERITY = { clean = 0, seq = 1, stack = 2, cluster = 3 }
+
+-- Which rule produced the verdict. Naming it turns a label into an
+-- explanation, and doubles as live feedback while tuning the thresholds.
+local RULE_FIRED = {
+    seq     = "sequential IDs within seqGap",
+    stack   = "stacked past the stack threshold",
+    cluster = "outfit cluster past minClu",
+}
+
+local function thresholdValue(key, fallback)
+    local e = NecroTab.thresholdEntries and NecroTab.thresholdEntries[key]
+    local v = e and tonumber(e:getText())
+    return v or fallback
+end
+
+local function parseTile(s)
+    if type(s) ~= "string" then return nil end
+    local sx, sy = s:match("^(-?%d+),(-?%d+)")
+    if not sx then return nil end
+    return tonumber(sx), tonumber(sy)
+end
+
+-- How far this zombie has wandered from where it was born. This is the actual
+-- bloom signal, and in the old layout it was not shown at all.
+local function driftOf(r)
+    local bx, by = parseTile(r.birthTile)
+    if not bx or not r.x then return nil end
+    local dx, dy = r.x - bx, r.y - by
+    return math.sqrt(dx * dx + dy * dy)
+end
+
+local function siblingsOf(r)
+    local prox = thresholdValue("outfitProximity", 75)
+    local n, r2 = 0, prox * prox
+    for _, o in ipairs(NecroTab.rows) do
+        if o.id ~= r.id and o.x and r.x then
+            local dx, dy = o.x - r.x, o.y - r.y
+            if dx * dx + dy * dy <= r2 then n = n + 1 end
+        end
+    end
+    return n, prox
+end
+
+local function firstSelectedRow()
+    local ids = selectedIdList()
+    if #ids == 0 then return nil end
+    for _, e in ipairs(NecroTab.rows) do
+        if e.id == ids[1] then return e end
+    end
+    return nil
+end
+
+-- The worst thing on screen, how big it is, and where its centre sits. A
+-- triage surface leads with the incident; the table is the audit trail.
+local function worstIncident()
+    local worst, n, sx, sy = nil, 0, 0, 0
+    for _, e in ipairs(NecroTab.rows) do
+        local s = SEVERITY[e.verdict or "clean"] or 0
+        if s > 0 then
+            if not worst or s > SEVERITY[worst] then worst, n, sx, sy = e.verdict, 0, 0, 0 end
+            if e.verdict == worst then
+                n, sx, sy = n + 1, sx + (e.x or 0), sy + (e.y or 0)
+            end
+        end
+    end
+    if not worst or n == 0 then return nil end
+    return { verdict = worst, n = n, x = math.floor(sx / n), y = math.floor(sy / n) }
+end
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Chrome: verdict band, detail pane, column header, empty state.
+-- All drawn, not widgets - it is read-only text that changes every frame.
+-- ─────────────────────────────────────────────────────────────────────────
+
+local function drawBand(el)
+    local b = NecroTab.bandRect
+    if not b then return end
+    local C  = DFKit.col
+    local fL = DFKit.font.label or UIFont.Small
+    local inc = worstIncident()
+
+    el:drawRect(b.x, b.y, b.w, b.h, DFKit.alpha.card, C.panel.r, C.panel.g, C.panel.b)
+
+    if not inc then
+        -- Quiet. The screen being calm IS the information; do not render a
+        -- table to prove it.
+        local msg = string.format("NO BLOOMS      %d loaded", #NecroTab.rows)
+        el:drawText(msg, b.x + 10, b.y + 6, C.ok.r, C.ok.g, C.ok.b, 0.95, fL)
+        return
+    end
+
+    local c = (inc.verdict == "cluster" and C.danger)
+           or (inc.verdict == "stack" and C.warn)
+           or C.warn
+    el:drawRect(b.x, b.y, 3, b.h, 1, c.r, c.g, c.b)
+    el:drawText(string.format("%s  %d zombies", string.upper(inc.verdict), inc.n),
+        b.x + 12, b.y + 4, c.r, c.g, c.b, 1, fL)
+    el:drawText(string.format("near %d,%d  -  %s", inc.x, inc.y,
+        RULE_FIRED[inc.verdict] or "rule fired"),
+        b.x + 12, b.y + 20, C.textDim.r, C.textDim.g, C.textDim.b, 0.9, fL)
+end
+
+local function drawDetail(el)
+    local d = NecroTab.detailRect
+    if not d then return end
+    local C  = DFKit.col
+    local fL = DFKit.font.label or UIFont.Small
+    el:drawRect(d.x, d.y, d.w, d.h, DFKit.alpha.inset, C.panel.r, C.panel.g, C.panel.b)
+
+    local r = firstSelectedRow()
+    if not r then
+        DFKit.drawEmpty(el, d.x, d.y, d.w, d.h, "select a row")
+        return
+    end
+
+    el:drawText("oid " .. tostring(r.id), d.x + 10, d.y + 8, C.text.r, C.text.g, C.text.b, 1, fL)
+
+    local drift = driftOf(r)
+    local sibs, prox = siblingsOf(r)
+    local rows = {
+        { "tile",     string.format("%d,%d,%d", r.x or 0, r.y or 0, r.z or 0) },
+        { "birth",    tostring(r.birthTile or "-") },
+        { "drift",    drift and string.format("%.1f tiles", drift) or "-" },
+        { "outfit",   tostring(r.outfit or "?") },
+        { "dirge",    tostring(r.dirgeType or "-") },
+        { "siblings", string.format("%d in %d", sibs, prox) },
+    }
+    local yy = d.y + 30
+    for _, kv in ipairs(rows) do
+        el:drawText(kv[1], d.x + 10, yy, C.textDim.r, C.textDim.g, C.textDim.b, 0.85, fL)
+        local tw = getTextManager():MeasureStringX(fL, kv[2])
+        el:drawText(kv[2], d.x + d.w - 10 - tw, yy, C.text.r, C.text.g, C.text.b, 1, fL)
+        yy = yy + 18
+    end
+
+    local v = r.verdict or "clean"
+    local c = (v == "clean" and C.ok) or (v == "cluster" and C.danger) or C.warn
+    local msg = (v == "clean") and "passed all 5 cluster rules"
+                                or (RULE_FIRED[v] or "flagged")
+    el:drawRect(d.x + 10, yy + 6, d.w - 20, 20, 0.18, c.r, c.g, c.b)
+    el:drawText(msg, d.x + 16, yy + 8, c.r, c.g, c.b, 1, fL)
+end
+
+local function attachChrome(panel)
+    panel.drawNecroChrome = function(self_)
+        DFColumns.drawHeader(self_, COLS, NecroTab.headerX or 8, NecroTab.headerY or 8, FONT)
+        drawBand(self_)
+        drawDetail(self_)
+        if #NecroTab.rows == 0 and NecroTab.listRect then
+            local l = NecroTab.listRect
+            DFKit.drawEmpty(self_, l.x, l.y, l.w, l.h, "nothing to triage")
+        end
     end
     local origPrerender = panel.prerender
     panel.prerender = function(self_)
         if origPrerender then origPrerender(self_) end
-        self_:drawColumnsHeader()
+        self_:drawNecroChrome()
     end
 end
 
@@ -423,12 +583,50 @@ local function build(spec, panel, x, y, w, h)
     NecroTab.thresholdEntries = {}
     clearHighlight()
 
-    local PAD       = 8
-    local BTN_H     = 24
-    local HEADER_H  = 20
+    local PAD       = DFKit.metrics.pad
+    local BTN_H     = DFKit.metrics.btnH
+    local HEADER_H  = DFKit.metrics.headerH
 
-    -- Row 1: filter + action buttons
-    local cursorY = PAD
+    -- Layout, computed up front so each row lands where triage wants it rather
+    -- than wherever a running cursor happened to arrive. The order that matters:
+    -- the VERDICT leads, the work row sits under it, and the destructive mass
+    -- actions plus the tuning row are pushed BELOW the list - they were at the
+    -- top, above the thing they act on, which is how "mass" ended up the
+    -- loudest control on screen.
+    local BAND_H   = 40
+    local bandY    = PAD
+    local toolbarY = bandY + BAND_H + PAD
+    local headerY  = toolbarY + BTN_H + PAD
+    local bodyY    = headerY + HEADER_H
+
+    local statsY   = h - PAD - 18
+    local ruleY    = statsY - PAD - BTN_H
+    local massY    = ruleY - PAD - BTN_H
+    local bodyH    = massY - PAD - bodyY
+    if bodyH < 120 then bodyH = 120 end
+
+    -- Body splits: the audit table keeps the left, the detail pane takes the
+    -- right. The table stops being the whole tab and becomes the evidence.
+    --
+    -- The detail pane is FIXED, not a percentage. Its content is short
+    -- key/value text that gains nothing from extra width - a wider pane only
+    -- pushes the label away from its value. The table is what actually needs
+    -- width: the six COLS total 620px at DFColumns' default 4px gap, and a
+    -- percentage split narrower than that clipped the Dirge column clean off
+    -- the right edge while the header kept drawing at full width over the
+    -- detail pane.
+    local DETAIL_W = 300
+    local colsW    = DFColumns.totalWidth(COLS, 4) + 16   -- + the list's own inset
+    local listW    = w - PAD * 3 - DETAIL_W
+    if listW < colsW then listW = colsW end               -- never clip a column
+    local maxList  = w - PAD * 3 - 160                    -- but leave the pane readable
+    if listW > maxList then listW = maxList end
+    local detailX  = PAD * 2 + listW
+    NecroTab.bandRect   = { x = PAD, y = bandY, w = w - PAD * 2, h = BAND_H }
+    NecroTab.listRect   = { x = PAD, y = bodyY, w = listW, h = bodyH }
+    NecroTab.detailRect = { x = detailX, y = bodyY, w = w - PAD - detailX, h = bodyH }
+
+    local cursorY = toolbarY
 
     -- "Suspects only" leads and is the default: it is what the server sends
     -- unasked, and at bloom scale it is the only view that is actually
@@ -448,12 +646,11 @@ local function build(spec, panel, x, y, w, h)
     local origSelect = filterCombo.select
     filterCombo.select = function(self_, ...) origSelect(self_, ...); onFilterChanged() end
 
-    local function mkBtn(label, bx, bw, handler)
-        local b = ISButton:new(bx, cursorY, bw, BTN_H, label, panel, handler)
-        b.borderColor.a = 0.4
-        b:initialise(); b:instantiate()
-        panel:addChild(b)
-        return b
+    -- Delegates to the shared primitive; call sites unchanged. Pass a `kind` to
+    -- DFKit.button for the destructive ones - mass cull should not render with
+    -- the same weight as Refresh.
+    local function mkBtn(label, bx, bw, handler, kind, opts)
+        return DFKit.button(panel, bx, cursorY, bw, label, panel, handler, kind, opts)
     end
 
     -- Refresh re-asks for whatever the current view needs, not always the
@@ -469,7 +666,7 @@ local function build(spec, panel, x, y, w, h)
         end
         sendCullIds(ids)
         NecroTab.sel:clear()
-    end)
+    end, "primary")   -- the scoped, intended action: it leads
     mkBtn("Find siblings", PAD + 390, 110, function()
         local ids = selectedIdList()
         if #ids == 0 then return end
@@ -510,7 +707,7 @@ local function build(spec, panel, x, y, w, h)
         end
     end)
 
-    cursorY = cursorY + BTN_H + PAD
+    cursorY = massY
 
     -- Row 1b: mass actions. Routes to DragonflyAdmin's removeChunk /
     -- removeRadius / removeAllLoaded handlers (server-side), guarded by
@@ -529,17 +726,13 @@ local function build(spec, panel, x, y, w, h)
 
     -- X offsets in this row were tuned in ScribeView; nudged from the
     -- original tight-pack to give the widgets visible breathing room.
-    local massLbl = ISLabel:new(PAD, cursorY + 4, 16, "Mass:", 0.7, 0.7, 0.7, 1, UIFont.Small, true)
-    massLbl:initialise(); massLbl:instantiate()
-    panel:addChild(massLbl)
+    DFKit.label(panel, PAD, cursorY + 4, "Mass:", DFKit.col.textDim)
 
     mkBtn("Remove chunk", PAD + 64, 110, function()
         mass("removeChunkZombies", "Remove all zombies in your current chunk.")
-    end)
+    end, "danger", { hold = true })
 
-    local rLbl = ISLabel:new(PAD + 196, cursorY + 4, 16, "Radius:", 0.85, 0.85, 0.85, 1, UIFont.Small, true)
-    rLbl:initialise(); rLbl:instantiate()
-    panel:addChild(rLbl)
+    DFKit.label(panel, PAD + 196, cursorY + 4, "Radius:")
 
     local rEntry = ISTextEntryBox:new(tostring(DEFAULT_MASS_RADIUS),
         PAD + 250, cursorY, 50, BTN_H)
@@ -554,12 +747,12 @@ local function build(spec, panel, x, y, w, h)
         mass("removeRadiusZombies",
             string.format("Remove all zombies within %d tiles of your position.", r),
             { radius = r })
-    end)
+    end, "danger", { hold = true })
 
     mkBtn("Remove ALL loaded", PAD + 444, 140, function()
         mass("removeAllLoadedZombies",
             "Remove every zombie currently loaded across all players' cells.")
-    end)
+    end, "danger", { hold = true })
 
     -- Dirge: refund every loaded zombie's consumed spawn roll and re-run
     -- the conversion sweep now. Routes to Dirge's own server module (not
@@ -581,30 +774,27 @@ local function build(spec, panel, x, y, w, h)
         end)
     end
 
-    cursorY = cursorY + BTN_H + PAD
+    -- Row 2: column header + the rest of the chrome (verdict band, detail pane,
+    -- empty state) - all drawn in one prerender hook rather than as widgets.
+    NecroTab.headerX, NecroTab.headerY = PAD, headerY
+    attachChrome(panel)
 
-    -- Row 2: column header (drawn via panel.prerender, not a child widget)
-    local headerY = cursorY
-    attachHeader(panel, PAD, headerY)
-    cursorY = cursorY + HEADER_H
-
-    -- Row 3: zombie list (everything between header and threshold row)
-    local listH = h - cursorY - (PAD * 2 + BTN_H + 22)
-    local list = NecroList:new(PAD, cursorY, w - PAD * 2, listH)
+    -- Row 3: the audit table, now sharing the body with the detail pane
+    local list = NecroList:new(PAD, bodyY, listW, bodyH)
     list.itemheight = 32   -- bumped from 18 for breathing room between rows
     list.drawBorder = true
+    DFKit.well(list)
     list:initialise(); list:instantiate()
     panel:addChild(list)
     NecroTab.listBox = list
-    cursorY = cursorY + listH + PAD
+
+    cursorY = ruleY
 
     -- Row 4: threshold tuning. Explicit x positions tuned in ScribeView so
     -- each value-entry has breathing room from its label and the next pair.
     -- Entries center-align their text since the contents are short numerics.
     local function addThreshold(label, key, default, labelX, entryX)
-        local lbl = ISLabel:new(labelX, cursorY + 4, 16, label, 0.85, 0.85, 0.85, 1, UIFont.Small, true)
-        lbl:initialise(); lbl:instantiate()
-        panel:addChild(lbl)
+        DFKit.label(panel, labelX, cursorY + 4, label)
         local entry = ISTextEntryBox:new(tostring(default), entryX, cursorY, 50, BTN_H)
         entry.align  = "center"
         entry.valign = "middle"
@@ -626,15 +816,10 @@ local function build(spec, panel, x, y, w, h)
             end
         end
     end)
-    cursorY = cursorY + BTN_H + PAD
-
     -- Row 5: stats line
-    local stats = ISLabel:new(PAD, cursorY, 16,
+    NecroTab.statsLabel = DFKit.label(panel, PAD, statsY,
         "Loaded: -   Cluster candidates: -   Total culls: -   Cull queue: -",
-        0.75, 0.85, 0.95, 1, UIFont.Small, true)
-    stats:initialise(); stats:instantiate()
-    panel:addChild(stats)
-    NecroTab.statsLabel = stats
+        DFKit.col.textDim)
 
     -- Z-order: combo's dropdown popup must render above the scrolling list.
     -- ISUI draws siblings in addChild order (later = on top); the list was

@@ -75,8 +75,20 @@ Events.EveryHours.Add(function()
     forEachLoadedVehicle(function(v)
         if RCRegistry.syncFromVehicle(v) == "expired" then expired = expired + 1 end
         if RCJanitor then RCJanitor.consider(v) end
+        -- Destruction accounting (§4) rides the SAME iteration. B42 fires no
+        -- vehicle-removal event, so a car that was intact last sweep and is a
+        -- wreck now is how we learn a player destroyed one. Runs after
+        -- consider() so a car reclaimed this pass is already gone and cannot
+        -- be double-counted as a destruction.
+        if RCRespawn then RCRespawn.observe(v) end
     end)
     if expired > 0 then RCShared.dbg("hourly pass: expired %d claim(s)", expired) end
+
+    -- Redemption: spend a metered slice of the token pool back into the world.
+    -- Last, so this hour's reclamations and destructions are already banked and
+    -- a car can be reclaimed in one corner and replaced near a player in the
+    -- same pass.
+    if RCRespawn then RCRespawn.sweep() end
 
     -- After this hour's loaded cars have refreshed their `seen`, drop index
     -- entries for online owners whose cars haven't been confirmed in a long
@@ -96,5 +108,10 @@ end)
 Events.OnServerStarted.Add(function()
     RCRegistry.creditDowntime()
     RCRegistry.heartbeat()
+    -- Re-apply the admin's saved tuning overrides. Must happen AFTER global
+    -- ModData has loaded (OnServerStarted is past OnInitGlobalModData), and
+    -- before the first hourly pass, or the server would spend an hour running
+    -- the raw sandbox values and then silently change behaviour.
+    if RCTuning then RCTuning.apply(RCTuning.load()) end
     print("[RC] RCSession loaded (lifecycle active)")
 end)

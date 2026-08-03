@@ -16,6 +16,14 @@ if not isServer() then return end
 -- the client, where RDRate.lua self-aborts and would resolve to nil.
 require "RDRate"
 
+-- Same rule, applied to the lifecycle surface. RCParking/RCRespawn/RCTuning all
+-- happen to sort before this file today, so these requires are currently no-ops
+-- - which is exactly when a load-order dependency is cheapest to declare and
+-- most likely to be silently broken later by a rename.
+require "RCTuning"
+require "RCParking"
+require "RCRespawn"
+
 RCServer = RCServer or {}
 
 local M = RCShared.MODULE
@@ -560,7 +568,129 @@ local function hSpawnVehicle(player, args)
     notify(player, "IGUI_RC_Spawned", false)
 end
 
+-- Staff fleet snapshot for the Dragonfly vehicles tab. Admin-gated HERE (the
+-- authoritative check - the tab's own capability gate is decorative, same split
+-- as the spawner), then handed to RCFleet, which owns the paging and the tick
+-- budget. Deliberately silent on denial: an unauthorised caller learns nothing,
+-- and a reply is itself a packet.
+--
+-- One request supersedes the caller's previous one inside RCFleet, so Refresh
+-- spam costs a dropped scan rather than N concurrent scans - which is why this
+-- needs no throttle of its own beyond the dispatcher's rate limit.
+local function hFleet(player, args)
+    if not RCShared.isAdmin(player) then
+        RCAudit.log("FLEET-DENY", player, {
+            level = tostring(player and player.getAccessLevel and player:getAccessLevel() or "?"),
+        })
+        return
+    end
+    if RCFleet then RCFleet.begin(player, args and args.scope) end
+end
+
+local function hFleetCancel(player)
+    if RCFleet then RCFleet.cancel(player) end
+end
+
+-- One car's parts for the inspector's diagram. Same admin gate; silent denial.
+local function hVehicleParts(player, args)
+    if not RCShared.isAdmin(player) then return end
+    if RCFleet then RCFleet.parts(player, args and args.vid) end
+end
+
+-- ---------------------------------------------------------------------------
+-- LIFECYCLE TAB (2026-08-03) - the tuning surface.
+--
+-- Everything below is admin-gated and silent on denial, matching hFleet. The
+-- dials are server state: the client renders a copy and asks for changes, it
+-- never applies one locally and hopes the server agrees. RCTuning.coerce is
+-- the gate - an unknown key or an out-of-range value dies there rather than
+-- being written into the override table and read back forever.
+-- ---------------------------------------------------------------------------
+
+-- One packet with everything the tab paints: dial values, which of them have
+-- been moved off the sandbox, the token pools, how the parking oracle is
+-- operating, and last sweep's outcome. Sent to the ASKING player only.
+local function hLifecycle(player)
+    if not RCShared.isAdmin(player) then return end
+    local values, moved = RCTuning.snapshot()
+    local tv, tt = RCRegistry.tokens()
+    sendServerCommand(player, M, "lifecycle", {
+        values  = values,
+        moved   = moved,
+        tokensVehicle = tv,
+        tokensTrailer = tt,
+        parking = RCParking and RCParking.status() or nil,
+        last    = RCRespawn and RCRespawn.last or nil,
+    })
+end
+
+-- Move one dial. Broadcasts the new override set to EVERY client, not just the
+-- caller: the decorative client-side gates (which tools to show) read cfg too,
+-- and a client holding stale overrides would disagree with the server about
+-- what is enabled. The push is one small packet on a rare, human-paced event.
+local function hSetTuning(player, args)
+    if not RCShared.isAdmin(player) then
+        RCAudit.log("TUNING-DENY", player, {
+            key = tostring(args and args.key),
+            level = tostring(player and player.getAccessLevel and player:getAccessLevel() or "?"),
+        })
+        return
+    end
+    local key = args and args.key
+    if type(key) ~= "string" then return end
+    local applied, reason = RCTuning.set(key, args.value)
+    if applied == nil then
+        RCShared.dbg("tuning: refused %s (%s)", tostring(key), tostring(reason))
+        hLifecycle(player)   -- resend truth so the panel snaps back
+        return
+    end
+    RCAudit.log("TUNING", player, { key = key, value = tostring(applied) })
+    sendServerCommand(M, "tuningpush", { values = RCTuning.load() })
+    hLifecycle(player)
+end
+
+local function hResetTuning(player)
+    if not RCShared.isAdmin(player) then return end
+    RCTuning.reset()
+    RCAudit.log("TUNING-RESET", player, {})
+    sendServerCommand(M, "tuningpush", { values = RCTuning.load() })
+    hLifecycle(player)
+end
+
+-- Retrofit census. Read-only; safe to run as often as an admin likes, bounded
+-- by the loaded vehicle count.
+local function hNoVanillaSurvey(player)
+    if not RCShared.isAdmin(player) then return end
+    if not RCNoVanilla then return end
+    sendServerCommand(player, M, "novanillasurvey", RCNoVanilla.survey())
+end
+
+-- Retrofit purge. The destructive half, and the reason survey exists: the tab
+-- will not send this until it has shown the admin a count first.
+local function hNoVanillaPurge(player, args)
+    if not RCShared.isAdmin(player) then
+        RCAudit.log("PURGE-DENY", player, {})
+        return
+    end
+    if not RCNoVanilla then return end
+    local budget = tonumber(args and args.budget) or 25
+    if budget < 1 then budget = 1 end
+    if budget > 200 then budget = 200 end
+    local removed, dumped = RCNoVanilla.purge(budget)
+    RCAudit.log("PURGE", player, { removed = removed, dumped = dumped })
+    sendServerCommand(player, M, "novanillapurged", { removed = removed, dumped = dumped })
+    sendServerCommand(player, M, "novanillasurvey", RCNoVanilla.survey())
+end
+
 local handlers = {
+    lifecycle       = hLifecycle,
+    settuning       = hSetTuning,
+    resettuning     = hResetTuning,
+    novanillasurvey = hNoVanillaSurvey,
+    novanillapurge  = hNoVanillaPurge,
+    fleet        = hFleet,
+    fleetcancel  = hFleetCancel,
+    vehicleparts = hVehicleParts,
     claim       = hClaim,
     unclaim     = hUnclaim,
     allow       = hAllow,

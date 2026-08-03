@@ -1,65 +1,190 @@
 -- RCVehicleTab - the "Vehicles" tab on Dragonfly's admin panel (DESIGN §7).
 --
--- Soft dependency (the RFTD integration contract): registration defers to
--- OnGameStart and bails if the DFRegistry global is absent, so Reclaimation
--- runs headless without Dragonfly. Couples to the DF* globals, never the
--- mod id.
+-- THE INSPECTOR. One car at a time, in depth: what it is, what shape it is in,
+-- who holds it, and how long it has left. The fleet-level view (what the
+-- Janitor is about to eat, the token pools) is the Lifecycle tab's job - this
+-- one answers "what am I looking at".
 --
--- Lists the vehicles STREAMED TO THIS CLIENT (the admin's loaded area),
--- read from getCell():getVehicles() on demand at refresh - so the tab costs
--- ZERO network and never touches the server or the registry. Row tools:
---   * Teleport to - moves the ADMIN to the car (people to cars: a vehicle's
---     position is a physics Transform, there is no clean Lua relocate)
---   * Spawn... - opens the staff vehicle spawner (RCSpawnWindow; the world
---     right-click is its other door). Visibility follows the sandbox access
---     ladder; the server re-gates every spawn command regardless.
---   * Delete - vanilla remove semantics (the mechanics-UI cheat): vehicle +
---     contents simply gone. NOT a dismantle on purpose (owner's call - an
---     admin cleaning up wants deletion, not scrap mechanics; the field
---     radial is where dismantling lives). Ledgered; a claimed car's index
---     entry is pruned server-side. BULK-CAPABLE via RDSelect (ctrl toggles,
---     shift takes a range) - the removals go one packet per car because that
---     is vanilla's channel, but the ledger travels as a single dismantledMany
---     so a rate-limited loop can never leave cars destroyed and unrecorded.
---     Teleport stays single-target; there is nowhere to teleport to for six.
--- Will later host the §4 recycle admin controls.
+-- WHAT CHANGED AND WHY (2026-08-02). The old tab was a flat table of the cars
+-- streamed to the admin's own client: seven columns, three buttons, zero
+-- network. It was honest and cheap and it could not do the job. Two reasons:
+--
+--   * SCOPE. getCell():getVehicles() on the CLIENT is the admin's personal
+--     bubble. Triage means finding the car you are NOT standing next to, and
+--     that list could never contain it. The scan now runs server-side over
+--     every loaded chunk (RCFleet), with the claim index as a third scope for
+--     cars nobody has streamed in at all.
+--   * THE VERDICT. RCJanitor has always computed abandonment in full - the
+--     Presence Law, the downtime-credited clock, the PhunZone and safehouse
+--     shields - and this tab referenced NONE of it, because those stamps live
+--     in server-only modData that is deliberately never transmitted. So the
+--     admin re-derived by eye what the server already knew exactly. Every row
+--     now carries RCJanitor.assess's verdict as a 3px stripe, and the selected
+--     car's full reasoning sits in the lifecycle block.
+--
+-- THE COST, stated plainly: this tab is no longer free. It was the only tab in
+-- the family that touched no network, and that property is spent. It is spent
+-- carefully - one request per Refresh, replies arrive as pages the admin can
+-- read while they land, and nothing polls. See the transport section.
+--
+-- ACTIONS WORK ON ROWS, NOT OBJECTS. Both destructive paths resolve
+-- server-side by id (VehicleCommands.remove does getVehicleById on the SERVER)
+-- and teleport only needs coordinates, so both work on a car this client has
+-- never streamed. That is what makes the wider scope actionable rather than
+-- merely informative - a list you can see but not act on is a worse tool than
+-- the bubble was.
 
 if isServer() then return end
 
+require "ISUI/ISPanel"
 require "ISUI/ISScrollingListBox"
 require "ISUI/ISButton"
 require "ISUI/ISLabel"
 require "ISUI/ISModalDialog"
 
 -- Shared selection model (Core). Same click semantics as the necro and players
--- tabs, so the muscle memory transfers between tabs. Reclaimation hard-requires
--- RFTDCore, and RDSelect lives in media/lua/shared which the client walks before
--- media/lua/client - so this require is belt-and-braces, kept because a
--- file-scope use of an RD* global is declared, never assumed.
+-- tabs, so the muscle memory transfers between tabs.
 require "RDSelect"
 local Select = RDSelect
 
 RCVehicleTab = RCVehicleTab or {}
+local T = RCVehicleTab
 
-local FONT = UIFont.Code -- monospace, columns line up
+local M    = RCShared.MODULE
+
+-- Monospace: ids and columns line up only while the face is fixed-width, so
+-- this slot must never fall back to a proportional font.
+--
+-- NOT a constant, despite reading like one. Text size is a client preference
+-- (DFPrefs) and the whole point of that preference is that it applies without
+-- a restart - so a DFPrefs listener at the bottom of this file REASSIGNS these
+-- two upvalues and re-lays-out. Every draw call below reads the upvalue at
+-- draw time, which is what lets one listener resize the entire tab instead of
+-- thirty call sites having to ask.
+local FONT  = UIFont.Code
+local ROW_H = 18
 
 -- Ceiling on one bulk delete. Deliberately below RCServer's DISMANTLE_BATCH_MAX
 -- so the panel never promises more than the ledger will accept, and low because
 -- each target costs a separate vanilla removal packet - see deleteRows.
 local BULK_MAX = 10
 
-local COLS = {
-    { label = "ID",      w = 62,  get = function(r) return tostring(r.vid) end },
-    { label = "Vehicle", w = 200, get = function(r) return r.script end },
-    { label = "Dist",    w = 52,  get = function(r) return tostring(r.dist) end },
-    { label = "Eng",     w = 46,  get = function(r) return r.engine and tostring(r.engine) or "-" end },
-    { label = "Kind",    w = 66,  get = function(r) return r.kind end },
-    { label = "Inside",  w = 56,  get = function(r) return r.occupied > 0 and tostring(r.occupied) or "-" end },
-    { label = "Owner",   w = 140, get = function(r) return r.owner or "-" end },
-}
+-- Geometry. Floors matter: the deck can be dragged small, and the failure mode
+-- to avoid is a detail pane so narrow the lifecycle values overprint their keys.
+-- BASE values, tuned against UIFont.Code at its default size. Nothing reads
+-- these directly - recomputeMetrics() derives the live values below from them
+-- and the CURRENT font, because text size is a client preference and every one
+-- of these numbers is only correct at the size it was measured at.
+local LIST_W_B,  LIST_MIN_B  = 248, 176
+local PARTS_W_B, PARTS_MIN_B = 250, 170
+local MEAT_MIN_B             = 208
+local BAND_H_B               = 40
+local LIST_HEAD_B            = 16
 
--- getCell():getVehicles() is a Set - get(i) crashes; :iterator() is the
--- supported path (the RCSession idiom). On-demand only, never a timer.
+-- The diagram column does NOT scale, deliberately. Its content is the vanilla
+-- mechanic-overlay art, which is 263x600 pixels whatever the font is doing;
+-- widening the column for a larger font would just add empty space around a
+-- fixed-size image.
+local DIAG_W,  DIAG_MIN  = 292, 200
+
+-- Live geometry, assigned by recomputeMetrics().
+local LIST_W,  LIST_MIN  = LIST_W_B, LIST_MIN_B
+local PARTS_W, PARTS_MIN = PARTS_W_B, PARTS_MIN_B
+local MEAT_MIN           = MEAT_MIN_B
+local BAND_H             = BAND_H_B
+local LIST_HEAD_H        = LIST_HEAD_B
+
+-- Row internals. GLYPH_X / VID_X / NAME_X are the three columns of a list row,
+-- and they are MEASURED rather than fixed: a five-digit vehicle id at
+-- CodeLarge is far wider than at Code, so a hard-coded name column is exactly
+-- how ids and names ended up drawn on top of each other. Shared by the row
+-- draw and the column header so the two cannot drift apart.
+local GLYPH_X = 8
+local VID_X   = 22
+local NAME_X  = 66
+local TEXT_DY = 2      -- vertical centring of row text, derived from row height
+
+-- ---------------------------------------------------------------------------
+-- Verdict vocabulary. The single place a Janitor verdict becomes a colour and
+-- a sentence; RCJanitor.assess owns what the verdict IS, this owns how it
+-- reads. Keys must track that function's return values exactly.
+-- ---------------------------------------------------------------------------
+local VERDICT = {
+    claimed  = { col = "ok",      label = "HELD",     line = "claimed - the Janitor never looks at a claimed car" },
+    held     = { col = "ok",      label = "HELD",     line = "past the window, but its keeper has logged in since" },
+    shielded = { col = "ok",      label = "SHIELDED", line = "eligible, but it is parked inside a safehouse" },
+    clock    = { col = "warn",    label = "ON CLOCK", line = "unclaimed and counting down" },
+    due      = { col = "danger",  label = "DUE",      line = "past every gate - next sweep with budget takes it" },
+    wreck    = { col = "textDim", label = "WRECK",    line = "wrecks are never reclaimed and mint nothing" },
+    off      = { col = "textDim", label = "-",        line = "the Janitor is disabled" },
+}
+local function verdictOf(row)
+    return VERDICT[row and row.verdict or "off"] or VERDICT.off
+end
+
+-- ---------------------------------------------------------------------------
+-- Formatting
+-- ---------------------------------------------------------------------------
+
+-- Coarse duration. Deliberately never finer than minutes: these clocks are
+-- measured in real days and a seconds figure would imply a precision the
+-- downtime credit does not actually have.
+local function fmtAgo(sec)
+    if type(sec) ~= "number" then return "-" end
+    local neg = sec < 0
+    if neg then sec = -sec end
+    local d = math.floor(sec / 86400)
+    local h = math.floor((sec % 86400) / 3600)
+    local m = math.floor((sec % 3600) / 60)
+    local s
+    if d > 0 then s = string.format("%dd %02dh", d, h)
+    elseif h > 0 then s = string.format("%dh %02dm", h, m)
+    else s = string.format("%dm", m) end
+    return neg and ("-" .. s) or s
+end
+
+local function fmtTile(row)
+    if not row or not row.x then return "-" end
+    return string.format("%d, %d, %d", row.x, row.y, row.z or 0)
+end
+
+-- Live distance from the local player. Computed per frame from the row's
+-- coordinates rather than sent by the server, so it stays true while the admin
+-- walks instead of freezing at snapshot time.
+local function distOf(row)
+    local me = getPlayer()
+    if not (me and row and row.x) then return nil end
+    local dx, dy = me:getX() - row.x, me:getY() - row.y
+    return math.floor(math.sqrt(dx * dx + dy * dy))
+end
+
+-- ---------------------------------------------------------------------------
+-- Transport. Pages arrive from RCFleet and are rendered AS THEY LAND - the
+-- list is useful from the first page and there is no spinner to sit behind.
+--
+-- The watchdog is not optional, and Necro paid for that lesson: its first
+-- paged snapshot had no seq tracking and no timeout, so one dropped chunk left
+-- an empty tab forever with no error. A partial fleet list is worse than that,
+-- because it does not look broken - it looks like a short fleet. So a stalled
+-- stream says so, out loud, and the status line stays marked partial.
+-- ---------------------------------------------------------------------------
+local STALL_TICKS = 300   -- ~10s at 30Hz with no new page
+
+T.rows    = T.rows or {}
+T.scope   = T.scope or "loaded"
+-- Which inner view is showing. Defaulted at file scope as well as in build,
+-- because the resize hook can reach layout() before build() has ever run.
+T.view    = T.view or "fleet"
+local pending = nil       -- { seq, rows, pages, idle, capped, seen }
+
+local function isAdmin()
+    return RCShared.isAdmin(getPlayer())
+end
+
+-- Nearby scope keeps the ORIGINAL zero-network path: read the client cell
+-- directly. It is the fallback when the server half is unavailable (an older
+-- server, or a non-admin), and it is genuinely the right tool when the admin is
+-- standing in the middle of what they want to look at.
 local function forEachClientVehicle(fn)
     local cell = getCell and getCell()
     if not cell then return end
@@ -73,19 +198,20 @@ local function forEachClientVehicle(fn)
     end
 end
 
-local function snapshotRows()
-    local me = getPlayer()
+local function nearbyRows()
     local rows = {}
     forEachClientVehicle(function(v)
-        local r = { vid = v:getId(), occupied = 0 }
+        local r = { vid = v:getId(), loaded = true, occupied = 0 }
         r.script = v:getScriptName() or "?"
-        r.dist = me and math.floor(me:DistTo(v:getX(), v:getY())) or 0
         pcall(function()
-            local eng = v:getPartById("Engine")
-            if eng then r.engine = eng:getCondition() end
+            r.x, r.y, r.z = math.floor(v:getX()), math.floor(v:getY()), math.floor(v:getZ())
         end)
         r.kind = RCShared.isWreck(v) and "wreck"
             or (RCShared.isTrailer(v) and "trailer" or "car")
+        pcall(function()
+            local eng = v:getPartById("Engine")
+            if eng then r.engine = math.floor(eng:getCondition()) end
+        end)
         pcall(function()
             local script = v:getScript()
             local seats = script and script:getPassengerCount() or 0
@@ -93,136 +219,201 @@ local function snapshotRows()
                 if v:isSeatOccupied(s) then r.occupied = r.occupied + 1 end
             end
         end)
-        r.owner = RCClaim.getOwner(v)
+        r.owner   = RCClaim.getOwner(v)
+        r.claimId = RCClaim.getClaimId(v)
+        -- No verdict: the janitor stamps are server-side and this path never
+        -- sees them. The stripe renders neutral, which is honest - "unknown",
+        -- not "clean".
         rows[#rows + 1] = r
     end)
-    table.sort(rows, function(a, b) return a.dist < b.dist end)
     return rows
 end
 
--- Rows carry only the id; actions re-resolve the live object at click time
--- (the vehicle may have streamed out / been removed since the refresh).
-local function findByVid(vid)
-    local found
-    forEachClientVehicle(function(v)
-        if not found and v:getId() == vid then found = v end
+local function sortRows(rows)
+    -- The DUE scope orders by URGENCY, not proximity. The question that scope
+    -- answers is "what goes next", and a car one sweep from reclamation matters
+    -- whether it is twenty tiles away or two thousand - distance is exactly the
+    -- wrong key there. Negative dueIn (already overdue) sorts to the top, which
+    -- is correct: those are the ones the next budgeted sweep actually takes.
+    --
+    -- Sorted HERE rather than on the server because a progressive paged scan
+    -- cannot sort - rows leave in the order they were found, across many pages
+    -- - and the client is where the whole set finally exists at once.
+    if T.scope == "due" then
+        table.sort(rows, function(a, b)
+            local da = a.dueIn or 999999999
+            local db = b.dueIn or 999999999
+            if da ~= db then return da < db end
+            return (a.script or "") < (b.script or "")
+        end)
+        return rows
+    end
+    table.sort(rows, function(a, b)
+        local da = distOf(a) or 999999
+        local db = distOf(b) or 999999
+        if da ~= db then return da < db end
+        return (a.script or "") < (b.script or "")
     end)
-    return found
+    return rows
 end
 
--- ---------------------------------------------------------------------------
--- List widget
--- ---------------------------------------------------------------------------
-local VehList = ISScrollingListBox:derive("RCVehicleTabList")
+local function rebuildList()
+    if not T.listBox then return end
+    T.listBox:clear()
+    for _, r in ipairs(T.rows) do T.listBox:addItem("", r) end
+end
 
--- Vehicle ids in the order the list is currently showing them. Shift ranges and
--- bulk ordering are computed against this, and sel:list() drops anything absent -
--- so a bulk delete can never reach a vehicle the admin cannot see.
 local function orderedVids(list)
     local out = {}
     if not list or not list.items then return out end
     for _, it in ipairs(list.items) do
+        -- unloaded registry rows have no vid; they are viewable, not selectable
         if it.item and it.item.vid then out[#out + 1] = it.item.vid end
     end
     return out
 end
 
-function VehList:doDrawItem(y, item, alt)
-    local r = item.item
-    if not r then return y + self.itemheight end
-    if RCVehicleTab.sel and RCVehicleTab.sel:has(r.vid) then
-        if self.selected == item.index then
-            -- The primary row reads brighter: with six cars selected it must
-            -- still be obvious which one "Teleport to" will take you to.
-            self:drawRect(0, y, self.width, self.itemheight - 1, 0.35, 0.25, 0.55, 0.85)
-        else
-            self:drawRect(0, y, self.width, self.itemheight - 1, 0.26, 0.16, 0.34, 0.62)
-        end
-    elseif alt then
-        self:drawRect(0, y, self.width, self.itemheight - 1, 0.18, 0.08, 0.08, 0.08)
-    end
-    local x = 4
-    for _, col in ipairs(COLS) do
-        local ok, txt = pcall(col.get, r)
-        -- claimed rows tint the owner cell; everything else neutral
-        self:drawText(ok and txt or "?", x, y + 2, 0.85, 0.85, 0.85, 1, FONT)
-        x = x + col.w
-    end
-    return y + self.itemheight
+local function setStatus(txt)
+    if T.status then T.status:setName(txt) end
 end
 
--- ---------------------------------------------------------------------------
--- Actions
--- ---------------------------------------------------------------------------
-
--- Base ISScrollingListBox sets self.selected for us; this only adds the
--- multi-row model on top, so every existing single-target path keeps working
--- off list.selected exactly as before.
-function VehList:onMouseDown(mx, my)
-    ISScrollingListBox.onMouseDown(self, mx, my)
-    local it = self.items[self.selected]
-    local vid = it and it.item and it.item.vid
-    if vid == nil or not RCVehicleTab.sel then return end
-
-    local ctrl, shift = Select.modifiers()
-    RCVehicleTab.sel:click(vid, orderedVids(self), ctrl, shift)
-
-    -- A ctrl-click that DEselected the clicked row must not leave it primary, or
-    -- Teleport/Delete would act on a row drawn as unselected.
-    if not RCVehicleTab.sel:has(vid) then
-        local first = RCVehicleTab.sel:list(orderedVids(self))[1]
-        for i, row in ipairs(self.items) do
-            if row.item and row.item.vid == first then self.selected = i; break end
-        end
+function T.refresh()
+    if T.scope == "nearby" or not isAdmin() then
+        pending = nil
+        T.rows = sortRows(nearbyRows())
+        T.partial = false
+        rebuildList()
+        if T.sel then T.sel:prune(orderedVids(T.listBox)) end
+        T.syncSelectionUI()
+        setStatus(string.format("%d loaded nearby - no lifecycle data on this scope.", #T.rows))
+        return
     end
-    if RCVehicleTab.onSelectionChanged then RCVehicleTab.onSelectionChanged() end
+    pending = nil
+    T.rows, T.partial = {}, false
+    rebuildList()
+    setStatus("Requesting fleet...")
+    sendClientCommand(getPlayer(), M, "fleet", { scope = T.scope })
 end
 
-local function selectedRow(list)
-    local it = list.items[list.selected]
+local function onFleetPage(args)
+    if not args then return end
+    -- A page from a superseded scan. Dropping it is what stops a Refresh spam
+    -- from interleaving two snapshots into one list.
+    if pending and args.seq ~= pending.seq then return end
+    if not pending then
+        pending = { seq = args.seq, rows = {}, pages = 0, idle = 0 }
+    end
+    pending.idle = 0
+    pending.pages = pending.pages + 1
+    for _, r in ipairs(args.rows or {}) do pending.rows[#pending.rows + 1] = r end
+    pending.capped = args.capped
+    pending.seen   = args.seen
+
+    -- Render progressively: the admin reads while it fills.
+    T.rows = sortRows(pending.rows)
+    rebuildList()
+    if T.sel then T.sel:prune(orderedVids(T.listBox)) end
+    T.syncSelectionUI()
+
+    if args.done then
+        local msg = string.format("%d vehicle(s) - %s scope", #T.rows, tostring(T.scope))
+        if args.capped then
+            msg = msg .. string.format("  CAPPED at %d of %d seen - narrow the scope",
+                #T.rows, tonumber(args.seen) or 0)
+        end
+        setStatus(msg)
+        pending = nil
+        T.partial = false
+    else
+        setStatus(string.format("%d vehicle(s) and counting...", #T.rows))
+    end
+end
+
+Events.OnServerCommand.Add(function(module, command, args)
+    if module ~= M then return end
+    if command == "Fleet" then onFleetPage(args) end
+end)
+
+-- Stall watchdog. Says so out loud AND leaves the list marked partial, because
+-- a half-filled fleet list does not look broken - it looks like a short fleet.
+Events.OnTick.Add(function()
+    local p = pending
+    if not p then return end
+    p.idle = p.idle + 1
+    if p.idle < STALL_TICKS then return end
+    pending = nil
+    T.partial = true
+    setStatus(string.format("PARTIAL - stream stalled after %d row(s). Refresh to retry.", #T.rows))
+    if DFFeedback then
+        DFFeedback.bad(string.format(
+            "Fleet snapshot incomplete: %d row(s) arrived before the stream stalled.", #T.rows))
+    end
+end)
+
+-- ---------------------------------------------------------------------------
+-- Selection helpers
+-- ---------------------------------------------------------------------------
+
+local function selectedRow()
+    if not T.listBox then return nil end
+    local it = T.listBox.items[T.listBox.selected]
     return it and it.item or nil
 end
 
--- Selection in display order, visible rows only.
-local function selectedRows(list)
+local function selectedRows()
     local out = {}
-    if not RCVehicleTab.sel then return out end
+    if not (T.sel and T.listBox) then return out end
     local want = {}
-    for _, vid in ipairs(RCVehicleTab.sel:list(orderedVids(list))) do want[vid] = true end
-    for _, it in ipairs(list.items or {}) do
-        if it.item and want[it.item.vid] then out[#out + 1] = it.item end
+    for _, vid in ipairs(T.sel:list(orderedVids(T.listBox))) do want[vid] = true end
+    for _, it in ipairs(T.listBox.items or {}) do
+        if it.item and it.item.vid and want[it.item.vid] then out[#out + 1] = it.item end
     end
     return out
 end
 
-local function teleportToRow(row, status)
-    local v = findByVid(row.vid)
-    if not v then status:setName("Vehicle no longer loaded - refresh."); return end
-    local me = getPlayer()
-    pcall(function() me:teleportTo(v:getX(), v:getY(), math.floor(v:getZ())) end)
+function T.syncSelectionUI()
+    local n = #selectedRows()
+    if T.btnDelete then
+        T.btnDelete:setTitle(n > 1 and ("Delete (" .. n .. ")") or "Delete")
+    end
+    return n
 end
 
--- Instant admin DELETE, vanilla remove semantics. Removal must be SERVER-
--- side: a client-side permanentlyRemove() is local-only (no packet) and the
--- server re-streams the car - the "panel dismantle respawned the vehicle"
--- bug, found live 2026-07-02. Vanilla's own cheat idiom
--- (ISVehicleMechanics.onCheatRemoveAux) is the fix. The report carries
--- owner/claimId so the server prunes the claim index of a claimed car.
--- Build the ledger report for one vehicle. Read BEFORE the removal - afterwards
--- the object is gone and its claim modData with it.
-local function reportFor(row, v)
-    local report = { via = "panel", delete = true, vehicle = row.script }
-    pcall(function()
-        report.wreck = RCShared.isWreck(v)
-        report.x = math.floor(v:getX())
-        report.y = math.floor(v:getY())
-        report.z = math.floor(v:getZ())
-        if RCClaim.isClaimed(v) then
-            report.owner   = RCClaim.getOwner(v)
-            report.claimId = RCClaim.getClaimId(v)
-        end
-    end)
-    return report
+function T.onSelectionChanged()
+    local n = T.syncSelectionUI()
+    if n > 1 then
+        local row = selectedRow()
+        setStatus(string.format("%d selected - Delete applies to all %d; Teleport uses %s",
+            n, n, row and tostring(row.vid or "-") or "?"))
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Actions. Both work on ROW data, never on a live object, so they reach a car
+-- this client has never streamed.
+-- ---------------------------------------------------------------------------
+
+-- Exposed on T (not a file local) because the right-click menu in
+-- RCVehicleCheats drives the same action. One implementation, two doors.
+function T.teleportTo(row)
+    if not (row and row.x) then setStatus("That row has no position."); return end
+    local me = getPlayer()
+    pcall(function() me:teleportTo(row.x + 0.5, row.y + 0.5, math.floor(row.z or 0)) end)
+end
+local teleportToRow = T.teleportTo
+
+-- Ledger report built from the SNAPSHOT rather than by reading the vehicle.
+-- The old code re-read modData off the live object, which meant a car the admin
+-- could see in the list but not stream was un-deletable. The server already
+-- enriched every field this needs.
+local function reportFor(row)
+    return {
+        via = "panel", delete = true,
+        vehicle = row.script,
+        wreck = row.kind == "wreck",
+        x = row.x, y = row.y, z = row.z,
+        owner = row.owner, claimId = row.claimId,
+    }
 end
 
 -- Delete a SELECTION. The two halves travel differently on purpose:
@@ -230,69 +421,71 @@ end
 --   * the removals are vanilla's own "vehicle"/remove channel and cannot be
 --     batched - one packet per car, and it must be the SERVER that removes,
 --     because a client-side permanentlyRemove() is local-only and the server
---     re-streams the car (the "panel dismantle respawned the vehicle" bug, found
---     live 2026-07-02)
+--     re-streams the car (the "panel dismantle respawned the vehicle" bug,
+--     found live 2026-07-02). getVehicleById runs SERVER-side there, which is
+--     also why this reaches unstreamed cars.
 --   * the ledger is ONE dismantledMany carrying every report, never a loop of
 --     dismantled: RCServer drops commands past 20/sec silently, so a loop could
 --     destroy ten cars and ledger only the first few. An audit that
 --     under-reports a destructive staff action is worse than none, because it
 --     reads as authoritative.
---
--- Capped at BULK_MAX. Each car re-resolves at click time and any that streamed
--- out since the refresh is skipped rather than guessed at.
-local function deleteRows(rows, status, refresh)
+local function deleteRows(rows)
     local me = getPlayer()
-    local reports, gone, failed = {}, 0, 0
+    local reports, skipped, failed = {}, 0, 0
     local capped = false
 
     for _, row in ipairs(rows) do
         if #reports >= BULK_MAX then capped = true; break end
-        local v = findByVid(row.vid)
-        if not v then
-            gone = gone + 1
+        if not row.vid then
+            -- an unloaded registry row: there is no object anywhere to remove
+            skipped = skipped + 1
         else
-            local report = reportFor(row, v)
-            local removed = pcall(function()
+            local sent = pcall(function()
                 if isClient() then
-                    sendClientCommand(me, "vehicle", "remove", { vehicle = v:getId() })
+                    sendClientCommand(me, "vehicle", "remove", { vehicle = row.vid })
                 else
-                    v:permanentlyRemove()
+                    local v = getVehicleById(row.vid)
+                    if v then v:permanentlyRemove() end
                 end
             end)
-            if removed then reports[#reports + 1] = report else failed = failed + 1 end
+            if sent then reports[#reports + 1] = reportFor(row) else failed = failed + 1 end
         end
     end
 
     if #reports > 0 then
         pcall(function()
-            sendClientCommand(me, RCShared.MODULE, "dismantledMany", { reports = reports })
+            sendClientCommand(me, M, "dismantledMany", { reports = reports })
         end)
     end
 
     -- Say what actually happened, including what was NOT done. A silent
     -- shortfall on a destructive action reads as "all of them went".
     local parts = { string.format("Deleted %d", #reports) }
-    if gone > 0   then parts[#parts + 1] = string.format("%d already gone", gone) end
-    if failed > 0 then parts[#parts + 1] = string.format("%d failed", failed) end
-    if capped     then parts[#parts + 1] = string.format("cap %d per click", BULK_MAX) end
-    status:setName(table.concat(parts, " - ") .. ".")
+    if skipped > 0 then parts[#parts + 1] = string.format("%d unloaded (skipped)", skipped) end
+    if failed > 0  then parts[#parts + 1] = string.format("%d failed", failed) end
+    if capped      then parts[#parts + 1] = string.format("cap %d per click", BULK_MAX) end
+    setStatus(table.concat(parts, " - ") .. ".")
 
-    if RCVehicleTab.sel then RCVehicleTab.sel:clear() end
-    refresh()
+    if T.sel then T.sel:clear() end
+    T.refresh()
 end
 
-local function confirmDelete(rows, status, refresh)
+-- Exposed for the same reason as teleportTo: the context menu's Delete must go
+-- through THIS path, so the modal, the claimed-car warning and the ledger
+-- report are identical whichever door the delete came through. A second,
+-- shorter delete path is how an unaudited destructive action gets born.
+function T.confirmDeleteRows(rows)
     local label
     if #rows == 1 then
         local row = rows[1]
         label = string.format(
             "Delete %s (id %s)%s?\n\nThe vehicle and everything inside it are removed from the world for good.",
-            tostring(row.script), tostring(row.vid),
-            row.owner and (" - CLAIMED by " .. tostring(row.owner)) or "")
+            RCShared.prettyVehicleName(row.script), tostring(row.vid or "-"),
+            row.owner and ("\n\nCLAIMED by " .. tostring(row.owner)) or "")
     else
         -- Count claimed cars separately: deleting someone's claimed vehicle is a
         -- different act from clearing wrecks, and at six rows the admin cannot
-        -- see the Owner column behind this dialog.
+        -- see the owner field behind this dialog.
         local claimed = 0
         for _, r in ipairs(rows) do if r.owner then claimed = claimed + 1 end end
         label = string.format("Delete %d selected vehicles?%s\n\n"
@@ -305,146 +498,918 @@ local function confirmDelete(rows, status, refresh)
         getCore():getScreenHeight() / 2 - 80,
         440, 180, label, true, nil,
         function(_, button)
-            if button.internal == "YES" then deleteRows(rows, status, refresh) end
+            if button.internal == "YES" then deleteRows(rows) end
         end)
     modal:initialise()
     modal:addToUIManager()
 end
 
 -- ---------------------------------------------------------------------------
+-- List widget
+-- ---------------------------------------------------------------------------
+local VehList = ISScrollingListBox:derive("RCVehicleTabList")
+
+function VehList:doDrawItem(y, item, alt)
+    local r = item.item
+    if not r then return y + self.itemheight end
+    local C = DFKit.col
+    local h = self.itemheight
+
+    local selected = r.vid and T.sel and T.sel:has(r.vid)
+    if selected then
+        if self.selected == item.index then
+            self:drawRect(0, y, self.width, h - 1, 0.35, C.accent.r, C.accent.g, C.accent.b)
+        else
+            self:drawRect(0, y, self.width, h - 1, 0.22, C.accent.r, C.accent.g, C.accent.b)
+        end
+    elseif alt then
+        self:drawRect(0, y, self.width, h - 1, 0.14, C.panel.r, C.panel.g, C.panel.b)
+    end
+
+    -- The lifecycle stripe. This is the whole reason the tab talks to the
+    -- server: four states the Janitor already knew and the admin could not see.
+    local v = verdictOf(r)
+    local sc = C[v.col] or C.textDim
+    self:drawRect(0, y, 3, h - 1, r.verdict and 1 or 0.35, sc.r, sc.g, sc.b)
+
+    local dim = r.loaded == false
+    local tc = dim and C.textDim or C.text
+    local glyph = (r.kind == "wreck" and "x") or (r.kind == "trailer" and "=") or "o"
+
+    self:drawText(glyph, GLYPH_X, y + TEXT_DY, C.textDim.r, C.textDim.g, C.textDim.b, 1, FONT)
+    self:drawText(r.vid and tostring(r.vid) or "--", VID_X, y + TEXT_DY,
+        C.textDim.r, C.textDim.g, C.textDim.b, 1, FONT)
+
+    -- Right column first, so the name knows how much room it actually has.
+    local right = (r.loaded == false) and "unloaded" or tostring(distOf(r) or "?")
+    local tw = getTextManager():MeasureStringX(FONT, right)
+    self:drawText(right, self.width - 8 - tw, y + TEXT_DY,
+        C.textDim.r, C.textDim.g, C.textDim.b, 1, FONT)
+
+    -- CLIP the name. "Pick Up Van Smashed Front" ran straight through the
+    -- distance column and out of the list; a name is the least important thing
+    -- in the row to read in full, and the one most likely to be long.
+    local name = RCShared.prettyVehicleName(r.script)
+    local avail = (self.width - 8 - tw) - NAME_X - 6
+    if avail > 12 then
+        if DFTheme and DFTheme.fitText then
+            name = DFTheme.fitText(name, FONT, avail)
+        elseif getTextManager():MeasureStringX(FONT, name) > avail then
+            -- No skin loaded (classic panel): trim by hand rather than overrun.
+            while #name > 1 and getTextManager():MeasureStringX(FONT, name .. "..") > avail do
+                name = string.sub(name, 1, #name - 1)
+            end
+            name = name .. ".."
+        end
+        self:drawText(name, NAME_X, y + TEXT_DY, tc.r, tc.g, tc.b, dim and 0.75 or 1, FONT)
+    end
+
+    return y + h
+end
+
+function VehList:onMouseDown(mx, my)
+    ISScrollingListBox.onMouseDown(self, mx, my)
+    local it = self.items[self.selected]
+    local vid = it and it.item and it.item.vid
+    if vid == nil or not T.sel then return end
+
+    local ctrl, shift = Select.modifiers()
+    T.sel:click(vid, orderedVids(self), ctrl, shift)
+
+    -- A ctrl-click that DEselected the clicked row must not leave it primary, or
+    -- Teleport/Delete would act on a row drawn as unselected.
+    if not T.sel:has(vid) then
+        local first = T.sel:list(orderedVids(self))[1]
+        for i, row in ipairs(self.items) do
+            if row.item and row.item.vid == first then self.selected = i; break end
+        end
+    end
+    T.onSelectionChanged()
+end
+
+-- Seam for the cheat menus (wired in RCVehicleCheats). Declared here so the
+-- widget never has to know whether that surface exists.
+--
+-- Does NOT chain to the base: ISScrollingListBox defines onMouseDown but no
+-- onRightMouseUp, so ISScrollingListBox.onRightMouseUp(self, ...) is a nil
+-- call - the same shape as the getTooltip() crash on 2026-08-02. And rowAt is
+-- the right source anyway: right-clicking a row should act on the row under
+-- the cursor, not on whatever was left-selected earlier.
+function VehList:onRightMouseUp(mx, my)
+    local idx = self:rowAt(mx, my)
+    if idx <= 0 then return end
+    local item = self.items[idx]
+    local row = item and item.item
+    if row and T.showVehicleMenu then T.showVehicleMenu(row) end
+end
+
+-- ---------------------------------------------------------------------------
+-- Diagram hotspot. The parts diagram is DRAWN in prerender, not a widget, so
+-- it cannot receive a click on its own - this is an invisible panel parked over
+-- the image rect whose only job is to turn a right-click into a part.
+--
+-- A widget rather than a handler on the tab panel because event delivery to a
+-- bare parent is not something to rely on, and because this keeps the hit area
+-- exactly congruent with the drawn rect: both are positioned from T.imgRect in
+-- layout(), so they cannot drift apart.
+--
+-- No base chaining: ISPanel defines onMouseUp but NOT onRightMouseUp, the same
+-- nil-call trap as the list widget above.
+-- ---------------------------------------------------------------------------
+local PartsHotspot = ISPanel:derive("RCPartsHotspot")
+
+-- Two of these exist: one over the diagram, one over the parts grid. They differ
+-- only in how a click becomes a part, so that is the one thing they carry - the
+-- rest (coordinate lift, selection check, menu call) is identical and lives here.
+--
+-- The grid one matters more than it looks. A wing mirror is a handful of pixels
+-- even on the rotated diagram, and "aim at a 12px sprite" is not a control
+-- surface; the grid gives every part a full-width row to hit. The diagram is for
+-- finding the damage, the list is for acting on it.
+function PartsHotspot:onRightMouseUp(mx, my)
+    local row = selectedRow()
+    if not row or not self.resolve then return end
+    -- Resolvers work in PANEL space (that is where both the diagram transform
+    -- and the grid rects were computed), so lift these local coords back up.
+    local rec = self.resolve(self:getX() + mx, self:getY() + my)
+    if rec and T.showPartMenu then T.showPartMenu(row, rec) end
+end
+
+-- Which grid row is under a panel-space point. T.partRows is rebuilt by
+-- drawParts every frame, so it can never describe a layout that is no longer
+-- on screen.
+local function partRowAt(px, py)
+    for _, r in ipairs(T.partRows or {}) do
+        if px >= r.x and px <= r.x + r.w and py >= r.y and py <= r.y + r.h then
+            return r.rec
+        end
+    end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Chrome: verdict band, parts pane, meat column. Drawn, not widgets - it is
+-- read-only text that changes every frame (the Necro idiom).
+-- ---------------------------------------------------------------------------
+
+local function drawBand(el)
+    local b = T.bandRect
+    if not b then return end
+    local C  = DFKit.col
+    local fL = DFKit.font.label or UIFont.Small
+    el:drawRect(b.x, b.y, b.w, b.h, DFKit.alpha.card, C.panel.r, C.panel.g, C.panel.b)
+
+    local row = selectedRow()
+    if not row then
+        DFKit.drawEmpty(el, b.x, b.y, b.w, b.h, "select a vehicle")
+        return
+    end
+
+    local v  = verdictOf(row)
+    local c  = C[v.col] or C.textDim
+    el:drawRect(b.x, b.y, 3, b.h, 1, c.r, c.g, c.b)
+
+    local head = v.label
+    if row.verdict == "clock" and row.dueIn then
+        head = head .. "  due in " .. fmtAgo(row.dueIn)
+    elseif row.verdict == nil then
+        head = "NO VERDICT"
+    end
+    -- Two stacked lines in the band. The second used to sit at a fixed +20,
+    -- which drew it through the first as soon as the glyphs got taller.
+    local bfh = 12
+    pcall(function() bfh = getTextManager():getFontHeight(fL) end)
+    local line2 = 4 + bfh + 2
+
+    el:drawText(head, b.x + 12, b.y + 4, c.r, c.g, c.b, 1, fL)
+
+    local why = row.verdict and v.line
+        or "nearby scope carries no lifecycle data - switch scope for a verdict"
+    el:drawText(why, b.x + 12, b.y + line2, C.textDim.r, C.textDim.g, C.textDim.b, 0.9, fL)
+end
+
+local function drawImage(el)
+    local i = T.imgRect
+    if not i then return end
+    local C = DFKit.col
+    el:drawRect(i.x, i.y, i.w, i.h, DFKit.alpha.inset, C.panel.r, C.panel.g, C.panel.b)
+
+    local row = selectedRow()
+    if not row then return end
+
+    -- The parts diagram owns this box when it is available. Keeping the call
+    -- behind a nil check means the tab renders correctly before that file
+    -- exists and if it ever fails to load.
+    if RCPartsView and RCPartsView.draw then
+        RCPartsView.draw(el, i, row)
+    else
+        DFKit.drawEmpty(el, i.x, i.y, i.w, i.h, "parts view unavailable")
+    end
+end
+
+-- Per-part breakdown, in two columns under the diagram.
+--
+-- The diagram answers "where is the damage"; this answers "how bad, exactly".
+-- Both read the SAME list (RCPartsView.partsFor), so a part cannot appear
+-- healthy in one and broken in the other.
+--
+-- Grouped rather than alphabetical: an admin triaging a car asks "can it drive"
+-- (drivetrain), "can it drive SAFELY" (running gear), then "is it worth
+-- keeping" (body) - and a flat A-Z list interleaves those three questions.
+local GROUPS = {
+    { title = "DRIVETRAIN",   match = function(id)
+        return id == "Engine" or id == "Battery" or id == "GasTank" or id == "Muffler"
+    end },
+    { title = "RUNNING GEAR", match = function(id)
+        return id:find("^Tire") or id:find("^Brake") or id:find("^Suspension")
+    end },
+    { title = "BODY",         match = function(id)
+        return id:find("Door") or id:find("Window") or id:find("Windshield")
+            or id == "TruckBed" or id:find("^Hood") or id:find("^Trunk")
+    end },
+}
+
+local function partLabel(rec)
+    if rec.missing then return "gone" end
+    -- Containers say how full, not how intact: "21 / 60" is the useful fact
+    -- about a gas tank, and its condition is the row's colour anyway.
+    if rec.capacity and rec.capacity > 0 then
+        return string.format("%d / %d", math.floor(rec.amount or 0), math.floor(rec.capacity))
+    end
+    return tostring(rec.cond or 0) .. "%"
+end
+
+local function partColour(rec)
+    local C = DFKit.col
+    if rec.missing then return C.danger end
+    local c = rec.cond or 0
+    if c < 30 then return C.danger end
+    if c < 65 then return C.warn end
+    return C.ok
+end
+
+-- Prettify a part id for a narrow column: "TireFrontLeft" -> "Tire Front Left".
+local function partName(id)
+    return (id:gsub("(%l)(%u)", "%1 %2"))
+end
+
+local function drawParts(el)
+    local p = T.partsRect
+    if not p or p.h < 30 then return end
+    local C  = DFKit.col
+    local fL = DFKit.font.label or UIFont.Small
+    local row = selectedRow()
+    if not row then return end
+
+    if row.loaded == false then
+        DFKit.drawEmpty(el, p.x, p.y, p.w, p.h,
+            "unloaded - no part data until someone streams it in")
+        return
+    end
+
+    T.partRows = {}
+
+    local parts = RCPartsView and RCPartsView.partsFor(row)
+    if not parts then
+        DFKit.drawEmpty(el, p.x, p.y, p.w, p.h, "reading parts...")
+        return
+    end
+
+    -- Bucket once. Anything unmatched lands in OTHER rather than vanishing -
+    -- modded vehicles carry parts vanilla never named, and silently dropping
+    -- them would make the panel lie about what is on the car.
+    local buckets, seen = {}, {}
+    for i = 1, #GROUPS do buckets[i] = {} end
+    local other = {}
+    for _, rec in ipairs(parts) do
+        if not seen[rec.id] then
+            seen[rec.id] = true
+            local placed = false
+            for i, g in ipairs(GROUPS) do
+                if g.match(rec.id) then buckets[i][#buckets[i] + 1] = rec; placed = true; break end
+            end
+            if not placed then other[#other + 1] = rec end
+        end
+    end
+
+    -- Grid rhythm from the label font, not fixed. A 15px part row around a
+    -- 20px glyph overlaps the row beneath it, and this grid is dense enough
+    -- that the overlap compounds down the whole column.
+    local gfh = 12
+    pcall(function() gfh = getTextManager():getFontHeight(fL) end)
+    local ROW_H2 = math.max(15, gfh + 3)
+    local HEAD_H = math.max(16, gfh + 4)
+    -- One column in the tall narrow pane the four-column layout gives us; two if
+    -- something ever hands this a wide one. Derived from the width rather than
+    -- assumed, so the grid cannot spill off its own pane.
+    local nCols = (p.w >= 420) and 2 or 1
+    local colW  = math.floor((p.w - (nCols - 1) * 12) / nCols)
+    local cols  = {}
+    for i = 1, nCols do cols[i] = { x = p.x + (i - 1) * (colW + 12), y = p.y } end
+    local ci = 1
+
+    local function room(need)
+        return (cols[ci].y + need) <= (p.y + p.h)
+    end
+    -- Fall to the next column when this one fills; stop when they are all full
+    -- rather than overflowing into the footer buttons.
+    local function ensure(need)
+        if room(need) then return true end
+        while ci < nCols do
+            ci = ci + 1
+            if room(need) then return true end
+        end
+        return false
+    end
+
+    local function drawGroup(title, list)
+        if #list == 0 then return true end
+        if not ensure(HEAD_H + ROW_H2) then return false end
+        local c = cols[ci]
+        el:drawText(title, c.x, c.y, C.textDim.r, C.textDim.g, C.textDim.b, 0.8, fL)
+        c.y = c.y + HEAD_H
+        for _, rec in ipairs(list) do
+            if not ensure(ROW_H2) then return false end
+            c = cols[ci]
+            local col   = partColour(rec)
+            local label = partLabel(rec)
+            local lw    = getTextManager():MeasureStringX(fL, label)
+            local nameW = colW - lw - 66
+            local nm    = partName(rec.id)
+            if DFTheme and DFTheme.fitText and nameW > 12 then
+                nm = DFTheme.fitText(nm, fL, nameW)
+            end
+            el:drawText(nm, c.x, c.y, C.text.r, C.text.g, C.text.b, rec.missing and 0.6 or 1, fL)
+            -- bar sits between the name column and the value
+            local barX = c.x + colW - lw - 58
+            local barW = 50
+            if barW > 8 then
+                el:drawRect(barX, c.y + 6, barW, 4, 0.45, C.bg.r, C.bg.g, C.bg.b)
+                if not rec.missing then
+                    local pct = math.max(0, math.min(100, rec.cond or 0))
+                    el:drawRect(barX, c.y + 6, math.floor(barW * pct / 100), 4, 1, col.r, col.g, col.b)
+                end
+            end
+            el:drawText(label, c.x + colW - lw, c.y, col.r, col.g, col.b, 1, fL)
+            -- Record the row's box for the hotspot. Captured BEFORE the cursor
+            -- advances, so the rect is the one just drawn.
+            T.partRows[#T.partRows + 1] =
+                { x = c.x, y = c.y, w = colW, h = ROW_H2, rec = rec }
+            c.y = c.y + ROW_H2
+        end
+        cols[ci].y = cols[ci].y + 6
+        return true
+    end
+
+    for i, g in ipairs(GROUPS) do
+        if not drawGroup(g.title, buckets[i]) then return end
+    end
+    drawGroup("OTHER", other)
+end
+
+local function drawMeat(el)
+    local d = T.meatRect
+    if not d then return end
+    local C  = DFKit.col
+    local fL = DFKit.font.label or UIFont.Small
+    el:drawRect(d.x, d.y, d.w, d.h, DFKit.alpha.inset, C.panel.r, C.panel.g, C.panel.b)
+
+    local row = selectedRow()
+    if not row then
+        DFKit.drawEmpty(el, d.x, d.y, d.w, d.h, "select a vehicle")
+        return
+    end
+
+    local yy = d.y + 8
+
+    -- Line advance from the ACTUAL font. Fixed 16/17px steps overlapped their
+    -- own glyphs the moment the text size went up, which is what turned this
+    -- column into a smear rather than a list.
+    local lh = 16
+    pcall(function() lh = getTextManager():getFontHeight(fL) + 3 end)
+    if lh < 14 then lh = 14 end
+
+    local function section(title)
+        el:drawText(title, d.x + 10, yy, C.textDim.r, C.textDim.g, C.textDim.b, 0.8, fL)
+        yy = yy + lh
+    end
+    local function kv(k, val, colour)
+        local c = colour or C.text
+        el:drawText(k, d.x + 10, yy, C.textDim.r, C.textDim.g, C.textDim.b, 0.85, fL)
+        -- Value clipped against the KEY's measured width, not a remembered
+        -- 108px gutter: at a larger font the key itself grows, and a fixed
+        -- gutter is how the two ends of the row ended up printed on top of
+        -- each other.
+        local kw = getTextManager():MeasureStringX(fL, k)
+        local avail = d.w - 20 - kw - 10
+        local s = tostring(val == nil and "-" or val)
+        if avail > 12 then
+            s = DFTheme and DFTheme.fitText and DFTheme.fitText(s, fL, avail) or s
+        end
+        local tw = getTextManager():MeasureStringX(fL, s)
+        el:drawText(s, d.x + d.w - 10 - tw, yy, c.r, c.g, c.b, 1, fL)
+        yy = yy + lh + 1
+    end
+    local function rule()
+        yy = yy + 3
+        el:drawRect(d.x + 10, yy, d.w - 20, 1, 0.35, C.line.r, C.line.g, C.line.b)
+        yy = yy + 7
+    end
+
+    section("PROVENANCE")
+    -- The script name's prefix IS the defining module ("Base.Van"), which is the
+    -- whole of what we can say about origin - see the removed "defined by" note
+    -- in RCFleet.lua for why the richer version is gone.
+    kv("script", row.script)
+    kv("kind", row.kind)
+    if row.overlay then kv("overlay", row.overlay) end
+    rule()
+
+    section("OWNERSHIP")
+    kv("owner", row.owner or "unclaimed", row.owner and C.ok or C.textDim)
+    kv("claim id", row.claimId)
+    rule()
+
+    section("LIFECYCLE")
+    if not row.verdict then
+        kv("verdict", "not available on this scope", C.textDim)
+    else
+        kv("last user", row.lastUser or "never seen")
+        kv("last touched", row.idle and fmtAgo(row.idle) or "-",
+            (row.idle and row.window and row.idle > row.window) and C.warn or nil)
+        kv("user seen", row.userIdle and fmtAgo(row.userIdle) or "-",
+            (row.userIdle and row.window and row.userIdle > row.window) and C.danger or nil)
+        kv("window", row.window and fmtAgo(row.window) or "-")
+        local due = row.dueIn
+        kv("eligible", due and (due <= 0 and "now" or ("in " .. fmtAgo(due))) or "-",
+            (due and due <= 0) and C.danger or C.warn)
+    end
+    rule()
+
+    section("SHIELDS")
+    local sh = row.shields or {}
+    -- Greyed chips are as informative as lit ones: "why is this car NOT
+    -- protected" is the question an admin arrives with.
+    --
+    -- No phunzone chip (2026-08-03, owner's call): PhunZones is on its way out
+    -- and Limes replaces it, so the chip would be permanently dark and reading
+    -- as a shield that exists but never fires.
+    --
+    -- RCJanitor still CHECKS phunZoneBlocks - deliberately left alone. That gate
+    -- decides what the sweep actually reclaims, so removing it is a reclamation
+    -- decision rather than a panel one, and it is already inert without
+    -- PhunZones loaded (RCShared.phunZoneBlocks returns false when the global is
+    -- absent). When Limes lands its zone rule takes that slot, and this list
+    -- gains a "limes" chip.
+    -- Chip height and wrap step follow the font: a 17px chip around a 20px
+    -- glyph is a box with text hanging out of it, and a 20px wrap step stacks
+    -- the second row of chips on top of the first.
+    local chipH = math.max(17, lh + 1)
+    local cx = d.x + 10
+    for _, k in ipairs({ "claimed", "wreck", "safehouse" }) do
+        local on = sh[k] == true
+        local c = on and C.ok or C.textDim
+        local tw = getTextManager():MeasureStringX(fL, k)
+        if cx + tw + 12 > d.x + d.w - 10 then cx = d.x + 10; yy = yy + chipH + 3 end
+        el:drawRect(cx, yy, tw + 10, chipH, on and 0.22 or 0.08, c.r, c.g, c.b)
+        el:drawText(k, cx + 5, yy, c.r, c.g, c.b, on and 1 or 0.5, fL)
+        cx = cx + tw + 14
+    end
+    yy = yy + chipH + 7
+    rule()
+
+    section("POSITION")
+    kv("tile", fmtTile(row))
+    local dist = distOf(row)
+    kv("distance", dist and (dist .. " tiles") or "-")
+    kv("occupants", (row.occupied and row.occupied > 0) and row.occupied or "none")
+end
+
+-- Column header for the list. The columns were unlabelled: an admin had a kind
+-- glyph, a bare number and a second bare number with nothing to say which was
+-- the id and which the distance.
+local function drawListHead(el)
+    local hd = T.listHeadRect
+    if not hd then return end
+    local C  = DFKit.col
+    local fL = DFKit.font.label or UIFont.Small
+    el:drawText("ID", hd.x + 22, hd.y, C.textDim.r, C.textDim.g, C.textDim.b, 0.8, fL)
+    el:drawText("VEHICLE", hd.x + NAME_X, hd.y, C.textDim.r, C.textDim.g, C.textDim.b, 0.8, fL)
+    -- The right column changes meaning per row (tiles away, or "unloaded"), so
+    -- the header names the common case rather than inventing a word for both.
+    local lbl = "DIST"
+    local tw = getTextManager():MeasureStringX(fL, lbl)
+    el:drawText(lbl, hd.x + hd.w - 8 - tw, hd.y, C.textDim.r, C.textDim.g, C.textDim.b, 0.8, fL)
+    el:drawRect(hd.x, hd.y + hd.h - 1, hd.w, 1, 0.35, C.line.r, C.line.g, C.line.b)
+end
+
+local function attachChrome(panel)
+    panel.drawVehicleChrome = function(self_)
+        -- The Janitor view draws its own body. Returning here rather than
+        -- letting the fleet chrome run first is what keeps a hidden view's
+        -- panes from bleeding through - drawn chrome has no visibility flag of
+        -- its own, so the branch IS its visibility.
+        if T.view == "janitor" then
+            if RCJanitorView then RCJanitorView.draw(self_) end
+            return
+        end
+        drawListHead(self_)
+        drawBand(self_)
+        drawImage(self_)
+        drawParts(self_)
+        drawMeat(self_)
+        if #T.rows == 0 and T.listRect then
+            local l = T.listRect
+            DFKit.drawEmpty(self_, l.x, l.y, l.w, l.h,
+                T.partial and "partial - refresh" or "no vehicles")
+        end
+    end
+    local orig = panel.prerender
+    panel.prerender = function(self_)
+        if orig then orig(self_) end
+        self_:drawVehicleChrome()
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- Layout. Positioning only, computed up front so each zone lands where the
+-- design wants it rather than wherever a running cursor arrived. Hoisted to
+-- file scope (with refresh and syncSelectionUI) so the resize hook can call it
+-- - the old build() closed over its widgets, which is why this tab was one of
+-- the three with no resize at all.
+-- ---------------------------------------------------------------------------
+local function layout(panel, x, y, w, h)
+    if not T.listBox then return end
+    local m = DFKit.metrics
+    local R = DFKit.layout(panel, x, y, w, h)
+
+    -- Remembered so setView can re-lay-out without the caller's rect. The
+    -- resize hook and the strip buttons both need to trigger a relayout, and
+    -- only one of them has coordinates to hand.
+    T.host = panel
+    T.hostX, T.hostY, T.hostW, T.hostH = x, y, w, h
+
+    -- The view strip is claimed FIRST, above everything either view owns, so
+    -- it stays in one place while the body underneath changes completely.
+    local strip = R:header(m.btnH + m.gap)
+    local vx = strip.x
+    for _, b in ipairs(T.viewBtns or {}) do
+        b:setX(vx); b:setY(strip.y)
+        vx = vx + b:getWidth() + 2
+    end
+
+    if T.view == "janitor" then
+        local body = R:rest()
+        if RCJanitorView then
+            RCJanitorView.layout(panel, body.x, body.y, body.w, body.h)
+        end
+        return
+    end
+
+    local tools = R:header(m.btnH + m.gap)
+    local foot  = R:footer(m.btnH + m.gap)
+
+    -- toolbar
+    local tx = tools.x
+    T.btnRefresh:setX(tx);         T.btnRefresh:setY(tools.y)
+    tx = tx + 90 + m.gap
+    for _, b in ipairs(T.scopeBtns) do
+        b:setX(tx); b:setY(tools.y)
+        tx = tx + b:getWidth() + 2
+    end
+    T.status:setX(tx + m.gap);     T.status:setY(tools.y + 4)
+
+    -- footer
+    local fy = foot.y + m.gap
+    T.btnTeleport:setX(foot.x);        T.btnTeleport:setY(fy)
+    if T.btnSpawn then T.btnSpawn:setX(foot.x + 120); T.btnSpawn:setY(fy) end
+    T.btnDelete:setX(foot.x + foot.w - 120); T.btnDelete:setY(fy)
+
+    -- FOUR columns: list | diagram | parts | meat, with the verdict band
+    -- spanning everything right of the list.
+    --
+    -- The diagram gets a TALL column rather than a wide one. Its art is 263x600
+    -- portrait, so in a landscape pane it fits to the height and renders about
+    -- 95px across - too small to click a part on. Given a column the full height
+    -- of the body it sits at nearly 1:1, roughly six times the area, with no
+    -- rotation needed (see the dead-end note in RCPartsView).
+    local body = R:rest()
+
+    local listX = body.x
+    local listW = LIST_W
+    local restW = body.w - listW - m.gap
+
+    -- Shrink order under pressure: meat, then parts, then the diagram, then the
+    -- list. The diagram resists because shrinking it is what made it unusable in
+    -- the first place; the list resists last because it is how you navigate.
+    local diagW, partsW = DIAG_W, PARTS_W
+    local meatW = restW - diagW - partsW - m.gap * 2
+    if meatW < MEAT_MIN then
+        local deficit = MEAT_MIN - meatW
+        local take = math.min(deficit, PARTS_W - PARTS_MIN)
+        partsW, deficit = partsW - take, deficit - take
+        take = math.min(deficit, DIAG_W - DIAG_MIN)
+        diagW, deficit = diagW - take, deficit - take
+        listW = math.max(LIST_MIN, listW - deficit)
+        restW = body.w - listW - m.gap
+        meatW = restW - diagW - partsW - m.gap * 2
+    end
+    if meatW < 60 then meatW = 60 end
+
+    local restX  = listX + listW + m.gap
+    local diagX  = restX
+    local partsX = diagX + diagW + m.gap
+    local meatX  = partsX + partsW + m.gap
+
+    T.listHeadRect = { x = listX, y = body.y, w = listW, h = LIST_HEAD_H }
+    local listY = body.y + LIST_HEAD_H
+    local listH = body.h - LIST_HEAD_H
+    T.listBox:setX(listX);      T.listBox:setY(listY)
+    T.listBox:setWidth(listW);  T.listBox:setHeight(listH)
+    T.listRect = { x = listX, y = listY, w = listW, h = listH }
+
+    -- The verdict leads, across the full width of the evidence below it.
+    T.bandRect = { x = restX, y = body.y, w = restW, h = BAND_H }
+    local by = body.y + BAND_H + m.gap
+    local bh = math.max(60, body.h - BAND_H - m.gap)
+
+    T.imgRect = { x = diagX, y = by, w = diagW, h = bh }
+    if T.hotspot then
+        T.hotspot:setX(diagX);    T.hotspot:setY(by)
+        T.hotspot:setWidth(diagW); T.hotspot:setHeight(bh)
+    end
+
+    T.partsRect = { x = partsX, y = by, w = partsW, h = bh }
+    if T.partsHotspot then
+        T.partsHotspot:setX(partsX);    T.partsHotspot:setY(by)
+        T.partsHotspot:setWidth(partsW); T.partsHotspot:setHeight(bh)
+    end
+
+    T.meatRect = { x = meatX, y = by, w = meatW, h = bh }
+end
+
+-- ---------------------------------------------------------------------------
+-- The inner view strip: Fleet | Janitor.
+--
+-- Two views, one tab. The family's panel bar was already at nine entries, and
+-- these two are the same domain - what the fleet IS, and what the Janitor does
+-- to it over time. Splitting them across top-level tabs cost a slot and made
+-- the policy and its consequences feel unrelated.
+--
+-- SWITCHING IS VISIBILITY, not rebuilding. Both views' widgets are constructed
+-- once in build() and live in the same panel for the tab's whole life; setView
+-- only toggles which set is visible and re-runs layout. That matters for
+-- correctness as much as speed: setVisible(false) also stops an element
+-- receiving mouse events, so a hidden view's buttons and hotspots cannot be
+-- clicked through the visible one - which is exactly the bug that would follow
+-- from merely drawing over them.
+-- ---------------------------------------------------------------------------
+local function setView(view)
+    T.view = (view == "janitor") and "janitor" or "fleet"
+
+    local fleetOn = (T.view == "fleet")
+    for _, wdg in ipairs(T.fleetWidgets or {}) do
+        if wdg then pcall(function() wdg:setVisible(fleetOn) end) end
+    end
+    for _, wdg in ipairs(T.janitorWidgets or {}) do
+        if wdg then pcall(function() wdg:setVisible(not fleetOn) end) end
+    end
+
+    for _, b in ipairs(T.viewBtns or {}) do
+        b.borderColor = (b.dfView == T.view)
+            and { r = DFKit.col.accent.r, g = DFKit.col.accent.g, b = DFKit.col.accent.b, a = 0.9 }
+            or  { r = DFKit.col.line.r,   g = DFKit.col.line.g,   b = DFKit.col.line.b,   a = 0.4 }
+    end
+
+    if T.host then layout(T.host, T.hostX, T.hostY, T.hostW, T.hostH) end
+
+    -- Entering the Janitor view re-reads server state. The dials are server
+    -- truth and an admin coming back to them should not be shown a snapshot
+    -- taken before whatever they just did on the Fleet view.
+    if not fleetOn and RCJanitorView and RCJanitorView.onShow then
+        RCJanitorView.onShow()
+    end
+end
+T.setView = setView
+
+-- ---------------------------------------------------------------------------
 -- Tab build (DFPanel calls build(spec, panel, x, y, w, h) at panel-open)
 -- ---------------------------------------------------------------------------
 local function build(spec, panel, x, y, w, h)
-    local PAD = 6
-    local BTN_H = 22
-
     -- Fresh selection every time the tab is built. A stale set of vehicle ids
     -- from a previous panel session would point at cars that may since have been
     -- removed, and this is the one tab where acting on the wrong row is
     -- unrecoverable.
-    RCVehicleTab.sel = Select.new()
+    T.sel = Select.new()
+    T.rows, T.partial = {}, false
+    pending = nil
 
-    -- header row: one label per column at its x offset
-    local hx = x + PAD + 4
-    for _, col in ipairs(COLS) do
-        local lbl = ISLabel:new(hx, y + PAD, BTN_H, col.label, 0.7, 0.7, 0.9, 1, FONT, true)
-        lbl:initialise()
-        panel:addChild(lbl)
-        hx = hx + col.w
-    end
-
-    local list = VehList:new(
-        x + PAD,
-        y + PAD + BTN_H,
-        w - PAD * 2,
-        h - (PAD * 3 + BTN_H * 2 + PAD))
-    list.itemheight = 18
+    local list = VehList:new(0, 0, 10, 10)
+    list.itemheight = ROW_H
     list.drawBorder = true
+    DFKit.well(list)
     list:initialise()
     list:instantiate()
     panel:addChild(list)
+    T.listBox = list
 
-    local btnY = y + h - PAD - BTN_H
+    T.status = DFKit.label(panel, 0, 0, "", DFKit.col.textDim, FONT)
 
-    local status = ISLabel:new(x + PAD + 450, btnY, BTN_H, "", 0.8, 0.8, 0.8, 1, FONT, true)
-    status:initialise()
-    panel:addChild(status)
-
-    -- Forward-declared so onMouseDown can retitle the Delete button the moment
-    -- the selection changes rather than waiting for a refresh.
-    local delBtn
-
-    local function selectionSuffix(n)
-        if n > 1 then return string.format("  (%d selected)", n) end
-        return ""
+    -- Invisible: what is underneath is drawn by the chrome pass, and these exist
+    -- only to catch right-clicks. backgroundColor a=0 rather than
+    -- setVisible(false), because an invisible element gets no mouse events.
+    local function hotspot(resolve)
+        local hs = PartsHotspot:new(0, 0, 10, 10)
+        hs.backgroundColor = { r = 0, g = 0, b = 0, a = 0 }
+        hs.borderColor     = { r = 0, g = 0, b = 0, a = 0 }
+        hs.resolve         = resolve
+        hs:initialise()
+        hs:instantiate()
+        panel:addChild(hs)
+        return hs
     end
-
-    local function syncSelectionUI()
-        local n = RCVehicleTab.sel and #selectedRows(list) or 0
-        if delBtn then delBtn:setTitle(n > 1 and ("Delete (" .. n .. ")") or "Delete") end
-        return n
-    end
-    RCVehicleTab.onSelectionChanged = function()
-        local n = syncSelectionUI()
-        if n > 1 then
-            -- Only counted buttons go wide; say which row the others use.
-            local row = selectedRow(list)
-            status:setName(string.format("%d selected - Delete applies to all %d; Teleport uses %s",
-                n, n, row and tostring(row.vid) or "?"))
-        elseif n == 1 then
-            local row = selectedRow(list)
-            status:setName("1 selected" .. (row and (" - id " .. tostring(row.vid)) or ""))
-        else
-            -- Must not leave a stale "6 selected" line up after the set is
-            -- emptied; that is the message an admin would act on.
-            status:setName("Nothing selected.")
-        end
-    end
-
-    local function refresh()
-        list:clear()
-        local rows = snapshotRows()
-        for _, r in ipairs(rows) do list:addItem("", r) end
-        -- Vehicles stream in and out constantly, so a stale selection is normal
-        -- here rather than exceptional. Drop what is gone and SAY so - a bulk
-        -- delete quietly applying to fewer cars than the admin can see is
-        -- exactly the failure this tab cannot afford.
-        local dropped = 0
-        if RCVehicleTab.sel then dropped = RCVehicleTab.sel:prune(orderedVids(list)) end
-        local n = syncSelectionUI()
-        local msg = string.format("%d vehicle(s) loaded nearby%s", #rows, selectionSuffix(n))
-        if dropped > 0 then
-            msg = msg .. string.format(" - %d selected no longer loaded", dropped)
-        end
-        status:setName(msg)
-    end
-
-    local refreshBtn = ISButton:new(x + PAD, btnY, 90, BTN_H, "Refresh", panel, refresh)
-    refreshBtn.borderColor.a = 0.3
-    refreshBtn:initialise()
-    refreshBtn:instantiate()
-    panel:addChild(refreshBtn)
-
-    local tpBtn = ISButton:new(x + PAD + 100, btnY, 110, BTN_H, "Teleport to", panel, function()
-        local row = selectedRow(list)
-        if row then teleportToRow(row, status) else status:setName("Select a vehicle first.") end
+    T.hotspot = hotspot(function(px, py)
+        return RCPartsView and RCPartsView.partAt(px, py) or nil
     end)
-    tpBtn.borderColor.a = 0.3
-    tpBtn:initialise()
-    tpBtn:instantiate()
-    panel:addChild(tpBtn)
+    T.partsHotspot = hotspot(partRowAt)
 
-    delBtn = ISButton:new(x + PAD + 220, btnY, 110, BTN_H, "Delete", panel, function()
-        -- Bulk-capable: acts on the whole visible selection. Falls back to the
-        -- primary row so a plain click-and-Delete behaves exactly as it always
-        -- has when nothing multi-row is going on.
-        -- No fallback to list.selected on purpose. Ctrl-clicking the only
-        -- selected row empties the set while the base widget still has that row
-        -- as self.selected - falling back would then delete the row the admin
-        -- had just UNSELECTED. On a destructive action, an empty selection means
-        -- do nothing.
-        local rows = selectedRows(list)
-        if #rows > 0 then confirmDelete(rows, status, refresh)
-        else status:setName("Select a vehicle first.") end
-    end)
-    delBtn.borderColor.a = 0.3
-    delBtn:initialise()
-    delBtn:instantiate()
-    panel:addChild(delBtn)
+    T.btnRefresh = DFKit.button(panel, 0, 0, 90, "Refresh", panel, T.refresh)
+
+    -- Scope. Loaded server-wide is the default because triage means finding the
+    -- car you are NOT standing next to; Nearby stays one click away and is the
+    -- only scope a non-admin can use, since the other two are server-gated.
+    local admin = isAdmin()
+    local SCOPES = {
+        { id = "loaded",  label = "Loaded",  w = 74,
+          tip = "Every vehicle in a loaded chunk, server-wide." },
+        { id = "nearby",  label = "Nearby",  w = 74,
+          tip = "Only what this client has streamed. Costs no network, carries no lifecycle data." },
+        { id = "claimed", label = "Claimed", w = 78,
+          tip = "Every claimed vehicle from the registry, including cars nobody has streamed in." },
+        -- The triage scope, and the reason the Janitor view carries no list of
+        -- its own: this IS the due list. Same scan, filtered server-side to the
+        -- two verdicts that lead to reclamation and ordered here by urgency -
+        -- so a doomed car is one click from the full inspector rather than a
+        -- read-only row in a second table.
+        { id = "due",     label = "Due",     w = 60,
+          tip = "Only vehicles on the reclamation path, soonest first. Excludes claimed, wrecked, held and shielded vehicles - they are not 'not due yet', they are not coming at all." },
+    }
+    T.scopeBtns = {}
+    for _, s in ipairs(SCOPES) do
+        local needsAdmin = (s.id ~= "nearby")
+        local b = DFKit.button(panel, 0, 0, s.w, s.label, panel, function()
+            T.scope = s.id
+            for _, o in ipairs(T.scopeBtns) do
+                o.borderColor = (o.dfScope == T.scope)
+                    and { r = DFKit.col.accent.r, g = DFKit.col.accent.g, b = DFKit.col.accent.b, a = 0.9 }
+                    or  { r = DFKit.col.line.r,   g = DFKit.col.line.g,   b = DFKit.col.line.b,   a = 0.4 }
+            end
+            T.refresh()
+        end, s.id == T.scope and "primary" or "action",
+        { tooltip = needsAdmin and not admin
+            and (s.tip .. "  Requires admin.") or s.tip })
+        b.dfScope = s.id
+        if needsAdmin and not admin then b:setEnable(false) end
+        T.scopeBtns[#T.scopeBtns + 1] = b
+    end
+    if not admin then T.scope = "nearby" end
+
+    T.btnTeleport = DFKit.button(panel, 0, 0, 110, "Teleport to", panel, function()
+        local row = selectedRow()
+        if row then teleportToRow(row) else setStatus("Select a vehicle first.") end
+    end, "primary")
 
     -- Spawner door #2 (the world right-click is #1; both open RCSpawnWindow).
     -- Decorative gate - the server re-checks the sender on every spawn command.
+    T.btnSpawn = nil
     if RCShared.canUseSpawner(getPlayer()) then
-        local spawnBtn = ISButton:new(x + PAD + 330, btnY, 110, BTN_H, getText("IGUI_RC_SpawnOpenBtn"), panel, function()
-            if RCSpawnWindow and RCSpawnWindow.open then RCSpawnWindow.open(getPlayer()) end
-        end)
-        spawnBtn.borderColor.a = 0.3
-        spawnBtn:initialise()
-        spawnBtn:instantiate()
-        panel:addChild(spawnBtn)
+        T.btnSpawn = DFKit.button(panel, 0, 0, 110,
+            getText("IGUI_RC_SpawnOpenBtn"), panel, function()
+                if RCSpawnWindow and RCSpawnWindow.open then RCSpawnWindow.open(getPlayer()) end
+            end)
     end
 
-    refresh()
+    -- No fallback to list.selected on purpose. Ctrl-clicking the only selected
+    -- row empties the set while the base widget still has that row as
+    -- self.selected - falling back would then delete the row the admin had just
+    -- UNSELECTED. On a destructive action, an empty selection means do nothing.
+    T.btnDelete = DFKit.button(panel, 0, 0, 110, "Delete", panel, function()
+        local rows = selectedRows()
+        if #rows > 0 then T.confirmDeleteRows(rows)
+        else setStatus("Select a vehicle first.") end
+    end, "danger", { hold = true })
+
+    -- ----- the inner view strip -------------------------------------------
+    -- Built last so both views' widgets already exist to be hidden. Fleet is
+    -- always the landing view: it is the one an admin opens the tab to use,
+    -- and the Janitor's dials are a place you go deliberately.
+    T.viewBtns = {}
+    local VIEWS = {
+        { id = "fleet",   label = "Fleet",   w = 72,
+          tip = "The fleet itself - find a vehicle, inspect it, act on it." },
+        { id = "janitor", label = "Janitor", w = 82,
+          tip = "How reclamation and replacement behave: the dials, the token pools, and the vanilla retrofit. To see WHICH vehicles are about to be reclaimed, use the Due scope on Fleet." },
+    }
+    for _, v in ipairs(VIEWS) do
+        local b = DFKit.button(panel, 0, 0, v.w, v.label, panel, function()
+            setView(v.id)
+        end, "action", { tooltip = v.tip })
+        b.dfView = v.id
+        T.viewBtns[#T.viewBtns + 1] = b
+    end
+
+    -- APPENDED, never a literal list. T.btnSpawn is nil when the player lacks
+    -- spawner access, and a nil in the middle of a table constructor truncates
+    -- ipairs at the hole - every widget after it would silently never be shown
+    -- or hidden again. Delete was the one sitting behind that hole.
+    T.fleetWidgets = {}
+    local function keep(wdg)
+        if wdg then T.fleetWidgets[#T.fleetWidgets + 1] = wdg end
+    end
+    keep(T.listBox); keep(T.status); keep(T.hotspot); keep(T.partsHotspot)
+    keep(T.btnRefresh); keep(T.btnTeleport); keep(T.btnSpawn); keep(T.btnDelete)
+    for _, b in ipairs(T.scopeBtns) do keep(b) end
+
+    -- The Janitor view builds its own widgets into this same panel and hands
+    -- back a flat list, so the host can toggle them without knowing what any
+    -- of them are.
+    T.janitorWidgets = (RCJanitorView and RCJanitorView.attach)
+        and RCJanitorView.attach(panel) or {}
+
+    attachChrome(panel)
+    setView("fleet")
+    layout(panel, x, y, w, h)
+    T.refresh()
+end
+
+-- ---------------------------------------------------------------------------
+-- METRICS. Every number this tab lays out with is derived here from the
+-- CURRENT font, against a baseline measured from UIFont.Code rather than
+-- assumed. This is the whole fix for "raising the text size breaks the list":
+-- the geometry was tuned at one font and treated as constant, so at a larger
+-- one the id column ran under the name column, rows clipped their own glyphs,
+-- and the meat column's label/value pairs overprinted each other.
+--
+-- The three row columns are measured against real content - a five-digit id -
+-- instead of being positioned at a remembered pixel. Column WIDTHS scale by
+-- the font ratio, except the diagram, whose content is a fixed-size sprite.
+-- ---------------------------------------------------------------------------
+local baseCodeFH
+local function recomputeMetrics()
+    FONT = DFKit.font.code or UIFont.Code
+
+    if not baseCodeFH then
+        baseCodeFH = 18
+        pcall(function() baseCodeFH = getTextManager():getFontHeight(UIFont.Code) end)
+        if not baseCodeFH or baseCodeFH < 1 then baseCodeFH = 18 end
+    end
+
+    local fh = baseCodeFH
+    pcall(function() fh = getTextManager():getFontHeight(FONT) end)
+    if not fh or fh < 1 then fh = baseCodeFH end
+
+    local s = fh / baseCodeFH
+    if s < 1 then s = 1 end
+
+    ROW_H       = math.max(18, fh + 4)
+    TEXT_DY     = math.max(1, math.floor((ROW_H - fh) / 2))
+    LIST_HEAD_H = math.max(LIST_HEAD_B, fh + 2)
+    BAND_H      = math.max(BAND_H_B, math.floor(BAND_H_B * s))
+
+    LIST_W    = math.floor(LIST_W_B * s)
+    LIST_MIN  = math.floor(LIST_MIN_B * s)
+    PARTS_W   = math.floor(PARTS_W_B * s)
+    PARTS_MIN = math.floor(PARTS_MIN_B * s)
+    MEAT_MIN  = math.floor(MEAT_MIN_B * s)
+
+    -- Measured columns. "88888" is the widest realistic vehicle id; the glyph
+    -- is one character. Both get a real gap after them rather than a gap that
+    -- happened to be big enough at one size.
+    local gw, iw = 8, 40
+    pcall(function()
+        gw = getTextManager():MeasureStringX(FONT, "o")
+        iw = getTextManager():MeasureStringX(FONT, "88888")
+    end)
+    GLYPH_X = 8
+    VID_X   = GLYPH_X + gw + 6
+    NAME_X  = VID_X + iw + 8
+
+    if T.listBox then T.listBox.itemheight = ROW_H end
+end
+
+-- Computed once at load so the tab is correct even if the panel is opened
+-- before any preference change has ever fired.
+recomputeMetrics()
+
+-- Text size is a client preference, and a tab that only honoured it at build
+-- time would need closing and reopening to apply - exactly the "did that
+-- work?" ambiguity the settings window should not create. So metrics are
+-- recomputed and the tab re-lays-out in place.
+if DFPrefs and DFPrefs.onChange then
+    DFPrefs.onChange(function()
+        recomputeMetrics()
+        if T.host then layout(T.host, T.hostX, T.hostY, T.hostW, T.hostH) end
+    end)
 end
 
 -- Deferred registration: DFRegistry may not exist (no Dragonfly) and load
@@ -458,6 +1423,7 @@ Events.OnGameStart.Add(function()
             capability = Capability.ChangeWeather,
             order      = 6,
             build      = build,
+            resize     = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
         }
     end)
     if not ok then print("[RC] RCVehicleTab registerTab error: " .. tostring(err)) end

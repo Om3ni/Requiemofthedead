@@ -38,18 +38,29 @@ local function cfg()
     return {
         enabled             = s.Enabled ~= false,
         cullEnabled         = s.CullEnabled ~= false,
-        logCulls            = s.LogCulls ~= false,
+        -- Default OFF. The line is cheap to read and expensive to write: print()
+        -- is synchronous main-thread I/O, and a bloom drain emits one line per
+        -- cull. Opt in while tuning, not in production.
+        logCulls            = s.LogCulls == true,
         sequentialThreshold = r.sequentialThreshold or s.SequentialThreshold or 2,
         stackThreshold      = r.stackThreshold      or s.StackThreshold      or 5,
+        -- REAL minutes for one full rotation of the three bloom scans. The
+        -- scans are staggered one per interval/3 slot, so this is the age of
+        -- the oldest evidence, not the frequency of a triple-scan burst.
         bloomInterval       = s.BloomInterval or 5,
         maxPerScan          = s.MaxRemovalsPerScan or 500,
         cullsPerTick        = s.CullsPerTick or 15,
         outfitIdGap         = r.outfitIdGap     or s.OutfitIdGap     or 15,
         outfitMinCluster    = r.outfitMinCluster or s.OutfitMinCluster or 3,
         outfitProximity     = r.outfitProximity  or s.OutfitProximity  or 75,
-        -- Full-sweep cadence in ticks (~2min at 30Hz). OnZombieCreate carries
-        -- newborn detection now; the sweep is a safety net, not the detector.
-        sweepTicks          = r.sweepTicks or s.SweepTicks or 3600,
+        -- Full-sweep cadence in REAL minutes. OnZombieCreate carries newborn
+        -- detection now; the sweep is a safety net, not the detector.
+        sweepInterval       = r.sweepInterval or s.SweepInterval or 2,
+        -- Zombies inspected per tick while a scan is in flight. This is the
+        -- knob that decides whether a scan is a stutter or a background hum:
+        -- the walk costs 2-4 pcalls per zombie, so it is bounded by count
+        -- rather than run to completion in one tick.
+        scanBudget          = r.scanBudget or s.ScanBudget or 200,
     }
 end
 
@@ -130,14 +141,29 @@ local knownIds     = {}   -- [OnlineID] = birthTileKey; recorded at first-seen t
 local bootstrapped = false
 local stats        = { culled = 0, ticks = 0, births = 0 }
 
+local tickTotal    = 0    -- monotone; never resets (ages recentBirths)
+
 -- The FIRST sweep stays early - it is the bootstrap that registers the
 -- world's existing zombies. After bootstrap the cadence relaxes to
--- cfg().sweepTicks, because OnZombieCreate now catches twins at birth.
-local BOOTSTRAP_TICKS  = 200
-local sweepTicks       = BOOTSTRAP_TICKS
-local tickCount        = 0
-local tickTotal        = 0    -- monotone; never resets (ages recentBirths)
-local bloomMinuteCount = 0
+-- cfg().sweepInterval, because OnZombieCreate now catches twins at birth.
+local BOOTSTRAP_MS = 7000
+
+-- Wall clock, not game time and not ticks.
+--
+-- The scan cadence used to hang off EveryOneMinute, which GameTime fires from
+-- minutesStamp - in-game minutes (GameTime.setMinutesStamp: worldAgeHours*60 +
+-- getMinutes()). DayLength therefore scaled it: at DayLength=5 (2 real hours
+-- per day) an in-game minute is 5 real seconds, so a "5 minute" bloom interval
+-- was really 25 seconds. Shortening the day silently multiplied the scan load.
+--
+-- Tick counting is no better: OnTick fires once per fixed-step iteration
+-- (IngameState:1647) at a rate that sags under exactly the load these scans
+-- create, so a tick budget stretches when the server is already struggling.
+-- System.currentTimeMillis is the only clock that means what it says.
+local function clockMs()
+    if getTimestampMs then return getTimestampMs() end
+    return tickTotal * 33   -- degraded fallback: assume ~30Hz
+end
 
 local function isValidId(id)
     return id and id ~= 0 and id ~= -1
@@ -179,9 +205,8 @@ local function finishBatchEntry(batch, removed)
     end
 end
 
-local function drainCullQueue()
+local function drainCullQueue(c)
     if queue.head > queue.tail then return end
-    local c = cfg()
 
     -- Culling switched off mid-drain: drop the backlog instead of
     -- continuing to remove zombies against the new setting.
@@ -284,12 +309,13 @@ local function pruneRecentBirths(now)
     end
 end
 
-local function processNewborns(now)
+-- Runs even while disabled, to drain and drop: OnZombieCreate keeps appending
+-- regardless, so an early return in the caller would grow this list forever.
+local function processNewborns(c, now)
     if #pendingNewborns == 0 then return end
     local batch = pendingNewborns
     pendingNewborns = {}
 
-    local c = cfg()
     if not c.enabled then return end
 
     -- Resolve ids; re-queue refs the engine has not numbered yet. A ref
@@ -348,111 +374,205 @@ local function processNewborns(now)
     end
 end
 
-local function newbornSweep()
-    local c = cfg()
-    if not c.enabled then return end
+-- -------------------------------------------------------------------------
+-- Incremental scanner
+--
+-- Every detection pass below is O(N) over the whole loaded zombie list with
+-- 2-4 pcalls per zombie, and N is unbounded whenever the vanilla cull is off
+-- (ZombiesCountBeforeDelete = 0) - which is exactly the configuration this mod
+-- exists to make survivable. Running a pass to completion inside one tick
+-- therefore costs more the better the server is doing.
+--
+-- So a scan is a resumable job, not a function call. Each tick spends at most
+-- cfg().scanBudget zombie-inspections on the scan in flight; the job carries
+-- its own cursor and buckets across ticks and retires when it runs out of
+-- list. Only one scan runs at a time, and the three bloom scans take turns -
+-- one per interval/3 slot - instead of firing as a burst of three.
+--
+-- Two consequences of spreading the walk, both handled below:
+--   * The zombie list mutates underneath an index walk. A removal shifts the
+--     tail down, so the same zombie can be visited twice - and two copies of
+--     one zombie in a bucket read as a twin pair. Every pass dedupes by
+--     OnlineID (scan.seen), so a revisit cannot manufacture a verdict.
+--   * A pass can equally MISS a zombie that shifted past the cursor. That only
+--     matters for the sweep's knownIds prune, where a miss would discard a
+--     live zombie's birth tile, so ids must go unseen twice running.
+-- -------------------------------------------------------------------------
 
-    stats.ticks = stats.ticks + 1
+local SCAN_TILE, SCAN_WANDER, SCAN_CLUSTER, SCAN_SWEEP = 1, 2, 3, 4
 
-    -- Two-stage: bucket by the cheap key (tile|outfit); the inventory walk
-    -- only runs when a newborn actually collides with a bucket.
-    local byCheap  = {}
-    local newborns = {}
-    local seenIds  = {}
+local SCAN_NAME = {
+    [SCAN_TILE]    = "bloom",
+    [SCAN_WANDER]  = "wander",
+    [SCAN_CLUSTER] = "cluster",
+    [SCAN_SWEEP]   = "sweep",
+}
 
-    forEachLoadedZombie(function(z, id)
-        seenIds[id] = true
-        local key = tileKey(z)
-        if key then
-            local cheap = key .. "|" .. safeOutfit(z)
-            if knownIds[id] then
-                local b = byCheap[cheap]
-                if not b then b = {}; byCheap[cheap] = b end
-                b[#b + 1] = { z = z, inv = nil }
-            else
-                newborns[#newborns + 1] = { z = z, id = id, cheap = cheap, birthTile = key }
-            end
-        end
-    end)
+-- The three bloom scans rotate: one starts per slot, never all three at once.
+local BLOOM_ROTATION = { SCAN_TILE, SCAN_WANDER, SCAN_CLUSTER }
 
-    -- Bootstrap pass: register everyone as known, do not cull.
-    if not bootstrapped then
-        for _, nb in ipairs(newborns) do knownIds[nb.id] = nb.birthTile or "?" end
-        bootstrapped = true
-        return
+local scan       = nil   -- the job in flight, or nil
+local scanQueue  = {}    -- FIFO of pending kinds
+local queuedKind = {}    -- [kind] = true; stops a slow scan from stacking up
+local staleIds   = {}    -- ids missing from the previous sweep (prune grace)
+
+local function requestScan(kind)
+    if queuedKind[kind] then return false end
+    if scan and scan.kind == kind then return false end
+    queuedKind[kind] = true
+    scanQueue[#scanQueue + 1] = kind
+    return true
+end
+
+local function startScan(kind, c)
+    if not c.enabled then return false end
+    -- The sweep still runs in monitor-only mode: it maintains knownIds, which
+    -- the wander scan and the Necro tab both read. The cull scans do not.
+    if kind ~= SCAN_SWEEP and not c.cullEnabled then return false end
+
+    local zlist
+    pcall(function() zlist = getCell():getZombieList() end)
+    if not zlist then return false end
+
+    scan = {
+        kind     = kind,
+        -- Frozen for the life of the job: a sandbox edit landing mid-scan
+        -- must not change the rules halfway through one verdict pass.
+        c        = c,
+        zlist    = zlist,
+        index    = 0,
+        phase    = "collect",
+        judgeIdx = 1,
+        removed  = 0,
+        seen     = {},
+        buckets  = {},
+        -- Bucket keys in insertion order. pairs() cannot be resumed across
+        -- ticks; an array cursor can.
+        order    = {},
+        newborns = {},
+    }
+    if kind == SCAN_SWEEP then stats.ticks = stats.ticks + 1 end
+    return true
+end
+
+local function bucketFor(s, key)
+    local b = s.buckets[key]
+    if not b then
+        b = {}
+        s.buckets[key] = b
+        s.order[#s.order + 1] = key
     end
-
-    for _, nb in ipairs(newborns) do
-        local bucket = byCheap[nb.cheap]
-        local twin = false
-        if bucket and #bucket > 0 and c.cullEnabled then
-            local myInv = inventorySig(nb.z)
-            for _, e in ipairs(bucket) do
-                if e.inv == nil then e.inv = inventorySig(e.z) end
-                if e.inv == myInv then twin = true; break end
-            end
-        end
-        if twin then
-            enqueueCull(nb.z, nb.id, "newborn")
-        else
-            knownIds[nb.id] = nb.birthTile or "?"
-            local b = byCheap[nb.cheap]
-            if not b then b = {}; byCheap[nb.cheap] = b end
-            b[#b + 1] = { z = nb.z, inv = nil }
-        end
-    end
-
-    for id in pairs(knownIds) do
-        if not seenIds[id] then knownIds[id] = nil end
-    end
+    return b
 end
 
 -- -------------------------------------------------------------------------
--- Tile+outfit bloom scan - catches existing/migrated blooms that the newborn
--- watcher missed. Groups loaded zombies by (current tile, outfit ID). Within
--- each bucket, culls based on two rules (whichever fires first):
---   1. Sequential IDs: runs of consecutive OnlineIDs within threshold (tight)
---   2. Stack threshold: bucket size >= stackThreshold (safety net for blooms
---      whose IDs aren't perfectly sequential - e.g., older accumulated stacks)
--- Removals are capped per scan to avoid frame spikes on huge blooms.
+-- Collect phase - the expensive half. Every branch here is per-zombie engine
+-- calls, so this is what cfg().scanBudget actually rations.
 -- -------------------------------------------------------------------------
 
-local function tileSequentialScan()
-    local c = cfg()
-    if not c.enabled then return end
-    if not c.cullEnabled then return end
+local function collectOne(s, z, id)
+    local kind = s.kind
 
-    local seqGap    = c.sequentialThreshold
-    local stackMin  = c.stackThreshold
-    local maxRemove = c.maxPerScan
-    local byKey     = {}
-
-    forEachLoadedZombie(function(z, id)
+    if kind == SCAN_TILE then
+        -- Group by current tile + outfit.
         local tile = tileKey(z)
-        if tile then
-            local key = tile .. "|" .. safeOutfit(z)
-            local t = byKey[key]
-            if not t then t = { tile = tile, entries = {} }; byKey[key] = t end
-            local e = t.entries
-            e[#e + 1] = { id = id, z = z }
+        if not tile then return end
+        local b = bucketFor(s, tile .. "|" .. safeOutfit(z))
+        b[#b + 1] = { id = id, z = z }
+
+    elseif kind == SCAN_WANDER then
+        -- Group by RECORDED BIRTH tile + outfit, to catch twins that spawned
+        -- together and separated since.
+        local birthTile = knownIds[id]
+        if not birthTile or birthTile == "?" then return end
+        local b = bucketFor(s, birthTile .. "|" .. safeOutfit(z))
+        b[#b + 1] = { id = id, z = z }
+
+    elseif kind == SCAN_CLUSTER then
+        -- Group by outfit alone, across all tiles; position rides along for
+        -- the bounding-box gate in the judge phase.
+        local sq
+        pcall(function() sq = z:getSquare() end)
+        if not sq then return end
+        local x, y, zc
+        pcall(function() x = sq:getX(); y = sq:getY(); zc = sq:getZ() end)
+        if not (x and y and zc) then return end
+        local b = bucketFor(s, safeOutfit(z))
+        b[#b + 1] = { id = id, z = z, x = x, y = y, zc = zc }
+
+    else -- SCAN_SWEEP
+        local tile = tileKey(z)
+        if not tile then return end
+        local cheap = tile .. "|" .. safeOutfit(z)
+        if knownIds[id] then
+            -- Known zombies are the buckets newborns get tested against. They
+            -- are only ever looked up by key, never walked, so they stay out
+            -- of s.order.
+            local b = s.buckets[cheap]
+            if not b then b = {}; s.buckets[cheap] = b end
+            b[#b + 1] = { z = z, inv = nil }
+        else
+            local nb = s.newborns
+            nb[#nb + 1] = { z = z, id = id, cheap = cheap, birthTile = tile }
         end
-    end)
+    end
+end
 
-    local removed = 0
+local function collectStep(s, budget)
+    local zlist = s.zlist
+    -- Re-read every tick: the list is live and its length moves under us.
+    local size = zlist:size()
 
-    for key, group in pairs(byKey) do
-        if removed >= maxRemove then break end
-        local entries = group.entries
-        if #entries > 1 then
+    while budget > 0 and s.index < size do
+        local z = zlist:get(s.index)
+        s.index = s.index + 1
+        budget  = budget - 1
+        if z then
+            local id = z:getOnlineID()
+            if isValidId(id) and not s.seen[id] then
+                s.seen[id] = true
+                collectOne(s, z, id)
+            end
+        end
+    end
+
+    return s.index >= size, budget
+end
+
+-- -------------------------------------------------------------------------
+-- Judge phase - pure Lua over the collected buckets, no engine calls except
+-- the enqueue itself. Cheap per entry, but still cursored so one enormous
+-- bucket set cannot own a tick. A single bucket is judged atomically: a
+-- verdict cannot be reached from a subset of it.
+-- -------------------------------------------------------------------------
+
+-- Tile + outfit. Two rules, whichever fires first:
+--   1. Sequential IDs: runs of consecutive OnlineIDs within threshold (tight)
+--   2. Stack threshold: bucket size >= stackThreshold (safety net for older
+--      accumulations whose IDs are no longer perfectly sequential)
+local function judgeTile(s, budget)
+    local c = s.c
+    local seqGap, stackMin = c.sequentialThreshold, c.stackThreshold
+    local maxRemove = c.maxPerScan
+    local order = s.order
+
+    while budget > 0 and s.judgeIdx <= #order do
+        if s.removed >= maxRemove then s.judgeIdx = #order + 1; break end
+        local entries = s.buckets[order[s.judgeIdx]]
+        s.judgeIdx = s.judgeIdx + 1
+
+        local n = #entries
+        budget = budget - (n > 1 and n or 1)
+        if n > 1 then
             table.sort(entries, function(a, b) return a.id < b.id end)
 
             local culledIdx = {}
 
             -- Rule 1: sequential ID runs
             local i = 1
-            while i <= #entries do
+            while i <= n do
                 local j = i + 1
-                while j <= #entries and entries[j].id - entries[j-1].id <= seqGap do
+                while j <= n and entries[j].id - entries[j-1].id <= seqGap do
                     j = j + 1
                 end
                 if j - i >= 2 then
@@ -461,76 +581,56 @@ local function tileSequentialScan()
                 i = j
             end
 
-            -- Rule 2: stack threshold (anything beyond stackMin gets culled,
-            -- keeping the lowest ID; only counts entries not already flagged)
-            if #entries >= stackMin then
-                for k = stackMin + 1, #entries do
+            -- Rule 2: stack threshold (keeps the lowest ID; only counts
+            -- entries not already flagged)
+            if n >= stackMin then
+                for k = stackMin + 1, n do
                     if not culledIdx[k] then culledIdx[k] = "stack" end
                 end
             end
 
-            for k = 1, #entries do
-                if removed >= maxRemove then break end
+            for k = 1, n do
+                if s.removed >= maxRemove then break end
                 local why = culledIdx[k]
                 if why and enqueueCull(entries[k].z, entries[k].id, why) then
-                    removed = removed + 1
+                    s.removed = s.removed + 1
                 end
             end
         end
     end
 
-    if removed > 0 and c.logCulls then
-        print(string.format("[Reaper:bloom] scan complete: queued=%d (cap=%d)", removed, maxRemove))
-    end
+    return s.judgeIdx > #order, budget
 end
 
--- -------------------------------------------------------------------------
--- Wandered bloom scan - catches twins that spawned together and separated.
--- Groups loaded zombies by (recorded birth tile, outfit ID) and applies the
--- same sequential-ID rule. Outfit narrows the bucket so legit zombies that
--- happened to first-load on the same tile don't false-positive.
--- -------------------------------------------------------------------------
+-- Birth tile + outfit, sequential-ID rule only. Outfit narrows the bucket so
+-- legit zombies that happened to first-load on the same tile don't match.
+local function judgeWander(s, budget)
+    local c = s.c
+    local seqGap, maxRemove = c.sequentialThreshold, c.maxPerScan
+    local order = s.order
 
-local function wanderedBloomScan()
-    local c = cfg()
-    if not c.enabled then return end
-    if not c.cullEnabled then return end
+    while budget > 0 and s.judgeIdx <= #order do
+        if s.removed >= maxRemove then s.judgeIdx = #order + 1; break end
+        local entries = s.buckets[order[s.judgeIdx]]
+        s.judgeIdx = s.judgeIdx + 1
 
-    local seqGap    = c.sequentialThreshold
-    local maxRemove = c.maxPerScan
-    local byKey     = {}
-
-    forEachLoadedZombie(function(z, id)
-        local birthTile = knownIds[id]
-        if birthTile and birthTile ~= "?" then
-            local key = birthTile .. "|" .. safeOutfit(z)
-            local t = byKey[key]
-            if not t then t = { birthTile = birthTile, entries = {} }; byKey[key] = t end
-            local e = t.entries
-            e[#e + 1] = { id = id, z = z }
-        end
-    end)
-
-    local removed = 0
-
-    for key, group in pairs(byKey) do
-        if removed >= maxRemove then break end
-        local entries = group.entries
-        if #entries > 1 then
+        local n = #entries
+        budget = budget - (n > 1 and n or 1)
+        if n > 1 then
             table.sort(entries, function(a, b) return a.id < b.id end)
 
             local i = 1
-            while i <= #entries do
-                if removed >= maxRemove then break end
+            while i <= n do
+                if s.removed >= maxRemove then break end
                 local j = i + 1
-                while j <= #entries and entries[j].id - entries[j-1].id <= seqGap do
+                while j <= n and entries[j].id - entries[j-1].id <= seqGap do
                     j = j + 1
                 end
                 if j - i >= 2 then
                     for k = i + 1, j - 1 do
-                        if removed >= maxRemove then break end
+                        if s.removed >= maxRemove then break end
                         if enqueueCull(entries[k].z, entries[k].id, "wander") then
-                            removed = removed + 1
+                            s.removed = s.removed + 1
                         end
                     end
                 end
@@ -539,72 +639,40 @@ local function wanderedBloomScan()
         end
     end
 
-    if removed > 0 and c.logCulls then
-        print(string.format("[Reaper:wander] scan complete: queued=%d (cap=%d)", removed, maxRemove))
-    end
+    return s.judgeIdx > #order, budget
 end
 
--- -------------------------------------------------------------------------
--- Outfit cluster scan - catches wandered/dispersed blooms that tile-based
--- scans miss. Groups by outfit ID (across all tiles), finds runs of nearly-
--- sequential IDs within the outfit bucket, and only culls clusters that
--- are geographically proximate (bbox <= outfitProximity tiles).
---
--- Three gates must all fire:
---   1. Same outfit ID (twin template match)
---   2. ID run with gaps <= outfitIdGap, cluster size >= outfitMinCluster
---   3. Bounding box width AND height <= outfitProximity tiles
---
--- Tile and ID together discriminate; outfit alone would false-positive in
--- legit zones (hospital, police station). All three together = bloom.
--- -------------------------------------------------------------------------
+-- Outfit clusters. Three gates must all fire: same outfit ID, an ID run with
+-- gaps <= outfitIdGap of at least outfitMinCluster entries, and a bounding box
+-- no larger than outfitProximity tiles. Outfit alone would false-positive in
+-- legit uniform zones (hospital, police station).
+local function judgeCluster(s, budget)
+    local c = s.c
+    local idGap, minCount = c.outfitIdGap, c.outfitMinCluster
+    local maxBox, maxRemove = c.outfitProximity, c.maxPerScan
+    local order = s.order
 
-local function outfitClusterScan()
-    local c = cfg()
-    if not c.enabled then return end
-    if not c.cullEnabled then return end
+    while budget > 0 and s.judgeIdx <= #order do
+        if s.removed >= maxRemove then s.judgeIdx = #order + 1; break end
+        local entries = s.buckets[order[s.judgeIdx]]
+        s.judgeIdx = s.judgeIdx + 1
 
-    local idGap     = c.outfitIdGap
-    local minCount  = c.outfitMinCluster
-    local maxBox    = c.outfitProximity
-    local maxRemove = c.maxPerScan
-
-    -- Group all loaded zombies by outfit ID, with each entry's position.
-    local byOutfit = {}
-    forEachLoadedZombie(function(z, id)
-        local sq
-        pcall(function() sq = z:getSquare() end)
-        if not sq then return end
-        local x, y, zc
-        pcall(function() x = sq:getX(); y = sq:getY(); zc = sq:getZ() end)
-        if not (x and y and zc) then return end
-        local outfit = safeOutfit(z)
-        local g = byOutfit[outfit]
-        if not g then g = {}; byOutfit[outfit] = g end
-        g[#g + 1] = { id = id, z = z, x = x, y = y, zc = zc }
-    end)
-
-    local removed = 0
-
-    for outfit, entries in pairs(byOutfit) do
-        if removed >= maxRemove then break end
-        if #entries >= minCount then
+        local n = #entries
+        budget = budget - (n > 1 and n or 1)
+        if n >= minCount then
             table.sort(entries, function(a, b) return a.id < b.id end)
 
-            -- Walk ID-based runs within the outfit bucket.
             local i = 1
-            while i <= #entries do
-                if removed >= maxRemove then break end
+            while i <= n do
+                if s.removed >= maxRemove then break end
                 local j = i + 1
-                while j <= #entries and entries[j].id - entries[j-1].id <= idGap do
+                while j <= n and entries[j].id - entries[j-1].id <= idGap do
                     j = j + 1
                 end
-                local count = j - i
-                if count >= minCount then
-                    -- Geographic check: bounding box must be tight.
-                    local minX, minY, maxX, maxY = entries[i].x, entries[i].y, entries[i].x, entries[i].y
-                    local sameZ = true
-                    local zRef = entries[i].zc
+                if j - i >= minCount then
+                    local minX, minY = entries[i].x, entries[i].y
+                    local maxX, maxY = entries[i].x, entries[i].y
+                    local zRef, sameZ = entries[i].zc, true
                     for k = i, j - 1 do
                         local e = entries[k]
                         if e.x < minX then minX = e.x end
@@ -616,9 +684,9 @@ local function outfitClusterScan()
                     if sameZ and (maxX - minX) <= maxBox and (maxY - minY) <= maxBox then
                         -- Cluster confirmed - cull all but the lowest ID.
                         for k = i + 1, j - 1 do
-                            if removed >= maxRemove then break end
+                            if s.removed >= maxRemove then break end
                             if enqueueCull(entries[k].z, entries[k].id, "cluster") then
-                                removed = removed + 1
+                                s.removed = s.removed + 1
                             end
                         end
                     end
@@ -628,55 +696,182 @@ local function outfitClusterScan()
         end
     end
 
-    if removed > 0 and c.logCulls then
-        print(string.format("[Reaper:cluster] scan complete: queued=%d (cap=%d)", removed, maxRemove))
-    end
+    return s.judgeIdx > #order, budget
 end
+
+-- The safety-net sweep: registers anything OnZombieCreate did not see, and
+-- ages out knownIds. Two-stage like the newborn intake - the cheap key
+-- (tile|outfit) buckets, and the inventory walk only runs on a collision.
+local function judgeSweep(s, budget)
+    local c = s.c
+    local newborns = s.newborns
+
+    -- Bootstrap pass: register the world's existing population, cull nothing.
+    -- Pure table writes, no engine calls, so it stays atomic.
+    if not bootstrapped then
+        for _, nb in ipairs(newborns) do knownIds[nb.id] = nb.birthTile or "?" end
+        bootstrapped = true
+        return true, 0
+    end
+
+    while budget > 0 and s.judgeIdx <= #newborns do
+        local nb = newborns[s.judgeIdx]
+        s.judgeIdx = s.judgeIdx + 1
+        budget = budget - 1
+
+        local b = s.buckets[nb.cheap]
+        local twin = false
+        if b and #b > 0 and c.cullEnabled then
+            -- Cheap key collided; escalate to the inventory signature to
+            -- confirm the template match. Each signature is a full inventory
+            -- walk, so charge the budget for them rather than for one newborn.
+            local myInv = inventorySig(nb.z)
+            budget = budget - 4
+            for _, e in ipairs(b) do
+                if e.inv == nil then
+                    e.inv = inventorySig(e.z)
+                    budget = budget - 4
+                end
+                if e.inv == myInv then twin = true; break end
+            end
+        end
+
+        if twin then
+            if enqueueCull(nb.z, nb.id, "newborn") then
+                s.removed = s.removed + 1
+            end
+        else
+            knownIds[nb.id] = nb.birthTile or "?"
+            if not b then b = {}; s.buckets[nb.cheap] = b end
+            b[#b + 1] = { z = nb.z, inv = nil }
+        end
+    end
+    if s.judgeIdx <= #newborns then return false, budget end
+
+    -- Prune ids the pass never saw. An incremental walk can miss a zombie the
+    -- list shifted past the cursor, so a single absence is not proof of death:
+    -- an id must go unseen across two consecutive sweeps before its birth tile
+    -- is discarded. Pure table work - no engine calls - so it stays atomic;
+    -- pairs() cannot be resumed and the cost is one hash lookup per known id.
+    local nextStale, doomed = {}, {}
+    for id in pairs(knownIds) do
+        if not s.seen[id] then
+            if staleIds[id] then doomed[#doomed + 1] = id
+            else nextStale[id] = true end
+        end
+    end
+    for _, id in ipairs(doomed) do knownIds[id] = nil end
+    staleIds = nextStale
+
+    return true, 0
+end
+
+local JUDGE = {
+    [SCAN_TILE]    = judgeTile,
+    [SCAN_WANDER]  = judgeWander,
+    [SCAN_CLUSTER] = judgeCluster,
+    [SCAN_SWEEP]   = judgeSweep,
+}
+
+local function stepScan(budget)
+    local s = scan
+    local done
+
+    if s.phase == "collect" then
+        done, budget = collectStep(s, budget)
+        if not done then return end
+        s.phase    = "judge"
+        s.judgeIdx = 1
+        if budget <= 0 then return end
+    end
+
+    done = JUDGE[s.kind](s, budget)
+    if not done then return end
+
+    if s.removed > 0 and s.c.logCulls then
+        print(string.format("[Reaper:%s] scan complete: queued=%d (cap=%d)",
+            SCAN_NAME[s.kind], s.removed, s.c.maxPerScan))
+    end
+    scan = nil
+end
+
+-- -------------------------------------------------------------------------
+-- Scheduler
+-- -------------------------------------------------------------------------
+
+local nextSlotMs  = nil
+local nextSweepMs = nil
+local lastNowMs   = 0
+local rotationIdx = 0
 
 local function onTick()
-    drainCullQueue()
-    tickTotal = tickTotal + 1
-    processNewborns(tickTotal)
-    tickCount = tickCount + 1
-    if tickCount < sweepTicks then return end
-    tickCount = 0
-    newbornSweep()
-    -- Re-read after each sweep so live tuning lands; the first sweep ran at
-    -- BOOTSTRAP_TICKS and this switches to the relaxed safety-net cadence.
-    sweepTicks = cfg().sweepTicks
-end
+    local c = cfg()
 
-local function onMinute()
-    bloomMinuteCount = bloomMinuteCount + 1
-    if bloomMinuteCount >= cfg().bloomInterval then
-        bloomMinuteCount = 0
-        tileSequentialScan()
-        wanderedBloomScan()
-        outfitClusterScan()
+    drainCullQueue(c)
+    tickTotal = tickTotal + 1
+    processNewborns(c, tickTotal)
+
+    if not c.enabled then return end
+
+    local now         = clockMs()
+    local slotPeriod  = math.max(1, c.bloomInterval) * 60000 / #BLOOM_ROTATION
+    local sweepPeriod = math.max(1, c.sweepInterval) * 60000
+
+    if not nextSlotMs or now < lastNowMs then
+        -- First tick, or the wall clock stepped backwards (NTP correction).
+        -- Rebase, rather than stall until the stale deadlines come round.
+        nextSweepMs = now + BOOTSTRAP_MS
+        nextSlotMs  = now + slotPeriod
     end
+    lastNowMs = now
+
+    -- One bloom scan per slot, taking turns. The scans used to run back to
+    -- back in a single handler, so a bloom interval bought three full O(N)
+    -- walks in one tick instead of three walks spread over the interval.
+    if now >= nextSlotMs then
+        nextSlotMs  = now + slotPeriod
+        rotationIdx = rotationIdx % #BLOOM_ROTATION + 1
+        requestScan(BLOOM_ROTATION[rotationIdx])
+    end
+    if now >= nextSweepMs then
+        nextSweepMs = now + sweepPeriod
+        requestScan(SCAN_SWEEP)
+    end
+
+    if not scan then
+        while #scanQueue > 0 do
+            local kind = table.remove(scanQueue, 1)
+            queuedKind[kind] = nil
+            if startScan(kind, c) then break end
+        end
+    end
+    if scan then stepScan(c.scanBudget) end
 end
 
 Events.OnTick.Add(onTick)
-Events.EveryOneMinute.Add(onMinute)
 -- Engine-registered event (LuaEventManager AddEvent at boot), safe to hook
 -- directly. RPCore only loads server-side (guard at top of file), so this
 -- never binds on clients, where the same creation funnel also runs.
 Events.OnZombieCreate.Add(onZombieCreate)
 
 -- -------------------------------------------------------------------------
--- Force full scan - runs all three bloom scans on demand instead of waiting
--- for the interval timer. Invoked from the right-click debug menu.
+-- Force full scan - requests all three bloom scans immediately instead of
+-- waiting for their slots. Invoked from the right-click debug menu.
+--
+-- They still run one at a time on the per-tick budget: "force" moves the
+-- schedule up, it does not buy the caller a synchronous triple walk of the
+-- whole population. Verdicts land in the cull queue as each scan finishes,
+-- so the return value is scans requested, not zombies queued.
 -- -------------------------------------------------------------------------
 
 function RPCore.forceScan()
-    local before = queueSize()
-    print("[Reaper:force] full scan starting")
-    tileSequentialScan()
-    wanderedBloomScan()
-    outfitClusterScan()
-    local queued = queueSize() - before
-    print(string.format("[Reaper:force] full scan complete: queued=%d", queued))
-    return queued
+    local requested = 0
+    for _, kind in ipairs(BLOOM_ROTATION) do
+        if requestScan(kind) then requested = requested + 1 end
+    end
+    print(string.format("[Reaper:force] full scan requested: %d queued (%d already pending)",
+        requested, #BLOOM_ROTATION - requested))
+    return requested
 end
 
 -- -------------------------------------------------------------------------
@@ -713,7 +908,6 @@ function RPCore.snapshot(opts)
     local maxBox   = c.outfitProximity
 
     local zombies = {}
-    local byId    = {}
 
     forEachLoadedZombie(function(z, id)
         local sq
@@ -738,7 +932,6 @@ function RPCore.snapshot(opts)
             verdict   = "clean",
         }
         zombies[#zombies + 1] = entry
-        byId[id] = entry
     end)
 
     -- Tag verdicts. Same grouping logic as the cull scans, but we mark
@@ -834,7 +1027,15 @@ function RPCore.snapshot(opts)
         cleanCount = cleanCount,   -- tagged clean and not sent
         loaded     = #zombies,     -- everything the scan actually walked
         cfg        = c,
-        stats      = { culled = stats.culled, ticks = stats.ticks, queued = queueSize(), births = stats.births },
+        stats      = {
+            culled = stats.culled,
+            ticks  = stats.ticks,
+            queued = queueSize(),
+            births = stats.births,
+            -- Which scan is mid-walk, if any. Scans are incremental now, so
+            -- "nothing queued" no longer means "nothing looking".
+            scan   = scan and SCAN_NAME[scan.kind] or "idle",
+        },
         timestamp  = getTimestampMs and getTimestampMs() or 0,
     }
 end

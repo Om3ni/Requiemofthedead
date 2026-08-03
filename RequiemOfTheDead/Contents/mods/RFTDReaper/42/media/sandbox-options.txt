@@ -19,7 +19,7 @@ option RFTDReaper.CullEnabled
 option RFTDReaper.LogCulls
 {
     type = boolean,
-    default = true,
+    default = false,
     page = RFTDReaper,
     translation = RP_LogCulls,
 }
@@ -45,11 +45,31 @@ option RFTDReaper.SequentialThreshold
 option RFTDReaper.BloomInterval
 {
     type = integer,
-    min = 5,
+    min = 1,
     max = 300,
     default = 5,
     page = RFTDReaper,
     translation = RP_BloomInterval,
+}
+
+option RFTDReaper.SweepInterval
+{
+    type = integer,
+    min = 1,
+    max = 60,
+    default = 2,
+    page = RFTDReaper,
+    translation = RP_SweepInterval,
+}
+
+option RFTDReaper.ScanBudget
+{
+    type = integer,
+    min = 25,
+    max = 2000,
+    default = 200,
+    page = RFTDReaper,
+    translation = RP_ScanBudget,
 }
 
 option RFTDReaper.StackThreshold

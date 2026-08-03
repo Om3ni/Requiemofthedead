@@ -193,6 +193,103 @@ function RCNoVanilla.isVanillaScriptName(name)
 end
 
 -- ---------------------------------------------------------------------------
+-- THE ROSTER - "what may the lifecycle spawn?" (the owner's second
+-- never-spawn-vanilla function, 2026-08-03).
+--
+-- Layers 1 and 2 above stop the WORLD spawning vanilla cars. This stops US
+-- doing it: when the respawner puts a replacement down it picks from here, so
+-- a server running car mods never has its own lifecycle quietly reintroducing
+-- the fleet the admin just suppressed.
+--
+-- SOURCE: VehicleZoneDistribution, not getAllVehicleScripts(). Both would
+-- answer "which vehicles exist", but only the distribution answers "which
+-- vehicles is this world configured to contain" - it carries the mod authors'
+-- own spawn weights and excludes scripts that were never meant to appear on
+-- their own. Better still, applyZoneStrip has already run against it by the
+-- time anything asks, so on a NoVanilla server the vanilla entries are simply
+-- gone and the modded-only filter below has nothing left to do. The filter
+-- stays anyway, because the two options are independent dials: an admin may
+-- run the lifecycle with map suppression off.
+--
+-- getAllVehicleScripts() is the fallback for a world with no distribution
+-- table at all. It is deliberately second: it happily returns trailers,
+-- wrecks and abstract parent scripts, which is why the exempt-name filter
+-- runs over both paths rather than only over the fallback.
+-- ---------------------------------------------------------------------------
+local rosterCache, rosterModded
+
+-- Every distinct vehicle name the distribution can spawn.
+local function rosterFromDistribution()
+    if type(VehicleZoneDistribution) ~= "table" then return nil end
+    local seen, out = {}, {}
+    for _, zoneDef in pairs(VehicleZoneDistribution) do
+        local vehicles = type(zoneDef) == "table" and zoneDef.vehicles or nil
+        if type(vehicles) == "table" then
+            for key in pairs(vehicles) do
+                if type(key) == "string" and not seen[key] then
+                    seen[key] = true
+                    out[#out + 1] = key
+                end
+            end
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+local function rosterFromScripts()
+    local out = {}
+    pcall(function()
+        local list = getScriptManager():getAllVehicleScripts()
+        if not list then return end
+        for i = 0, list:size() - 1 do
+            local s = list:get(i)
+            local full
+            if s then pcall(function() full = s:getFullName() end) end
+            if type(full) == "string" then out[#out + 1] = full end
+        end
+    end)
+    if #out == 0 then return nil end
+    return out
+end
+
+-- Spawnable names for the lifecycle. moddedOnly drops anything whose script
+-- body zero is pz-vanilla. Wrecks and trailers are dropped either way: a
+-- replacement is meant to be transport, and isExemptName already encodes
+-- exactly that distinction for Layers 1 and 2.
+--
+-- Cached per moddedOnly value. Vehicle scripts and the distribution are both
+-- fixed for a session, so rebuilding would burn a ScriptManager walk per
+-- placement for an answer that cannot have changed.
+function RCNoVanilla.roster(moddedOnly)
+    moddedOnly = moddedOnly ~= false
+    if rosterCache and rosterModded == moddedOnly then return rosterCache end
+
+    local names = rosterFromDistribution() or rosterFromScripts() or {}
+    local out = {}
+    for i = 1, #names do
+        local n = names[i]
+        if not RCNoVanilla.isExemptName(n) then
+            if not (moddedOnly and RCNoVanilla.isVanillaScriptName(n)) then
+                -- Must actually resolve: a distribution key for a mod that is
+                -- no longer installed would otherwise reach RCSpawn as a
+                -- "badmodel" failure on every attempt.
+                local script
+                pcall(function() script = getScriptManager():getVehicle(n) end)
+                if script then out[#out + 1] = n end
+            end
+        end
+    end
+
+    rosterCache, rosterModded = out, moddedOnly
+    print(string.format("[RC] NoVanilla: lifecycle roster = %d vehicle(s) (%s)",
+        #out, moddedOnly and "modded only" or "all"))
+    return out
+end
+
+function RCNoVanilla.clearRoster() rosterCache = nil end
+
+-- ---------------------------------------------------------------------------
 -- Staff-spawn latch (Layer 2 bypass). Counter, not boolean: nesting-safe.
 -- ---------------------------------------------------------------------------
 local exemptDepth = 0
@@ -220,6 +317,149 @@ Events.OnLoadedTileDefinitions.Add(applyZoneStrip)
 -- ---------------------------------------------------------------------------
 -- Layer 2: burn the story spawns
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- LAYER 3 - the RETROFIT cleanup pass (2026-08-03).
+--
+-- WHY THIS IS NOT ABOUT FRESH SAVES. Layer 1 strips the distribution at
+-- OnLoadedTileDefinitions, which is after sandbox is final and BEFORE the
+-- first chunk streams in, and VehicleType.init() snapshots the table lazily on
+-- the first spawn request (VehicleType.java:147). On a fresh save there is
+-- therefore no window at all - not even the starting cell - in which a vanilla
+-- car can be generated. Nothing here is needed for a new world.
+--
+-- What Layer 1 CANNOT do is un-generate the past. Switch NoVanilla on for a
+-- save that has been played, and every chunk already visited has its vanilla
+-- cars written to disk; they will keep loading forever because generation
+-- already happened. That is the only hole, and this is the patch for it.
+--
+-- ADMIN-TRIGGERED, SURVEY FIRST. This deletes player-visible world objects, so
+-- it never runs on its own. survey() reports; purge() acts, and only when
+-- asked a second time. The honesty that matters: BOTH only see vehicles that
+-- are currently STREAMED IN. B42 exposes no enumerator for unloaded vehicles
+-- (the same wall RCRegistry.pruneOrphans documents), so a full retrofit means
+-- running this while travelling, not once from spawn. survey() reports the
+-- loaded count precisely so that limit is visible rather than implied.
+--
+-- WHAT IT SPARES, matching Layers 1 and 2 exactly - wrecks and trailers
+-- (isExemptName), plus four protections the spawn-side layers never need:
+-- claimed cars, occupied cars, safehouse cars, and cars still held by the
+-- Presence Law. A retrofit sweep must not be a way to delete the fleet players
+-- are actually driving.
+-- ---------------------------------------------------------------------------
+
+-- Classify one loaded vehicle for the retrofit. Returns a reason string:
+--   "notvanilla" | "exempt" | "claimed" | "occupied" | "safehouse" | "held"
+--   | "purge"
+local function retrofitVerdict(vehicle)
+    local script, full
+    if not pcall(function() script = vehicle:getScript() end) or not script then
+        return "notvanilla"
+    end
+    pcall(function() full = script:getFullName() end)
+    if type(full) ~= "string" then return "notvanilla" end
+    if not scriptIsVanilla(script) then return "notvanilla" end
+    if RCNoVanilla.isExemptName(full) then return "exempt" end
+
+    if RCClaim and RCClaim.isClaimed(vehicle) then return "claimed" end
+
+    local occupied = false
+    pcall(function()
+        local seats = vehicle:getScript():getPassengerCount() or 0
+        for s = 0, seats - 1 do
+            if vehicle:isSeatOccupied(s) then occupied = true; return end
+        end
+    end)
+    if occupied then return "occupied" end
+
+    local sheltered = false
+    pcall(function() sheltered = SafeHouse.getSafeHouse(vehicle:getSquare()) ~= nil end)
+    if sheltered then return "safehouse" end
+
+    -- The Presence Law, borrowed from the Janitor: a car attributed to someone
+    -- who still logs in is their car, whatever script it happens to run.
+    local user
+    pcall(function() user = vehicle:getModData()["RC_LastUser"] end)
+    if user then
+        local days = RCShared.cfg().janitorDays
+        local seen = RCRegistry and RCRegistry.lastSeenAny(user)
+        if seen and days and days > 0 and (os.time() - seen) <= days * 86400 then
+            return "held"
+        end
+    end
+
+    return "purge"
+end
+
+local function forEachLoadedVehicle(fn)
+    local cell = getCell and getCell()
+    if not cell then return end
+    local vs = cell:getVehicles()
+    if not vs then return end
+    -- Set, not List: get(i) crashes, :iterator() is the supported path.
+    local ok, it = pcall(function() return vs:iterator() end)
+    if not ok or not it then return end
+    while it:hasNext() do
+        local v = it:next()
+        if v then pcall(fn, v) end
+    end
+end
+
+-- Read-only census of what a purge would do. Writes nothing.
+function RCNoVanilla.survey()
+    local out = { loaded = 0, purge = 0, exempt = 0, claimed = 0,
+                  occupied = 0, safehouse = 0, held = 0, notvanilla = 0, sample = {} }
+    forEachLoadedVehicle(function(v)
+        out.loaded = out.loaded + 1
+        local verdict = retrofitVerdict(v)
+        out[verdict] = (out[verdict] or 0) + 1
+        if verdict == "purge" and #out.sample < 12 then
+            out.sample[#out.sample + 1] = {
+                name = v:getScriptName(),
+                x = math.floor(v:getX()), y = math.floor(v:getY()),
+            }
+        end
+    end)
+    return out
+end
+
+-- Remove up to `budget` vanilla cars. Loot is dumped to the ground first - the
+-- suite never vaporizes loot, and a retrofit is exactly the moment a player
+-- would lose a stash they did not know was at risk.
+function RCNoVanilla.purge(budget)
+    budget = tonumber(budget) or 25
+    local doomed = {}
+    -- Collect first, remove after: permanentlyRemove() mutates the cell's
+    -- vehicle Set, and mutating it mid-iterator is the crash this codebase
+    -- already learned about the hard way.
+    forEachLoadedVehicle(function(v)
+        if #doomed < budget and retrofitVerdict(v) == "purge" then
+            doomed[#doomed + 1] = v
+        end
+    end)
+
+    local removed, dumped = 0, 0
+    for i = 1, #doomed do
+        local v = doomed[i]
+        local name, x, y = "?", 0, 0
+        pcall(function()
+            name = v:getScriptName()
+            x, y = math.floor(v:getX()), math.floor(v:getY())
+        end)
+        local okDump, n = pcall(RCShared.dumpVehicleContainers, v)
+        if okDump and type(n) == "number" then dumped = dumped + n end
+        if pcall(function() v:permanentlyRemove() end) then
+            removed = removed + 1
+            RCAudit.log("NOVANILLA-PURGE", nil, { vehicle = name, x = x, y = y })
+        end
+    end
+    if removed > 0 then
+        print(string.format(
+            "[RC] NoVanilla retrofit: removed %d vanilla vehicle(s), %d item(s) dumped",
+            removed, dumped))
+    end
+    return removed, dumped
+end
+
 local function onSpawnVehicleStart(vehicle)
     if exemptDepth > 0 then return end
     local c = RCShared.cfg()

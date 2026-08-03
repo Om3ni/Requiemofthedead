@@ -220,6 +220,111 @@ function RCJanitor.consider(vehicle)
 end
 
 -- ---------------------------------------------------------------------------
+-- ASSESS - the read-only mirror of consider()'s ladder (2026-08-02).
+--
+-- The admin fleet panel needs to show WHY a car stands where it does, and the
+-- one thing it must never do is compute that itself. A second implementation
+-- of the Presence Law would drift from this one, and a panel that disagrees
+-- with the sweep is worse than a panel with no verdict at all - it would be
+-- read as authoritative right up until it deleted someone's car.
+--
+-- So the law is stated ONCE, above, and this walks the same gates in the same
+-- order without acting on them. Two hard rules:
+--   * it WRITES NOTHING. consider() owns the stamps; if this stamped anything,
+--     opening the panel would restart the clock on every car the admin looked
+--     at - observation would grant immunity.
+--   * it never consults the budget. Budget decides how many cars a SWEEP
+--     eats, not whether a car is eligible; a car that is due but out of budget
+--     this hour is still due, and the panel must say so.
+--
+-- Returns a table (never nil) with:
+--   verdict  "off" | "claimed" | "wreck" | "clock" | "held" | "shielded" | "due"
+--   lastUser attributed keeper, if any
+--   idle     seconds since last observed use, downtime-credited (nil if unstamped)
+--   window   the configured abandonment window in seconds
+--   dueIn    seconds until eligible; <= 0 means eligible now (nil when N/A)
+--   userIdle seconds since lastUser was last online (nil if never seen)
+--   shields  { claimed, wreck, phunzone, safehouse } - true only when APPLYING
+-- ---------------------------------------------------------------------------
+function RCJanitor.assess(vehicle)
+    local out = { verdict = "off", shields = {} }
+    local c = RCShared.cfg()
+    if not (c.enabled and c.janitorEnabled) then return out end
+    if not c.janitorDays or c.janitorDays <= 0 then return out end
+    if not vehicle then return out end
+
+    local md
+    if not pcall(function() md = vehicle:getModData() end) or not md then return out end
+
+    out.window = c.janitorDays * 86400
+
+    if RCClaim.isClaimed(vehicle) then
+        out.verdict = "claimed"
+        out.shields.claimed = true
+        return out
+    end
+    if RCShared.isWreck(vehicle) then
+        out.verdict = "wreck"
+        out.shields.wreck = true
+        return out
+    end
+
+    local now = os.time()
+    out.lastUser = md[KEY_USER]
+
+    -- Unstamped, or in use right now: the clock is at zero either way. We do
+    -- NOT re-derive the signature here - comparing it would tell us the sweep
+    -- is about to restart the clock, which is a fact about the next sweep, not
+    -- about the car.
+    if md[KEY_SEEN] == nil then
+        out.verdict = "clock"
+        out.dueIn = out.window
+        return out
+    end
+
+    out.idle = (now - md[KEY_SEEN]) - (RCRegistry.downtimeTotal() - (md[KEY_DT] or 0))
+    out.dueIn = out.window - out.idle
+
+    if out.lastUser then
+        local seen = RCRegistry.lastSeenAny(out.lastUser)
+        if seen then out.userIdle = now - seen end
+    end
+
+    if out.idle <= out.window then
+        out.verdict = "clock"
+        return out
+    end
+
+    -- THE PRESENCE LAW: their stuff is preserved while they keep logging in.
+    if out.userIdle and out.userIdle <= out.window then
+        out.verdict = "held"
+        return out
+    end
+
+    -- Past every clock gate; only the location shields remain. Both are read
+    -- exactly as consider() reads them, including the deliberate ordering -
+    -- safehouse last, because it is the expensive one.
+    local x, y = 0, 0
+    pcall(function() x = vehicle:getX(); y = vehicle:getY() end)
+    if RCShared.phunZoneBlocks(x, y) then
+        out.verdict = "shielded"
+        out.shields.phunzone = true
+        return out
+    end
+
+    local sheltered = false
+    pcall(function() sheltered = SafeHouse.getSafeHouse(vehicle:getSquare()) ~= nil end)
+    if sheltered then
+        out.verdict = "shielded"
+        out.shields.safehouse = true
+        return out
+    end
+
+    out.verdict = "due"
+    return out
+end
+
+-- ---------------------------------------------------------------------------
 -- Attribution feed: observe the vanilla 'vehicle' command channel (the
 -- RCDamageAudit pattern - a listener, never a wrap; the module string is
 -- vanilla's, not ours, so this does NOT belong in RCServer's dispatcher).
@@ -232,6 +337,24 @@ local EXCLUDE = {
     damageWindow = true, crash = true, damageFromHitChr = true,
     -- lifecycle/admin paths, not "use"
     remove = true,
+    -- STAFF EDITS ARE NOT USE (2026-08-02). Every command below is sent ONLY
+    -- from a cheat/debug surface - vanilla's mechanics cheat menu, the debug
+    -- spawn UI, the Patrick scenario - and several are gated server-side on
+    -- Capability.UseMechanicsCheat. Attribution is a record of who USES a car,
+    -- so a staff member editing one must not become its keeper: without these
+    -- here, an admin repairing a row from the vehicles tab is stamped
+    -- RC_LastUser, and the Presence Law then shields that car from reclamation
+    -- for as long as the admin keeps logging in. A repair sweep across the map
+    -- would silently adopt every vehicle it touched - the same class of error
+    -- as letting a vandal inherit the windshield they smashed, which is why
+    -- these sit beside the damage paths rather than in a list of their own.
+    --
+    -- fixPart is DELIBERATELY ABSENT: that is the PLAYER mechanic repair
+    -- (skill-checked, sets haveBeenRepaired, no capability gate), which is
+    -- exactly the kind of care that should keep a car alive.
+    getKey = true, repair = true, repairPart = true, setPartCondition = true,
+    setContainerContentAmount = true, setRust = true, cheatHotwire = true,
+    setAlarmed = true,
 }
 
 -- Attribute a vehicle to `name` as USED right now: stamp the keeper + restart

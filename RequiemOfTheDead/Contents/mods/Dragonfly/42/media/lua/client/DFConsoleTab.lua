@@ -58,11 +58,30 @@ end
 -- live one and drop it on rebuild.
 local activeListener = nil
 
-local function build(spec, panel, x, y, w, h)
-    local PADDING = 6
-    local BTN_H   = 22
+-- Handles for the reflow. Console had drifted to PADDING=6 / BTN_H=22, the same
+-- two-pixel deviation as the Vehicles tab and for the same reason: no shared
+-- place to read the family's metrics from. Both now take DFKit.metrics.
+local ui
 
-    local filterCombo = ISComboBox:new(x + PADDING, y + PADDING, 160, BTN_H, panel)
+local function layout(panel, x, y, w, h)
+    if not ui then return end
+    local m = DFKit.metrics
+    local R = DFKit.layout(panel, x, y, w, h)
+
+    local bar = R:header(m.btnH + m.pad)
+    ui.filterCombo:setX(bar.x);       ui.filterCombo:setY(bar.y)
+    ui.copyBtn:setX(bar.x + 170);     ui.copyBtn:setY(bar.y)
+    ui.clearBtn:setX(bar.x + 280);    ui.clearBtn:setY(bar.y)
+    ui.testBtn:setX(bar.x + 370);     ui.testBtn:setY(bar.y)
+
+    ui.list:setX(R.x);        ui.list:setY(R.y)
+    ui.list:setWidth(R.w);    ui.list:setHeight(R.h)
+end
+
+local function build(spec, panel, x, y, w, h)
+    local m = DFKit.metrics
+
+    local filterCombo = ISComboBox:new(0, 0, 160, m.btnH, panel)
     filterCombo:initialise()
     filterCombo:instantiate()
     filterCombo:addOptionWithData("All sources",    "all")
@@ -71,13 +90,10 @@ local function build(spec, panel, x, y, w, h)
     filterCombo:addOptionWithData("Mod traffic",    "Mod")
     panel:addChild(filterCombo)
 
-    local list = ConsoleList:new(
-        x + PADDING,
-        y + PADDING + BTN_H + PADDING,
-        w - PADDING * 2,
-        h - (PADDING * 3 + BTN_H))
+    local list = ConsoleList:new(0, 0, 10, 10)
     list.itemheight  = 18
     list.drawBorder  = true
+    DFKit.well(list)
     list:initialise()
     list:instantiate()
     panel:addChild(list)
@@ -97,18 +113,13 @@ local function build(spec, panel, x, y, w, h)
         refresh()
     end
 
-    local copyBtn = ISButton:new(x + PADDING + 170, y + PADDING, 100, BTN_H,
-        "Copy all", panel, function()
-            local filter = "all"
-            if filterCombo.getOptionData then
-                filter = filterCombo:getOptionData(filterCombo.selected) or "all"
-            end
-            DFLog.copyAllToClipboard(filter)
-        end)
-    copyBtn.borderColor.a = 0.3
-    copyBtn:initialise()
-    copyBtn:instantiate()
-    panel:addChild(copyBtn)
+    local copyBtn = DFKit.button(panel, 0, 0, 100, "Copy all", panel, function()
+        local filter = "all"
+        if filterCombo.getOptionData then
+            filter = filterCombo:getOptionData(filterCombo.selected) or "all"
+        end
+        DFLog.copyAllToClipboard(filter)
+    end)
 
     -- Deliberately throw one non-fatal Lua error, to prove the whole error path is
     -- alive: engine catches -> KahluaThread.m_errors_list -> DFErrorPoller ->
@@ -120,28 +131,19 @@ local function build(spec, panel, x, y, w, h)
     -- the engine catches Lua errors there, logs the trace and carries on - which is
     -- exactly why modded PZ spams traces without dying. The handler removes itself
     -- before throwing, so it fires once and cannot loop.
-    local testBtn = ISButton:new(x + PADDING + 370, y + PADDING, 90, BTN_H,
-        "Test error", panel, function()
-            local function boom()
-                Events.OnTick.Remove(boom)
-                error("[Dragonfly] simulated console test error - safe to ignore")
-            end
-            Events.OnTick.Add(boom)
-            if DFFeedback then
-                DFFeedback.good("Simulated error thrown; it should appear below within a second.")
-            end
-        end)
-    testBtn.borderColor = { r = 0.75, g = 0.65, b = 0.35, a = 1 }
-    testBtn:initialise()
-    testBtn:instantiate()
-    panel:addChild(testBtn)
+    local testBtn = DFKit.button(panel, 0, 0, 90, "Test error", panel, function()
+        local function boom()
+            Events.OnTick.Remove(boom)
+            error("[Dragonfly] simulated console test error - safe to ignore")
+        end
+        Events.OnTick.Add(boom)
+        if DFFeedback then
+            DFFeedback.good("Simulated error thrown; it should appear below within a second.")
+        end
+    end, "warn")
 
-    local clearBtn = ISButton:new(x + PADDING + 280, y + PADDING, 80, BTN_H,
-        "Clear", panel, function() DFLog.clear(); refresh() end)
-    clearBtn.borderColor.a = 0.3
-    clearBtn:initialise()
-    clearBtn:instantiate()
-    panel:addChild(clearBtn)
+    local clearBtn = DFKit.button(panel, 0, 0, 80, "Clear", panel,
+        function() DFLog.clear(); refresh() end)
 
     if activeListener then DFLog.unsubscribe(activeListener) end
     activeListener = function() refresh() end
@@ -153,6 +155,11 @@ local function build(spec, panel, x, y, w, h)
     -- the combo back above so its expanded options aren't hidden behind rows.
     filterCombo:bringToTop()
 
+    ui = {
+        filterCombo = filterCombo, list = list,
+        copyBtn = copyBtn, clearBtn = clearBtn, testBtn = testBtn,
+    }
+    layout(panel, x, y, w, h)
     refresh()
 end
 
@@ -169,10 +176,11 @@ Events.OnGameStart.Add(function()
     end
     local ok, err = pcall(function()
         DFRegistry.registerTab{
-            id    = "console",
-            label = "Console",
-            order = 1000,
-            build = build,
+            id     = "console",
+            label  = "Console",
+            order  = 1000,
+            build  = build,
+            resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
         }
     end)
     if not ok then
