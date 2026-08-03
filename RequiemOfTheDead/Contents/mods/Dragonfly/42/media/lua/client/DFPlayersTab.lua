@@ -397,8 +397,9 @@ end
 -- ─────────────────────────────────────────────────────────────────────────
 
 local function buildDetail(panel, x, y, w, h)
-    local PAD   = 6
-    local BTN_H = 24
+    -- was PAD = 6 here and PAD = 8 further down in this same file
+    local PAD   = DFKit.metrics.pad
+    local BTN_H = DFKit.metrics.btnH
     local d     = PlayersTab.detail
     d.panel = panel
     d.actionButtons = {}
@@ -428,7 +429,7 @@ local function buildDetail(panel, x, y, w, h)
     panel:addChild(accCombo)
     d.accessCombo = accCombo
 
-    local accApply = ISButton:new(x + PAD + 176, row1Y, 70, BTN_H, "Apply", panel,
+    local accApply = DFKit.button(panel, x + PAD + 176, row1Y, 70, "Apply", panel,
         withSelected("Set Access", Capability.ChangeAccessLevel, function(row)
             local idx = accCombo.selected or 0
             local opt = accCombo.options and accCombo.options[idx]
@@ -448,9 +449,6 @@ local function buildDetail(panel, x, y, w, h)
                     "Set %s's access to %s.", row.username, lvl))
             end
         end))
-    accApply.borderColor.a = 0.4
-    accApply:initialise(); accApply:instantiate()
-    panel:addChild(accApply)
     d.actionButtons[#d.actionButtons + 1] = accApply
 
     -- Restore Memoir: disaster-recovery rebuild from the server's memoir archive
@@ -499,7 +497,7 @@ local function buildDetail(panel, x, y, w, h)
         return math.floor(v + 0.5)
     end
 
-    local restoreBtn = ISButton:new(x + PAD + 300, row1Y, 130, BTN_H, "Restore Memoir", panel,
+    local restoreBtn = DFKit.button(panel, x + PAD + 300, row1Y, 130, "Restore Memoir", panel,
         withSelection("Restore Memoir", Capability.CanModifyPlayerStatsInThePlayerStatsUI, function(names)
             -- Captured at CLICK time so the value the admin just looked at is the
             -- one that gets applied, not whatever the field holds later.
@@ -536,19 +534,13 @@ local function buildDetail(panel, x, y, w, h)
                     .. "per-player results appear in the Console tab.", send)
             else send() end
         end))
-    restoreBtn.borderColor.a = 0.4
-    restoreBtn:initialise(); restoreBtn:instantiate()
-    panel:addChild(restoreBtn)
     d.actionButtons[#d.actionButtons + 1] = restoreBtn
     d.restoreButton = restoreBtn
 
     -- Action button row
     local row2Y = row1Y + BTN_H + PAD
-    local function mkButton(label, bx, bw, callback)
-        local btn = ISButton:new(x + PAD + bx, row2Y, bw, BTN_H, label, panel, callback)
-        btn.borderColor.a = 0.4
-        btn:initialise(); btn:instantiate()
-        panel:addChild(btn)
+    local function mkButton(label, bx, bw, callback, kind)
+        local btn = DFKit.button(panel, x + PAD + bx, row2Y, bw, label, panel, callback, kind)
         d.actionButtons[#d.actionButtons + 1] = btn
         return btn
     end
@@ -698,9 +690,9 @@ local function build(spec, panel, x, y, w, h)
     PlayersTab.detail = {}
     PlayersTab.sel:clear()
 
-    local PAD       = 8
-    local BTN_H     = 24
-    local HEADER_H  = 20
+    local PAD       = DFKit.metrics.pad
+    local BTN_H     = DFKit.metrics.btnH
+    local HEADER_H  = DFKit.metrics.headerH
     local DETAIL_H  = 96
 
     local cursorY = PAD
@@ -724,11 +716,8 @@ local function build(spec, panel, x, y, w, h)
         refreshDetail()
     end
 
-    local refreshBtn = ISButton:new(PAD + 170, cursorY, 90, BTN_H, "Refresh",
+    local refreshBtn = DFKit.button(panel, PAD + 170, cursorY, 90, "Refresh",
         panel, requestSnapshot)
-    refreshBtn.borderColor.a = 0.4
-    refreshBtn:initialise(); refreshBtn:instantiate()
-    panel:addChild(refreshBtn)
 
     -- Stats label, right-justified on the same row
     local stats = ISLabel:new(PAD + 280, cursorY + 4, 16,
@@ -751,6 +740,7 @@ local function build(spec, panel, x, y, w, h)
     local list = PlayerList:new(PAD, cursorY, w - PAD * 2, listH)
     list.itemheight = 28
     list.drawBorder = true
+    DFKit.well(list)
     list:initialise(); list:instantiate()
     panel:addChild(list)
     PlayersTab.listBox = list

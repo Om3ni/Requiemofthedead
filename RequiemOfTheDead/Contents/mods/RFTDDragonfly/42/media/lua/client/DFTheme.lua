@@ -213,6 +213,39 @@ function DFTheme.fitText(str, font, maxW)
     return s .. ".."
 end
 
+-- ---------------------------------------------------------------------------
+-- Skin bridge: hand Growl's palette to Core's DFKit
+-- ---------------------------------------------------------------------------
+--
+-- Core owns tokens AND structure; a skin overrides TOKENS ONLY. DFKit ignores
+-- any key it does not already define, so geometry cannot ride in through here -
+-- that is what guarantees a tab lays out identically in the classic panel and
+-- in the deck, and only its paint changes.
+--
+-- Growl's vocabulary stays inside Growl: Core must never learn what "scar" or
+-- "sight" mean. This is the one place the two naming systems meet.
+if DFKit and DFKit.applySkin then
+    DFKit.applySkin{
+        col = {
+            bg        = DFTheme.col.void,
+            panel     = DFTheme.col.murk,
+            line      = DFTheme.col.scar,
+            text      = DFTheme.col.bone,
+            textDim   = DFTheme.col.ash,
+            accent    = DFTheme.col.sight,      -- ATTENTION ONLY, per rule
+            accentDim = DFTheme.col.sightDim,
+            ok        = DFTheme.col.fen,
+            warn      = DFTheme.col.ochre,
+            danger    = DFTheme.col.oldblood,
+        },
+        font = {
+            small = DFTheme.font.body,
+            label = DFTheme.font.label,
+        },
+    }
+    print("[Deck] DFTheme -> DFKit skin bridge applied")
+end
+
 print("[Deck] DFTheme loaded - the Growl constitution is in force")
 
 return DFTheme

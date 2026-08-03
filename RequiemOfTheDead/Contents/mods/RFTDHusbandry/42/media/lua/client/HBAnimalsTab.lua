@@ -162,9 +162,12 @@ function AnimalsList:render()
     self:clearStencilRect()
 end
 
-local function attachHeader(panel, listX, headerY)
+-- Reads its origin from AnimalsTab each frame rather than closing over the
+-- coords it was built with, so a reflow can move the header without rebuilding
+-- the panel (a rebuild would re-wrap prerender).
+local function attachHeader(panel)
     panel.drawColumnsHeader = function(self_)
-        DFColumns.drawHeader(self_, COLS, listX, headerY, FONT)
+        DFColumns.drawHeader(self_, COLS, AnimalsTab.headerX or 8, AnimalsTab.headerY or 8, FONT)
     end
     local origPrerender = panel.prerender
     panel.prerender = function(self_)
@@ -318,77 +321,89 @@ Events.OnServerCommand.Add(onServerCommand)
 -- Tab build
 -- ─────────────────────────────────────────────────────────────────────────
 
+local LOG_H = 130   -- probe/audit pane; fixed, the list absorbs the slack
+
+-- Positioning only. Same geometry as the hand-rolled version - the buttons keep
+-- their exact offsets - but PAD/BTN_H/HEADER_H now come from DFKit.metrics.
+local function layout(panel, x, y, w, h)
+    local m = DFKit.metrics
+    local R = DFKit.layout(panel, x, y, w, h)
+    local s = R:stack(0)
+
+    -- Row 1: action buttons, all on one line
+    local bx, by = s:row(m.btnH + m.pad)
+    local B = AnimalsTab.btns
+    local offs = { 0, 100, 220, 310, 420, 540, 650 }
+    for i = 1, #B do B[i]:setX(bx + offs[i]); B[i]:setY(by) end
+
+    -- Row 2: column header (drawn via panel.prerender)
+    local _, hy = s:row(m.headerH)
+    AnimalsTab.headerX, AnimalsTab.headerY = R.x, hy
+
+    -- Row 3: animal list, sized to whatever the fixed rows leave behind
+    local listH = h - s.y - (LOG_H + m.pad * 2 + 22)
+    if listH < 60 then listH = 60 end
+    local lx, ly = s:row(listH + m.pad)
+    AnimalsTab.listBox:setX(lx);  AnimalsTab.listBox:setY(ly)
+    AnimalsTab.listBox:setWidth(R.w); AnimalsTab.listBox:setHeight(listH)
+
+    -- Row 4: log pane
+    local gx, gy = s:row(LOG_H + m.pad)
+    AnimalsTab.logBox:setX(gx);  AnimalsTab.logBox:setY(gy)
+    AnimalsTab.logBox:setWidth(R.w); AnimalsTab.logBox:setHeight(LOG_H)
+
+    -- Row 5: stats line
+    local sx, sy = s:row(16)
+    AnimalsTab.statsLabel:setX(sx); AnimalsTab.statsLabel:setY(sy)
+end
+
 local function build(spec, panel, x, y, w, h)
     AnimalsTab.selectedOid = nil
     clearHighlight()
 
-    local PAD      = 8
-    local BTN_H    = 24
-    local HEADER_H = 20
-    local LOG_H    = 130
+    AnimalsTab.btns = {
+        DFKit.button(panel, 0, 0, 90,  "Refresh",     panel, refresh),
+        DFKit.button(panel, 0, 0, 110, "Teleport to", panel, teleportToSelected),
+        DFKit.button(panel, 0, 0, 80,  "Probe",       panel, probeSelected),
+        DFKit.button(panel, 0, 0, 100, "Refill all",  panel, refillAll),
+        DFKit.button(panel, 0, 0, 100, "Starve all",  panel, starveAll, "danger"),
+        DFKit.button(panel, 0, 0, 100, "Clear log",   panel,
+            function() if AnimalsTab.logBox then AnimalsTab.logBox:clear() end end),
+        DFKit.button(panel, 0, 0, 100, "Copy log",    panel, copyLog),
+    }
 
-    -- Row 1: action buttons
-    local cursorY = PAD
+    attachHeader(panel)
 
-    local function mkBtn(label, bx, bw, handler)
-        local b = ISButton:new(bx, cursorY, bw, BTN_H, label, panel, handler)
-        b.borderColor.a = 0.4
-        b:initialise(); b:instantiate()
-        panel:addChild(b)
-        return b
-    end
-
-    mkBtn("Refresh",     PAD,        90,  refresh)
-    mkBtn("Teleport to", PAD + 100,  110, teleportToSelected)
-    mkBtn("Probe",       PAD + 220,  80,  probeSelected)
-    mkBtn("Refill all",  PAD + 310,  100, refillAll)
-    mkBtn("Starve all",  PAD + 420,  100, starveAll)
-    mkBtn("Clear log",   PAD + 540,  100, function() if AnimalsTab.logBox then AnimalsTab.logBox:clear() end end)
-    mkBtn("Copy log",    PAD + 650,  100, copyLog)
-
-    cursorY = cursorY + BTN_H + PAD
-
-    -- Row 2: column header (drawn via panel.prerender)
-    local headerY = cursorY
-    attachHeader(panel, PAD, headerY)
-    cursorY = cursorY + HEADER_H
-
-    -- Row 3: animal list (above the log pane)
-    local listH = h - cursorY - (LOG_H + PAD * 2 + 22)
-    local list = AnimalsList:new(PAD, cursorY, w - PAD * 2, listH)
+    local list = AnimalsList:new(0, 0, 10, 10)
     list.itemheight = 32   -- bumped from 18 for breathing room between rows
     list.drawBorder = true
+    DFKit.well(list)
     list:initialise(); list:instantiate()
     panel:addChild(list)
     AnimalsTab.listBox = list
-    cursorY = cursorY + listH + PAD
 
-    -- Row 4: log pane (probe results / action audits)
-    local log = LogList:new(PAD, cursorY, w - PAD * 2, LOG_H)
+    local log = LogList:new(0, 0, 10, 10)
     log.itemheight = 14
     log.drawBorder = true
+    DFKit.well(log)
     log:initialise(); log:instantiate()
     panel:addChild(log)
     AnimalsTab.logBox = log
-    cursorY = cursorY + LOG_H + PAD
 
-    -- Row 5: stats line
-    local stats = ISLabel:new(PAD, cursorY, 16, "Loaded animals: -",
-        0.75, 0.85, 0.95, 1, UIFont.Small, true)
-    stats:initialise(); stats:instantiate()
-    panel:addChild(stats)
-    AnimalsTab.statsLabel = stats
+    AnimalsTab.statsLabel = DFKit.label(panel, 0, 0, "Loaded animals: -")
 
+    layout(panel, x, y, w, h)
     refresh()
 end
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
     DFRegistry.registerTab{
-        id    = "animals",
-        label = "Animals",
-        order = 6,
-        build = build,
+        id     = "animals",
+        label  = "Animals",
+        order  = 6,
+        build  = build,
+        resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
     }
     print("[Husbandry] HBAnimalsTab registered into Dragonfly")
 end)

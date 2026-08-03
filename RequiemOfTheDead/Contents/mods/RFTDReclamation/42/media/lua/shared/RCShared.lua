@@ -38,8 +38,41 @@ RDEvents.registerNamespace("RC", RCShared.MODULE, {
 -- ---------------------------------------------------------------------------
 -- Sandbox config (cached). SandboxVars are fixed for a session; we read them
 -- once and bake the defaults in so every caller sees the same resolved values.
+--
+-- LIVE TUNING OVERLAY (2026-08-03). The Lifecycle tab edits these dials at
+-- runtime, so a value now resolves in two layers: an override table wins, and
+-- SandboxVars is the floor underneath it. Three things make that safe:
+--
+--   * The overlay is a PLAIN LUA TABLE here, deliberately. RCTuning (server)
+--     owns where it persists and RCServer owns who may write it; this file
+--     only knows how to READ one. That keeps the schema, the authority and
+--     the accessor in three separate places instead of one god-object.
+--   * cfg() is CACHED (the `if cfg then` below), so an override that is not
+--     followed by clearCfg() changes nothing at all. setOverrides() therefore
+--     clears the cache itself rather than trusting every caller to remember -
+--     a silently-stale cfg is exactly the class of bug that makes a tuning
+--     panel lie about what the server is doing.
+--   * SandboxVars is never written. The sandbox file is the admin's stated
+--     intent and lives outside Lua's writable jail anyway; overrides are a
+--     save-scoped layer on top, so wiping them restores the sandbox exactly.
+--
+-- Clients keep their own copy, pushed by the server on change, so the
+-- decorative client-side gates (hiding tools) agree with the authoritative
+-- server-side ones. A client that misses the push is cosmetically stale and
+-- self-corrects on the next push or relog - the server still gates.
 -- ---------------------------------------------------------------------------
 local cfg
+local overrides = {}
+
+-- Replace the whole override set and invalidate the cache. Whole-set rather
+-- than per-key so the server can push one authoritative snapshot and a client
+-- can never end up holding a half-applied mixture of two different pushes.
+function RCShared.setOverrides(t)
+    overrides = (type(t) == "table") and t or {}
+    RCShared.clearCfg()
+end
+
+function RCShared.getOverrides() return overrides end
 
 local function parseCSV(s)
     local set = {}
@@ -66,35 +99,56 @@ end
 
 function RCShared.cfg()
     if cfg then return cfg end
-    local sv = SandboxVars and SandboxVars.RFTDReclamation or {}
+    local raw = SandboxVars and SandboxVars.RFTDReclamation or {}
+    -- Resolve one option name through the overlay. A plain function, not an
+    -- __index metatable: Kahlua's handling of a FUNCTION __index is not
+    -- something this suite has verified, and cfg() is on every gate in the mod
+    -- - not the place to find out. Indexed per key rather than copied
+    -- wholesale, because SandboxVars entries are engine-backed and iterating
+    -- them is not something to rely on (the loadedScriptBodies lesson).
+    local function S(k)
+        local v = overrides[k]
+        if v ~= nil then return v end
+        return raw[k]
+    end
     cfg = {
-        enabled        = sv.Enabled ~= false,          -- default true
-        debug          = sv.Debug == true,             -- default false
-        claimsEnabled  = sv.ClaimsEnabled ~= false,    -- default true
-        maxClaims      = tonumber(sv.MaxClaims) or 2,  -- motor vehicles; 0 = unlimited
-        maxTrailers    = tonumber(sv.MaxClaimTrailers) or 1, -- trailers, own pool; 0 = unlimited
-        maxAllowed     = tonumber(sv.MaxAllowed) or 8,
-        inactivityDays = tonumber(sv.ClaimInactivityDays) or 14, -- real days, 0 = never
-        exemptUsers    = parseCSV(sv.ClaimExemptUsers), -- set keyed by lowercase username
+        enabled        = S("Enabled") ~= false,          -- default true
+        debug          = S("Debug") == true,             -- default false
+        claimsEnabled  = S("ClaimsEnabled") ~= false,    -- default true
+        maxClaims      = tonumber(S("MaxClaims")) or 2,  -- motor vehicles; 0 = unlimited
+        maxTrailers    = tonumber(S("MaxClaimTrailers")) or 1, -- trailers, own pool; 0 = unlimited
+        maxAllowed     = tonumber(S("MaxAllowed")) or 8,
+        inactivityDays = tonumber(S("ClaimInactivityDays")) or 14, -- real days, 0 = never
+        exemptUsers    = parseCSV(S("ClaimExemptUsers")), -- set keyed by lowercase username
         -- dismantle + engine-lock slice
-        adminOnlyDismantle = sv.AdminOnly == true,               -- default false
-        engineThreshold    = tonumber(sv.EngineThreshold) or 40, -- engine cond >= this blocks
-        engineTooGoodText  = flavorText(sv.EngineTooGoodText),   -- nil = translated default
-        dismantleTimePct   = tonumber(sv.DismantleTimePercent) or 100,
-        engineLockEnabled  = sv.EngineLockEnabled ~= false,      -- default true
-        respectClaims      = sv.RespectClaims ~= false,          -- default true
-        respectPhunZones   = sv.RespectPhunZones ~= false,       -- default true
+        adminOnlyDismantle = S("AdminOnly") == true,               -- default false
+        engineThreshold    = tonumber(S("EngineThreshold")) or 40, -- engine cond >= this blocks
+        engineTooGoodText  = flavorText(S("EngineTooGoodText")),   -- nil = translated default
+        dismantleTimePct   = tonumber(S("DismantleTimePercent")) or 100,
+        engineLockEnabled  = S("EngineLockEnabled") ~= false,      -- default true
+        respectClaims      = S("RespectClaims") ~= false,          -- default true
+        respectPhunZones   = S("RespectPhunZones") ~= false,       -- default true
         -- janitor (abandoned-vehicle reclamation -> token pools)
-        janitorEnabled = sv.JanitorEnabled ~= false,             -- default true
-        janitorDays    = tonumber(sv.JanitorAbandonDays) or 14,  -- REAL days; fractions ok; 0 = off
-        janitorBudget  = tonumber(sv.JanitorFeedsBudget) or 3,   -- max reclaims per sweep
+        janitorEnabled = S("JanitorEnabled") ~= false,             -- default true
+        janitorDays    = tonumber(S("JanitorAbandonDays")) or 14,  -- REAL days; fractions ok; 0 = off
+        janitorBudget  = tonumber(S("JanitorFeedsBudget")) or 3,   -- max reclaims per sweep
         -- staff vehicle spawner
-        spawnerEnabled = sv.SpawnerEnabled ~= false,             -- default true
-        spawnerAccess  = tonumber(sv.SpawnerAccess) or 2,        -- 1=admin, 2=+moderator, 3=all staff
-        spawnerMissingMax = tonumber(sv.SpawnerMissingPartsMax) or 6, -- "Missing parts" tick: max N stripped/spawn
+        spawnerEnabled = S("SpawnerEnabled") ~= false,             -- default true
+        spawnerAccess  = tonumber(S("SpawnerAccess")) or 2,        -- 1=admin, 2=+moderator, 3=all staff
+        spawnerMissingMax = tonumber(S("SpawnerMissingPartsMax")) or 6, -- "Missing parts" tick: max N stripped/spawn
         -- vanilla-spawn suppression (RCNoVanilla.lua)
-        noVanillaVehicles = sv.NoVanillaVehicles ~= false,       -- default true; map spawns
-        noVanillaStories  = sv.NoVanillaStoryVehicles ~= false,  -- default true; story spawns -> burnt hulls
+        noVanillaVehicles = S("NoVanillaVehicles") ~= false,       -- default true; map spawns
+        noVanillaStories  = S("NoVanillaStoryVehicles") ~= false,  -- default true; story spawns -> burnt hulls
+        -- REPLACEMENT LIFECYCLE (RCRespawn.lua): reclaimed/destroyed cars mint
+        -- tokens, a metered worker spends tokens back into the world near
+        -- players who have nothing.
+        respawnEnabled     = S("RespawnEnabled") ~= false,             -- default true
+        respawnPerSweep    = tonumber(S("RespawnPerSweep")) or 2,      -- placements per hourly pass; 0 = paused
+        respawnMinDist     = tonumber(S("RespawnMinDistance")) or 40,  -- tiles: never in a player's lap
+        respawnMaxDist     = tonumber(S("RespawnMaxDistance")) or 250, -- tiles: outward search limit
+        respawnModdedOnly  = S("RespawnModdedOnly") ~= false,          -- default true; no vanilla in the lifecycle
+        respawnCondition   = tonumber(S("RespawnCondition")) or 4,     -- 1 random 2 perfect 3 average 4 low
+        respawnOnDestroy   = S("RespawnOnDestruction") ~= false,       -- default true; wreck-transition minting
     }
     return cfg
 end
@@ -153,6 +207,20 @@ end
 function RCShared.isTrailer(vehicle)
     local name = scriptName(vehicle)
     return (name ~= nil) and string.contains(name, "Trailer") or false
+end
+
+-- Display name for a vehicle script: drop the module prefix and space out the
+-- CamelCase ("Base.PickUpVanMccoy" -> "Pick Up Van Mccoy"). Lives here because
+-- two surfaces render vehicle names to players - the fleet panel and the admin
+-- vehicles tab - and they must not disagree about what a car is called.
+-- (RCMyVehicles still carries its own twin of this; it migrates the next time
+-- that file is touched. Incremental adoption, same as DFKit's.)
+function RCShared.prettyVehicleName(scriptName)
+    if not scriptName or scriptName == "" then return "?" end
+    local s = scriptName:gsub("^%a+%.", "")
+    s = s:gsub("_", " ")
+    s = s:gsub("(%l)(%u)", "%1 %2")
+    return s
 end
 
 -- Float a halo message over a character. Client-side use only (HaloTextHelper

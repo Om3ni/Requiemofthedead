@@ -71,5 +71,30 @@
     "Sandbox_RC_NoVanillaVehicles_tooltip": "Vanilla drivable vehicles no longer spawn on the map: parking stalls, traffic jams, dealership lots, business fleets. Applies from the very first chunk of a fresh world; on an existing world only not-yet-visited areas are affected and nothing already spawned is removed. Burnt/smashed wrecks and trailers still spawn, and vehicles added by mods are untouched - including packs that register under the Base module. Story set-pieces are handled by the option below.",
 
     "Sandbox_RC_NoVanillaStoryVehicles": "Story Vehicles Spawn As Burnt Hulls",
-    "Sandbox_RC_NoVanillaStoryVehicles_tooltip": "Randomized stories that hardcode a vanilla vehicle (police blockades, crash scenes, camps, sieges) spawn the burnt hull of that vehicle instead, so the scene keeps its shape without gifting a drivable car. Modded vehicles - including story-swap mods that redirect to a vehicle pack - are never touched, and neither are staff-spawner vehicles. To remove the scenes entirely, use the vanilla 'Vehicle Story' / 'Zone Story' frequency options instead."
+    "Sandbox_RC_NoVanillaStoryVehicles_tooltip": "Randomized stories that hardcode a vanilla vehicle (police blockades, crash scenes, camps, sieges) spawn the burnt hull of that vehicle instead, so the scene keeps its shape without gifting a drivable car. Modded vehicles - including story-swap mods that redirect to a vehicle pack - are never touched, and neither are staff-spawner vehicles. To remove the scenes entirely, use the vanilla 'Vehicle Story' / 'Zone Story' frequency options instead.",
+
+    "Sandbox_RC_RespawnEnabled": "Replacement Lifecycle",
+    "Sandbox_RC_RespawnEnabled_tooltip": "Vehicles that leave the world come back somewhere useful. Reclaimed, dismantled and destroyed vehicles mint respawn tokens; each hour a metered number of those tokens are spent placing fresh vehicles near players. Fleet size stays roughly flat, but the fleet MIGRATES out of dead corners of the map and back to where people are actually playing. Placements only ever land in real parking areas - never on grass - and never inside a safehouse.",
+
+    "Sandbox_RC_RespawnPerSweep": "Replacements Per Hour",
+    "Sandbox_RC_RespawnPerSweep_tooltip": "Upper bound on vehicles placed in one hourly sweep. This is a ceiling, not a quota: a placement only happens if a token is available AND somewhere legal to park is loaded nearby, so the real rate is usually lower. 0 pauses placement while still banking tokens, so you can let a pool build and then open the tap.",
+
+    "Sandbox_RC_RespawnMinDistance": "Replacement: Minimum Distance",
+    "Sandbox_RC_RespawnMinDistance_tooltip": "Tiles. A replacement never appears closer than this to the player it was placed for, so cars are never seen popping into existence. Roughly 40 is just beyond comfortable view distance.",
+
+    "Sandbox_RC_RespawnMaxDistance": "Replacement: Maximum Distance",
+    "Sandbox_RC_RespawnMaxDistance_tooltip": "Tiles. How far out to search for a legal parking spot before giving up for this sweep. In practice the edge of the loaded map usually stops the search first - vehicles can only be placed in streamed-in chunks - which is what keeps replacements tracking the active play area.",
+
+    "Sandbox_RC_RespawnModdedOnly": "Replacements Are Modded Vehicles Only",
+    "Sandbox_RC_RespawnModdedOnly_tooltip": "The lifecycle never places a vanilla vehicle. Use this when you run vehicle packs and have suppressed vanilla map spawns, so the respawner cannot quietly reintroduce the fleet you just removed. Vehicles registered by mods under the Base module still count as modded - the test is which mod first defined the vehicle, not what it is named. Turn off to let the lifecycle draw from everything installed.",
+
+    "Sandbox_RC_RespawnCondition": "Replacement Condition",
+    "Sandbox_RC_RespawnCondition_tooltip": "Part wear on placed vehicles. Fuel and battery charge are always rolled independently, and replacements never come with a key in the glovebox - a vehicle the world put back is something to find and get running, not a delivery.",
+    "Sandbox_RC_RespawnConditionValues_option1": "Random (1-100%)",
+    "Sandbox_RC_RespawnConditionValues_option2": "Perfect (100%)",
+    "Sandbox_RC_RespawnConditionValues_option3": "Average (40-80%)",
+    "Sandbox_RC_RespawnConditionValues_option4": "Poor (1-40%)",
+
+    "Sandbox_RC_RespawnOnDestruction": "Destroyed Vehicles Mint Replacements",
+    "Sandbox_RC_RespawnOnDestruction_tooltip": "A vehicle wrecked by fire or collision counts as leaving the fleet and mints a replacement token, alongside the tokens from Janitor reclamation and field dismantle. The replacement goes to the world, not to whoever lost the vehicle, so destroying your own car is not a way to farm new ones. Turn off if you want only reclamation and dismantle to feed the pool."
 }

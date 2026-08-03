@@ -64,7 +64,10 @@ local function build(spec, panel, x, y, w, h)
 
     LSTours.load()
 
-    local PAD, BTN_H, ROW, LBL = 8, 24, 28, 16
+    -- Metrics from DFKit so this tab cannot drift from the family. ROW/LBL stay
+    -- local: they are Longstrider's own list-row and label rhythm, not shared.
+    local PAD, BTN_H = DFKit.metrics.pad, DFKit.metrics.btnH
+    local ROW, LBL   = 28, 16
     local LEFT_W   = 210
     local headH    = ROW
     local bottomH  = ROW * 2 + PAD
@@ -119,15 +122,18 @@ local function build(spec, panel, x, y, w, h)
     toursList = ToursList:new(PAD, midY, LEFT_W - PAD, listH)
     toursList.itemheight = 24
     toursList.drawBorder = true
+    DFKit.well(toursList)
     toursList:initialise(); toursList:instantiate()
     toursList.onSelectTour = function(id) selectTour(id) end
     panel:addChild(toursList)
 
+    -- The fourth copy of this helper in the family; now a one-line delegate so
+    -- the call sites below are untouched. LSTab keeps its hand-rolled region
+    -- maths for now - the cached map is re-parented across rebuilds and needs
+    -- setMapSize alongside any reflow, so it gets no `resize` hook until that
+    -- is done deliberately rather than blind.
     local function mkBtn(label, bx, bw, by, cb)
-        local b = ISButton:new(bx, by, bw, BTN_H, label, panel, cb)
-        b.borderColor.a = 0.4
-        b:initialise(); b:instantiate(); panel:addChild(b)
-        return b
+        return DFKit.button(panel, bx, by, bw, label, panel, cb)
     end
 
     local addBtn = mkBtn("Add", PAD, 58, listBtnY, function()
@@ -200,15 +206,13 @@ local function build(spec, panel, x, y, w, h)
     addLabel("Dwell ms", r1y)
     dwellField = addField(tostring(LSTours.dwellMs), 58, r1y, true, nil)
 
-    gridBtn = ISButton:new(cur, r1y, 92, BTN_H, LSTours.gridOn and "Grid: ON" or "Grid: OFF", panel, function()
+    gridBtn = mkBtn(LSTours.gridOn and "Grid: ON" or "Grid: OFF", cur, 92, r1y, function()
         local on = not LSTours.gridOn
         LSTours.setGridOn(on)
         overlay:setGridOn(on)
         pcall(function() map:getAPI():setBoolean("CellGrid", on) end)
         gridBtn:setTitle(on and "Grid: ON" or "Grid: OFF")
     end)
-    gridBtn.borderColor.a = 0.4
-    gridBtn:initialise(); gridBtn:instantiate(); panel:addChild(gridBtn)
     cur = cur + 92 + PAD
 
     -- Selected-region coords
@@ -217,7 +221,7 @@ local function build(spec, panel, x, y, w, h)
         addLabel(name, r1y)
         cornerFields[#cornerFields + 1] = addField("", 54, r1y, false, nil)
     end
-    local setBtn = ISButton:new(cur, r1y, 54, BTN_H, "Set", panel, function()
+    local setBtn = mkBtn("Set", cur, 54, r1y, function()
         local t = LSTours.getSelected()
         if not t then DFFeedback.bad("Select a tour first."); return end
         local x1, y1, x2, y2 = num(cornerFields[1]), num(cornerFields[2]), num(cornerFields[3]), num(cornerFields[4])
@@ -227,8 +231,6 @@ local function build(spec, panel, x, y, w, h)
         if nr then map:zoomAndCentreMapToBounds(nr[1], nr[2], nr[3], nr[4]) end
         recompute()
     end)
-    setBtn.borderColor.a = 0.4
-    setBtn:initialise(); setBtn:instantiate(); panel:addChild(setBtn)
 
     -- ---- Bottom row 2: Run Selected / Run All / Abort / progress ----
     local function preflight(jobs, label)
@@ -251,16 +253,14 @@ local function build(spec, panel, x, y, w, h)
             end)
     end
 
-    runSelBtn = ISButton:new(PAD, r2y, 120, BTN_H, "Run Selected", panel, function()
+    runSelBtn = mkBtn("Run Selected", PAD, 120, r2y, function()
         local t = LSTours.getSelected()
         if not t then DFFeedback.bad("Select a tour first."); return end
         -- snapshot region BY VALUE so an edit during the confirm modal can't change what runs
         preflight({ { name = t.name, region = { t.region[1], t.region[2], t.region[3], t.region[4] } } }, "Run " .. t.name)
     end)
-    runSelBtn.borderColor.a = 0.4
-    runSelBtn:initialise(); runSelBtn:instantiate(); panel:addChild(runSelBtn)
 
-    runAllBtn = ISButton:new(PAD + 128, r2y, 100, BTN_H, "Run All", panel, function()
+    runAllBtn = mkBtn("Run All", PAD + 128, 100, r2y, function()
         if #LSTours.list == 0 then DFFeedback.bad("No tours defined."); return end
         local jobs = {}
         for _, t in ipairs(LSTours.list) do
@@ -268,14 +268,10 @@ local function build(spec, panel, x, y, w, h)
         end
         preflight(jobs, "Run all " .. #jobs .. " tours")
     end)
-    runAllBtn.borderColor.a = 0.4
-    runAllBtn:initialise(); runAllBtn:instantiate(); panel:addChild(runAllBtn)
 
-    abortBtn = ISButton:new(PAD + 236, r2y, 90, BTN_H, "Abort", panel, function()
+    abortBtn = mkBtn("Abort", PAD + 236, 90, r2y, function()
         LSTour.abort(); overlay:setLocked(false); DFFeedback.good("Tour aborted.")
     end)
-    abortBtn.borderColor.a = 0.4
-    abortBtn:initialise(); abortBtn:instantiate(); panel:addChild(abortBtn)
 
     progress = ISLabel:new(PAD + 336, r2y + 4, LBL, "", 0.95, 0.90, 0.50, 1, UIFont.Small, true)
     progress:initialise(); progress:instantiate(); panel:addChild(progress)

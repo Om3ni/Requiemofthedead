@@ -96,51 +96,62 @@ local function sendImport()
     if ui and ui.importBtn then ui.importBtn.enable = false end
 end
 
+-- Positioning only, no widget creation. Split out from build() so a deck
+-- resize can reflow in place instead of destroying and rebuilding - a rebuild
+-- would throw away the parsed preview sitting in LMImportTab.pending.
+local function layout(panel, x, y, w, h)
+    if not ui then return end
+    local m = DFKit.metrics
+    local s = DFKit.layout(panel, x, y, w, h):stack(0)
+
+    local function place(el, hgt)
+        local lx, ly = s:row(hgt)
+        el:setX(lx)
+        el:setY(ly)
+    end
+
+    place(ui.title, 20)
+    place(ui.sub1, 16)
+    place(ui.sub2, 24)
+
+    -- both buttons share one row, so take the row once and place across it
+    local bx, by = s:row(m.btnH + m.pad)
+    ui.readBtn:setX(bx);         ui.readBtn:setY(by)
+    ui.importBtn:setX(bx + 150); ui.importBtn:setY(by)
+
+    place(ui.status, 22)
+    for i = 1, #ui.warns do place(ui.warns[i], 16) end
+    s.y = s.y + 6
+    place(ui.store, 16)
+end
+
 local function build(spec, panel, x, y, w, h)
-    local PAD, BTN_H = 8, 24
-    local cursorY = PAD
+    local C = DFKit.col
 
-    local function mkLabel(text, ly, r, g, b)
-        local l = ISLabel:new(PAD, ly, 16, text, r or 0.85, g or 0.85, b or 0.85, 1, UIFont.Small, true)
-        l:initialise(); l:instantiate()
-        panel:addChild(l)
-        return l
-    end
-    local function mkBtn(label, bx, bw, handler)
-        local btn = ISButton:new(bx, cursorY, bw, BTN_H, label, panel, handler)
-        btn.borderColor.a = 0.4
-        btn:initialise(); btn:instantiate()
-        panel:addChild(btn)
-        return btn
-    end
+    local title = DFKit.label(panel, 0, 0,
+        "Zone import - paste a PhunZones custom layer (the text of phunzones.txt).")
+    local sub1 = DFKit.label(panel, 0, 0,
+        "Copy the export to the clipboard, preview it here, then import. The server", C.textDim)
+    local sub2 = DFKit.label(panel, 0, 0,
+        "rewrites RFTDLimes.ini and every client re-syncs. Admin only.", C.textDim)
 
-    mkLabel("Zone import - paste a PhunZones custom layer (the text of phunzones.txt).", cursorY)
-    cursorY = cursorY + 20
-    mkLabel("Copy the export to the clipboard, preview it here, then import. The server", cursorY, 0.65, 0.65, 0.65)
-    cursorY = cursorY + 16
-    mkLabel("rewrites RFTDLimes.ini and every client re-syncs. Admin only.", cursorY, 0.65, 0.65, 0.65)
-    cursorY = cursorY + 24
-
-    mkBtn("Read clipboard", PAD, 140, readClipboard)
-    local importBtn = mkBtn("Import to server", PAD + 150, 150, sendImport)
+    local readBtn   = DFKit.button(panel, 0, 0, 140, "Read clipboard",   panel, readClipboard)
+    local importBtn = DFKit.button(panel, 0, 0, 150, "Import to server", panel, sendImport, "primary")
     importBtn.enable = false
-    cursorY = cursorY + BTN_H + PAD
 
-    local status = mkLabel("No preview yet.", cursorY, 0.75, 0.85, 0.95)
-    cursorY = cursorY + 22
-
+    local status = DFKit.label(panel, 0, 0, "No preview yet.")
     local warns = {}
-    for i = 1, 8 do
-        warns[i] = mkLabel("", cursorY, 0.8, 0.7, 0.5)
-        cursorY = cursorY + 16
-    end
-    cursorY = cursorY + 6
+    for i = 1, 8 do warns[i] = DFKit.label(panel, 0, 0, "", C.warn) end
+    local store = DFKit.label(panel, 0, 0, "")
 
-    local store = mkLabel("", cursorY, 0.75, 0.85, 0.95)
-
-    ui = { status = status, store = store, warns = warns, importBtn = importBtn }
+    ui = {
+        title = title, sub1 = sub1, sub2 = sub2,
+        readBtn = readBtn, importBtn = importBtn,
+        status = status, store = store, warns = warns,
+    }
     LMImportTab.pending = nil
     setStoreLine()
+    layout(panel, x, y, w, h)
 end
 
 -- The authoritative outcome arrives as the server's notice; the local store
@@ -155,10 +166,11 @@ Limes.onChanged(function() setStoreLine() end)
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
     DFRegistry.registerTab{
-        id    = "limes",
-        label = "Zones",
-        order = 6,
-        build = build,
+        id     = "limes",
+        label  = "Zones",
+        order  = 6,
+        build  = build,
+        resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
     }
     print("[Limes] import tab registered into Dragonfly")
 end)
