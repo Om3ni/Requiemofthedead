@@ -197,12 +197,14 @@ end
 
 local function refresh()
     if not HutchesTab.listBox then return end
-    HutchesTab.listBox:clear()
     local rows = scanHutches()
     HutchesTab.rows = rows
-    for _, row in ipairs(rows) do
-        HutchesTab.listBox:addItem("", row)
-    end
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(HutchesTab.listBox, function(box)
+        for _, row in ipairs(rows) do box:addItem("", row) end
+    end)
     if HutchesTab.statsLabel then
         HutchesTab.statsLabel:setName(string.format("Loaded hutches near you: %d", #rows))
     end

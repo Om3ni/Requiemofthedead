@@ -205,6 +205,48 @@ function DFKit.well(el)
     return el
 end
 
+-- REFILL A SCROLLING LIST. Every list in the family rebuilds itself the same
+-- way - clear, then addItem in a loop - and that sequence is quietly broken in
+-- vanilla, so it is centralised here rather than fixed twelve times.
+--
+-- ISScrollingListBox:clear() resets items, count and selection but NOT the
+-- scroll height (ISScrollingListBox.lua:340), while addItem ADDS to it (:150).
+-- So each rebuild leaves the previous content's height behind and stacks the
+-- new content on top. The height only ever grows, and it takes two things with
+-- it:
+--
+--   * isVScrollBarVisible compares the bar against that height
+--     (ISUIElement.lua:1412), so a scrollbar appears on a list that fits;
+--   * yScroll, which clear() also leaves alone, can then sit far below where
+--     any content actually is - and the rows draw ABOVE the visible window.
+--
+-- The failure looks like data loss and is not: the list is fully populated and
+-- rowAt() still resolves clicks correctly, so clicking blank space selects the
+-- row that should have been drawn there. Nothing but rebuilding the widget
+-- recovers it, so it presents as "only a relog fixes it", and refreshing makes
+-- it worse. Found in the vehicles tab 2026-08-03; it was latent in every list
+-- in the suite.
+--
+-- `fill` receives the box and adds whatever it likes, including nothing.
+function DFKit.refillList(box, fill)
+    if not box then return box end
+    box:clear()
+    box:setScrollHeight(0)
+    -- A smooth scroll in flight is aimed at content that no longer exists, and
+    -- updateSmoothScrolling would drive yScroll back to that target on the next
+    -- frame - undoing the clamp below.
+    box.smoothScrollTargetY = nil
+    box.smoothScrollY       = nil
+    if fill then fill(box) end
+    -- Re-clamp rather than snap to the top: setYScroll bounds against the NEW
+    -- scroll height (ISUIElement.lua:1690), so a list that is still long keeps
+    -- the reader's position and a short one falls back to 0 on its own. Lists
+    -- that refill progressively call this once per page, and yanking the view
+    -- to the top mid-read would be a bug of its own.
+    box:setYScroll(box:getYScroll())
+    return box
+end
+
 -- NOTE the originalX guard. ISLabel:setName does `self:setX(self.originalX)`
 -- (ISLabel.lua:17), and originalX is captured ONCE at construction. Every tab
 -- here builds its labels at (0,0) and positions them later from layout() - so

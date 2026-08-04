@@ -57,7 +57,15 @@ local CONDITION = { [1] = "random", [2] = "perfect", [3] = "average", [4] = "low
 
 -- Last-run telemetry for the Lifecycle tab. Plain counters, overwritten each
 -- sweep - not a log, so it cannot grow.
-RCRespawn.last = { placed = 0, tried = 0, noSpot = 0, noToken = 0, at = 0 }
+--
+-- `spots` carries WHERE the last sweep put things. A placement lands in a
+-- loaded chunk near somebody else, so the admin who pressed the button has no
+-- way to see the result: "placed 3" is a claim they cannot check, and an
+-- unverifiable success reads exactly like a silent failure. The coordinates
+-- make it falsifiable. Bounded by the burst ceiling (25, clamped in RCServer),
+-- and replaced wholesale each sweep, so it is telemetry and not a ledger - the
+-- durable record is RCAudit's RESPAWN line.
+RCRespawn.last = { placed = 0, tried = 0, noSpot = 0, noToken = 0, at = 0, spots = {} }
 
 -- ---------------------------------------------------------------------------
 -- Destruction accounting
@@ -140,7 +148,18 @@ end
 
 -- Place one replacement near `player`. Returns the vehicle, or nil plus a
 -- reason ("noroster" | "nospot" | "spawnfailed").
-function RCRespawn.placeNear(player)
+--
+-- On success a third value describes WHERE it went - see RCRespawn.last.spots.
+-- Appended rather than folded into the vehicle handle because the caller needs
+-- the coordinates after the sweep has finished, by which time the car may have
+-- streamed out and the handle be worthless.
+--
+-- `avoid` carries the spots THIS sweep has already used. It is not an
+-- optimisation and not defensive: a car placed a moment ago is queued in
+-- cell.addVehicles and is absent from every world query until the cell's next
+-- update pass, so without this list a burst of placements is free to stack
+-- itself in one car park (see RCParking's SPACING).
+function RCRespawn.placeNear(player, avoid)
     local c = RCShared.cfg()
 
     local roster = RCNoVanilla.roster(c.respawnModdedOnly)
@@ -152,13 +171,23 @@ function RCRespawn.placeNear(player)
     end)
     if not okPos or not px then return nil, "nospot" end
 
-    local sx, sy, sz = RCParking.findSpot(px, py, pz, c.respawnMinDist, c.respawnMaxDist)
+    local sx, sy, sz = RCParking.findSpot(px, py, pz, c.respawnMinDist, c.respawnMaxDist, avoid)
     if not sx then return nil, "nospot" end
 
-    local model = roster[ZombRand(#roster) + 1]
+    -- Prefer a car that suits the stall it is parking in: the zone's own
+    -- distribution list, filtered the same way the general roster is. A police
+    -- lot gets police vehicles, a farm gets farm ones. Falls back to the
+    -- general roster whenever the zone has nothing usable, so this can only
+    -- improve the choice, never block a placement.
+    local zoneName = RCParking.zoneNameAt(sx, sy, sz)
+    local pick = (zoneName and RCNoVanilla.rosterForZone(zoneName, c.respawnModdedOnly)) or roster
+    local model = pick[ZombRand(#pick) + 1]
     local vehicle, reason = RCSpawn.spawn({
         model     = model,
         x = sx, y = sy, z = sz,
+        -- Point it along the stall rather than across it. nil when the tile is
+        -- in no zone, which leaves RCSpawn's roll exactly as it was.
+        direction = RCParking.zoneDirection(sx, sy, sz),
         condition = CONDITION[c.respawnCondition] or "low",
         -- No key and no forced fuel: a car the world put back is something to
         -- be found and got running, not a delivery. RCSpawn rolls fuel and
@@ -180,21 +209,42 @@ function RCRespawn.placeNear(player)
         vehicle = model, x = sx, y = sy, z = sz,
         nearPlayer = player:getUsername(),
     })
-    RCShared.dbg("respawn: placed %s at %d,%d near %s",
-        model, sx, sy, tostring(player:getUsername()))
-    return vehicle
+    RCShared.dbg("respawn: placed %s at %d,%d,%d near %s",
+        model, sx, sy, sz, tostring(player:getUsername()))
+    return vehicle, nil, {
+        -- Prefixless: the panel column is narrow and "Base." is noise on every
+        -- single row. The full script name is in the audit line.
+        model = tostring(model):gsub("^.-%.", ""),
+        x = sx, y = sy, z = sz,
+        near = player:getUsername(),
+    }
 end
 
 -- ---------------------------------------------------------------------------
--- The sweep worker - called by RCSession once per hourly pass
+-- The sweep worker - called by RCSession once per hourly pass, and by the
+-- Janitor view's "Place now" for an immediate run.
+--
+-- `burst` overrides RespawnPerSweep for THIS run only. It exists because the
+-- hourly rate is tuned for ambient upkeep (default 2/hour), and a retrofit is
+-- not ambient: an admin who has just purged fifty vanilla cars should not have
+-- to leave the server running for a day to see them replaced. The hourly caller
+-- passes nothing and is completely unchanged.
+--
+-- Deliberately does NOT bypass the token pool. A manual run spends banked
+-- tokens faster; it cannot conjure them. That keeps one invariant true
+-- everywhere - a car only ever appears because a car left - which is the whole
+-- reason the pool exists rather than a spawn button.
 -- ---------------------------------------------------------------------------
-function RCRespawn.sweep()
+function RCRespawn.sweep(burst)
     local c = RCShared.cfg()
-    local stat = { placed = 0, tried = 0, noSpot = 0, noToken = 0, at = os.time() }
+    local stat = { placed = 0, tried = 0, noSpot = 0, noToken = 0, at = os.time(), spots = {} }
     RCRespawn.last = stat
 
+    -- RespawnEnabled still gates a manual run: it is the admin's statement that
+    -- this server does not place replacements at all, and a button should not
+    -- quietly outrank a setting.
     if not (c.enabled and c.respawnEnabled) then return 0 end
-    local perSweep = c.respawnPerSweep or 0
+    local perSweep = tonumber(burst) or c.respawnPerSweep or 0
     if perSweep <= 0 then return 0 end
 
     local queue = playersByNeed()
@@ -223,9 +273,13 @@ function RCRespawn.sweep()
             idx = idx % #queue + 1
             if entry then
                 stat.tried = stat.tried + 1
-                local v = RCRespawn.placeNear(entry.player)
+                -- stat.spots doubles as the avoid list: its entries already
+                -- carry x/y, and it is exactly "what this sweep has placed so
+                -- far", which is the set nothing in the world can see yet.
+                local v, _, spot = RCRespawn.placeNear(entry.player, stat.spots)
                 if v then
                     stat.placed = stat.placed + 1
+                    if spot then stat.spots[#stat.spots + 1] = spot end
                     entry.claims = entry.claims + 1   -- served: drop them down the order
                     placed = true
                     break

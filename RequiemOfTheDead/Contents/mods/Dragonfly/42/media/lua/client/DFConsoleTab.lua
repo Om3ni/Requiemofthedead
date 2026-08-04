@@ -35,11 +35,17 @@ function ConsoleList:doDrawItem(y, item, alt)
     return y + self.itemheight
 end
 
+-- DFKit.refillList, not a bare clear(): vanilla's clear leaves the scroll
+-- height behind and addItem stacks onto it, and THIS list is the worst case in
+-- the family - it refills on every log line, so the phantom height grew without
+-- bound and the view eventually scrolled off its own content. See that
+-- function's header.
 local function rebuildList(list, filter)
-    list:clear()
-    for _, e in ipairs(DFLog.snapshot(filter)) do
-        list:addItem("", e)
-    end
+    DFKit.refillList(list, function(box)
+        for _, e in ipairs(DFLog.snapshot(filter)) do
+            box:addItem("", e)
+        end
+    end)
     if #list.items > 0 then
         -- ensureVisible, not just `selected`. Setting selected only moves the
         -- highlight; the view stays scrolled wherever it was, which for a buffer

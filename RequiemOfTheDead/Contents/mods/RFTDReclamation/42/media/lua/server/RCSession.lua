@@ -69,7 +69,12 @@ Events.EveryHours.Add(function()
     -- expiry, AND abandonment (never a second scan). Expiry runs first per
     -- vehicle, so a just-expired car is seen unclaimed and gets a fresh
     -- abandonment clock, not an instant reclaim.
-    if RCJanitor then RCJanitor.beginSweep() end
+    -- Reported at the sweep entry, not per vehicle: the per-vehicle guards
+    -- below stay bare so the hot loop is untouched, and one report covers them.
+    if RCShared.need("RCJanitor", RCJanitor,
+        "no vehicle will ever be reclaimed - the hourly sweep does nothing") then
+        RCJanitor.beginSweep()
+    end
 
     local expired = 0
     forEachLoadedVehicle(function(v)
@@ -88,7 +93,10 @@ Events.EveryHours.Add(function()
     -- Last, so this hour's reclamations and destructions are already banked and
     -- a car can be reclaimed in one corner and replaced near a player in the
     -- same pass.
-    if RCRespawn then RCRespawn.sweep() end
+    if RCShared.need("RCRespawn", RCRespawn,
+        "reclaimed vehicles are never replaced - tokens accumulate forever") then
+        RCRespawn.sweep()
+    end
 
     -- After this hour's loaded cars have refreshed their `seen`, drop index
     -- entries for online owners whose cars haven't been confirmed in a long
@@ -112,6 +120,9 @@ Events.OnServerStarted.Add(function()
     -- ModData has loaded (OnServerStarted is past OnInitGlobalModData), and
     -- before the first hourly pass, or the server would spend an hour running
     -- the raw sandbox values and then silently change behaviour.
-    if RCTuning then RCTuning.apply(RCTuning.load()) end
+    if RCShared.need("RCTuning", RCTuning,
+        "saved dial overrides are ignored - the server runs raw sandbox values") then
+        RCTuning.apply(RCTuning.load())
+    end
     print("[RC] RCSession loaded (lifecycle active)")
 end)

@@ -26,9 +26,19 @@ local SRC  = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDReclamation/42/media/l
 
 -- The whole harness: a no-op require and an Events table that swallows Add.
 require = function() end
+-- Handlers are kept as a LIST per event and dispatched in registration order,
+-- because that is what LuaEventManager does and this file now registers two on
+-- OnSpawnVehicleStart (Layer 2's story burn and Layer 4's in-place retrofit).
+-- A harness that kept only the last Add would silently test the wrong one - it
+-- did, the moment the second handler landed.
+local handlers = {}
 local captured = {}
 local function fakeEvent(name)
-    return { Add = function(fn) captured[name] = fn end }
+    handlers[name] = {}
+    captured[name] = function(...)
+        for _, fn in ipairs(handlers[name]) do fn(...) end
+    end
+    return { Add = function(fn) handlers[name][#handlers[name] + 1] = fn end }
 end
 Events = {
     OnLoadedTileDefinitions = fakeEvent("tiles"),
@@ -161,9 +171,150 @@ eq("strip of a non-table is a no-op", (function()
     return r == 0 and z == 0
 end)(), true)
 
+-- MODDED ZONES ARE NOT OURS TO EDIT (2026-08-03). A zone a vehicle mod defined
+-- is that author's curated list, and any vanilla entry in it is deliberate.
+-- Stripping it is both rude and destructive: it can empty a zone the author
+-- balanced, which is the permanently-failing-spawn-site state backfill exists
+-- to prevent. The whitelist is derived from the game's own
+-- VehicleZoneDefinition.lua, so "is this zone vanilla" is a fact, not a guess.
+local modDist = {
+    parkingstall  = { vehicles = { ["Base.CarNormal"] = { index = -1, spawnChance = 20 } } },
+    ki5_dealership = { vehicles = { ["Base.CarNormal"] = { index = -1, spawnChance = 50 } } },
+}
+local mRemoved, mZones, mSkipped = RCNoVanilla.strip(modDist, isVanilla)
+eq("vanilla zone is stripped",           modDist.parkingstall.vehicles["Base.CarNormal"], nil)
+eq("modded zone is left completely alone",
+    modDist.ki5_dealership.vehicles["Base.CarNormal"] ~= nil, true)
+eq("only the vanilla zone counted",      mRemoved, 1)
+eq("...as one zone touched",             mZones, 1)
+eq("...and the modded one is reported skipped, not silently ignored", mSkipped, 1)
+eq("every vanilla zone key the donor mod missed is in our set",
+    (RCNoVanilla.VANILLA_ZONES.racecar and RCNoVanilla.VANILLA_ZONES.trafficjamn
+     and RCNoVanilla.VANILLA_ZONES.trafficjame and RCNoVanilla.VANILLA_ZONES.business12)
+    and true or false, true)
+
+-- ---------------------------------------------------------------------------
+-- BACKFILL. The strip leaves a zone REGISTERED but empty, and an empty zone is
+-- not inert - VehicleType.init() still puts it in the map, so hasTypeForZone
+-- answers true and every spawn attempt reaches RandomizeModel's
+-- "no vehicle definition found" bail (IsoChunk.java:1316). A stripped-empty
+-- zone is therefore a permanently failing spawn site, which is exactly the
+-- "suppress vanilla and the world has no cars" report this pass came from.
+--
+-- The entry shape is pinned against the parser at VehicleType.java:69:
+--   index       SKIN index; -1 means roll a random skin (IsoChunk.java:1335
+--               only calls setSkinIndex when index > -1). Any other value would
+--               pin every backfilled car to one paint job.
+--   spawnChance normalised by the engine (100/sum), so equal values = equal
+--               share and there are no weights to get wrong.
+-- ---------------------------------------------------------------------------
+local ROSTER = { "Base.87gmcS15", "Base.StepVan" }
+
+local bf = {
+    empty    = { vehicles = {} },
+    populated = { vehicles = { ["Base.SomeModdedCar"] = { index = -1, spawnChance = 10 } } },
+    wrecks   = { vehicles = { ["Base.RaceCarBurnt"] = { index = -1, spawnChance = 5 } } },
+}
+local added, filled = RCNoVanilla.backfill(bf, ROSTER)
+
+eq("backfill added count", added, 2)      -- roster size x 1 empty zone
+eq("backfill zones filled", filled, 1)    -- only `empty`
+eq("empty zone got roster entry 1", bf.empty.vehicles["Base.87gmcS15"] ~= nil, true)
+eq("empty zone got roster entry 2", bf.empty.vehicles["Base.StepVan"] ~= nil, true)
+eq("backfilled index is -1 (random skin)",
+    bf.empty.vehicles["Base.87gmcS15"].index, -1)
+eq("backfilled spawnChance is a number",
+    type(bf.empty.vehicles["Base.87gmcS15"].spawnChance), "number")
+
+-- A zone a vehicle mod populated itself keeps ITS curation. Drowning an
+-- author's weighted list in the whole roster would be worse than doing nothing.
+eq("populated zone untouched",
+    bf.populated.vehicles["Base.87gmcS15"], nil)
+eq("populated zone keeps its own entry",
+    bf.populated.vehicles["Base.SomeModdedCar"] ~= nil, true)
+
+-- Wreck zones survive the strip via isExemptName, so they are never empty and
+-- this rule spares them for free - no separate wreck check needed.
+eq("wreck zone untouched", bf.wrecks.vehicles["Base.StepVan"], nil)
+
+eq("backfill with an empty roster is a no-op", (function()
+    local d = { z = { vehicles = {} } }
+    local a, f = RCNoVanilla.backfill(d, {})
+    return a == 0 and f == 0 and d.z.vehicles["anything"] == nil
+end)(), true)
+
+eq("backfill of a non-table is a no-op", (function()
+    local a, f = RCNoVanilla.backfill(nil, ROSTER)
+    return a == 0 and f == 0
+end)(), true)
+
 -- Both event hooks must have registered at load.
 eq("zone-strip hook registered",  type(captured.tiles), "function")
 eq("story hook registered",       type(captured.spawn), "function")
+
+-- ---------------------------------------------------------------------------
+-- LAYER 2 MUST NOT TOUCH MAP SPAWNS. The regression that produced a world of
+-- nothing but burnt-out husks.
+--
+-- OnSpawnVehicleStart is not a story event: BaseVehicle.java:822 fires it in
+-- createPhysics for EVERY brand-new vehicle, so without a story test the
+-- handler burnt every vanilla car IsoChunk.AddVehicles placed in a parking
+-- stall or traffic jam. It was worst with NoVanillaVehicles OFF, because then
+-- the zones still had vanilla cars to spawn and all of them came through here.
+--
+-- The discriminator reads inverted: a ZONE spawn has a zone (setZone at
+-- IsoChunk.java:1030), a STORY spawn does not (RandomizedWorldBase.addVehicle
+-- never calls setZone).
+-- ---------------------------------------------------------------------------
+RCShared = { cfg = function() return { enabled = true, noVanillaStories = true } end,
+             dbg = function() end }
+
+local function fakeVehicle(fullName, zone)
+    local v = { swappedTo = nil, reloaded = false }
+    function v:isCreated() return false end
+    function v:getZone() return zone end
+    function v:getScript()
+        return {
+            getFullName = function() return fullName end,
+            -- body zero "pz-vanilla" is the vanilla test (ScriptManager.VanillaID)
+            getLoadedScriptBodies = function()
+                return { size = function() return 1 end,
+                         get = function(_, i) return "pz-vanilla" end }
+            end,
+        }
+    end
+    function v:setScriptName(n) self.swappedTo = n end
+    function v:scriptReloaded(b) self.reloaded = b end
+    return v
+end
+
+local zoned = fakeVehicle("Base.CarNormal", "parkingstall")
+captured.spawn(zoned)
+eq("MAP spawn (has a zone) is left alone", zoned.swappedTo, nil)
+
+local zonedEmpty = fakeVehicle("Base.CarNormal", "")
+captured.spawn(zonedEmpty)
+eq("empty-string zone counts as zoneless", zonedEmpty.swappedTo ~= nil, true)
+
+local story = fakeVehicle("Base.CarNormal", nil)
+captured.spawn(story)
+eq("STORY spawn (no zone) is burnt", story.swappedTo, "Base.CarNormalBurnt")
+eq("burnt swap rebuilds with spawnSwap=true", story.reloaded, true)
+
+-- The exemptions still hold on the story path.
+local wreck = fakeVehicle("Base.CarNormalBurnt", nil)
+captured.spawn(wreck)
+eq("already-burnt story vehicle untouched", wreck.swappedTo, nil)
+
+local trailer = fakeVehicle("Base.Trailer", nil)
+captured.spawn(trailer)
+eq("trailer story vehicle untouched", trailer.swappedTo, nil)
+
+-- And the option still gates it.
+RCShared.cfg = function() return { enabled = true, noVanillaStories = false } end
+local off = fakeVehicle("Base.CarNormal", nil)
+captured.spawn(off)
+eq("story swap respects NoVanillaStoryVehicles = false", off.swappedTo, nil)
 
 print(string.format("RCNoVanilla: %d passed, %d failed", pass, fail))
 os.exit(fail > 0 and 1 or 0)

@@ -318,10 +318,14 @@ function Modal:rebuild()
     end
 
     if not self.list then return end
-    self.list:clear()
-    for _, r in ipairs(self.rows) do
-        self.list:addItem("", r)
-    end
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(self.list, function(box)
+        for _, r in ipairs(self.rows) do
+            box:addItem("", r)
+        end
+    end)
 
     -- Restore the selection, or drop it if that item is gone (removed, or moved
     -- out of the walk). Never leave it pointing at whatever now occupies the index.

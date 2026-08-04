@@ -64,6 +64,7 @@
 if not isServer() then return end
 
 require "RCShared"
+require "RCNoPark"
 
 RCParking = RCParking or {}
 
@@ -73,11 +74,24 @@ RCParking = RCParking or {}
 -- for speed - do not, without re-reading AddVehicles_OnZone first.
 local STEP = 3
 
--- Hard ceiling on getVehicleZoneAt calls for ONE search. At STEP=3 this covers
--- a generous slice of the loaded area; it exists so a player in the middle of
--- nowhere costs a predictable amount rather than scaling with the search
--- ceiling the admin happened to set.
+-- Hard ceiling on candidate tiles considered in ONE search. At STEP=3 this
+-- covers a generous slice of the loaded area; it exists so a player in the
+-- middle of nowhere costs a predictable amount rather than scaling with the
+-- search ceiling the admin happened to set.
 local MAX_PROBES = 900
+
+-- Minimum tiles between a replacement and ANY other vehicle (owner's rule,
+-- 2026-08-03: two placements landed almost on top of each other).
+--
+-- footprintClear alone could not have prevented that, and neither could any
+-- engine query. A brand-new vehicle adds itself to cell.addVehicles
+-- (BaseVehicle.java:882), a PENDING set; getVehicles() returns cell.vehicles
+-- (IsoCell.java:2368) and the pending set is only drained into it during the
+-- cell's update pass (IsoCell.java:1875-1879). One sweep is one Lua call inside
+-- one tick, so the second placement of a burst is invisible to the first
+-- through every route the engine offers - which is exactly why findSpot takes
+-- an explicit `avoid` list rather than trusting the world to have noticed.
+local SPACING = 8
 
 -- Last search outcome, for the Janitor view. Overwritten each search, so it
 -- cannot grow.
@@ -137,11 +151,145 @@ function RCParking.canPlace(x, y, z)
     local sq
     pcall(function() sq = getCell():getGridSquare(x, y, z) end)
     if not sq then return false end                       -- unloaded: nothing to place on
+
+    -- INDOOR STALLS ARE LEGAL (owner's call, 2026-08-04, replacing a blanket
+    -- isOutside() gate). A painted vehicle zone inside a fire station bay or a
+    -- showroom is a real parking space and vanilla uses it - its own test
+    -- (IsoChunk.doSpawnedVehiclesInInvalidPosition :1244) only rejects an indoor
+    -- square when there is NO zone over it. Refusing all of them cost real
+    -- spots under carports and overhangs to avoid a problem nobody had yet.
+    --
+    -- The exception list is the answer instead: when a specific room turns out
+    -- to be a bad place for a car, an admin marks that room and it is excluded
+    -- from then on. Evidence beats a rule that guesses.
+    if RCNoPark and RCNoPark.blocks(x, y, z) then return false end
+
     if not footprintClear(x, y, z) then return false end
     local sheltered = false
     pcall(function() sheltered = SafeHouse.getSafeHouse(sq) ~= nil end)
     if sheltered then return false end
     return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Orientation
+--
+-- A replacement used to take RCSpawn's uniform roll across all four headings
+-- (RCSpawn.lua:70), which is how cars ended up wedged sideways between
+-- buildings. The zone already knows which way its stalls run, and vanilla
+-- derives exactly that before placing its own cars - so this ports vanilla's
+-- rule rather than inventing a heuristic.
+--
+-- WHAT WE CAN AND CANNOT READ. Zone's geometry getters are METHODS and so are
+-- Lua-callable: getWidth/getHeight (Zone.java:534/530), isFaceDirection
+-- (VehicleZone.java:32). `VehicleZone.dir` - the explicit Direction property a
+-- mapper can paint - is a public INSTANCE FIELD (VehicleZone.java:15), which
+-- Kahlua never exposes (the vehiclesZones lesson, in this file's header). So a
+-- hand-painted heading is unreadable and we recover the AXIS only. That is the
+-- part that matters: it is facing across the stall rather than along it that
+-- looks broken, not facing north instead of south.
+-- ---------------------------------------------------------------------------
+
+-- Codes match RCSpawn's spec.direction so the value passes straight through.
+local DIR_W, DIR_E, DIR_N, DIR_S = 1, 2, 3, 4
+
+-- The zone's NAME at a tile ("police", "farm", "parkingstall"...). This is what
+-- VehicleZoneDistribution is keyed by, so it is how the placer asks for a car
+-- that suits where it is parking. getName is a method (Zone.java:486) and so is
+-- reachable, unlike the zone's dir field.
+function RCParking.zoneNameAt(x, y, z)
+    local name
+    pcall(function()
+        local zone = getWorld():getMetaGrid():getVehicleZoneAt(
+            math.floor(x), math.floor(y), math.floor(z or 0))
+        if zone then name = zone:getName() end
+    end)
+    if type(name) ~= "string" or name == "" then return nil end
+    return name
+end
+
+-- Which way should a car in this zone point? Returns 1-4, or nil when the tile
+-- is in no vehicle zone (the caller then leaves RCSpawn to roll, as before).
+function RCParking.zoneDirection(x, y, z)
+    local zone
+    local ok = pcall(function()
+        zone = getWorld():getMetaGrid():getVehicleZoneAt(
+            math.floor(x), math.floor(y), math.floor(z or 0))
+    end)
+    if not ok or not zone then return nil end
+
+    local w, h
+    pcall(function() w, h = zone:getWidth(), zone:getHeight() end)
+    if not (w and h) then return nil end
+
+    -- Vanilla's test (IsoChunk.java:980) with its double negative resolved.
+    -- The source reads:
+    --     if (!(w != 4 && w != 5 && w != 6 || h > 3 && h < 6)) dir = W;
+    -- De Morgan: dir is WEST when w IS one of 4/5/6 AND h is NOT 4 or 5 - i.e.
+    -- the zone is exactly one stall LENGTH across, so the cars lie east-west,
+    -- and its other axis is not itself a stall length (which would make the
+    -- shape ambiguous and vanilla defaults those to north).
+    local eastWest = (w >= 4 and w <= 6) and (h <= 3 or h >= 6)
+
+    -- Either end of the axis, exactly as vanilla does for a zone without an
+    -- explicit direction (IsoChunk.java, the setDir branch): a row of stalls
+    -- holds cars nosed in both ways, and forcing one heading looks stamped.
+    if eastWest then
+        return (ZombRand(2) == 0) and DIR_W or DIR_E
+    end
+    return (ZombRand(2) == 0) and DIR_N or DIR_S
+end
+
+-- ---------------------------------------------------------------------------
+-- Spacing
+--
+-- Kept OUT of canPlace on purpose. "Is this tile a legal place for a car" and
+-- "is this a sensible place to add ANOTHER car" are different questions, and
+-- only the lifecycle asks the second one: an admin placing a vehicle by hand
+-- from the spawn window should be free to park it beside an existing car.
+-- ---------------------------------------------------------------------------
+
+-- Every loaded vehicle within reach of the search, as plain {x,y} points.
+-- Collected ONCE per search rather than per candidate: the Java set is walked
+-- with :iterator() (get(i) on it crashes - the RCSession idiom) and turned
+-- straight into a Lua array, after which a spacing test is arithmetic on a
+-- handful of numbers instead of an engine call.
+local function vehiclePoints(x, y, maxDist)
+    local out = {}
+    local reach = maxDist + SPACING
+    local cell = getCell and getCell()
+    if not cell then return out end
+    local vs = cell:getVehicles()
+    if not vs then return out end
+    local ok, it = pcall(function() return vs:iterator() end)
+    if not ok or not it then return out end
+    while it:hasNext() do
+        local v = it:next()
+        if v then
+            pcall(function()
+                local vx, vy = v:getX(), v:getY()
+                -- Cheap box reject before anything is stored: a search band is
+                -- a few hundred tiles across and the cell can hold cars far
+                -- outside it.
+                if math.abs(vx - x) <= reach and math.abs(vy - y) <= reach then
+                    out[#out + 1] = { x = vx, y = vy }
+                end
+            end)
+        end
+    end
+    return out
+end
+
+-- Squared distance throughout: no square roots, and SPACING is a constant.
+local function tooClose(tx, ty, points)
+    if not points then return false end
+    local limit = SPACING * SPACING
+    for i = 1, #points do
+        local p = points[i]
+        local dx, dy = tx - p.x, ty - p.y
+        if dx * dx + dy * dy < limit then return true end
+    end
+    return false
 end
 
 -- ---------------------------------------------------------------------------
@@ -155,14 +303,17 @@ end
 --
 -- Returns x, y, z or nil. nil is a NORMAL outcome (nothing legal is loaded
 -- nearby) and the caller must treat it as "try again later", never an error.
-function RCParking.findSpot(x, y, z, minDist, maxDist)
-    x, y, z = math.floor(x), math.floor(y), math.floor(z or 0)
-    minDist = math.max(math.floor(minDist or 0), 0)
-    maxDist = math.max(math.floor(maxDist or 250), minDist + STEP)
-
+--
+-- `avoid` is an optional array of {x=,y=} points the result must also stay
+-- SPACING tiles clear of. Callers placing several vehicles in one pass MUST
+-- pass the ones they have already placed: those cars exist in the world but not
+-- yet in cell.getVehicles(), so nothing else can see them (see SPACING).
+--
+-- One ring walk. `crowd` is the point set to keep SPACING clear of, or nil to
+-- skip that test entirely; `avoid` is enforced either way. Returns the tile
+-- plus the radius it was found at, or nil plus the probes spent.
+local function ringWalk(x, y, z, minDist, maxDist, crowd, avoid)
     local probes = 0
-    RCParking.last = { probes = 0, found = false, dist = 0 }
-
     for radius = math.max(minDist, STEP), maxDist, STEP do
         -- Arc spacing matched to the lattice: enough samples that consecutive
         -- points on this ring are about STEP apart, so the ring cannot slip
@@ -182,19 +333,69 @@ function RCParking.findSpot(x, y, z, minDist, maxDist)
             local ty = y + math.floor(math.sin(ang) * radius)
 
             probes = probes + 1
-            if probes > MAX_PROBES then
-                RCParking.last = { probes = probes - 1, found = false, dist = 0 }
-                return nil
-            end
+            if probes > MAX_PROBES then return nil, nil, probes - 1 end
 
-            if RCParking.canPlace(tx, ty, z) then
-                RCParking.last = { probes = probes, found = true, dist = radius }
-                return tx, ty, z
+            -- Spacing first: it is Lua arithmetic over a short array, where
+            -- canPlace is a zone lookup plus nine square lookups. Rejecting a
+            -- crowded tile here saves all of that.
+            if not tooClose(tx, ty, crowd) and not tooClose(tx, ty, avoid)
+                and RCParking.canPlace(tx, ty, z) then
+                return tx, ty, probes, radius
             end
         end
     end
+    return nil, nil, probes
+end
 
-    RCParking.last = { probes = probes, found = false, dist = 0 }
+-- TWO PASSES, and the second one is not a nicety (added 2026-08-03 after the
+-- first version returned nothing at all in Louisville).
+--
+-- The spacing rule and the parkable rule fight each other, because they select
+-- for the same tiles: a car park is BOTH the only legal ground and the place
+-- cars already are. In a dense city the first pass therefore rejects almost
+-- exactly the tiles that passed the zone test, and with MAX_PROBES exhausted
+-- inside a ~20-tile band the search never reaches emptier ground. Three sweeps
+-- with 21 tokens banked placed nothing.
+--
+-- So: pass one wants a genuinely uncrowded stall anywhere in range. Pass two
+-- drops the requirement to stand clear of vehicles that were ALREADY THERE and
+-- keeps it only against `avoid` - this sweep's own placements. That is the
+-- distinction the rule was actually asked for: two replacements landing on top
+-- of each other is the bug, whereas a replacement parking beside a car already
+-- in a car park is what a car park looks like. `avoid` is never relaxed, and
+-- canPlace still runs, so a car can never land ON another one either way.
+--
+-- Each pass gets its own probe budget. Sharing one would make the fallback
+-- decorative, since pass one only fails by exhausting it.
+--
+-- Returns x, y, z or nil. nil is a NORMAL outcome (nothing legal is loaded
+-- nearby) and the caller must treat it as "try again later", never an error.
+function RCParking.findSpot(x, y, z, minDist, maxDist, avoid)
+    x, y, z = math.floor(x), math.floor(y), math.floor(z or 0)
+    minDist = math.max(math.floor(minDist or 0), 0)
+    maxDist = math.max(math.floor(maxDist or 250), minDist + STEP)
+
+    RCParking.last = { probes = 0, found = false, dist = 0 }
+
+    local existing = vehiclePoints(x, y, maxDist)
+
+    local tx, ty, probes, radius = ringWalk(x, y, z, minDist, maxDist, existing, avoid)
+    if tx then
+        RCParking.last = { probes = probes, found = true, dist = radius, relaxed = false }
+        return tx, ty, z
+    end
+
+    local spent = probes
+    tx, ty, probes, radius = ringWalk(x, y, z, minDist, maxDist, nil, avoid)
+    if tx then
+        -- Reported, not silent: "found at 47 tiles (crowded)" tells the admin
+        -- the area is full and the rule was relaxed to place at all, which is
+        -- a real fact about their world rather than an implementation detail.
+        RCParking.last = { probes = spent + probes, found = true, dist = radius, relaxed = true }
+        return tx, ty, z
+    end
+
+    RCParking.last = { probes = spent + probes, found = false, dist = 0 }
     return nil
 end
 
@@ -205,5 +406,8 @@ end
 function RCParking.status()
     local l = RCParking.last or {}
     return { probes = l.probes or 0, found = l.found and true or false,
-             dist = l.dist or 0, step = STEP, cap = MAX_PROBES }
+             dist = l.dist or 0, step = STEP, cap = MAX_PROBES, spacing = SPACING,
+             -- Normalised to a real boolean: the panel renders this, and a nil
+             -- would read as "strictly spaced" on a search that was relaxed.
+             relaxed = l.relaxed and true or false }
 end

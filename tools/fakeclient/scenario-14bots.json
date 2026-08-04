@@ -1,0 +1,46 @@
+{
+  "version": "42.20",
+
+  "_comment_version": "PRESENT-BUT-INERT. FakeClientManager parses this into Movement.version (:82) and never reads it again; the login sends the bot JVM's own Core.getVersionNumber() (:58, :790). The key must exist or load() throws and you get ZERO bots plus one 'Scenarios file load failed' line. Version mismatches are fixed by launching the bot from an install matching the server, not by editing this value. See RUNBOOK.md section 3.",
+
+  "_comment_scenario": "14-bot WORST-CASE cluster for Mosaic: every bot piles on one tile in Muldraugh (type=Stay, shared spawn) so PlayerUpdate relevance overlaps maximally and the relay fan-out is at its worst. Bots join staggered by id*connection.interval so onset is load-dependent and observable. Bot 13 chats on a timer to exercise every mod that hooks chat. No checksum block: correct for Mosaic, which has DoLuaChecksum=false. For the BEST-case control run, give each bot a distinct far-apart spawn and type=Line.",
+
+  "_comment_labels": "Bots name themselves Client0..Client13 (:1700). Those exact strings appear as the 'client' label on packet_send_bytes / packet_receive_bytes, which is how tools/netprobe/analyze-capture.py attributes bytes per bot.",
+
+  "config": {
+    "client": {
+      "_comment_timeout": "120000, not the stock 10000. The bot arms checkConnectionTimeout in every WAIT state (:602-604, :674-677), including the one where it waits for the large-area chunk zip. On a heavily modded world the server needs far longer than 10s to answer that, and the bot quietly gives up with 'Player -1 disconnect' and no error.",
+      "connection": { "serverHost": "127.0.0.1", "interval": 1500, "timeout": 120000, "delay": 15000 },
+      "statistics": { "period": 5, "id": 0 }
+    },
+    "player": { "fps": 60, "predict": 100 },
+    "movement": {
+      "radius": 150,
+      "motion": {
+        "aim": 4, "sneak": 6, "sneakrun": 10, "walk": 7, "run": 13, "sprint": 19,
+        "pedestrian": { "min": 5, "max": 20 },
+        "vehicle": { "min": 40, "max": 80 }
+      }
+    }
+  },
+
+  "movements": [
+    { "id": 0,  "description": "bot00", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 1,  "description": "bot01", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 2,  "description": "bot02", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 3,  "description": "bot03", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 4,  "description": "bot04", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 5,  "description": "bot05", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 6,  "description": "bot06", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 7,  "description": "bot07", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 8,  "description": "bot08", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 9,  "description": "bot09", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 10, "description": "bot10", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 11, "description": "bot11", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    { "id": 12, "description": "bot12", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 } },
+    {
+      "id": 13, "description": "bot13-chatter", "motion": "Walk", "type": "Stay", "spawn": { "x": 8000, "y": 11484 },
+      "makeSound": { "interval": 4000, "radius": 30, "message": "netprobe chatter - exercising chat hooks" }
+    }
+  ]
+}

@@ -137,8 +137,14 @@ function RCShared.cfg()
         spawnerAccess  = tonumber(S("SpawnerAccess")) or 2,        -- 1=admin, 2=+moderator, 3=all staff
         spawnerMissingMax = tonumber(S("SpawnerMissingPartsMax")) or 6, -- "Missing parts" tick: max N stripped/spawn
         -- vanilla-spawn suppression (RCNoVanilla.lua)
-        noVanillaVehicles = S("NoVanillaVehicles") ~= false,       -- default true; map spawns
+        -- Default OFF, and it is the one suppression dial that must be: the
+        -- strip is destructive and irreversible for the session (Layer 1 nils
+        -- the zone entries, VehicleType then snapshots the table), so a default
+        -- of ON means a server that never touched the setting still cannot get
+        -- vanilla cars back without a restart. Opt in, deliberately.
+        noVanillaVehicles = S("NoVanillaVehicles") == true,        -- default false; map spawns
         noVanillaStories  = S("NoVanillaStoryVehicles") ~= false,  -- default true; story spawns -> burnt hulls
+        noVanillaRetrofit = S("NoVanillaRetrofit") == true,        -- default false; convert SAVED vanilla cars in place
         -- REPLACEMENT LIFECYCLE (RCRespawn.lua): reclaimed/destroyed cars mint
         -- tokens, a metered worker spends tokens back into the world near
         -- players who have nothing.
@@ -183,6 +189,46 @@ function RCShared.trace(key, fmt, ...)
     lastTrace[key] = now
     local msg = (select("#", ...) > 0) and string.format(fmt, ...) or tostring(fmt)
     print("[RC][" .. SIDE .. "] " .. msg)
+end
+
+-- ---------------------------------------------------------------------------
+-- Missing-dependency report.
+--
+-- Several surfaces call a sibling module behind `if RCX then RCX.f() end`. The
+-- guard itself is right - a half-deployed tree must not throw on every packet -
+-- but on its own it is SILENT, and a silently dropped request is indisting-
+-- uishable from a healthy server with nothing to say.
+--
+-- 2026-08-03 is what this costs: Steam re-validated the workshop item and
+-- reverted the dedi's tree to the PUBLISHED build. Brand-new files survived
+-- (nothing upstream to revert them to) but RCServer.lua went back to a copy
+-- with no fleet/lifecycle/settuning handlers. RCFleet.lua sat on disk with
+-- nothing able to call it, the Vehicles tab read "Requesting fleet..." forever,
+-- and the only clue anywhere was the absence of a reply. Hours went into
+-- reading UI code for a bug that was never in it.
+--
+-- So an absent module says so, LOUDLY - and exactly once per module per
+-- session. Once, because these guards sit in per-packet and per-sweep paths:
+-- a line per call would bury the first one under thousands of copies, which is
+-- its own kind of silence. Unconditional, NOT gated on the Debug option - the
+-- whole point is to be seen on a server nobody thought to put in debug.
+--
+-- Returns the module (truthy) or nil, so it drops into the guard position:
+--     if RCShared.need("RCFleet", RCFleet, "...") then RCFleet.begin(...) end
+-- ---------------------------------------------------------------------------
+local reportedMissing = {}
+function RCShared.need(name, mod, consequence)
+    if mod ~= nil then return mod end
+    if not reportedMissing[name] then
+        reportedMissing[name] = true
+        print(string.format(
+            "[RC] !! MISSING MODULE: %s is not loaded - %s. The mod tree is incomplete "
+            .. "or out of date (a Steam workshop re-validate reverts it to the published "
+            .. "build); re-deploy and RESTART. Reported once per module per session.",
+            tostring(name),
+            tostring(consequence or "the features that depend on it will not respond")))
+    end
+    return nil
 end
 
 -- ---------------------------------------------------------------------------

@@ -163,14 +163,18 @@ end
 
 local function rebuildList()
     if not PlayersTab.listBox then return end
-    PlayersTab.listBox:clear()
     local filter = "all"
     if PlayersTab.filterCombo and PlayersTab.filterCombo.getOptionData then
         filter = PlayersTab.filterCombo:getOptionData(PlayersTab.filterCombo.selected) or "all"
     end
-    for _, r in ipairs(applyFilter(PlayersTab.rows, filter)) do
-        PlayersTab.listBox:addItem("", r)
-    end
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(PlayersTab.listBox, function(box)
+        for _, r in ipairs(applyFilter(PlayersTab.rows, filter)) do
+            box:addItem("", r)
+        end
+    end)
 end
 
 local function updateStats()

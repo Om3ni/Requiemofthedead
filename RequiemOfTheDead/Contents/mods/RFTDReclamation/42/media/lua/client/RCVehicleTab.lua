@@ -47,6 +47,10 @@ require "ISUI/ISModalDialog"
 require "RDSelect"
 local Select = RDSelect
 
+-- Shared scroll primitive (Core). Same thumb, same wheel distance, same
+-- track-click as the Janitor dial form - the parts grid is not its own dialect.
+require "DFScroll"
+
 RCVehicleTab = RCVehicleTab or {}
 local T = RCVehicleTab
 
@@ -257,10 +261,16 @@ local function sortRows(rows)
     return rows
 end
 
+-- THE INVISIBLE-LIST BUG (2026-08-03) was found here: the list stayed fully
+-- populated and clickable while drawing nothing, and only a relog recovered it.
+-- The cause is vanilla's clear()/addItem scroll-height accounting and it was
+-- latent in every list in the suite, so the fix lives in DFKit.refillList -
+-- see that function's header. This tab refills progressively, once per page.
 local function rebuildList()
     if not T.listBox then return end
-    T.listBox:clear()
-    for _, r in ipairs(T.rows) do T.listBox:addItem("", r) end
+    DFKit.refillList(T.listBox, function(box)
+        for _, r in ipairs(T.rows) do box:addItem("", r) end
+    end)
 end
 
 local function orderedVids(list)
@@ -380,6 +390,10 @@ function T.syncSelectionUI()
 end
 
 function T.onSelectionChanged()
+    -- New car, top of its part list. DFScroll's own clamp would catch the
+    -- dangerous case, but carrying an offset across a selection is disorienting
+    -- when the next car happens to be long enough to keep it.
+    if T.partsScroll then T.partsScroll:reset() end
     local n = T.syncSelectionUI()
     if n > 1 then
         local row = selectedRow()
@@ -635,6 +649,49 @@ function PartsHotspot:onRightMouseUp(mx, my)
     if rec and T.showPartMenu then T.showPartMenu(row, rec) end
 end
 
+-- ---------------------------------------------------------------------------
+-- Scrolling, GRID INSTANCE ONLY (self.scrolls). Both hotspots share this class
+-- and the diagram has nothing to scroll - its content is one fixed-size sprite.
+--
+-- These chain to ISPanel for the cases they do not claim. That is safe here and
+-- deliberately unlike onRightMouseUp above: ISPanel really does define
+-- onMouseDown/Move/Up, it is only onRightMouseUp (and onMouseWheel) it lacks.
+-- ---------------------------------------------------------------------------
+function PartsHotspot:onMouseWheel(del)
+    if not self.scrolls then return false end
+    return T.partsScroll:wheel(del)
+end
+
+function PartsHotspot:onMouseDown(x, y)
+    if self.scrolls and T.partsScroll:press(self:getX() + x, self:getY() + y) then
+        self:setCapture(true)
+        return true
+    end
+    return ISPanel.onMouseDown(self, x, y)
+end
+
+function PartsHotspot:onMouseMove(dx, dy)
+    if self.scrolls and T.partsScroll:drag(self:getY() + self:getMouseY()) then return end
+    return ISPanel.onMouseMove(self, dx, dy)
+end
+
+function PartsHotspot:onMouseMoveOutside(dx, dy)
+    if self.scrolls and T.partsScroll:drag(self:getY() + self:getMouseY()) then return end
+    return ISPanel.onMouseMoveOutside(self, dx, dy)
+end
+
+function PartsHotspot:onMouseUp(x, y)
+    self:setCapture(false)
+    if self.scrolls then T.partsScroll:release() end
+    return ISPanel.onMouseUp(self, x, y)
+end
+
+function PartsHotspot:onMouseUpOutside(x, y)
+    self:setCapture(false)
+    if self.scrolls then T.partsScroll:release() end
+    return ISPanel.onMouseUpOutside(self, x, y)
+end
+
 -- Which grid row is under a panel-space point. T.partRows is rebuilt by
 -- drawParts every frame, so it can never describe a layout that is no longer
 -- on screen.
@@ -753,18 +810,29 @@ local function partName(id)
     return (id:gsub("(%l)(%u)", "%1 %2"))
 end
 
+-- Scroll state for the parts grid. One DFScroll, kept on T because drawParts is
+-- redrawn from scratch every frame and the offset has to outlive the frame.
+-- The behaviour - thumb size, wheel distance, track-click - is Core's, shared
+-- with the Janitor dial form; this file owns only its own layout.
+T.partsScroll = T.partsScroll or DFScroll.new()
+
+local function partsClearScroll()
+    T.partsScroll:measure(0, 0)
+    T.partsScroll:reset()
+end
+
 local function drawParts(el)
     local p = T.partsRect
-    if not p or p.h < 30 then return end
+    if not p or p.h < 30 then return partsClearScroll() end
     local C  = DFKit.col
     local fL = DFKit.font.label or UIFont.Small
     local row = selectedRow()
-    if not row then return end
+    if not row then return partsClearScroll() end
 
     if row.loaded == false then
         DFKit.drawEmpty(el, p.x, p.y, p.w, p.h,
             "unloaded - no part data until someone streams it in")
-        return
+        return partsClearScroll()
     end
 
     T.partRows = {}
@@ -772,7 +840,7 @@ local function drawParts(el)
     local parts = RCPartsView and RCPartsView.partsFor(row)
     if not parts then
         DFKit.drawEmpty(el, p.x, p.y, p.w, p.h, "reading parts...")
-        return
+        return partsClearScroll()
     end
 
     -- Bucket once. Anything unmatched lands in OTHER rather than vanishing -
@@ -803,16 +871,49 @@ local function drawParts(el)
     -- something ever hands this a wide one. Derived from the width rather than
     -- assumed, so the grid cannot spill off its own pane.
     local nCols = (p.w >= 420) and 2 or 1
-    local colW  = math.floor((p.w - (nCols - 1) * 12) / nCols)
+
+    -- MEASURE FIRST, then flow. This used to fill columns against the visible
+    -- height and simply stop - drawGroup returned false and every remaining
+    -- group vanished, with nothing on screen to say so. Vanilla cars fit, so it
+    -- never showed; a KI5 car carries far more parts and most of them land in
+    -- OTHER, which is drawn last and so is exactly what disappeared.
+    --
+    -- The fix is a virtual canvas: measure what the content actually needs,
+    -- give the columns that height to flow into, and scroll the result. The
+    -- column model survives intact - content still fills column 1 before
+    -- column 2 - it is just no longer clipped to one screenful.
+    local function groupH(list)
+        if #list == 0 then return 0 end
+        return HEAD_H + #list * ROW_H2 + 6
+    end
+    local totalH = 0
+    for i = 1, #GROUPS do totalH = totalH + groupH(buckets[i]) end
+    totalH = totalH + groupH(other)
+
+    local virtualH = math.max(p.h, math.ceil(totalH / nCols))
+
+    -- The gutter is 0 when it all fits, so a vanilla car still uses the full
+    -- pane. Named sbW, not barW: the condition meter inside each row is already
+    -- a local `barW` further down, and one shadowing the other is a bug waiting.
+    local sc     = T.partsScroll
+    local sbW    = sc:measure(p.h, virtualH)
+    local availW = p.w - sbW
+    local colW  = math.floor((availW - (nCols - 1) * 12) / nCols)
     local cols  = {}
     for i = 1, nCols do cols[i] = { x = p.x + (i - 1) * (colW + 12), y = p.y } end
     local ci = 1
 
+    -- Column cursors are VIRTUAL positions; sy() maps one to the screen.
+    local function sy(vy) return sc:screenY(vy) end
+    local function visible(vy, h) return sc:shows(vy, h, p) end
+
     local function room(need)
-        return (cols[ci].y + need) <= (p.y + p.h)
+        return (cols[ci].y + need) <= (p.y + virtualH)
     end
-    -- Fall to the next column when this one fills; stop when they are all full
-    -- rather than overflowing into the footer buttons.
+    -- Fall to the next column when this one fills. With the virtual height
+    -- above, "all columns full" now means the content genuinely does not fit
+    -- the canvas we sized for it, which cannot happen - the canvas was sized
+    -- from the content. The guard stays as a backstop.
     local function ensure(need)
         if room(need) then return true end
         while ci < nCols do
@@ -826,45 +927,63 @@ local function drawParts(el)
         if #list == 0 then return true end
         if not ensure(HEAD_H + ROW_H2) then return false end
         local c = cols[ci]
-        el:drawText(title, c.x, c.y, C.textDim.r, C.textDim.g, C.textDim.b, 0.8, fL)
+        if visible(c.y, HEAD_H) then
+            el:drawText(title, c.x, sy(c.y), C.textDim.r, C.textDim.g, C.textDim.b, 0.8, fL)
+        end
         c.y = c.y + HEAD_H
         for _, rec in ipairs(list) do
             if not ensure(ROW_H2) then return false end
             c = cols[ci]
-            local col   = partColour(rec)
-            local label = partLabel(rec)
-            local lw    = getTextManager():MeasureStringX(fL, label)
-            local nameW = colW - lw - 66
-            local nm    = partName(rec.id)
-            if DFTheme and DFTheme.fitText and nameW > 12 then
-                nm = DFTheme.fitText(nm, fL, nameW)
-            end
-            el:drawText(nm, c.x, c.y, C.text.r, C.text.g, C.text.b, rec.missing and 0.6 or 1, fL)
-            -- bar sits between the name column and the value
-            local barX = c.x + colW - lw - 58
-            local barW = 50
-            if barW > 8 then
-                el:drawRect(barX, c.y + 6, barW, 4, 0.45, C.bg.r, C.bg.g, C.bg.b)
-                if not rec.missing then
-                    local pct = math.max(0, math.min(100, rec.cond or 0))
-                    el:drawRect(barX, c.y + 6, math.floor(barW * pct / 100), 4, 1, col.r, col.g, col.b)
+            -- Scrolled off: no drawing and no hit rect. A part that cannot be
+            -- seen must not answer a right-click, or the cheat menu would act
+            -- on whichever row happened to share those coordinates.
+            if visible(c.y, ROW_H2) then
+                local ry    = sy(c.y)
+                local col   = partColour(rec)
+                local label = partLabel(rec)
+                local lw    = getTextManager():MeasureStringX(fL, label)
+                local nameW = colW - lw - 66
+                local nm    = partName(rec.id)
+                if DFTheme and DFTheme.fitText and nameW > 12 then
+                    nm = DFTheme.fitText(nm, fL, nameW)
                 end
+                el:drawText(nm, c.x, ry, C.text.r, C.text.g, C.text.b, rec.missing and 0.6 or 1, fL)
+                -- bar sits between the name column and the value
+                local barX = c.x + colW - lw - 58
+                local barW = 50
+                if barW > 8 then
+                    el:drawRect(barX, ry + 6, barW, 4, 0.45, C.bg.r, C.bg.g, C.bg.b)
+                    if not rec.missing then
+                        local pct = math.max(0, math.min(100, rec.cond or 0))
+                        el:drawRect(barX, ry + 6, math.floor(barW * pct / 100), 4, 1, col.r, col.g, col.b)
+                    end
+                end
+                el:drawText(label, c.x + colW - lw, ry, col.r, col.g, col.b, 1, fL)
+                -- Record the row's box for the hotspot, in SCREEN space and
+                -- captured BEFORE the cursor advances, so the rect is the one
+                -- just drawn.
+                T.partRows[#T.partRows + 1] =
+                    { x = c.x, y = ry, w = colW, h = ROW_H2, rec = rec }
             end
-            el:drawText(label, c.x + colW - lw, c.y, col.r, col.g, col.b, 1, fL)
-            -- Record the row's box for the hotspot. Captured BEFORE the cursor
-            -- advances, so the rect is the one just drawn.
-            T.partRows[#T.partRows + 1] =
-                { x = c.x, y = c.y, w = colW, h = ROW_H2, rec = rec }
             c.y = c.y + ROW_H2
         end
         cols[ci].y = cols[ci].y + 6
         return true
     end
 
+    -- Clip to the pane: with a scroll offset the first and last rows straddle
+    -- the edges, and unclipped they would paint over the diagram above and the
+    -- footer buttons below.
+    sc:clip(el, p)
     for i, g in ipairs(GROUPS) do
-        if not drawGroup(g.title, buckets[i]) then return end
+        if not drawGroup(g.title, buckets[i]) then break end
     end
     drawGroup("OTHER", other)
+    sc:unclip(el)
+
+    -- The bar, outside the stencil and last. Its presence is also the only
+    -- honest signal that the car has more parts than the pane shows.
+    sc:draw(el, p, C)
 end
 
 local function drawMeat(el)
@@ -1232,6 +1351,8 @@ local function build(spec, panel, x, y, w, h)
         return RCPartsView and RCPartsView.partAt(px, py) or nil
     end)
     T.partsHotspot = hotspot(partRowAt)
+    -- Only the grid scrolls; the diagram is one fixed-size sprite.
+    T.partsHotspot.scrolls = true
 
     T.btnRefresh = DFKit.button(panel, 0, 0, 90, "Refresh", panel, T.refresh)
 

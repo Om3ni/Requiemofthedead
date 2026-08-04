@@ -4,8 +4,34 @@
 # server nor the client reads it. They read their own Steam workshop download
 # caches, and those are DIFFERENT directories:
 #
-#   server  C:\Mosaic\ProjectZomboidDedicatedServer\steamapps\workshop\content\108600\3772176444\mods
-#   client  D:\Steam\steamapps\workshop\content\108600\3772176444\mods
+#   server  C:\Mosaic\pzdata\mods
+#   client  %USERPROFILE%\Zomboid\mods
+#
+# STEAM NO LONGER OWNS THE SERVER TREE (2026-08-03). The server target used to
+# be the Steam workshop cache, and that was the single biggest source of lost
+# time on this project: Steam re-validates the workshop item on launch and
+# rewrites that tree with the PUBLISHED build, silently reverting whatever this
+# script pushed. It reverted mid-session, and later emptied the tree outright -
+# fifteen mod folders, zero files. An hour went into debugging a "UI bug" that
+# was a dedi running reverted code with no fleet handler.
+#
+# The fix is not to fight it. ZomboidFileSystem.getAllModFolders (:504) searches
+# three sources - staged workshop, installed workshop, and <userdir>\mods - and
+# only the last is added unconditionally; the other two are gated on Steam mode
+# and are Steam's to rewrite. So the dev copy lives in C:\Mosaic\pzdata\mods and
+# MDS.ini's WorkshopItems no longer lists 3772176444. Steam still manages every
+# THIRD-PARTY item on that line (KI5, warthog, defender, damnlib) and still
+# updates them normally; it simply has no record of ours to revert.
+#
+# CONSEQUENCE, deliberately accepted: WorkshopItems is also what tells joining
+# clients which items to download, so players are no longer auto-prompted to
+# install RotD on this server. Mosaic is a test surface - testers subscribe by
+# hand. Put the id back for any run that takes public traffic (and upload first,
+# so the clobber is harmless when it comes).
+#
+# The old Steam cache copy was DELETED rather than left in place: installed
+# workshop items are searched BEFORE <userdir>\mods, so a stale copy there would
+# shadow this one and nothing would say so.
 #
 # Both are laid out as <id>\mods\<ModId>\... - Steam strips the "Contents"
 # wrapper on upload, so the repo's Contents\mods\ maps onto the target's mods\
@@ -47,8 +73,10 @@ param(
     [switch]$Client,
     [switch]$Mirror,
     [string]$Source = "C:\VSCodeProjects\RequiemoftheDead\RequiemOfTheDead\Contents\mods",
-    [string]$ServerTree = "C:\Mosaic\ProjectZomboidDedicatedServer\steamapps\workshop\content\108600\3772176444\mods",
-    [string]$ClientTree = "D:\Steam\steamapps\workshop\content\108600\3772176444\mods"
+    # 2026-08-03: the server target is no longer a Steam workshop cache. See the
+    # "STEAM NO LONGER OWNS THE SERVER TREE" note in the header.
+    [string]$ServerTree = "C:\Mosaic\pzdata\mods",
+    [string]$ClientTree = "$env:USERPROFILE\Zomboid\mods"
 )
 
 $ErrorActionPreference = "Stop"
@@ -127,6 +155,25 @@ foreach ($t in $targets) {
         foreach ($r in $cmp.Missing | Select-Object -First 12) { Write-Host "         MISSING  $r" -ForegroundColor DarkGray }
         foreach ($r in $cmp.Differ  | Select-Object -First 12) { Write-Host "         DIFFER   $r" -ForegroundColor DarkGray }
         if ($bad -gt 24) { Write-Host "         ... and $($bad - 24) more" -ForegroundColor DarkGray }
+        continue
+    }
+
+    # REFUSE TO COPY THROUGH A LINK (2026-08-03). dev-link.ps1 replaces each mod
+    # folder in this tree with a junction back into the repo. robocopy follows
+    # junctions by default, so copying here would write INTO the repo through
+    # them - and with -Mirror, /PURGE would be deleting inside the repo. The
+    # source and destination would be the same files.
+    #
+    # There is no safe merge of the two modes, so this stops rather than guesses.
+    $linked = @(Get-ChildItem -LiteralPath $t.Path -Directory -Force -ErrorAction SilentlyContinue |
+                Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint })
+    if ($linked.Count -gt 0) {
+        Write-Host ("{0,-7} REFUSED        {1}" -f $t.Name, $t.Path) -ForegroundColor Red
+        Write-Host "        $($linked.Count) mod folder(s) here are junctions into the repo (dev-link is active)." -ForegroundColor Yellow
+        Write-Host "        Copying would write through them into your working tree." -ForegroundColor Yellow
+        Write-Host "        Nothing to sync - the tree already IS the repo. Use:" -ForegroundColor Yellow
+        Write-Host "            tools\dev-link.ps1        re-link (also refreshes the Echoes copy)" -ForegroundColor DarkYellow
+        Write-Host "            tools\dev-link.ps1 -Down  unlink, then this script works again" -ForegroundColor DarkYellow
         continue
     }
 
