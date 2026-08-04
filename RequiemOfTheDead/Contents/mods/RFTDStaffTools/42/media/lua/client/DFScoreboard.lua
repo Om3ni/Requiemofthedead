@@ -337,23 +337,28 @@ if not DFScoreboard.patched then
 
     function ISScoreboard:fillList(usernames, displayNames, steamIDs)
         self.maxNameWid = 0
-        self.listbox:clear()
-        for i = 0, usernames:size() - 1 do
-            local username = usernames:get(i)
-            local displayName = displayNames:get(i)
-            local data = { username = username, displayName = displayName }
-            if getSteamModeActive() then
-                data.steamID = steamIDs:get(i)
-                data.profileName = getSteamProfileNameFromSteamID(data.steamID)
-                data.avatar      = getSteamAvatarFromSteamID(data.steamID)
+        -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+        -- addItem stacks onto it. This list refills on every join and leave, so
+        -- on a busy server the phantom height climbs all session. See that
+        -- function's header.
+        DFKit.refillList(self.listbox, function(box)
+            for i = 0, usernames:size() - 1 do
+                local username = usernames:get(i)
+                local displayName = displayNames:get(i)
+                local data = { username = username, displayName = displayName }
+                if getSteamModeActive() then
+                    data.steamID = steamIDs:get(i)
+                    data.profileName = getSteamProfileNameFromSteamID(data.steamID)
+                    data.avatar      = getSteamAvatarFromSteamID(data.steamID)
+                end
+                local item = box:addItem(displayName, data)
+                if ISScoreboard.isAdmin and username ~= displayName then
+                    item.tooltip = username
+                end
+                local tw = getTextManager():MeasureStringX(UIFont.Large, displayName)
+                if tw > self.maxNameWid then self.maxNameWid = tw end
             end
-            local item = self.listbox:addItem(displayName, data)
-            if ISScoreboard.isAdmin and username ~= displayName then
-                item.tooltip = username
-            end
-            local tw = getTextManager():MeasureStringX(UIFont.Large, displayName)
-            if tw > self.maxNameWid then self.maxNameWid = tw end
-        end
+        end)
         table.sort(self.listbox.items, function(a, b)
             return not string.sort(a.text, b.text)
         end)

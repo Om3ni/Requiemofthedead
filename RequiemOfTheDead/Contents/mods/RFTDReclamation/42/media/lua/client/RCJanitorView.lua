@@ -57,6 +57,11 @@ local function font() return DFKit.font.small or UIFont.Small end
 local STATUS_W   = 214
 local STATUS_MIN = 168
 
+-- How many placement coordinates the status column lists before summarising.
+-- The burst ceiling is 25 and the column is not tall enough for that many on
+-- top of everything above it; six is a legible batch and the rest is counted.
+local MAX_SPOT_LINES = 6
+
 local T = {
     data    = nil,   -- last server payload
     survey  = nil,   -- last retrofit census
@@ -76,6 +81,13 @@ local function setStatus(s) T.status = s or "" end
 -- ---------------------------------------------------------------------------
 local function requestState()
     if not isAdmin() then setStatus("Admin only."); return end
+    -- Cleared HERE rather than when the reply lands. Every action on this view
+    -- ends with the server pushing a fresh lifecycle packet, so blanking the
+    -- status on arrival wiped each action's own receipt ("Removed 3; 3 tokens
+    -- banked") a frame after it appeared - the admin pressed a destructive
+    -- button and was told nothing. An explicit refresh is the one moment the
+    -- previous result is genuinely stale.
+    setStatus("")
     T.pending = true
     sendClientCommand(getPlayer(), M, "lifecycle", {})
 end
@@ -88,7 +100,14 @@ Events.OnServerCommand.Add(function(module, command, args)
     if command == "lifecycle" then
         T.pending = false
         T.data = args
-        setStatus("")
+        -- A sweep we have not walked yet: park the cursor before its first
+        -- entry so "Go to placement" starts at the top of the NEW batch rather
+        -- than continuing to count through the last one.
+        local at = args and args.last and args.last.at or 0
+        if at ~= T.lastAt then
+            T.lastAt  = at
+            T.gotoIdx = 0
+        end
 
     elseif command == "tuningpush" then
         -- Authoritative override set, broadcast to every client so the
@@ -104,8 +123,32 @@ Events.OnServerCommand.Add(function(module, command, args)
         end
 
     elseif command == "novanillapurged" then
-        setStatus(string.format("Removed %d vehicle(s); %d item(s) dropped to the ground.",
-            (args and args.removed) or 0, (args and args.dumped) or 0))
+        -- Says the tokens out loud. Removal now FUNDS replacement, and an admin
+        -- who is not told that reads the pool jumping as a bug.
+        setStatus(string.format(
+            "Removed %d vehicle(s); %d item(s) dropped; %d replacement token(s) banked.",
+            (args and args.removed) or 0, (args and args.dumped) or 0,
+            (args and args.minted) or 0))
+
+    elseif command == "nopark" then
+        if args and args.ok then
+            setStatus(string.format(
+                "Marked \"%s\" (%dx%d at %d,%d) as no-parking - %d exclusion(s) total.",
+                tostring(args.label), args.w or 0, args.h or 0,
+                args.x or 0, args.y or 0, args.total or 0))
+        else
+            setStatus("Not marked: " .. tostring(args and args.reason or "unknown"))
+        end
+
+    elseif command == "respawnnow" then
+        local placed = (args and args.placed) or 0
+        if placed > 0 then
+            setStatus(string.format("Placed %d vehicle(s) near players.", placed))
+        else
+            -- The two ways this legitimately does nothing, named - otherwise a
+            -- button that reports "0" reads as broken rather than as blocked.
+            setStatus("Placed nothing - the pool is empty, or no legal parking is loaded nearby.")
+        end
     end
 end)
 
@@ -149,10 +192,23 @@ local function drawStatus(el)
     if pk and (pk.probes or 0) > 0 then
         if pk.found then
             y = line(el, x, y, string.format("found at %d tiles", pk.dist or 0), c.ok)
+            -- Said out loud: the area was too full to honour the spacing rule,
+            -- so the search fell back to "clear of this sweep's own placements"
+            -- to place at all. An admin reading "found" should know which of
+            -- the two answers they got.
+            if pk.relaxed then
+                y = line(el, x, y, "crowded - spacing relaxed", c.warn, 0.9)
+            end
         else
             y = line(el, x, y, "no stall in range", c.warn)
         end
         y = line(el, x, y, string.format("%d probes", pk.probes or 0), c.textDim, 0.9)
+        -- Only on a failure, and only because it is usually the ANSWER there:
+        -- a full car park now fails the search, and without this the admin
+        -- reads "no stall in range" while looking straight at a car park.
+        if not pk.found and (pk.spacing or 0) > 0 then
+            y = line(el, x, y, string.format("min gap %d tiles", pk.spacing), c.textDim, 0.9)
+        end
     else
         y = line(el, x, y, "not searched yet", c.textDim, 0.9)
     end
@@ -168,6 +224,26 @@ local function drawStatus(el)
         end
         if (ls.noToken or 0) > 0 then
             y = line(el, x, y, "pool empty", c.textDim, 0.9)
+        end
+        -- WHERE they went. "placed 3" is a claim the admin cannot check: the
+        -- cars land in loaded chunks near whoever needed one, which is usually
+        -- not the person who pressed the button. Coordinates make the number
+        -- falsifiable, and the Go to button walks them.
+        local sp = ls.spots
+        if sp and #sp > 0 then
+            local cur = T.gotoIdx or 0
+            for i = 1, math.min(#sp, MAX_SPOT_LINES) do
+                local s = sp[i]
+                y = line(el, x, y,
+                    string.format("%s %d,%d", i == cur and ">" or " ", s.x or 0, s.y or 0),
+                    i == cur and c.ok or c.textDim, 0.9)
+            end
+            -- Named, not silently dropped: a truncated list that looks complete
+            -- is how an admin concludes the other placements never happened.
+            if #sp > MAX_SPOT_LINES then
+                y = line(el, x, y, string.format("  +%d more", #sp - MAX_SPOT_LINES),
+                    c.textDim, 0.9)
+            end
         end
     else
         y = line(el, x, y, "not yet run", c.textDim, 0.9)
@@ -278,8 +354,55 @@ function V.attach(panel)
         sendClientCommand(getPlayer(), M, "novanillapurge", { budget = 25 })
         setStatus("Removing...")
     end, "danger", { hold = true,
-        tooltip = "Permanently remove loaded vanilla vehicles, up to 25 per press. Contents drop to the ground first. Claimed, occupied, safehouse and still-in-use vehicles are always spared, as are wrecks and trailers." })
+        tooltip = "Permanently remove loaded vanilla vehicles, up to 25 per press. Contents drop to the ground first. Claimed, occupied, safehouse and still-in-use vehicles are always spared, as are wrecks and trailers.\n\nEach removal banks one replacement token, so clearing the vanilla fleet pays for the modded one." })
     add(T.btnPurge)
+
+    -- The other half of the retrofit. NOT hold-to-fire, unlike its neighbour:
+    -- this is additive and reversible - the Janitor reclaims anything unwanted
+    -- on its own schedule - so it does not deserve the same friction as a
+    -- permanent deletion sitting next to it.
+    T.btnPlace = DFKit.button(panel, 0, 0, 96, "Place now", panel, function()
+        if not isAdmin() then return end
+        sendClientCommand(getPlayer(), M, "respawnnow", { burst = 10 })
+        setStatus("Placing...")
+    end, "primary",
+    { tooltip = "Spend banked replacement tokens immediately instead of waiting for the hourly sweep, up to 10 per press. Vehicles go to the players holding fewest claims first.\n\nPlacements can only land in chunks that are currently loaded, so this repopulates the area around online players - not the whole map. It never creates tokens: if the pool is empty, nothing happens." })
+    add(T.btnPlace)
+
+    -- The verification half of "Place now". Teleport is the vanilla
+    -- /teleportto, sent as a chat command exactly like Longstrider's tour: it
+    -- is SERVER authoritative, so it re-checks the caller's access level and
+    -- streams the destination in. Moving the player locally with setX would be
+    -- rubber-banded by the server on a dedicated host, which is the only place
+    -- this button matters.
+    T.btnGoto = DFKit.button(panel, 0, 0, 120, "Go to placement", panel, function()
+        if not isAdmin() then return end
+        local sp = T.data and T.data.last and T.data.last.spots
+        if not sp or #sp == 0 then
+            setStatus("No placements recorded - press Place now first.")
+            return
+        end
+        local i = ((T.gotoIdx or 0) % #sp) + 1   -- cycles, so one button walks the batch
+        T.gotoIdx = i
+        local s = sp[i]
+        SendCommandToServer(string.format("/teleportto %d,%d,%d",
+            math.floor(s.x or 0), math.floor(s.y or 0), math.floor(s.z or 0)))
+        setStatus(string.format("%d of %d: %s at %d,%d - placed near %s.",
+            i, #sp, tostring(s.model or "?"), s.x or 0, s.y or 0, tostring(s.near or "?")))
+    end, "action",
+    { tooltip = "Teleport to the vehicles the last sweep placed, one press per vehicle, cycling. This is how you check that a placement is real and standing in a parking space rather than in a field.\n\nOnly the last sweep is listed. The permanent record of every placement is the RESPAWN line in the server's RFTDReclamation_Dismantle.txt." })
+    add(T.btnGoto)
+
+    -- The other half of "indoor stalls are legal": when one turns out not to
+    -- be, this is how it gets recorded. Stand in the room and press once - the
+    -- room's own bounds are what gets stored, so there is nothing to measure.
+    T.btnNoPark = DFKit.button(panel, 0, 0, 128, "No parking here", panel, function()
+        if not isAdmin() then return end
+        sendClientCommand(getPlayer(), M, "noparkhere", {})
+        setStatus("Marking this room...")
+    end, "warn",
+    { tooltip = "Record the room you are standing in as somewhere the lifecycle must never place a vehicle, and keep it excluded from now on.\n\nIndoor parking zones are allowed by default because most of them - fire station bays, showrooms, carports - are real parking. This is for the ones that are not.\n\nStand INSIDE the room, not in the car park outside it. Entries are appended to RFTDReclamation_NoPark.txt on the server and can be hand-edited or removed." })
+    add(T.btnNoPark)
 
     T.widgets = widgets
     return widgets
@@ -302,10 +425,25 @@ function V.layout(panel, x, y, w, h)
 
     T.form:layout(x, y, dialW, bodyH)
 
+    -- Left row is LIFECYCLE operations, right column is the vanilla RETROFIT
+    -- pair. "Place now" sits left rather than beside its conceptual partner
+    -- because the status column cannot hold three buttons - Survey (84) and
+    -- Remove vanilla (110) already fill it - and a third would have run under
+    -- the dials. The split also reads correctly: Survey/Remove is a two-step
+    -- sequence, and everything on the left is a single action.
     local bx = x
     if T.btnRefresh then T.btnRefresh:setX(bx); T.btnRefresh:setY(btnY) end
     bx = bx + 90 + m.gap
     T.btnReset:setX(bx); T.btnReset:setY(btnY)
+    bx = bx + 130 + m.gap
+    if T.btnPlace then T.btnPlace:setX(bx); T.btnPlace:setY(btnY) end
+    bx = bx + 96 + m.gap
+    -- Directly after its partner: place, then go and look at what you placed.
+    if T.btnGoto then T.btnGoto:setX(bx); T.btnGoto:setY(btnY) end
+    bx = bx + 120 + m.gap
+    -- Last in the row, because it is the one you press AFTER going to look and
+    -- finding the car somewhere it should not be.
+    if T.btnNoPark then T.btnNoPark:setX(bx); T.btnNoPark:setY(btnY) end
 
     local sx = x + dialW + m.gap
     T.btnSurvey:setX(sx); T.btnSurvey:setY(btnY)

@@ -150,10 +150,14 @@ end
 function ECSongbook:refresh()
     if not self.songList then return end
     local selectedIndex = self.songList.selected
-    self.songList:clear()
-    for _, row in ipairs(self:buildRows()) do
-        self.songList:addItem(self:rowText(row), row)
-    end
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(self.songList, function(box)
+        for _, row in ipairs(self:buildRows()) do
+            box:addItem(self:rowText(row), row)
+        end
+    end)
     if selectedIndex and selectedIndex > 0 and selectedIndex <= #self.songList.items then
         self.songList.selected = selectedIndex
     end

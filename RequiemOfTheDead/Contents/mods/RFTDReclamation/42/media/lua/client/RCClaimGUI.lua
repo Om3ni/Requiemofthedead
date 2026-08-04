@@ -251,15 +251,19 @@ end
 function RCClaimGUI:refresh()
     if not self.grid then return end
 
-    self.grid:clear()
-    self.grid:addItem(getText("IGUI_RC_Everyone"), { public = true })
-    local map = self.source.getAllowedMap()
-    local names = {}
-    for nm in pairs(map) do names[#names + 1] = nm end
-    table.sort(names)
-    for _, nm in ipairs(names) do
-        self.grid:addItem(nm, { username = nm })
-    end
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(self.grid, function(box)
+        box:addItem(getText("IGUI_RC_Everyone"), { public = true })
+        local map = self.source.getAllowedMap()
+        local names = {}
+        for nm in pairs(map) do names[#names + 1] = nm end
+        table.sort(names)
+        for _, nm in ipairs(names) do
+            box:addItem(nm, { username = nm })
+        end
+    end)
 
     self:applyEditable()
 end

@@ -210,12 +210,14 @@ end
 
 local function refresh()
     if not AnimalsTab.listBox then return end
-    AnimalsTab.listBox:clear()
     local rows = (HBDebugPanel and HBDebugPanel.scanCell) and HBDebugPanel.scanCell() or {}
     AnimalsTab.rows = rows
-    for _, row in ipairs(rows) do
-        AnimalsTab.listBox:addItem("", row)
-    end
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(AnimalsTab.listBox, function(box)
+        for _, row in ipairs(rows) do box:addItem("", row) end
+    end)
     if AnimalsTab.statsLabel then
         AnimalsTab.statsLabel:setName(string.format("Loaded animals: %d", #rows))
     end

@@ -136,14 +136,17 @@ end
 -- ---------------------------------------------------------------------------
 function RCMyVehicles:setList(list)
     self.rows = {}
-    self.list:clear()
-    if type(list) == "table" then
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(self.list, function(box)
+        if type(list) ~= "table" then return end
         table.sort(list, function(a, b) return prettyName(a.name) < prettyName(b.name) end)
         for _, rec in ipairs(list) do
             self.rows[#self.rows + 1] = rec
-            self.list:addItem(prettyName(rec.name), rec)
+            box:addItem(prettyName(rec.name), rec)
         end
-    end
+    end)
     -- keep a valid selection
     if #self.rows == 0 then
         self.list.selected = 0

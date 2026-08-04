@@ -96,6 +96,14 @@ RCTuning.SCHEMA = {
       label = "Suppress vanilla map spawns",
       note = "Applies on world reload - the engine snapshots the spawn table once per session",
       help = tip("NoVanillaVehicles") },
+    -- LIVE, unlike its neighbour above: this one is read per vehicle as chunks
+    -- stream, so switching it takes effect on the next chunk rather than the
+    -- next world load. It converts as you travel, and stops the moment it is
+    -- turned off.
+    { key = "NoVanillaRetrofit",    kind = "bool", live = true,
+      label = "Convert saved vanilla cars",
+      note = "Rewrites cars already in the save, in place - skips any holding items",
+      help = tip("NoVanillaRetrofit") },
 }
 
 -- Index the schema by key, skipping group headers.

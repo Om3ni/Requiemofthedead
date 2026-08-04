@@ -584,17 +584,23 @@ local function hFleet(player, args)
         })
         return
     end
-    if RCFleet then RCFleet.begin(player, args and args.scope) end
+    if RCShared.need("RCFleet", RCFleet,
+        "the Vehicles tab will sit on 'Requesting fleet...' forever") then
+        RCFleet.begin(player, args and args.scope)
+    end
 end
 
 local function hFleetCancel(player)
-    if RCFleet then RCFleet.cancel(player) end
+    if RCFleet then RCFleet.cancel(player) end   -- nothing to cancel; silence is correct
 end
 
 -- One car's parts for the inspector's diagram. Same admin gate; silent denial.
 local function hVehicleParts(player, args)
     if not RCShared.isAdmin(player) then return end
-    if RCFleet then RCFleet.parts(player, args and args.vid) end
+    if RCShared.need("RCFleet", RCFleet,
+        "the parts diagram will stay on 'select a vehicle'") then
+        RCFleet.parts(player, args and args.vid)
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -612,6 +618,11 @@ end
 -- operating, and last sweep's outcome. Sent to the ASKING player only.
 local function hLifecycle(player)
     if not RCShared.isAdmin(player) then return end
+    -- Guarded rather than assumed: RCTuning is a shared/ file and a partial
+    -- deploy can leave it behind, in which case snapshot() throws inside a
+    -- packet handler and the Janitor tab reads "loading..." with no reply.
+    if not RCShared.need("RCTuning", RCTuning,
+        "the Janitor tab will stay on 'loading...'") then return end
     local values, moved = RCTuning.snapshot()
     local tv, tt = RCRegistry.tokens()
     sendServerCommand(player, M, "lifecycle", {
@@ -661,7 +672,8 @@ end
 -- by the loaded vehicle count.
 local function hNoVanillaSurvey(player)
     if not RCShared.isAdmin(player) then return end
-    if not RCNoVanilla then return end
+    if not RCShared.need("RCNoVanilla", RCNoVanilla,
+        "Survey will report nothing and Remove vanilla will refuse") then return end
     sendServerCommand(player, M, "novanillasurvey", RCNoVanilla.survey())
 end
 
@@ -672,14 +684,76 @@ local function hNoVanillaPurge(player, args)
         RCAudit.log("PURGE-DENY", player, {})
         return
     end
-    if not RCNoVanilla then return end
+    if not RCShared.need("RCNoVanilla", RCNoVanilla,
+        "the retrofit purge cannot run") then return end
     local budget = tonumber(args and args.budget) or 25
     if budget < 1 then budget = 1 end
     if budget > 200 then budget = 200 end
-    local removed, dumped = RCNoVanilla.purge(budget)
-    RCAudit.log("PURGE", player, { removed = removed, dumped = dumped })
-    sendServerCommand(player, M, "novanillapurged", { removed = removed, dumped = dumped })
+    local removed, dumped, minted = RCNoVanilla.purge(budget)
+    RCAudit.log("PURGE", player, { removed = removed, dumped = dumped, minted = minted })
+    -- `minted` travels back so the panel can SAY that removal funded
+    -- replacement. A destructive action that silently also credits an economy
+    -- is the wrong kind of surprise, even when the credit is the point.
+    sendServerCommand(player, M, "novanillapurged",
+        { removed = removed, dumped = dumped, minted = minted })
     sendServerCommand(player, M, "novanillasurvey", RCNoVanilla.survey())
+    -- Fresh lifecycle payload: the token pool just moved and the panel's status
+    -- column is the only place an admin can see that it did.
+    hLifecycle(player)
+end
+
+-- Force a replacement sweep now, instead of waiting on the hourly pass.
+--
+-- This is what makes the retrofit usable: purge banks tokens, this spends them.
+-- Without it an admin who clears fifty vanilla cars has to leave the server
+-- running for a day to see them come back, which is why the pair read as
+-- "cleanup works, replacement does not".
+--
+-- It cannot mint. RCRespawn.sweep spends from the pool and refunds what it
+-- cannot place, so the worst this button can do is fail to find parking.
+local function hRespawnNow(player, args)
+    if not RCShared.isAdmin(player) then
+        RCAudit.log("RESPAWN-NOW-DENY", player, {})
+        return
+    end
+    if not RCShared.need("RCRespawn", RCRespawn,
+        "replacements cannot be placed") then return end
+    local burst = tonumber(args and args.burst) or 10
+    if burst < 1 then burst = 1 end
+    if burst > 25 then burst = 25 end
+    local placed = RCRespawn.sweep(burst) or 0
+    RCAudit.log("RESPAWN-NOW", player, { burst = burst, placed = placed })
+    sendServerCommand(player, M, "respawnnow", { placed = placed, burst = burst })
+    hLifecycle(player)
+end
+
+-- Mark the room the admin is standing in as "never park here".
+--
+-- The reporting half of a deliberate decision: indoor vehicle zones stay legal
+-- (see RCParking.canPlace) because most of them are real parking, so the bad
+-- ones are collected as they are found rather than guessed at up front. One
+-- press, no coordinates to type - the room's own bounds are recorded.
+local function hNoParkHere(player)
+    if not RCShared.isAdmin(player) then
+        RCAudit.log("NOPARK-DENY", player, {})
+        return
+    end
+    if not RCShared.need("RCNoPark", RCNoPark,
+        "the exclusion list is unavailable") then return end
+    local rect, why = RCNoPark.addRoomAt(player)
+    if not rect then
+        sendServerCommand(player, M, "nopark", { ok = false, reason = tostring(why) })
+        return
+    end
+    RCAudit.log("NOPARK", player, {
+        x = rect.x, y = rect.y, z = rect.z, w = rect.w, h = rect.h,
+        room = tostring(rect.label or "-"),
+    })
+    sendServerCommand(player, M, "nopark", {
+        ok = true, x = rect.x, y = rect.y, w = rect.w, h = rect.h,
+        label = tostring(rect.label or "room"),
+        total = #RCNoPark.all(),
+    })
 end
 
 local handlers = {
@@ -688,6 +762,8 @@ local handlers = {
     resettuning     = hResetTuning,
     novanillasurvey = hNoVanillaSurvey,
     novanillapurge  = hNoVanillaPurge,
+    respawnnow      = hRespawnNow,
+    noparkhere      = hNoParkHere,
     fleet        = hFleet,
     fleetcancel  = hFleetCancel,
     vehicleparts = hVehicleParts,
@@ -730,10 +806,44 @@ local handlers = {
 -- ---------------------------------------------------------------------------
 local RATE_MAX = 20
 
+-- An unrecognised command used to return in silence, and that silence is what
+-- cost 2026-08-03: the dedi was running a REVERTED RCServer.lua with no fleet /
+-- lifecycle / settuning handlers, so the client's requests landed here, matched
+-- nothing, and vanished. The tab waited on a reply that was never coming and
+-- the only symptom anywhere was an empty list.
+--
+-- A version-skewed client is the normal cause and it is worth one line each.
+-- BOUNDED, though, and deliberately: this sits BEFORE the rate limit (an
+-- unknown command never reaches RDRate), so an unbounded report would be a
+-- log-flood vector for any client that can invent names. One line per distinct
+-- command, and no more than UNKNOWN_CAP distinct names for the whole session.
+local UNKNOWN_CAP = 24
+local unknownSeen, unknownCount = {}, 0
+
+local function reportUnknown(command, player)
+    if unknownSeen[command] or unknownCount >= UNKNOWN_CAP then return end
+    unknownSeen[command] = true
+    unknownCount = unknownCount + 1
+    print(string.format(
+        "[RC] !! UNKNOWN COMMAND '%s' from %s - this server's RCServer.lua does not "
+        .. "implement it. Usually a version skew: the client is newer than the server's "
+        .. "mod tree (a Steam workshop re-validate reverts the dedi to the published "
+        .. "build). Re-deploy and RESTART. Reported once per command name.",
+        tostring(command),
+        tostring(player and player.getUsername and player:getUsername() or "?")))
+    if unknownCount >= UNKNOWN_CAP then
+        print("[RC] !! unknown-command reporting capped at "
+            .. UNKNOWN_CAP .. " distinct names for this session.")
+    end
+end
+
 local function onClientCommand(module, command, player, args)
     if module ~= M then return end
     local h = handlers[command]
-    if not h then return end
+    if not h then
+        reportUnknown(command, player)
+        return
+    end
     if not RDRate.allow(player, RATE_MAX, 1000) then return end
     local ok, err = pcall(h, player, args or {})
     if not ok then print("[RC] handler error (" .. tostring(command) .. "): " .. tostring(err)) end

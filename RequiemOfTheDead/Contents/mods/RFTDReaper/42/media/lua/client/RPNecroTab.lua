@@ -229,10 +229,14 @@ end
 
 local function rebuildList()
     if not NecroTab.listBox then return end
-    NecroTab.listBox:clear()
-    for _, row in ipairs(applyFilter(NecroTab.rows, currentFilter())) do
-        NecroTab.listBox:addItem("", row)
-    end
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(NecroTab.listBox, function(box)
+        for _, row in ipairs(applyFilter(NecroTab.rows, currentFilter())) do
+            box:addItem("", row)
+        end
+    end)
 end
 
 -- The two views that need rows the default request deliberately leaves on the

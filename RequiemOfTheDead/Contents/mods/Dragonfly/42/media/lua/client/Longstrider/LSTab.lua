@@ -278,12 +278,16 @@ local function build(spec, panel, x, y, w, h)
 
     -- ---- Helpers ----
     rebuildList = function()
-        toursList:clear()
         local selIdx
-        for i, t in ipairs(LSTours.list) do
-            toursList:addItem(t.name, t)
-            if t.id == LSTours.selectedId then selIdx = i end
-        end
+        -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+        -- addItem stacks onto it, which eventually scrolls the list off its own
+        -- rows. See that function's header.
+        DFKit.refillList(toursList, function(box)
+            for i, t in ipairs(LSTours.list) do
+                box:addItem(t.name, t)
+                if t.id == LSTours.selectedId then selIdx = i end
+            end
+        end)
         toursList.selected = selIdx or 0
     end
 

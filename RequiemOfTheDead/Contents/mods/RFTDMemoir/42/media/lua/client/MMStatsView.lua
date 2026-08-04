@@ -181,8 +181,12 @@ end
 
 function MMStatsView:populate()
     self:buildHeader()
-    self.list:clear()
-    for _, row in ipairs(collectSkills(self.player)) do self.list:addItem(row.name, row) end
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(self.list, function(box)
+        for _, row in ipairs(collectSkills(self.player)) do box:addItem(row.name, row) end
+    end)
 end
 
 function MMStatsView:new(player)

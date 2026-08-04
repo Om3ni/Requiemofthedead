@@ -31,6 +31,10 @@ tools/lua5.1.dll
 # Dropped-in client logs for analysis (not repo content)
 debugclientlog*.txt
 
+# --- netprobe captures: raw /metrics snapshots, regenerate per experiment ---
+# These carry live player usernames and world coordinates. Never commit them.
+tools/netprobe/captures/
+
 # --- Engine decompile: reference only, regenerate with tools/decompile-engine.ps1 ---
 PZ_Engine_Decompiled_*/
 IBdebuglog.txt

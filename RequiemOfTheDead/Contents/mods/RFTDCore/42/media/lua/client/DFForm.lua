@@ -40,10 +40,28 @@
 -- SPACING IS A TOKEN, NOT A GUESS. Group gaps, header rules and row heights
 -- are constants here precisely so every surface breathes identically, and so
 -- "the text is too close together" is one edit rather than a survey.
+--
+-- IT SCROLLS, via DFScroll. A schema is as long as it is, and the host rect is
+-- whatever the window happens to leave - the two have no reason to agree, and on
+-- the Janitor view they did not: the form drew until it ran out of room,
+-- stopped, and printed "+N more - make the panel taller". That warning was
+-- honest about the truncation and useless about it, because there was no taller
+-- to make and no way to reach the dials underneath.
+--
+-- The scrolling itself is NOT implemented here. DFScroll owns the offset, the
+-- bar, the thumb drag and the wheel distance, and every drawn scrolling surface
+-- in the family uses it - so the form and the vehicle parts grid cannot drift
+-- apart on thumb size or whether clicking the track jumps.
+--
+-- The wheel still belongs to the number box when the cursor is over one. That
+-- is the older contract and the more specific one - coarse travel on a 0-1000
+-- dial is why the stepper is usable at all - so scrolling only takes the wheel
+-- everywhere it is not already spoken for.
 
 if isServer() then return end
 
 require "ISUI/ISPanel"
+require "DFScroll"
 
 DFForm = DFForm or {}
 
@@ -101,22 +119,72 @@ local function metrics()
     }
 end
 
+-- Breathing room under the last row, so it clears the bottom edge instead of
+-- sitting flush against it. Counted INSIDE contentHeight(), because that is
+-- what callers size themselves against: DFSettingsWindow makes its body
+-- exactly contentHeight() tall, and a pad living outside that number would put
+-- the window 6px into scroll range and hang a scrollbar on a form that fits.
+local BOT_PAD = 6
+
 -- ---------------------------------------------------------------------------
 -- Hotspot. One invisible panel over the whole form catches every interaction;
 -- rows are drawn chrome, not widgets, so there is nothing else to hit-test.
 --
--- Does NOT chain to the base class. ISPanel has no onMouseUp or onMouseWheel
--- of its own, so calling one would nil-call - the trap ISScrollingListBox
--- already sprang on this codebase once.
+-- COORDINATE SPACE. The form's rects are all in the HOST PANEL's space, because
+-- that is what DFForm:draw is handed. Everything arriving here is in the
+-- hotspot's own space, so it is offset by the hotspot origin on the way in.
+-- onMouseWheel used to skip that step and pass getMouseX/Y through raw, which
+-- happened to work only while a form sat at x=0 - the Janitor view's does not,
+-- so wheeling a number box there adjusted whichever dial was that many pixels
+-- to the left, or none.
+--
+-- ISPanel DOES define onMouseUp/onMouseDown/onMouseMove (it drives
+-- moveWithMouse), so chaining them is safe and keeps the default behaviour for
+-- anything this does not claim. It has no onMouseWheel - that one must not
+-- chain, which is the trap ISScrollingListBox already sprang on this codebase.
 -- ---------------------------------------------------------------------------
 local Hotspot = ISPanel:derive("DFFormHotspot")
 
+function Hotspot:onMouseDown(x, y)
+    -- Claim the press only when it lands on the scrollbar; capture so the drag
+    -- survives the cursor leaving the form, exactly as ISScrollBar does.
+    if self.form and self.form:barDown(self:getX() + x, self:getY() + y) then
+        self:setCapture(true)
+        return true
+    end
+    return ISPanel.onMouseDown(self, x, y)
+end
+
+function Hotspot:onMouseMove(dx, dy)
+    if self.form and self.form:barDrag(self:getY() + self:getMouseY()) then return end
+    return ISPanel.onMouseMove(self, dx, dy)
+end
+
+function Hotspot:onMouseMoveOutside(dx, dy)
+    if self.form and self.form:barDrag(self:getY() + self:getMouseY()) then return end
+    return ISPanel.onMouseMoveOutside(self, dx, dy)
+end
+
 function Hotspot:onMouseUp(x, y)
-    if self.form then self.form:click(self:getX() + x, self:getY() + y) end
+    self:setCapture(false)
+    if not self.form then return end
+    -- Releasing a scrollbar drag is not a click on whatever row is now under
+    -- the cursor - the rows moved while the thumb was moving.
+    if self.form:barUp() then return end
+    self.form:click(self:getX() + x, self:getY() + y)
+end
+
+function Hotspot:onMouseUpOutside(x, y)
+    self:setCapture(false)
+    if self.form then self.form:barUp() end
+    return ISPanel.onMouseUpOutside(self, x, y)
 end
 
 function Hotspot:onMouseWheel(del)
-    if self.form then return self.form:wheel(self:getMouseX(), self:getMouseY(), del) end
+    if self.form then
+        return self.form:wheel(self:getX() + self:getMouseX(),
+                               self:getY() + self:getMouseY(), del)
+    end
     return false
 end
 
@@ -142,6 +210,7 @@ function DFForm.new(opts)
         rects   = {},
         rect    = nil,
         height  = 0,
+        scroll  = DFScroll.new(),
     }
     return setmetatable(f, { __index = DFForm })
 end
@@ -164,10 +233,21 @@ function DFForm:layout(x, y, w, h)
         self.hotspot:setX(x); self.hotspot:setY(y)
         self.hotspot:setWidth(w); self.hotspot:setHeight(h)
     end
+    -- Measured here as well as in draw: a panel that just got taller can leave
+    -- the view scrolled past the end, and the wheel has to know its range
+    -- before the first frame is drawn.
+    --
+    -- The `or` is for hot reload. reloadLuaFile re-runs this file into the same
+    -- DFForm table, so live instances pick up the new methods while keeping the
+    -- fields they were built with - and one built before scrolling existed has
+    -- no self.scroll at all, which would fault rather than simply not scroll.
+    self.scroll = self.scroll or DFScroll.new()
+    self.scroll:measure(h, self:contentHeight())
 end
 
--- Total vertical space the schema needs. Callers use it to decide whether to
--- warn about truncation or to size their own window.
+-- Total vertical space the form needs, bottom padding included. Give a form
+-- this much height and it will not scroll; give it less and the difference is
+-- exactly its scroll range.
 function DFForm:contentHeight()
     local m = metrics()
     local total = 6
@@ -176,7 +256,7 @@ function DFForm:contentHeight()
         if e.group then total = total + m.groupGap + m.headH + m.ruleGap + m.headBottom
         else total = total + m.rowH end
     end
-    return total
+    return total + BOT_PAD
 end
 
 -- ---------------------------------------------------------------------------
@@ -230,29 +310,45 @@ function DFForm:draw(el)
     local textDY = math.floor((m.rowH - m.fh) / 2)
     local ctlDY  = math.floor((m.rowH - ctlH) / 2)
 
+    -- Scroll geometry, remeasured every frame: the schema is fixed but the
+    -- rect is not, and neither is the font. The gutter is 0 when the schema
+    -- fits, so a short form still uses the full rect.
+    local content = self:contentHeight()
+    self.scroll = self.scroll or DFScroll.new()   -- see layout(): hot reload
+    local sc = self.scroll
+    local gutter = sc:measure(r.h, content)
+
     self.rects = {}
     local x = r.x + m.gutter
-    local w = r.w - m.gutter - DFKit.metrics.pad
-    local y = r.y + 6
+    local w = r.w - m.gutter - DFKit.metrics.pad - gutter
+    local y = r.y + 6                 -- VIRTUAL cursor; sc:screenY maps it down
+
+    sc:clip(el, r)
 
     for i = 1, #self.schema do
         local e = self.schema[i]
 
         if e.group then
             y = y + m.groupGap
-            local label = string.upper(e.group)
-            el:drawText(label, x, y, c.textDim.r, c.textDim.g, c.textDim.b, 0.95, fo)
-            y = y + m.headH
-            -- The rule runs the FULL width beneath the header rather than
-            -- trailing off after the text. A section divider that stops where
-            -- the word stops reads as decoration; one that spans the column
-            -- reads as a boundary, which is what it is.
-            el:drawRect(x, y + m.ruleGap - 3, w, 1, 0.45, c.line.r, c.line.g, c.line.b)
-            y = y + m.ruleGap + m.headBottom
+            -- Visibility gates the DRAWING only; y advances identically either
+            -- way, or the scroll range would stop matching contentHeight().
+            if sc:shows(y, m.headH + m.ruleGap, r) then
+                local hy = sc:screenY(y)
+                local label = string.upper(e.group)
+                el:drawText(label, x, hy, c.textDim.r, c.textDim.g, c.textDim.b, 0.95, fo)
+                -- The rule runs the FULL width beneath the header rather than
+                -- trailing off after the text. A section divider that stops
+                -- where the word stops reads as decoration; one that spans the
+                -- column reads as a boundary, which is what it is.
+                el:drawRect(x, hy + m.headH + m.ruleGap - 3, w, 1, 0.45,
+                    c.line.r, c.line.g, c.line.b)
+            end
+            y = y + m.headH + m.ruleGap + m.headBottom
 
-        else
+        elseif sc:shows(y, m.rowH, r) then
             local live   = e.live ~= false
-            local rowY   = y
+            local rowY   = sc:screenY(y)   -- SCREEN space from here down, so the
+                                           -- hit rects below are what was drawn
             local hasHelp = type(e.help) == "string" and e.help ~= ""
 
             -- Overridden marker, in the gutter.
@@ -351,25 +447,25 @@ function DFForm:draw(el)
 
             self.rects[#self.rects + 1] = rect
             y = y + m.rowH
-        end
 
-        -- Ran out of room. Say so: a settings list that quietly stops short
-        -- reads as "these are all the options", which is the one thing a
-        -- tuning surface must never imply.
-        if y > r.y + r.h - m.rowH and i < #self.schema then
-            local hidden = 0
-            for j = i + 1, #self.schema do
-                if self.schema[j].key then hidden = hidden + 1 end
-            end
-            if hidden > 0 then
-                el:drawText(string.format("+%d more - make the panel taller", hidden),
-                    x, r.y + r.h - 15, c.warn.r, c.warn.g, c.warn.b, 0.9, fo)
-            end
-            break
+        else
+            -- Scrolled out of sight: no drawing and no hit rect - a row that
+            -- cannot be seen must not be clickable - but the cursor still has
+            -- to step over it or everything below would shift up.
+            y = y + m.rowH
         end
     end
 
-    self.height = y - r.y
+    sc:unclip(el)
+
+    -- The bar, outside the stencil and last, so it sits above the rows rather
+    -- than being clipped by the same rect they are. Its presence is also the
+    -- honest signal that there is more here than fits: this replaced a
+    -- "+N more - make the panel taller" line, which named the problem
+    -- accurately and left the admin no way to act on it.
+    sc:draw(el, r, c)
+
+    self.height = content
 end
 
 -- ---------------------------------------------------------------------------
@@ -430,18 +526,32 @@ function DFForm:click(ax, ay)
     end
 end
 
--- Wheel over the number box. This is what keeps a 0-1000 dial usable without
--- reintroducing a drag: coarse travel costs a flick, and every stop is still
--- exactly on a step boundary.
-function DFForm:wheel(ax, ay, del)
-    if not self.enabled() or not self.set then return false end
-    local rc = self:rowAt(ax, ay)
-    if not rc or rc.e.kind ~= "int" or not rc.boxX then return false end
-    if ax < rc.boxX or ax >= rc.boxX + rc.boxW then return false end
+-- ---------------------------------------------------------------------------
+-- Scrolling - delegated wholesale to DFScroll. These thin wrappers exist only
+-- so the Hotspot has something to call without knowing the form keeps its
+-- scroller in a field.
+-- ---------------------------------------------------------------------------
+function DFForm:barDown(ax, ay) return self.scroll and self.scroll:press(ax, ay) or false end
+function DFForm:barDrag(ay)     return self.scroll and self.scroll:drag(ay) or false end
+function DFForm:barUp()         return self.scroll and self.scroll:release() or false end
 
-    local e = rc.e
-    local n = tonumber(self.get(e.key)) or (e.min or 0)
-    -- del is +1 down / -1 up in PZ; wheeling UP should raise the number.
-    self.set(e.key, clamp(e, n - (del > 0 and 1 or -1) * (e.step or 1)))
-    return true
+-- The wheel has two jobs and the specific one wins. Over a number box it is
+-- the dial's own coarse-travel control - what keeps a 0-1000 setting usable
+-- without reintroducing a drag, every stop still exactly on a step boundary.
+-- Anywhere else in the form it scrolls.
+function DFForm:wheel(ax, ay, del)
+    local rc = self:rowAt(ax, ay)
+    if rc and rc.e.kind == "int" and rc.boxX
+        and ax >= rc.boxX and ax < rc.boxX + rc.boxW
+        and self.enabled() and self.set then
+        local e = rc.e
+        local n = tonumber(self.get(e.key)) or (e.min or 0)
+        -- del is +1 down / -1 up in PZ; wheeling UP should raise the number.
+        self.set(e.key, clamp(e, n - (del > 0 and 1 or -1) * (e.step or 1)))
+        return true
+    end
+
+    -- Distance comes from DFScroll, so a notch travels the same here as in the
+    -- vehicle parts grid.
+    return self.scroll and self.scroll:wheel(del) or false
 end

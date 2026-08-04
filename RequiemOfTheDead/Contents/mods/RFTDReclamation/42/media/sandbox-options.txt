@@ -201,7 +201,7 @@ option RFTDReclamation.SpawnerMissingPartsMax
 option RFTDReclamation.NoVanillaVehicles
 {
     type = boolean,
-    default = true,
+    default = false,
     page = RFTDReclamation,
     translation = RC_NoVanillaVehicles,
 }
@@ -212,6 +212,14 @@ option RFTDReclamation.NoVanillaStoryVehicles
     default = true,
     page = RFTDReclamation,
     translation = RC_NoVanillaStoryVehicles,
+}
+
+option RFTDReclamation.NoVanillaRetrofit
+{
+    type = boolean,
+    default = false,
+    page = RFTDReclamation,
+    translation = RC_NoVanillaRetrofit,
 }
 
 /* ---------------------- replacement lifecycle ----------------------- */
