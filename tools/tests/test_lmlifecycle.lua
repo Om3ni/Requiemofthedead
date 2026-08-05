@@ -55,12 +55,12 @@ end
 
 eq("store starts empty",          #Limes.zoneNames(), 0)
 eq("seedIfEmpty seeds",           Limes.seedIfEmpty(), true)
-eq("seeded the shipped set",      #Limes.zoneNames(), 5)
+eq("seeded the shipped set",      #Limes.zoneNames(), 7)
 eq("_default is a real record",   Limes.getZone("_default").name, "_default")
-eq("_default tier",               Limes.getZone("_default").fields.tier, 0)
-eq("ladder inherits _default",    Limes.getZone("Tier_Lethal").inherits, "_default")
-eq("ladder carries its tier",     Limes.getZone("Tier_Lethal").fields.tier, 10)
-eq("middle rung resolves",        Limes.getZone("Tier_Normal").fields.tier, 5)
+eq("_default tier",               Limes.getZone("_default").fields.tier, 2)
+eq("ladder inherits _default",    Limes.getZone("Very_Hard").inherits, "_default")
+eq("top rung is tier 5",          Limes.getZone("Very_Hard").fields.tier, 5)
+eq("the missing rung ships",      Limes.getZone("Intermediate").fields.tier, 3)
 
 -- Templates only: no geometry anywhere in the seed, so nothing it ships can
 -- claim a tile out from under an admin who never referenced it.
@@ -72,18 +72,18 @@ eq("seed ships no geometry",      anyGeometry, false)
 eq("seed claims no tiles",        Limes.getLocation(1000, 1000), nil)
 
 eq("seedIfEmpty is a no-op when populated", Limes.seedIfEmpty(), false)
-eq("no-op did not duplicate",     #Limes.zoneNames(), 5)
+eq("no-op did not duplicate",     #Limes.zoneNames(), 7)
 
 -- The copy is the whole point: without it the module constant IS the live
 -- store, and the first admin edit rewrites the defaults every later server ships.
 Limes.raw()["_default"].fields.tier = 99
-eq("SEED constant untouched by store edits", Limes.SEED._default.fields.tier, 0)
+eq("SEED constant untouched by store edits", Limes.SEED._default.fields.tier, 2)
 
 -- A deleted template stays deleted across a later seed attempt.
-Limes.applyDelta(nil, { "Tier_Calm" }, 2)
-eq("template deleted",            Limes.getZone("Tier_Calm"), nil)
+Limes.applyDelta(nil, { "Medium" }, 2)
+eq("template deleted",            Limes.getZone("Medium"), nil)
 eq("seed does not resurrect",     Limes.seedIfEmpty(), false)
-eq("still deleted",               Limes.getZone("Tier_Calm"), nil)
+eq("still deleted",               Limes.getZone("Medium"), nil)
 
 -- ---------------------------------------------------------------------------
 -- Lifecycle events (§5.1)

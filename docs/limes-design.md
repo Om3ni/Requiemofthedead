@@ -368,6 +368,21 @@ import candidate.
   documented answer to "how does an unzoned tile behave" instead of an implicit root, and
   demonstrates the inheritance contract rather than describing it. A template with no
   rects cannot affect anyone who does not reference it, so the risk is nil.
+- **The ladder is the family's existing six rungs** — `_default`, `Very_Easy`, `Easy`,
+  `Medium`, `Intermediate`, `Hard`, `Very_Hard` — *corrected 2026-08-04*. The first cut
+  shipped a namespaced `Tier_Calm/Normal/Harsh/Lethal` set on a 0-10 scale to avoid
+  colliding with imported PhunZones names. That collision cannot happen (the seed only
+  lands in an empty store; an import replaces the store wholesale), and the prefix bought
+  a worse problem: a fresh install and a migrated install would speak different
+  vocabularies for the same concept. Measured against the live layer, **all six rungs are
+  in real use** — 0:4 zones, 1:3, 2:6, 3:4, 4:7, 5:4 — so collapsing the ladder would
+  discard distinctions the admin already made. `tier` stays registered 0-10; the ladder
+  occupies 0-5 and the headroom is free, whereas narrowing a registered range silently
+  eats stored values.
+- **Known wart:** `Medium` (2) and `Intermediate` (3) are English synonyms on adjacent
+  rungs — very likely why `Intermediate` was deleted from the live layer, orphaning five
+  zones. Renaming means rewriting every child's `inherits`, so it waits for the M4 editor,
+  which can rename and rewrite atomically.
 - **Why not geography:** it would be deleted by the first thing we tell an admin to do.
   `finishImport` calls `Limes.apply(res.zones)`, which *replaces* the store wholesale — so
   any shipped rectangles vanish on import. Baked coordinates also assume a map set.

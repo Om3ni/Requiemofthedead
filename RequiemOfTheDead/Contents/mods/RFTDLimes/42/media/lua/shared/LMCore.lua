@@ -540,21 +540,40 @@ end
 -- exists), and the inheritance contract is demonstrated rather than described.
 --
 -- Only `tier` carries values here, because tier is the one scalar LMCore itself
--- registers that means anything to a satellite later. When Dirge registers its
--- vocabulary at M1 the admin adds those values to these same templates - that
--- is the intended growth path, not a second ladder.
+-- registers that means anything to a satellite later. LMDirge's vocabulary
+-- lands on these same templates at M1 - that is the intended growth path, not a
+-- second ladder.
 --
--- The "Tier_" prefix is a namespace: imported PhunZones data brings bare names
--- like Hard and Very_Easy, and an admin reading an inherits chain should never
--- have to guess which system a template came from.
+-- THE NAMES ARE THE FAMILY'S EXISTING LADDER, deliberately (corrected
+-- 2026-08-04). An earlier revision shipped a namespaced Tier_Calm/Normal/
+-- Harsh/Lethal set on a 0-10 scale, reasoning that a prefix avoids colliding
+-- with imported PhunZones names. It avoided a collision that could not happen -
+-- the seed only ever lands in an EMPTY store, and an import replaces the store
+-- wholesale - while creating a worse problem: a fresh install and a migrated
+-- install would speak different vocabularies for the same concept, and an
+-- admin reading an inherits chain would have to know which kind of server they
+-- were on. Measured against the live layer, all six rungs are in real use
+-- (0:4 zones, 1:3, 2:6, 3:4, 4:7, 5:4), so six is what ships.
+--
+-- `tier` stays registered 0-10. The ladder occupies 0-5 and the headroom costs
+-- nothing, whereas narrowing a registered range is how stored values get
+-- silently eaten.
+--
+-- Known wart, not fixed here: Medium (2) and Intermediate (3) are English
+-- synonyms on adjacent rungs, which is very likely why Intermediate was
+-- deleted from the live layer in the first place. Renaming means rewriting
+-- every child's `inherits`, so it waits for the M4 editor, which can do the
+-- rename and the rewrite atomically.
 -- ---------------------------------------------------------------------------
 
 Limes.SEED = {
-    _default    = {                        fields = { tier = 0 } },
-    Tier_Calm   = { inherits = "_default", fields = { tier = 2 } },
-    Tier_Normal = { inherits = "_default", fields = { tier = 5 } },
-    Tier_Harsh  = { inherits = "_default", fields = { tier = 8 } },
-    Tier_Lethal = { inherits = "_default", fields = { tier = 10 } },
+    _default     = {                        fields = { tier = 2 } },
+    Very_Easy    = { inherits = "_default", fields = { tier = 0 } },
+    Easy         = { inherits = "_default", fields = { tier = 1 } },
+    Medium       = { inherits = "_default", fields = { tier = 2 } },
+    Intermediate = { inherits = "_default", fields = { tier = 3 } },
+    Hard         = { inherits = "_default", fields = { tier = 4 } },
+    Very_Hard    = { inherits = "_default", fields = { tier = 5 } },
 }
 
 local function copyRaw(src)
