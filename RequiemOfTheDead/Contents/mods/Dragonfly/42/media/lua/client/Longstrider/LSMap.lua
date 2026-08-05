@@ -134,10 +134,21 @@ function LSMap:initMap()
         api:setBoundsFromWorld()
         api:setZoom(DEFAULT_ZOOM)
 
-        -- View flags: show the real 300-tile cell grid and player markers so the
-        -- admin can orient; hide vanilla map symbols to keep our overlay clean.
+        -- View flags. Only the ones every embedded consumer wants: show the whole
+        -- world rather than the visited part, draw player markers so the admin can
+        -- orient, and hide vanilla map symbols so an overlay is not fighting them.
+        --
+        -- THE CELL GRID IS NOT SET HERE, deliberately (2026-08-04). This used to
+        -- turn "CellGrid" on for everybody, which is a VIEW POLICY and belongs to
+        -- whoever is using the map, not to the bring-up. Longstrider wants it -
+        -- its whole job is walking 300-tile cells - and LSTab sets it from
+        -- LSTours.gridOn immediately after acquiring the map anyway, so nothing is
+        -- lost there. Limes' zone editor emphatically does not: a 256-square
+        -- lattice over the entire map buries the zone rectangles it exists to
+        -- draw. The engine's own default is false (WorldMapRenderer.java:140,
+        -- and CellGrid300 at :141 is a separate option, also false), so consumers
+        -- that say nothing now get a clean map.
         api:setBoolean("HideUnvisited", false)
-        api:setBoolean("CellGrid",      true)
         api:setBoolean("Players",       true)
         api:setBoolean("RemotePlayers", true)
         api:setBoolean("PlayerNames",   true)
@@ -234,13 +245,25 @@ function LSMap:setMapSize(w, h)
 end
 
 -- ---------------------------------------------------------------------------
--- Session cache: one initialised map per player, reused across tab rebuilds.
--- The caller (LSTab) is responsible for re-parenting it into the live content
+-- Session cache: one initialised map per player PER CONSUMER, reused across tab
+-- rebuilds. The caller is responsible for re-parenting it into the live content
 -- area. Returns an *initialised, instantiated* LSMap.
+--
+-- WHY `key`, added 2026-08-04 for Limes' M4 editor: an overlay takes the map
+-- over by wrapping its render and mouse handlers permanently (see
+-- LSGridOverlay:hookNow). Two tabs sharing one widget would therefore stack two
+-- overlays on it, and both would draw - Longstrider's tour rectangles would
+-- appear over the zone editor and vice versa, with the mouse going to whichever
+-- wrapper happened to be outermost. Nothing about that is fixable from inside
+-- either overlay, so each consumer that wants a map asks for its own by name.
+--
+-- The cost is a second bring-up, which is local: getLotDirectories, fileExists,
+-- addData/addImages against media/maps on this machine, zero packets. Callers
+-- that genuinely want to share a view can pass the same key on purpose.
 -- ---------------------------------------------------------------------------
-function LSMap.acquire(player, w, h)
-    local pi = player:getPlayerNum()
-    local inst = LSMap.instances[pi]
+function LSMap.acquire(player, w, h, key)
+    local ck = player:getPlayerNum() .. "/" .. tostring(key or "longstrider")
+    local inst = LSMap.instances[ck]
     if inst and inst._initialised then
         inst:setMapSize(w, h)
         return inst
@@ -249,13 +272,20 @@ function LSMap.acquire(player, w, h)
     inst = LSMap:new(0, 0, w, h, player)
     inst:initialise()     -- runs createChildren -> initMap
     inst:instantiate()
-    LSMap.instances[pi] = inst
+    LSMap.instances[ck] = inst
     return inst
 end
 
--- Drop the cached instance (e.g. on player death / disconnect) so it rebuilds.
+-- Drop cached instances for a player (e.g. on death / disconnect) so they
+-- rebuild. Every key for that player goes, since the caller is talking about
+-- the player and not about one tab's copy.
 function LSMap.forget(playerIndex)
-    LSMap.instances[playerIndex] = nil
+    local prefix = tostring(playerIndex) .. "/"
+    for ck in pairs(LSMap.instances) do
+        if type(ck) == "string" and ck:sub(1, #prefix) == prefix then
+            LSMap.instances[ck] = nil
+        end
+    end
 end
 
 -- Dragonfly Longstrider v0.3.0

@@ -42,9 +42,13 @@
 --   import       fallback by filename in the Zomboid/Lua/ jail, for a box
 --                where the export already sits next to the server
 --                (LMSync.requestImport("phunzones.txt") from the Lua console)
+--   saveZones    the M4 editor's Save: a DIFF against a stated revision, which
+--                comes straight back out as a delta. The only edit route that
+--                does not replace the whole store.
 
 require "RDNet"
 require "LMCore"
+require "LMEdit"
 
 LMSync = LMSync or {}
 
@@ -216,6 +220,117 @@ if isServer() then
         print("[Limes] " .. who .. " cleared all zones (" .. had .. " removed)")
     end)
 
+    -- SAVE, the M4 editor's one command (§6.1 rules 2, 4, 7, 8).
+    --
+    -- The editor edits a local draft and sends the DIFF once, on an explicit
+    -- Save - never on a drag, never on field-blur, never on a timer. What
+    -- arrives is { rev, changed, removed }, and it is the same shape that goes
+    -- straight back out as a delta, which is why an edit to one zone costs one
+    -- zone on the wire in both directions.
+    --
+    -- OPTIMISTIC CONCURRENCY (rule 7). The revision the draft was taken against
+    -- has to still be the store's, or the save is refused. Server Lua is
+    -- single-threaded so two saves cannot interleave mid-apply, but two admins
+    -- with the tab open is otherwise a silent lost update: the second Save
+    -- overwrites zones the first one moved, with no symptom on either screen.
+    -- Refusing costs the loser their unsaved edits and tells them why; the
+    -- alternative costs the winner their saved ones and tells nobody.
+    --
+    -- VALIDATED AGAIN HERE. The client validated before offering Save; that
+    -- validation ran on a machine we do not own. LMEdit is shared code precisely
+    -- so the authoritative check is the same check, rather than a second
+    -- implementation that drifts.
+    --
+    -- ERRORS ARE SCOPED TO WHAT THIS SAVE TOUCHED. A pre-existing defect
+    -- elsewhere in the store - a name from some other importer that will not
+    -- round-trip, a dangling chain nobody has fixed - must not wedge every
+    -- future edit. The check asks "is this save making things wrong", not "is
+    -- the store perfect".
+    local MAX_SAVE_ZONES = 512    -- a rename can legitimately touch every child
+    local MAX_RECTS      = 128    -- the live layer's worst zone has nine
+
+    RDNet.register(TOKEN, "saveZones", { capability = "any", rate = 1 }, function(player, args)
+        local who = adminGate(player)
+        if not who then return end
+
+        local changed = (args and type(args.changed) == "table") and args.changed or {}
+        local removed = (args and type(args.removed) == "table") and args.removed or {}
+
+        local rev = tonumber(args and args.rev)
+        if rev == nil or rev ~= Limes.revision then
+            RDNet.reply(player, TOKEN, "notice", { msg = string.format(
+                "save refused: you were editing revision %s, the store is on %d."
+                .. " Someone else saved first - reopen the tab to pick up their"
+                .. " changes before redoing yours.", tostring(rev), Limes.revision) })
+            return
+        end
+
+        local nChanged = 0
+        for name, rec in pairs(changed) do
+            nChanged = nChanged + 1
+            if type(name) ~= "string" or type(rec) ~= "table" then
+                RDNet.reply(player, TOKEN, "notice", { msg = "save refused: malformed change set" })
+                return
+            end
+            if rec.rects and #rec.rects > MAX_RECTS then
+                RDNet.reply(player, TOKEN, "notice", { msg = "save refused: '" .. name
+                    .. "' has " .. #rec.rects .. " rectangles, over the " .. MAX_RECTS .. " cap" })
+                return
+            end
+        end
+        if nChanged + #removed > MAX_SAVE_ZONES then
+            RDNet.reply(player, TOKEN, "notice", { msg = "save refused: " .. (nChanged + #removed)
+                .. " zones in one save, over the " .. MAX_SAVE_ZONES .. " cap" })
+            return
+        end
+        if nChanged == 0 and #removed == 0 then
+            RDNet.reply(player, TOKEN, "notice", { msg = "nothing to save" })
+            return
+        end
+
+        -- Fold, then validate the result. Folding first is what makes a cycle or
+        -- an orphan visible at all: neither is a property of the change set on
+        -- its own, only of the store it lands in.
+        local merged = LMEdit.applyChangeSet(Limes.raw(), changed, removed)
+        local touched = {}
+        for name in pairs(changed) do touched[name] = true end
+        local errs = {}
+        for _, p in ipairs(LMEdit.new(merged, Limes.revision):validate()) do
+            if p.level == "error" and touched[p.zone] then
+                errs[#errs + 1] = p.zone .. ": " .. p.msg
+            end
+        end
+        if #errs > 0 then
+            for i = 1, #errs do print("[Limes] save refused: " .. errs[i]) end
+            forensic("LM.SAVE_INVALID", player, { errors = #errs, first = errs[1] })
+            RDNet.reply(player, TOKEN, "notice", { msg = "save refused: " .. errs[1]
+                .. (#errs > 1 and ("  (and " .. (#errs - 1) .. " more - see the server log)") or "") })
+            return
+        end
+
+        -- The pruned records come out of the fold, so the store, the file and
+        -- the broadcast all carry the identical shape rather than three
+        -- near-copies of what the client happened to send.
+        local pruned = {}
+        for name in pairs(changed) do pruned[name] = merged[name] end
+
+        local warnings = Limes.applyDelta(pruned, removed)
+        for i = 1, #warnings do print("[Limes] resolve: " .. warnings[i]) end
+        LMPersist.save(Limes.raw(), "editor save by " .. who, who)
+
+        -- ONE announcement (rule 4). A delta, and nothing after it.
+        LMSync.broadcastDelta(pruned, removed)
+
+        forensic("LM.SAVE", player, { changed = nChanged, removed = #removed,
+                                      rev = Limes.revision, warnings = #warnings })
+        RDNet.reply(player, TOKEN, "notice", { msg = string.format(
+            "saved: %d zone%s changed, %d removed, revision %d%s",
+            nChanged, nChanged == 1 and "" or "s", #removed, Limes.revision,
+            #warnings > 0 and (" (" .. #warnings .. " resolve warnings - see the server log)") or "") })
+        print("[Limes] " .. who .. " saved " .. nChanged .. " changed / "
+            .. #removed .. " removed, revision " .. Limes.revision)
+    end)
+
     -- The chunked paste route: layers past MAX_PASTE arrive in pieces and are
     -- reassembled here, then take the same finishImport tail as everything
     -- else - the server still parses ONE text authoritatively.
@@ -331,6 +446,23 @@ else
 
     function LMSync.requestImport(file)
         RDNet.send(TOKEN, "import", { file = file })
+    end
+
+    -- The editor's Save. One command, on an explicit click, carrying the draft's
+    -- revision so the server can refuse a stale write (§6.1 rules 2 and 7).
+    --
+    -- Nothing is applied locally. The saving client learns about its own edit
+    -- from the delta broadcast, exactly like every other client (rule 3) - so
+    -- there is no second code path where the editor's view and the store can
+    -- disagree, and no window where the admin is looking at state nobody else
+    -- has. Returns the count so the caller can say what it sent.
+    function LMSync.save(changed, removed, rev)
+        changed, removed = changed or {}, removed or {}
+        local n = #removed
+        for _ in pairs(changed) do n = n + 1 end
+        if n == 0 then return 0 end
+        RDNet.send(TOKEN, "saveZones", { rev = rev, changed = changed, removed = removed })
+        return n
     end
 
     Events.OnGameStart.Add(pull)

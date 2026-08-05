@@ -21,10 +21,10 @@
 -- machine, of text they just copied.
 --
 -- Soft-dep on Dragonfly, the RPNecroTab pattern: no DFRegistry, no tab, and
--- Limes ships fine without it. The tab id "limes" is where the M4 map editor
--- (Longstrider-style drawing) will also land - this paste surface is the
--- first resident, not the final form; layout is deliberately plain and
--- expects iteration.
+-- Limes ships fine without it. Since 2026-08-04 this is the IMPORT VIEW of the
+-- Zones tab rather than the whole of it - LMZonesTab owns the registration and
+-- puts the M4 map editor beside it. Import is how a layer arrives; the editor
+-- is how it is shaped afterwards, and an admin mid-migration needs both.
 
 if isServer() then return end
 
@@ -47,6 +47,22 @@ local CHUNK_BYTES = 24000
 local MAX_TEXT    = 512 * 1024
 
 local ui = nil   -- { status, store, warns = {labels}, importBtn }
+
+-- EVERYTHING THE IMPORTER SAYS GOES TO DFLog, source "Limes".
+--
+-- The eight warning labels below are a preview, not the record: nine warnings
+-- fitted and seventeen did not, and the overflow line read "... and 9 more
+-- (console has all)" - which was true only because these lines were also being
+-- print()ed, and print goes to the game log, not to anywhere an admin can scroll
+-- or copy. Pushing them into DFLog costs one call and puts them in the suite's
+-- own Console tab, in LMImportWindow's log pane, and in the clipboard-copy
+-- button, all of which already existed.
+local function log(text, level)
+    print("[Limes] " .. tostring(text))
+    if DFLog and DFLog.push then
+        DFLog.push({ source = "Limes", level = level or "info", text = tostring(text) })
+    end
+end
 
 local function setStatus(msg, good)
     if not ui or not ui.status then return end
@@ -86,11 +102,11 @@ local function readClipboard()
         setStatus("Clipboard is " .. math.floor(#text / 1024) .. "KB - over the server's "
             .. math.floor(MAX_TEXT / 1024) .. "KB assembly cap. Put the file in the "
             .. "server's Zomboid/Lua/ and use the filename route instead.")
-        print("[Limes] paste refused: " .. #text .. " bytes exceeds the "
+        log("paste refused: " .. #text .. " bytes exceeds the "
             .. MAX_TEXT .. "-byte assembly cap. Copy the export to "
             .. "<server>/Lua/phunzones.txt, then either restart the server "
             .. "(first-boot import) or run LMSync.requestImport(\"phunzones.txt\") "
-            .. "from the client console. Hand-editing RFTDLimes.ini also works.")
+            .. "from the client console. Hand-editing RFTDLimes.ini also works.", "warn")
         return
     end
 
@@ -105,7 +121,8 @@ local function readClipboard()
     setStatus("Preview: " .. res.count .. " zones, " .. #res.warnings
         .. " warnings. Review, then import.", true)
     showWarnings(res.warnings)
-    for i = 1, #res.warnings do print("[Limes] preview: " .. res.warnings[i]) end
+    log(string.format("preview: %d zones, %d warnings", res.count, #res.warnings))
+    for i = 1, #res.warnings do log("preview: " .. res.warnings[i], "warn") end
 end
 
 -- One command when it fits, N when it does not. The single-shot path is kept
@@ -198,10 +215,10 @@ local function clearAll()
         end)
 end
 
--- Positioning only, no widget creation. Split out from build() so a deck
+-- Positioning only, no widget creation. Split out from attach() so a deck
 -- resize can reflow in place instead of destroying and rebuilding - a rebuild
 -- would throw away the parsed preview sitting in LMImportTab.pending.
-local function layout(panel, x, y, w, h)
+function LMImportTab.layout(panel, x, y, w, h)
     if not ui then return end
     local m = DFKit.metrics
     local s = DFKit.layout(panel, x, y, w, h):stack(0)
@@ -239,8 +256,13 @@ local function layout(panel, x, y, w, h)
     ui.gotoBtn:setY(ly + listH + m.pad)
 end
 
-local function build(spec, panel, x, y, w, h)
+-- The DFViews contract: build every widget once and hand the host a flat list,
+-- which it shows and hides on a switch. Never rebuilt - a rebuild on every
+-- switch would drop the parsed clipboard preview and the list selection each
+-- time somebody glanced at the editor.
+function LMImportTab.attach(panel)
     local C = DFKit.col
+    local bag = {}
 
     local title = DFKit.label(panel, 0, 0,
         "Zone import - paste a PhunZones custom layer (the text of phunzones.txt).")
@@ -293,14 +315,31 @@ local function build(spec, panel, x, y, w, h)
     refreshZoneList()
     LMImportTab.pending = nil
     setStoreLine()
-    layout(panel, x, y, w, h)
+
+    for _, el in ipairs({ title, sub1, sub2, readBtn, importBtn, clearBtn,
+                          status, store, zoneList, gotoBtn }) do
+        bag[#bag + 1] = el
+    end
+    for i = 1, #warns do bag[#bag + 1] = warns[i] end
+    return bag
+end
+
+-- Re-entering the panel is a chance to catch up with the store; the count line
+-- and the drill-down list both follow onChanged anyway, so this only matters
+-- after a switch that happened between broadcasts.
+function LMImportTab.onShow()
+    setStoreLine()
+    refreshZoneList()
 end
 
 -- The authoritative outcome arrives as the server's notice; the local store
 -- line moves when the broadcast baseline lands (Limes.onChanged).
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= TOKEN or command ~= "notice" then return end
-    if args and args.msg then setStatus(tostring(args.msg), true) end
+    if args and args.msg then
+        setStatus(tostring(args.msg), true)
+        log("server: " .. tostring(args.msg))
+    end
 end)
 
 -- Both halves of the panel follow the store: the count line and the drill-down
@@ -311,17 +350,8 @@ Limes.onChanged(function()
     refreshZoneList()
 end)
 
-Events.OnGameStart.Add(function()
-    if not DFRegistry then return end
-    DFRegistry.registerTab{
-        id     = "limes",
-        label  = "Zones",
-        order  = 6,
-        build  = build,
-        resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
-    }
-    print("[Limes] import tab registered into Dragonfly")
-end)
+-- Tab registration lives in LMZonesTab: this panel is one VIEW of the Zones tab
+-- now, sitting beside the M4 editor rather than owning the tab outright.
 
 return LMImportTab
 

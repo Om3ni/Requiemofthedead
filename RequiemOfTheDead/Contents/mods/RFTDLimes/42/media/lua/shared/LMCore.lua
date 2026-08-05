@@ -119,6 +119,16 @@ function Limes.fields.register(owner, name, spec)
     specs[name] = {
         owner = owner, type = spec.type, side = side,
         default = spec.default, min = spec.min, max = spec.max,
+        -- Presentation, carried but never interpreted here (§11.3). The Details
+        -- panel groups registered fields by owner and renders them, and it can
+        -- only do that if the registrant gets to say what the dial IS - a name
+        -- an admin recognises, what it does, and which control it deserves. A
+        -- registry that stores only type and range forces every consumer to
+        -- publish a second, parallel description somewhere else, and the two
+        -- then disagree. Absent `ui`, the type decides.
+        label = spec.label, help = spec.help, ui = spec.ui,
+        values = spec.values, step = spec.step, unit = spec.unit, zero = spec.zero,
+        order = tonumber(spec.order) or 0,
     }
     return true
 end
@@ -127,17 +137,87 @@ function Limes.fields.spec(name)
     return specs[name]
 end
 
--- Sorted view for the editor / form panel to render from.
-function Limes.fields.list()
+-- Sorted view for the editor / form panel to render from. `owner` filters to one
+-- registrant, which is what the Details panel's per-mod pane is.
+function Limes.fields.list(owner)
     local names = {}
-    for n in pairs(specs) do names[#names + 1] = n end
-    table.sort(names)
+    for n, s in pairs(specs) do
+        if not owner or s.owner == owner then names[#names + 1] = n end
+    end
+    -- Within one owner the registrant's `order` leads, so a mod can put its
+    -- headline dial above its footnotes; name breaks ties so the panel never
+    -- reshuffles between frames.
+    table.sort(names, function(a, b)
+        local sa, sb = specs[a], specs[b]
+        if sa.order ~= sb.order then return sa.order < sb.order end
+        return a < b
+    end)
     local out = {}
     for i = 1, #names do
         local s = specs[names[i]]
         out[i] = { name = names[i], owner = s.owner, type = s.type, side = s.side,
-                   default = s.default, min = s.min, max = s.max }
+                   default = s.default, min = s.min, max = s.max,
+                   label = s.label, help = s.help, ui = s.ui, values = s.values,
+                   step = s.step, unit = s.unit, zero = s.zero, order = s.order }
     end
+    return out
+end
+
+-- ---------------------------------------------------------------------------
+-- Mod registry - who owns fields, and what to call them (§11.3)
+--
+-- Limes is a surface other mods bind to: Dirge registers its weights and
+-- spacings, Reclamation its dismantle flag, and a third-party mod whatever it
+-- likes. `owner` on a field spec has carried that relationship since M0, but an
+-- owner id is a file prefix, not a name an admin should have to recognise.
+-- This is the display half, and it is DELIBERATELY OPTIONAL: a mod that never
+-- calls register still shows up in the Details panel under its raw id, because
+-- losing a mod's dials from the UI is a worse failure than an ugly heading.
+-- ---------------------------------------------------------------------------
+
+Limes.mods = Limes.mods or {}
+local modInfo = {}
+
+-- spec = { label = "Dirge", description = "...", order = 10 }
+function Limes.mods.register(id, spec)
+    id = tostring(id or "")
+    if id == "" then return false end
+    spec = spec or {}
+    modInfo[id] = {
+        id    = id,
+        label = tostring(spec.label or id),
+        description = spec.description and tostring(spec.description) or nil,
+        order = tonumber(spec.order) or 100,
+    }
+    return true
+end
+
+function Limes.mods.info(id)
+    return modInfo[id]
+end
+
+-- Every mod that owns at least one field, registered or not, with its field
+-- count. Ordered by declared order then label, so the list is stable.
+function Limes.mods.list()
+    local seen = {}
+    for _, s in pairs(specs) do
+        seen[s.owner] = (seen[s.owner] or 0) + 1
+    end
+    local out = {}
+    for id, n in pairs(seen) do
+        local info = modInfo[id]
+        out[#out + 1] = {
+            id = id, count = n,
+            label = info and info.label or id,
+            description = info and info.description or nil,
+            order = info and info.order or 100,
+            registered = info ~= nil,
+        }
+    end
+    table.sort(out, function(a, b)
+        if a.order ~= b.order then return a.order < b.order end
+        return a.label < b.label
+    end)
     return out
 end
 
@@ -146,8 +226,14 @@ end
 function Limes.fields.get(zone, name)
     local v = zone and zone.fields and zone.fields[name]
     if v ~= nil then return v end
+    -- NOT `s and s.default or nil`. `disabled` and `noannounce` are registered
+    -- with a default of FALSE, and that idiom turns a false default into nil -
+    -- so a caller distinguishing "unset" from "set to false", or comparing
+    -- `== false`, gets the wrong answer for exactly the two boolean fields
+    -- LMCore ships. Both are falsey, which is why it went unnoticed.
     local s = specs[name]
-    return s and s.default or nil
+    if s then return s.default end
+    return nil
 end
 
 -- Raw zones with server-only fields removed, for LMSync to put on the wire
@@ -206,13 +292,31 @@ end
 -- resolver-critical (forced "both" regardless); tier is a scalar both halves
 -- read. Satellites declare their own - loot tables and dirge weights are the
 -- server-only cases the tag exists for.
-Limes.fields.register("LMCore", "title",      { type = "string",  default = "",    side = "client" })
-Limes.fields.register("LMCore", "subtitle",   { type = "string",  default = "",    side = "client" })
-Limes.fields.register("LMCore", "order",      { type = "number",  default = 0,     side = "client" })
-Limes.fields.register("LMCore", "noannounce", { type = "boolean", default = false, side = "client" })
-Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = false, side = "both" })
-Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0,     side = "both" })
-Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0,     side = "both", min = 0, max = 10 })
+Limes.mods.register("LMCore", { label = "Zone basics", order = 0,
+    description = "The fields every zone has, whatever else is installed." })
+
+Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0,     side = "both", min = 0, max = 10,
+    order = 1, label = "Difficulty tier", unit = "",
+    help = "The one number other modules read to decide how hard this zone is."
+        .. " The shipped ladder runs 0 (Very Easy) to 5 (Very Hard); 6-10 are"
+        .. " headroom. A zone drawn inside another starts from its parent's tier"
+        .. " and overrides it only if you set one here." })
+Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0,     side = "both",
+    order = 2, label = "Overlap priority",
+    help = "Breaks a tie when two zones of the SAME total area cover a tile."
+        .. " Smaller area already wins, so this only matters for exact ties." })
+Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = false, side = "both",
+    order = 3, label = "Disabled",
+    help = "Keeps the zone and its geometry but stops it answering lookups." })
+Limes.fields.register("LMCore", "noannounce", { type = "boolean", default = false, side = "client",
+    order = 4, label = "No entry announce",
+    help = "Suppress the on-screen title when a player walks in." })
+Limes.fields.register("LMCore", "title",      { type = "string",  default = "",    side = "client",
+    order = 5, label = "Announce title" })
+Limes.fields.register("LMCore", "subtitle",   { type = "string",  default = "",    side = "client",
+    order = 6, label = "Announce subtitle" })
+Limes.fields.register("LMCore", "order",      { type = "number",  default = 0,     side = "client",
+    order = 7, label = "Display order" })
 
 -- ---------------------------------------------------------------------------
 -- Store state

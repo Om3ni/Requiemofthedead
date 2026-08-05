@@ -19,11 +19,17 @@ local OC = {
     handle     = { r = 0.98, g = 0.98, b = 0.98, a = 1.00 },
     visited    = { r = 0.20, g = 0.80, b = 0.35, a = 0.30 },  -- populated cell
     current    = { r = 0.98, g = 0.92, b = 0.25, a = 0.60 },  -- active stop
+    overCap    = { r = 0.98, g = 0.45, b = 0.20, a = 1.00 },  -- too many cells to run
 }
 
 local HANDLE_R     = 5
 local HANDLE_HIT_R = 9
 local MIN_CELL_PX  = 4
+-- Smallest span, in world tiles, a drag may leave on either axis. Dragging a
+-- corner clean past its opposite edge used to bottom out at 1 tile, producing a
+-- region you can neither see nor grab a handle on again (one such - 5068x1 -
+-- was found in a live tours file).
+local MIN_SPAN     = 10
 local FONT         = UIFont.Small
 local FONT_HGT     = getTextManager():getFontHeight(FONT)
 
@@ -67,14 +73,15 @@ function LSGridOverlay:setCellSize(n)     self.cellSize = math.max(1, math.floor
 function LSGridOverlay:setGridOn(b)       self.gridOn = b and true or false end
 function LSGridOverlay:setMaxCells(n)     self.maxCells = tonumber(n) or 0 end
 
--- Cell count a region would produce at the current cell size.
+-- Cell count a region would produce at the current cell size. Delegated to
+-- LSTour so the tab's readout, the run's preflight and this overlay's warning
+-- can never quote three different numbers for the same rectangle.
 function LSGridOverlay:_cellCount(r)
-    local cs = self.cellSize
-    local cols = math.max(1, math.ceil((r[3] - r[1]) / cs))
-    local rows = math.max(1, math.ceil((r[4] - r[2]) / cs))
-    return cols * rows
+    return LSTour.cellCountOf(r, self.cellSize)
 end
 
+-- Over the cap = "this cannot be RUN", not "this cannot be DRAWN". See
+-- _applyHandle for why that distinction had to be made explicit.
 function LSGridOverlay:_overCap(r)
     return self.maxCells and self.maxCells > 0 and self:_cellCount(r) > self.maxCells
 end
@@ -109,11 +116,6 @@ end
 -- decorator idiom - the design decisions that matter here are ours and are
 -- written down where they are made. See docs/limes-design.md §2.
 function LSGridOverlay:hookNow()
-    -- Reset accumulated absolute mouse position on every (re)attach. A cached map
-    -- re-parented into a rebuilt tab would otherwise carry stale deltas. Must run
-    -- BEFORE the _hooked guard, or it never fires on rebuild (LSTab calls hookNow
-    -- each build, but the guard early-returns once wrapped).
-    self._mouseX, self._mouseY = nil, nil
     if self._hooked then return end
     local mapWidget = self.lsmap and self.lsmap.map
     if not mapWidget then return end
@@ -137,34 +139,43 @@ function LSGridOverlay:hookNow()
         end
     end)
 
-    -- Down and up carry absolute widget coordinates; the move handlers carry
-    -- deltas, so the absolute position has to be accumulated by hand.
     takeOver(mapWidget, "onMouseDown", function(orig)
         return function(s, x, y)
-            overlay._mouseX, overlay._mouseY = x, y
             overlay:_onMouseDown(s, x, y)
             forward(orig, s, x, y)
         end
     end)
 
-    local function onMoved(orig)
+    -- ASK THE WIDGET WHERE THE MOUSE IS; DO NOT ADD UP THE DELTAS.
+    --
+    -- onMouseMove carries frame deltas, not a position, so this used to seed an
+    -- absolute from the mouse-down coordinates and accumulate dx/dy on top -
+    -- a running total that is only ever as good as the dispatch history behind
+    -- it, and that silently walks away from the cursor if a frame is dropped,
+    -- duplicated, or delivered through a path that scales differently.
+    -- ISUIElement:getMouseX (ISUI/ISUIElement.lua:339-351) is the live mouse
+    -- position minus the widget's own absolute origin - i.e. already in the
+    -- widget-local space our hit tests and world transforms work in, with no
+    -- state to keep and nothing to reset when a cached map is re-parented into a
+    -- rebuilt tab. Vanilla's own ISMiniMapInner:onMouseMove (ISUI/Maps/
+    -- ISMiniMap.lua:251-266) ignores its dx/dy arguments and does exactly this.
+    --
+    -- Only ONE hook is installed here, not two. The old second hook on
+    -- "onMouseMoveWhileCapture" was dead code: that name appears nowhere in
+    -- 42.20's engine or its shipped Lua. A captured child gets plain onMouseMove
+    -- like any other - UIElement.java:998 admits it to the dispatch loop on
+    -- `mouse-in-bounds || ui.isCapture()`.
+    takeOver(mapWidget, "onMouseMove", function(orig)
         return function(s, dx, dy)
-            overlay._mouseX = (overlay._mouseX or 0) + dx
-            overlay._mouseY = (overlay._mouseY or 0) + dy
-            overlay:_onMouseMove(s, overlay._mouseX, overlay._mouseY)
+            overlay:_onMouseMove(s, s:getMouseX(), s:getMouseY())
             forward(orig, s, dx, dy)
         end
-    end
-    takeOver(mapWidget, "onMouseMove", onMoved)
-    -- Same treatment while the widget holds capture: once a drag begins the
-    -- engine routes movement here instead, and the overlay must not go blind.
-    takeOver(mapWidget, "onMouseMoveWhileCapture", onMoved)
+    end)
 
     -- Release is the one place the overlay reports back: a live drag consumes
     -- the event outright, so the widget never sees the click that ended it.
     takeOver(mapWidget, "onMouseUp", function(orig)
         return function(s, x, y)
-            overlay._mouseX, overlay._mouseY = x, y
             local consumed = overlay:_onMouseUp(s, x, y)
             if not consumed and orig then orig(s, x, y) end
         end
@@ -291,6 +302,36 @@ function LSGridOverlay:_hitTestTour(sx, sy)
     return nil
 end
 
+-- Keep an axis at least MIN_SPAN wide by pushing back on THE EDGE BEING
+-- DRAGGED, not on its anchor: dragging the left edge rightwards past the right
+-- edge must stop the left edge, not shove the right one along with it. A "mid"
+-- edge means this axis is not part of the gesture at all, so it is returned
+-- untouched even if a hand-edited file left it degenerate.
+local function clampSpan(lo, hi, edge)
+    if hi - lo >= MIN_SPAN then return lo, hi end
+    if     edge == "min" then return hi - MIN_SPAN, hi
+    elseif edge == "max" then return lo, lo + MIN_SPAN end
+    return lo, hi
+end
+
+-- THE CAP IS A RUN LIMIT, NOT A DRAWING LIMIT (fixed 2026-08-04).
+--
+-- This used to refuse any candidate over maxCells, so the handle "stuck" at the
+-- limit. The intent was a guard rail; the effect was a dead control. Once a
+-- region reached the cap the refusal was total and silent - no message, no
+-- colour, nothing - and since a region can also cross the cap by routes that
+-- never touch this function (the Set button, lowering Cell size, a loaded file),
+-- a region could sit permanently over the cap with every handle frozen,
+-- INCLUDING the drags that would have shrunk it back under. The only way out
+-- was to delete the tour and start over, which is exactly what it looked like
+-- from the outside: "drag resizing doesn't work". A live tours file showed the
+-- fingerprint plainly - two regions pinned at exactly 400 cells, and a nextId of
+-- 43 behind four surviving tours.
+--
+-- The cap is enforced where it means something: recompute() greys out Run, and
+-- preflight() refuses the run outright with a message naming the number and the
+-- remedy. Nothing is lost by letting the admin draw freely, and the count is now
+-- O(1) (LSTour.cellCountOf) so an oversized region costs nothing to display.
 function LSGridOverlay:_applyHandle(wx, wy)
     local t = self._dragTour
     if not t then return end
@@ -306,14 +347,10 @@ function LSGridOverlay:_applyHandle(wx, wy)
     if     a.yEdge == "min" then ny1 = wy
     elseif a.yEdge == "max" then ny2 = wy end
 
-    if nx1 > nx2 - 1 then nx1 = nx2 - 1 end
-    if ny1 > ny2 - 1 then ny1 = ny2 - 1 end
+    nx1, nx2 = clampSpan(nx1, nx2, a.xEdge)
+    ny1, ny2 = clampSpan(ny1, ny2, a.yEdge)
 
-    local cand = { math.floor(nx1), math.floor(ny1), math.floor(nx2), math.floor(ny2) }
-    -- Refuse a resize that would push the region past the cell cap, so the
-    -- handle "sticks" at the limit instead of growing further.
-    if self:_overCap(cand) then return end
-    t.region = cand
+    t.region = { math.floor(nx1), math.floor(ny1), math.floor(nx2), math.floor(ny2) }
 end
 
 function LSGridOverlay:_applyBody(wx, wy)
@@ -423,12 +460,18 @@ function LSGridOverlay:_renderTour(widget, t, isSel)
     if w < 2 or h < 2 then return end
 
     local c = t.color
+    local over    = self:_overCap(t.region)
     local fillA   = isSel and 0.22 or 0.12
     local borderA = isSel and 1.0  or 0.7
+    -- Over the cap the region is still perfectly drawable - it just cannot be
+    -- toured - so it keeps its own colour and gains a warning outline rather
+    -- than being recoloured wholesale. The admin needs to see WHICH tour is the
+    -- problem, and the tour's identity is its colour.
+    local bc = over and OC.overCap or { r = c[1], g = c[2], b = c[3] }
     widget:drawRect(x1, y1, w, h, fillA, c[1], c[2], c[3])
-    widget:drawRectBorder(x1, y1, w, h, borderA, c[1], c[2], c[3])
+    widget:drawRectBorder(x1, y1, w, h, borderA, bc.r, bc.g, bc.b)
     if isSel then
-        widget:drawRectBorder(x1 + 1, y1 + 1, w - 2, h - 2, 0.5, c[1], c[2], c[3])
+        widget:drawRectBorder(x1 + 1, y1 + 1, w - 2, h - 2, 0.5, bc.r, bc.g, bc.b)
         for _, hd in ipairs(self:_handlePoints(x1, y1, x2, y2)) do
             widget:drawRect(hd.sx - HANDLE_R, hd.sy - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2, 0.9, 0.06, 0.06, 0.08)
             widget:drawRectBorder(hd.sx - HANDLE_R, hd.sy - HANDLE_R, HANDLE_R * 2, HANDLE_R * 2,
@@ -442,6 +485,19 @@ function LSGridOverlay:_renderTour(widget, t, isSel)
     local lx, ly = x1 + 3, y1 + 3
     widget:drawRect(lx - 2, ly - 1, lw + 6, FONT_HGT + 2, 0.8, 0.05, 0.05, 0.08)
     widget:drawText(label, lx + 1, ly, c[1], c[2], c[3], isSel and 1.0 or 0.85, FONT)
+
+    -- SAY WHY RUN IS GREYED OUT, ON THE THING THAT CAUSED IT. The cap used to be
+    -- enforced by silently refusing the drag, which taught the admin that resize
+    -- was broken rather than that the region was too big. Now the drag always
+    -- works and the rectangle itself carries the diagnosis and the two remedies.
+    if over then
+        local msg = string.format("%d cells - over the %d cap; shrink it or raise Cell size",
+            self:_cellCount(t.region), self.maxCells)
+        local mw = getTextManager():MeasureStringX(FONT, msg)
+        local my = ly + FONT_HGT + 3
+        widget:drawRect(lx - 2, my - 1, mw + 6, FONT_HGT + 2, 0.85, 0.05, 0.05, 0.08)
+        widget:drawText(msg, lx + 1, my, OC.overCap.r, OC.overCap.g, OC.overCap.b, 1.0, FONT)
+    end
 end
 
 function LSGridOverlay:_renderLattice(widget, r)
