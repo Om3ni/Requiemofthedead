@@ -95,6 +95,43 @@ DFKit.font = {
     code  = UIFont and UIFont.Code  or nil,
 }
 
+-- ---------------------------------------------------------------------------
+-- FONT TIER - the "and the text size" half of a resizable panel.
+--
+-- PZ's fonts are discrete (UIFont.java:10-12 - Small, Medium, Large), so a panel
+-- cannot scale type smoothly; it picks a rung. That is fine, because everything
+-- in this kit already derives its geometry from the font: DFKit.rowHeight()
+-- measures it, DFForm's metrics() derives every row, gutter and box from it, and
+-- Reclamation's list computes max(18, fh + 4). Move the rung and those follow on
+-- their own. Anything that hardcoded a pixel height does not, which is exactly
+-- why the shared row height landed first.
+--
+-- THE TIER IS FAMILY-WIDE, deliberately. It lives on the kit, not on the deck,
+-- so a tab laid out in the deck and the same tab laid out in the old panel agree
+-- about how big text is - the whole point of the kit. The caller decides WHEN to
+-- move it; DFDeck ties it to its own width.
+--
+-- Returns true when the tier actually changed, because a caller has to know:
+-- ISLabel and ISButton bake their font at construction, so existing widgets keep
+-- the old one until they are rebuilt. Changing the tier is a "rebuild the
+-- surface" event, not a repaint.
+-- ---------------------------------------------------------------------------
+
+local FONT_TIERS = UIFont and { UIFont.Small, UIFont.Medium, UIFont.Large } or {}
+
+DFKit.fontScale = 1
+
+function DFKit.setFontScale(n)
+    if #FONT_TIERS == 0 then return false end
+    n = math.floor(tonumber(n) or 1)
+    if n < 1 then n = 1 elseif n > #FONT_TIERS then n = #FONT_TIERS end
+    if n == DFKit.fontScale then return false end
+    DFKit.fontScale = n
+    DFKit.font.small = FONT_TIERS[n]
+    DFKit.font.label = FONT_TIERS[n]
+    return true
+end
+
 -- A skin overrides colours (and fonts) only. Unknown keys are ignored rather
 -- than merged blindly, so a skin cannot smuggle geometry in through this door.
 function DFKit.applySkin(skin)
@@ -271,6 +308,27 @@ end
 -- drawn BEFORE the stencil is set. That 2px sliver at the top-left corner of an
 -- empty-looking list is the whole bug, visible.
 --
+-- ONE ROW HEIGHT FOR EVERY LIST IN THE FAMILY, and it is derived rather than
+-- declared.
+--
+-- Three had drifted apart: Reclamation's fleet list computed max(18, fh + 4),
+-- Husbandry took metrics.rowH flat, and the Limes zone tree hardcoded 18 - the
+-- tightest of the three, which is what "the text feels crowded" was measuring.
+-- A constant cannot be right, because the row has to hold a glyph whose height
+-- is a UI setting: at a larger font a fixed 18 clips descenders and the list
+-- reads as squashed rather than as too small.
+--
+-- So: never smaller than the token, and always at least the glyph plus
+-- breathing room. This is also the hinge the deck's resize needs - scale the
+-- font and every list that asks here grows with it, instead of keeping its
+-- old spacing around bigger text.
+function DFKit.rowHeight()
+    local fh = 12
+    pcall(function() fh = getTextManager():getFontHeight(DFKit.font.small) end)
+    if not fh or fh < 1 then fh = 12 end
+    return math.max(DFKit.metrics.rowH, fh + 8)
+end
+
 -- Rebuilding the bars after sizing puts the widget in exactly the state vanilla
 -- would have constructed it in. removeScrollBars() detaches the old ones first,
 -- so this does not accumulate children, and layout runs rarely (open, resize,

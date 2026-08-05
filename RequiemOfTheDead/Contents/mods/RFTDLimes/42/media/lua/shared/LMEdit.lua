@@ -406,13 +406,35 @@ end
 -- Cycle-safe by construction: a node is emitted once, tracked in `seen`, and
 -- anything still unemitted at the end is appended at depth 0 rather than being
 -- lost. validate() is what complains about the cycle; this only refuses to hang.
+-- NESTING IS SPATIAL, NOT INHERITED (revised 2026-08-05).
+--
+-- A row is a child of another row only when its parent OCCUPIES SPACE. The tree
+-- used to nest on `inherits` alone, and in an imported layer `inherits` is the
+-- difficulty ladder - so every zone on the map filed itself under Easy, Hard,
+-- Intermediate or Very_Hard, and finding Rosewood meant knowing its tier first.
+-- That is a category the admin did not ask for and cannot navigate by.
+--
+-- A template is not a place. It has no geometry, nothing is inside it, and it
+-- has no business being a folder. Zones under one render at the top level in
+-- plain alphabetical order, which is what a list of names should do; real
+-- containment - a block drawn inside a town - still nests, because there the
+-- parent genuinely is somewhere you can stand.
+--
+-- The FIELD chain is untouched by any of this. A zone still inherits its
+-- policies from its template exactly as before; only the shape of the list
+-- changed. Sorting is alphabetical at every level, roots included, because
+-- self:names() is sorted and both loops below walk it in that order.
+local function hasGeometry(rec)
+    return rec and rec.rects and #rec.rects > 0
+end
+
 function LMEdit:tree()
     local kids, roots = {}, {}
     local names = self:names()
     for i = 1, #names do
         local name = names[i]
         local p = self.work[name].inherits
-        if p and self.work[p] then
+        if p and self.work[p] and hasGeometry(self.work[p]) then
             kids[p] = kids[p] or {}
             table.insert(kids[p], name)
         else

@@ -126,7 +126,7 @@ function Limes.fields.register(owner, name, spec)
         -- registry that stores only type and range forces every consumer to
         -- publish a second, parallel description somewhere else, and the two
         -- then disagree. Absent `ui`, the type decides.
-        label = spec.label, help = spec.help, ui = spec.ui,
+        label = spec.label, help = spec.help, ui = spec.ui, group = spec.group,
         values = spec.values, step = spec.step, unit = spec.unit, zero = spec.zero,
         order = tonumber(spec.order) or 0,
     }
@@ -157,8 +157,9 @@ function Limes.fields.list(owner)
         local s = specs[names[i]]
         out[i] = { name = names[i], owner = s.owner, type = s.type, side = s.side,
                    default = s.default, min = s.min, max = s.max,
-                   label = s.label, help = s.help, ui = s.ui, values = s.values,
-                   step = s.step, unit = s.unit, zero = s.zero, order = s.order }
+                   label = s.label, help = s.help, ui = s.ui, group = s.group,
+                   values = s.values, step = s.step, unit = s.unit, zero = s.zero,
+                   order = s.order }
     end
     return out
 end
@@ -296,27 +297,83 @@ Limes.mods.register("LMCore", { label = "Zone basics", order = 0,
     description = "The fields every zone has, whatever else is installed." })
 
 Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0,     side = "both", min = 0, max = 10,
-    order = 1, label = "Difficulty tier", unit = "",
+    order = 1, group = "Zone", label = "Difficulty tier", unit = "",
     help = "The one number other modules read to decide how hard this zone is."
         .. " The shipped ladder runs 0 (Very Easy) to 5 (Very Hard); 6-10 are"
         .. " headroom. A zone drawn inside another starts from its parent's tier"
         .. " and overrides it only if you set one here." })
 Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0,     side = "both",
-    order = 2, label = "Overlap priority",
+    order = 2, group = "Zone", label = "Overlap priority",
     help = "Breaks a tie when two zones of the SAME total area cover a tile."
         .. " Smaller area already wins, so this only matters for exact ties." })
 Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = false, side = "both",
-    order = 3, label = "Disabled",
+    order = 3, group = "Zone", label = "Disabled",
     help = "Keeps the zone and its geometry but stops it answering lookups." })
 Limes.fields.register("LMCore", "noannounce", { type = "boolean", default = false, side = "client",
-    order = 4, label = "No entry announce",
+    order = 4, group = "Announce", label = "No entry announce",
     help = "Suppress the on-screen title when a player walks in." })
 Limes.fields.register("LMCore", "title",      { type = "string",  default = "",    side = "client",
-    order = 5, label = "Announce title" })
+    order = 5, group = "Announce", label = "Announce title" })
 Limes.fields.register("LMCore", "subtitle",   { type = "string",  default = "",    side = "client",
-    order = 6, label = "Announce subtitle" })
+    order = 6, group = "Announce", label = "Announce subtitle" })
 Limes.fields.register("LMCore", "order",      { type = "number",  default = 0,     side = "client",
-    order = 7, label = "Display order" })
+    order = 7, group = "Announce", label = "Display order" })
+
+-- ---------------------------------------------------------------------------
+-- THE ZONE'S OWN POLICY VOCABULARY - restrictions, zombies, loot, sprinters.
+--
+-- These are declared HERE, by LMCore, and that is deliberate. They are "the
+-- policies that are true for a zone absent any other mod" (§11.3): the store has
+-- carried them since the import, the .ini shows them, and until now the editor
+-- was the only thing in the suite that could not see them - because
+-- LMFieldForm renders REGISTERED fields and nothing had registered these.
+-- Twelve keys sitting in the file, invisible in the panel, is the worst of both.
+--
+-- Declaring is not enforcing. LMRestrict (M4), LMZeds (M4), LMStats (M2) and
+-- LMLoot (M3) will CONSUME these; they do not own them, and first-claim-wins in
+-- the registry keeps it that way. Where nothing is enforcing yet the help text
+-- says so outright rather than letting a dial imply an effect it does not have.
+--
+-- side = "both" throughout except lewtkey: restrictions gate client menus AND
+-- server actions, so both halves need them. Loot is read only where containers
+-- are filled, which is the server.
+-- ---------------------------------------------------------------------------
+
+local NOT_YET = "  NOTE: no module is enforcing this yet - the value is stored,"
+             .. " replicated and preserved, but nothing reads it."
+
+local RESTRICTIONS = {
+    { "nobuilding",    "No building",        "Blocks the build menu inside this zone." },
+    { "nodestruction", "No destruction",     "Blocks sledging and structural damage." },
+    { "nopickup",      "No pickup",          "Movable furniture cannot be picked up." },
+    { "noplacing",     "No placing",         "Movable furniture cannot be put down." },
+    { "noscrap",       "No scrapping",       "Blocks dismantling for materials." },
+    { "nosafehouse",   "No safehouse claim", "The zone cannot be claimed as a safehouse." },
+    { "nofire",        "No fire",            "Suppresses ignition and fire spread." },
+    { "noplayers",     "No player entry",    "Players are turned back at the boundary." },
+}
+for i, r in ipairs(RESTRICTIONS) do
+    Limes.fields.register("LMCore", r[1], { type = "boolean", default = false, side = "both",
+        order = 10 + i, group = "Restrictions", label = r[2], help = r[3] .. NOT_YET })
+end
+
+Limes.fields.register("LMCore", "zeds", { type = "string", default = "", side = "both",
+    order = 30, group = "Zombies", label = "Zombie handling",
+    help = "'remove' clears zombies standing in the zone; 'none' stops them spawning."
+        .. " Blank leaves the zone alone." .. NOT_YET })
+Limes.fields.register("LMCore", "minSprinterRisk", { type = "number", default = 0, side = "both",
+    min = 0, max = 100, order = 31, group = "Zombies", label = "Sprinter risk (min)",
+    help = "Lower bound of the per-zone sprinter chance band." .. NOT_YET })
+Limes.fields.register("LMCore", "maxSprinterRisk", { type = "number", default = 0, side = "both",
+    min = 0, max = 100, order = 32, group = "Zombies", label = "Sprinter risk (max)",
+    help = "Upper bound of the per-zone sprinter chance band." .. NOT_YET })
+
+-- side = "both" for the same reason as the dirge vocabulary: the editor has
+-- to show it to let anyone set it. Genuinely large or secret payloads - the
+-- loot TABLES themselves, when M3 brings them - stay server-only.
+Limes.fields.register("LMCore", "lewtkey", { type = "string", default = "", side = "both",
+    order = 40, group = "Loot", label = "Loot table key",
+    help = "Names the loot profile applied to containers in this zone." .. NOT_YET })
 
 -- ---------------------------------------------------------------------------
 -- Store state

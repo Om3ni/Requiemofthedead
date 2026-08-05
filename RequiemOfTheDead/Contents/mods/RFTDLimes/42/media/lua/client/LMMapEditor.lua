@@ -113,6 +113,60 @@ function LMMapEditor:setSelected(name, rectIdx)
     end
 end
 
+-- HOW BIG A NEW RECTANGLE STARTS, and it cannot be a number of tiles.
+--
+-- MIN_SPAN is 8 tiles. At a zoom showing a whole region - which is where an
+-- admin actually is when they decide to add a zone - eight tiles is about two
+-- pixels: the rectangle exists, is selected, has handles, and is invisible.
+-- That is the whole of "I can add a zone but no box appears on the map".
+--
+-- So the seed is a fraction of what is ON SCREEN: about a twelfth of the
+-- visible width, which is a comfortable grab target at any zoom and shrinks to
+-- something sane when zoomed into a single building. Clamped at both ends so a
+-- fully zoomed-out world map does not seed a 1200-tile monster and a fully
+-- zoomed-in one still yields something draggable.
+function LMMapEditor:_seedSpan()
+    local api = self:_api()
+    local w = self.host and self.host.map and self.host.map:getWidth() or 0
+    if not api or w <= 0 then return 64 end
+    local ok, span = pcall(function()
+        return math.abs(api:uiToWorldX(w, 0) - api:uiToWorldX(0, 0))
+    end)
+    if not ok or not span or span <= 0 then return 64 end
+    local seed = math.floor(span / 12)
+    if seed < MIN_SPAN * 2 then seed = MIN_SPAN * 2 end
+    if seed > 1500 then seed = 1500 end
+    return seed
+end
+
+-- Drop a rectangle in the middle of the current view and select it. This is
+-- what "Add zone" uses: a zone with no geometry is a template, and a template
+-- is not what somebody who just pressed Add wanted - they wanted a box to drag.
+-- Longstrider's Add has always worked this way; the zone editor asking for a
+-- modifier-key gesture instead was a regression against a pattern the admin had
+-- already learned.
+function LMMapEditor:addRectAtView(name)
+    local api = self:_api()
+    if not (api and self.draft) then return nil end
+    local rec = self.draft:get(name)
+    if not rec then return nil end
+    local mw = self.host.map:getWidth()
+    local mh = self.host.map:getHeight()
+    local cx, cy
+    local ok = pcall(function()
+        cx = math.floor(api:uiToWorldX(mw / 2, mh / 2))
+        cy = math.floor(api:uiToWorldY(mw / 2, mh / 2))
+    end)
+    if not ok or not cx or not cy then return nil end
+
+    local half = math.floor(self:_seedSpan() / 2)
+    rec.rects = rec.rects or {}
+    rec.rects[#rec.rects + 1] = { cx - half, cy - half, cx + half, cy + half }
+    self.selected = name
+    self.rectIdx  = #rec.rects
+    return #rec.rects
+end
+
 function LMMapEditor:selectedRect()
     if not (self.draft and self.selected and self.rectIdx) then return nil end
     local rec = self.draft:get(self.selected)
@@ -362,8 +416,12 @@ function LMMapEditor:_onMouseDown(widget, x, y)
         local rec = self.draft:get(self.selected)
         if rec then
             rec.rects = rec.rects or {}
+            -- Seeded from the VIEW, not from MIN_SPAN: a ctrl-CLICK with no drag
+            -- has to leave something you can see and grab, and eight tiles at
+            -- region zoom is two pixels.
+            local seed = self:_seedSpan()
             local r = { math.floor(wx), math.floor(wy),
-                        math.floor(wx) + MIN_SPAN, math.floor(wy) + MIN_SPAN }
+                        math.floor(wx) + seed, math.floor(wy) + seed }
             rec.rects[#rec.rects + 1] = r
             self.rectIdx    = #rec.rects
             self._newDrag   = true
@@ -410,8 +468,9 @@ function LMMapEditor:_onMouseMove(widget, x, y)
         local r = self._dragRect
         local x1, x2 = math.min(s[1], wx), math.max(s[1], wx)
         local y1, y2 = math.min(s[2], wy), math.max(s[2], wy)
-        if x2 - x1 < MIN_SPAN then x2 = x1 + MIN_SPAN end
-        if y2 - y1 < MIN_SPAN then y2 = y1 + MIN_SPAN end
+        local floorSpan = math.max(MIN_SPAN, math.floor(self:_seedSpan() / 8))
+        if x2 - x1 < floorSpan then x2 = x1 + floorSpan end
+        if y2 - y1 < floorSpan then y2 = y1 + floorSpan end
         r[1], r[2] = math.floor(x1), math.floor(y1)
         r[3], r[4] = math.floor(x2), math.floor(y2)
     end

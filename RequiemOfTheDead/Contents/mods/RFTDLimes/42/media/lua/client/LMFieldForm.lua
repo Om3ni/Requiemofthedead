@@ -58,7 +58,7 @@ end
 --   onChange() called after any write, so the host can refresh its chrome
 function LMFieldForm.new(opts)
     local schema, skipped = {}, {}
-    local lastOwner = nil
+    local lastOwner, lastGroup = nil, nil
 
     for _, s in ipairs(Limes.fields.list(opts.owner)) do
         local kind = kindOf(s)
@@ -69,6 +69,16 @@ function LMFieldForm.new(opts)
                 local info = Limes.mods.info(s.owner)
                 schema[#schema + 1] = { group = info and info.label or s.owner }
                 lastOwner = s.owner
+                lastGroup = nil          -- a new owner restarts the sections
+            end
+            -- SECTIONS COME FROM THE REGISTRY, not from this file. Seventeen
+            -- dials in one flat column is a wall; the registrant is the only
+            -- thing that knows Restrictions are not Loot, so it says so on the
+            -- spec and the form obeys. Fields with no group simply run on
+            -- without a header, which is what a short vocabulary wants.
+            if s.group and s.group ~= lastGroup then
+                schema[#schema + 1] = { group = s.group }
+                lastGroup = s.group
             end
             local row = {
                 key   = s.name,

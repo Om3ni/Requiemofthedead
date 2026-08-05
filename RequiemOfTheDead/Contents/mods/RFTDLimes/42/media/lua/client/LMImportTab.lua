@@ -29,6 +29,7 @@
 if isServer() then return end
 
 require "LMCore"
+require "LMIni"
 require "LMImport"
 
 LMImportTab = LMImportTab or {}
@@ -110,18 +111,21 @@ local function readClipboard()
         return
     end
 
-    local ok, res = LMImport.parsePhunZones(text)
+    -- parseAny, not parsePhunZones: an RFTDLimes .ini is a legitimate thing to
+    -- paste back, and until 2026-08-05 it died on line 1.
+    local ok, res = LMImport.parseAny(text)
     if not ok then
-        setStatus("Does not parse as a PhunZones layer: " .. tostring(res))
+        setStatus("Not a PhunZones export or an RFTDLimes .ini: " .. tostring(res))
         return
     end
+    local dialect = (res.format == "ini") and "RFTDLimes .ini" or "PhunZones layer"
 
     LMImportTab.pending = text
     if ui and ui.importBtn then ui.importBtn.enable = true end
-    setStatus("Preview: " .. res.count .. " zones, " .. #res.warnings
+    setStatus("Preview: " .. dialect .. ", " .. res.count .. " zones, " .. #res.warnings
         .. " warnings. Review, then import.", true)
     showWarnings(res.warnings)
-    log(string.format("preview: %d zones, %d warnings", res.count, #res.warnings))
+    log(string.format("preview: %s, %d zones, %d warnings", dialect, res.count, #res.warnings))
     for i = 1, #res.warnings do log("preview: " .. res.warnings[i], "warn") end
 end
 

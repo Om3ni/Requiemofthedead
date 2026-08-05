@@ -288,6 +288,50 @@ function LMImport.parsePhunZones(text)
     return true, { zones = zones, warnings = warnings, count = count }
 end
 
+-- ---------------------------------------------------------------------------
+-- THE ONE DOOR IN, whichever dialect is knocking (2026-08-05).
+--
+-- The import route spoke PhunZones and nothing else, which made it a one-way
+-- door: an admin could paste somebody else's export, but not the .ini Limes
+-- itself had written ten minutes earlier - it died on line 1, because
+-- parseLua wants a Lua table and an .ini opens with a comment. "You can export
+-- your store but not restore it" is not a property a store may have. Backing
+-- up by copying the file out, and restoring by pasting it back, is the most
+-- obvious thing an admin will try, and it has to work.
+--
+-- Sniffing is a POSITIVE test for our own format (LMIni.looksLikeIni) so that
+-- anything unrecognised still falls through to the PhunZones path, which has
+-- the detailed parse errors. Someone pasting a malformed export gets told what
+-- is wrong with it rather than being told it is not an .ini.
+--
+-- Returns the same shape as parsePhunZones - ok, { zones, warnings, count } -
+-- plus `format`, so a caller can say which dialect it read. Both routes end at
+-- the same authoritative apply on the server.
+function LMImport.parseAny(text)
+    if LMIni and LMIni.looksLikeIni and LMIni.looksLikeIni(text) then
+        local zones, warnings = LMIni.parse(text)
+        local count = 0
+        for _ in pairs(zones) do count = count + 1 end
+        if count == 0 then
+            return false, "reads as an RFTDLimes .ini but contains no [sections]"
+        end
+        -- The same dangling-parent report the PhunZones path gives, because it
+        -- is the warning that matters most when restoring a partial backup.
+        for name, z in pairs(zones) do
+            if z.inherits and not zones[z.inherits] then
+                warnings[#warnings + 1] = name .. " inherits '" .. z.inherits
+                    .. "', which is not in this import"
+            end
+        end
+        table.sort(warnings)
+        return true, { zones = zones, warnings = warnings, count = count, format = "ini" }
+    end
+
+    local ok, res = LMImport.parsePhunZones(text)
+    if ok then res.format = "phunzones" end
+    return ok, res
+end
+
 return LMImport
 
 -- ---------------------------------------------------------------------------

@@ -53,6 +53,7 @@ if not isServer() then return end
 
 require "RDJson"
 require "LMCore"
+require "LMIni"
 require "LMImport"
 
 LMPersist = LMPersist or {}
@@ -61,109 +62,15 @@ LMPersist.FILE              = "RFTDLimes.ini"
 LMPersist.IMPORT_CANDIDATES = { "phunzones.txt", "PhunZones.txt", "PhunZonesExport.lua" }
 
 -- ---------------------------------------------------------------------------
--- Pure half: text -> raw zones -> text
+-- The .ini dialect now lives in shared/LMIni.lua, so the CLIENT can read the
+-- format the server writes - which is what lets the importer accept our own
+-- export instead of only PhunZones'. These two names are kept as delegates
+-- because they are the file's published surface and every caller, including
+-- the test suite, addresses them.
 -- ---------------------------------------------------------------------------
 
-local HEADER = "; RFTDLimes zone store. Hand-editable; the server rewrites it on every\n"
-            .. "; zone edit (sorted sections and keys - keep diffs clean, not comments:\n"
-            .. "; lines starting with ; or # survive a reload but NOT the next rewrite).\n"
-
-local function autoType(s)
-    if s == "true"  then return true  end
-    if s == "false" then return false end
-    local n = tonumber(s)
-    if n ~= nil then return n end
-    return s
-end
-
-local function encodeValue(v)
-    if type(v) == "boolean" then return v and "true" or "false" end
-    if type(v) == "number"  then return RDJson.fmtNum(v) end
-    -- One line per key is the grammar; a value cannot carry the line breaks.
-    return (tostring(v):gsub("[\r\n]", " "))
-end
-
--- text -> rawZones, warnings
-function LMPersist.parse(text)
-    local zones, warnings = {}, {}
-    local cur, curName = nil, nil
-    local lineNo = 0
-    for line in tostring(text or ""):gmatch("([^\n]*)\n?") do
-        lineNo = lineNo + 1
-        line = line:gsub("\r$", "")
-        local section = line:match("^%s*%[([%w_%-%.]+)%]%s*$")
-        if section then
-            if zones[section] then
-                warnings[#warnings + 1] = "line " .. lineNo .. ": duplicate section ["
-                    .. section .. "], merging"
-                cur = zones[section]
-            else
-                cur = { inherits = nil, rects = {}, fields = {} }
-                zones[section] = cur
-            end
-            curName = section
-        elseif line:match("^%s*$") or line:match("^%s*[;#]") then
-            -- blank or comment
-        else
-            local key, value = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
-            if not key then
-                warnings[#warnings + 1] = "line " .. lineNo .. ": unparseable, skipped: " .. line
-            elseif not cur then
-                warnings[#warnings + 1] = "line " .. lineNo .. ": '" .. key
-                    .. "' before any [section], skipped"
-            elseif key == "inherits" then
-                if value ~= "" then cur.inherits = value end
-            elseif key == "rects" then
-                for rect in value:gmatch("[^;]+") do
-                    local x1, y1, x2, y2 = rect:match("^%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*$")
-                    if x1 then
-                        cur.rects[#cur.rects + 1] =
-                            { tonumber(x1), tonumber(y1), tonumber(x2), tonumber(y2) }
-                    else
-                        warnings[#warnings + 1] = "line " .. lineNo .. ": [" .. tostring(curName)
-                            .. "] bad rect '" .. rect .. "', skipped"
-                    end
-                end
-            else
-                cur.fields[key] = autoType(value)
-            end
-        end
-    end
-    return zones, warnings
-end
-
--- rawZones -> deterministic text
-function LMPersist.serialize(rawZones)
-    local names = {}
-    for name in pairs(rawZones or {}) do names[#names + 1] = name end
-    table.sort(names)
-
-    local out = { HEADER }
-    for i = 1, #names do
-        local name = names[i]
-        local z = rawZones[name]
-        out[#out + 1] = "\n[" .. name .. "]\n"
-        if z.inherits then
-            out[#out + 1] = "inherits = " .. tostring(z.inherits) .. "\n"
-        end
-        if z.rects and #z.rects > 0 then
-            local parts = {}
-            for j = 1, #z.rects do
-                local r = z.rects[j]
-                parts[j] = RDJson.fmtNum(r[1]) .. "," .. RDJson.fmtNum(r[2]) .. ","
-                        .. RDJson.fmtNum(r[3]) .. "," .. RDJson.fmtNum(r[4])
-            end
-            out[#out + 1] = "rects = " .. table.concat(parts, " ; ") .. "\n"
-        end
-        local keys = {}
-        for k in pairs(z.fields or {}) do keys[#keys + 1] = k end
-        table.sort(keys)
-        for j = 1, #keys do
-            out[#out + 1] = keys[j] .. " = " .. encodeValue(z.fields[keys[j]]) .. "\n"
-        end
-    end
-    return table.concat(out)
-end
+function LMPersist.parse(text)          return LMIni.parse(text) end
+function LMPersist.serialize(rawZones)  return LMIni.serialize(rawZones) end
 
 -- ---------------------------------------------------------------------------
 -- Engine half: the jail, the journal, the boot

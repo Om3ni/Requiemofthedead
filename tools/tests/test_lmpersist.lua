@@ -71,6 +71,11 @@ require = function() end   -- everything LMPersist requires is dofiled below
 for _, src in ipairs({
     CORE .. "/RDJson.lua",
     LIMES .. "/shared/LMCore.lua",
+    -- The .ini dialect moved out of LMPersist on 2026-08-05 so the client can
+    -- read the format the server writes. LMPersist.parse/serialize are thin
+    -- delegates now, so this suite still addresses them and still tests the
+    -- same round trip - but the code has to be loaded first.
+    LIMES .. "/shared/LMIni.lua",
     LIMES .. "/shared/LMImport.lua",
     LIMES .. "/server/LMPersist.lua",
 }) do

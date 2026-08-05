@@ -46,6 +46,7 @@
 if isServer() then return end
 
 require "ISUI/ISPanel"
+require "DFKit"      -- the font tier the resize drives
 require "DFTheme"
 
 DFDeck = ISPanel:derive("DFDeck")
@@ -73,6 +74,14 @@ local BEAT     = 30      -- frames between status/capability refreshes
 local GEAR_X   = 46
 local GEAR_COL = 26
 
+-- Resize grip, bottom-right. MIN is the smallest the deck may be dragged to:
+-- the roster is a fixed 148 wide and every tab wants a usable pane beside it, so
+-- below this the content area stops being a place anything can be laid out.
+local GRIP    = 18
+local MIN_W   = 820
+local MIN_H   = 460
+local LAYOUT_FILE = "DFDeck_layout.txt"
+
 -- ---------------------------------------------------------------------------
 -- Construction
 -- ---------------------------------------------------------------------------
@@ -93,6 +102,8 @@ function DFDeck:new(x, y, w, h)
     o.statusText    = ""
     o.dragging      = false
     o.dragDX, o.dragDY = 0, 0
+    o.resizing      = false
+    o.resizeDX, o.resizeDY = 0, 0
     return o
 end
 
@@ -128,16 +139,69 @@ function DFDeck:rebuild()
     end
 end
 
+-- The content rect, in one place, because three things need it: the build, the
+-- live reflow during a resize drag, and the rebuild after one.
+function DFDeck:contentRect()
+    local cx = ROSTER_W + PAD
+    local cy = TITLE_H + PAD
+    return cx, cy, self.width - cx - PAD, self.height - cy - PAD
+end
+
+-- ---------------------------------------------------------------------------
+-- Resize
+--
+-- THE TAB `resize` HOOK EXISTS AND NOTHING WAS CALLING IT. DFRegistry has
+-- accepted a `resize` on a tab spec since it was written, and Limes, Husbandry
+-- and Reclamation all supply one - they were simply never invoked, by either
+-- shell, because neither shell could change size. That hook is what makes a live
+-- drag affordable: it re-lays-out in place, keeping list selection, scroll
+-- position and any parsed state the tab is holding.
+--
+-- A tab WITHOUT one falls back to a full rebuild, and that is deferred to the
+-- release. Rebuilding per frame would throw the tab away sixty times a second -
+-- and with it, on the Zones tab, an unsaved draft.
+-- ---------------------------------------------------------------------------
+
+-- Returns true when the active tab laid itself out; false means it needs the
+-- rebuild that settleResize() performs on release.
+function DFDeck:reflowContent()
+    if not self.contentArea then return true end
+    local cx, cy, cw, ch = self:contentRect()
+    self.contentArea:setX(cx); self.contentArea:setY(cy)
+    self.contentArea:setWidth(cw); self.contentArea:setHeight(ch)
+
+    local spec = DFRegistry.tabs[self.activeId or ""]
+    if spec and type(spec.resize) == "function" then
+        local ok, err = pcall(spec.resize, spec, self.contentArea, cw, ch)
+        if ok then return true end
+        print("[Deck] tab resize failed (" .. tostring(self.activeId) .. "): " .. tostring(err))
+    end
+    return false
+end
+
+function DFDeck:settleResize()
+    -- Font tier follows the width. Conservative on purpose: the default size
+    -- keeps the type it has always had, and only a deliberately enlarged deck
+    -- moves up a rung. A tier change re-bakes every label and button, so it can
+    -- only be applied by rebuilding.
+    local tier = 1
+    if     self.width >= 1900 then tier = 3
+    elseif self.width >= 1500 then tier = 2 end
+    local fontMoved = DFKit.setFontScale(tier)
+
+    if fontMoved or not self:reflowContent() then
+        if self.activeId then self:showTab(self.activeId) end
+    end
+    DFDeck.saveLayout(self.width, self.height)
+end
+
 function DFDeck:showTab(id)
     self.activeId = id
     local spec = DFRegistry.tabs[id]
     if not spec then return end
 
     if self.contentArea then self:removeChild(self.contentArea) end
-    local cx = ROSTER_W + PAD
-    local cy = TITLE_H + PAD
-    local cw = self.width - cx - PAD
-    local ch = self.height - cy - PAD
+    local cx, cy, cw, ch = self:contentRect()
     self.contentArea = ISPanel:new(cx, cy, cw, ch)
     self.contentArea.background = false
     self.contentArea:initialise()
@@ -299,6 +363,18 @@ function DFDeck:prerender()
         local a = (t < 0.12) and (t / 0.12) * 0.5 or (1 - t) * 0.5
         self:drawRect(1, math.floor(t * (h - 2)), w - 2, 2, a, C.sight.r, C.sight.g, C.sight.b)
     end
+
+    -- THE GRIP. Three tapering rules in the bottom-right corner - the universal
+    -- shorthand for "drag me" - drawn in the chrome vocabulary rather than as a
+    -- stock widget, because rule one of this file is that the deck owns its own
+    -- chrome. It brightens while a resize is live so the corner acknowledges the
+    -- grab even when the cursor has run off the edge of the panel.
+    local ga = self.resizing and 0.95 or 0.45
+    for i = 1, 3 do
+        local o = 4 + (i - 1) * 5
+        self:drawRect(w - o - 6, h - 5, 6, 1, ga, C.sight.r, C.sight.g, C.sight.b)
+        self:drawRect(w - 5, h - o - 6, 1, 6, ga, C.sight.r, C.sight.g, C.sight.b)
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -316,6 +392,7 @@ local function rowAt(self, x, y)
 end
 
 function DFDeck:onMouseMove(dx, dy)
+    if self.resizing then self:applyResize(); return end
     local x, y = self:getMouseX(), self:getMouseY()
     if y < TITLE_H then
         if x > self.width - 28 then
@@ -335,6 +412,7 @@ function DFDeck:onMouseMove(dx, dy)
 end
 
 function DFDeck:onMouseMoveOutside(dx, dy)
+    if self.resizing then self:applyResize(); return end
     self.hoverRow = nil
     if self.dragging then
         self:setX(getMouseX() - self.dragDX)
@@ -362,14 +440,49 @@ function DFDeck:onMouseDown(x, y)
         self.dragDY = getMouseY() - self:getY()
         return
     end
+    -- The grip is checked before the roster, but it cannot collide with it: the
+    -- roster is on the left edge and this is the bottom-RIGHT corner.
+    if x >= self.width - GRIP and y >= self.height - GRIP then
+        self.resizing = true
+        self.resizeDX = getMouseX() - self.width
+        self.resizeDY = getMouseY() - self.height
+        return
+    end
+
     local i = rowAt(self, x, y)
     if i and self.rows[i].enabled then
         self:showTab(self.rows[i].id)
     end
 end
 
-function DFDeck:onMouseUp(x, y)        self.dragging = false end
-function DFDeck:onMouseUpOutside(x, y) self.dragging = false end
+-- Clamped to the SCREEN as well as to MIN. A deck dragged wider than the display
+-- puts its own resize grip somewhere unreachable, which is the same class of
+-- trap as an off-screen titlebar.
+function DFDeck:applyResize()
+    local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
+    local w = getMouseX() - self.resizeDX
+    local h = getMouseY() - self.resizeDY
+    if w < MIN_W then w = MIN_W end
+    if h < MIN_H then h = MIN_H end
+    if w > sw - self:getX() then w = sw - self:getX() end
+    if h > sh - self:getY() then h = sh - self:getY() end
+    self:setWidth(math.floor(w))
+    self:setHeight(math.floor(h))
+    self:reflowContent()
+end
+
+local function endDrag(self)
+    self.dragging = false
+    if self.resizing then
+        self.resizing = false
+        -- The expensive half happens ONCE, here: a tab with no resize hook is
+        -- rebuilt, the size is persisted, and a font-tier change is applied.
+        self:settleResize()
+    end
+end
+
+function DFDeck:onMouseUp(x, y)        endDrag(self) end
+function DFDeck:onMouseUpOutside(x, y) endDrag(self) end
 
 -- ---------------------------------------------------------------------------
 -- Open / close / toggle / keybind. Same access policy as DFPanel: sandbox
@@ -377,6 +490,37 @@ function DFDeck:onMouseUpOutside(x, y) self.dragging = false end
 -- for the incubation (primary opener is the DFDeckButton sidebar badge);
 -- the swap inherits Shift+U.
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- Remembered size. Client-local, one line, failures non-fatal: a deck that
+-- forgets its size is a nuisance, a deck that refuses to open because it could
+-- not write a preference is a fault. Position is NOT saved - the deck centres
+-- itself on the screen it opens on, which is the right answer when the screen
+-- may have changed since last session.
+-- ---------------------------------------------------------------------------
+
+function DFDeck.saveLayout(w, h)
+    pcall(function()
+        local f = getFileWriter(LAYOUT_FILE, true, false)
+        if not f then return end
+        f:write(string.format("w=%d h=%d\n", math.floor(w), math.floor(h)))
+        f:close()
+    end)
+end
+
+function DFDeck.loadLayout()
+    local w, h
+    pcall(function()
+        local r = getFileReader(LAYOUT_FILE, false)
+        if not r then return end
+        local line = r:readLine()
+        r:close()
+        if not line then return end
+        w = tonumber(line:match("w=(%d+)"))
+        h = tonumber(line:match("h=(%d+)"))
+    end)
+    return w, h
+end
 
 function DFDeck.canOpen()
     local tier
@@ -403,8 +547,18 @@ function DFDeck.open()
     -- Clamped with a margin so the deck can never open larger than the screen
     -- it lands on - an off-screen titlebar is an unmovable window. The clamp
     -- still matters at this size: 1092 wide overflows a 1024x768 display.
-    local w = math.min(1292, sw - 80)
-    local h = math.min(714,  sh - 80)
+    local rw, rh = DFDeck.loadLayout()
+    local w = math.min(rw or 1292, sw - 80)
+    local h = math.min(rh or 714,  sh - 80)
+    if w < MIN_W then w = math.min(MIN_W, sw - 80) end
+    if h < MIN_H then h = math.min(MIN_H, sh - 80) end
+
+    -- The font tier belongs to the SIZE, so a remembered large deck comes back
+    -- with the type it had - set before the first build, or every widget bakes
+    -- the old font and only a resize would correct it.
+    if     w >= 1900 then DFKit.setFontScale(3)
+    elseif w >= 1500 then DFKit.setFontScale(2)
+    else                  DFKit.setFontScale(1) end
     local inst = DFDeck:new(math.floor((sw - w) / 2), math.floor((sh - h) / 2), w, h)
     inst:initialise()
     inst:addToUIManager()

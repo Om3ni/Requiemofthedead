@@ -84,7 +84,13 @@ end
 -- --------------------------------------------------------------------------
 
 eq("spawn chance registered",   Limes.fields.spec("dirgeSpawnChance").type, "number")
-eq("dirge fields are server-only", Limes.fields.spec("dirgeGluttonWeight").side, "server")
+-- side = "both", changed 2026-08-05 and pinned deliberately. These were
+-- server-only until the Details panel arrived to tune them per zone: a field the
+-- client is never sent renders as its registered default, so an admin edits a
+-- blank and saves it over a value they were never shown. If this ever flips back
+-- to "server", the panel silently starts lying - hence the assertion.
+eq("dirge fields reach the client", Limes.fields.spec("dirgeGluttonWeight").side, "both")
+eq("...spacings too",               Limes.fields.spec("dirgeEMPSpacing").side,    "both")
 eq("weights clamp at 100",      Limes.fields.spec("dirgeScreamerWeight").max, 100)
 eq("spacing clamps at 300",     Limes.fields.spec("dirgeEMPSpacing").max, 300)
 eq("suppression is client-side", Limes.fields.spec("weaponDebuffMult").side, "client")
