@@ -412,7 +412,24 @@ PhunZones formats at runtime.
    (LMCore, LMImport, LMSync, LMPersist, LMShadow, LMImportTab + three suites, green);
    deviations from this document recorded in §11.2.
 2. **M1** — LMDirge + LMSuppress bridges; Dirge reads Limes when present, PhunZones
-   otherwise (both bridges are soft-deps; flip is server-side).
+   otherwise (both bridges are soft-deps; flip is server-side). **Built 2026-08-04**
+   (`shared/LMDirge.lua`, `client/LMSuppress.lua`, suite `test_lmdirge.lua`, 29 assertions).
+   Three decisions worth carrying forward:
+   - **The bridge lives in Limes, not in Dirge.** `RQPhunZones.getEffectiveRules` is taken
+     over from this side, so RQServer's three call sites (`:319`, `:609`, `:637`) are
+     untouched and deleting `LMDirge.lua` restores the previous behaviour with no other
+     edit.
+   - **An empty store does not take over.** Authority is conditional on Limes actually
+     having zones, so a server that installs Limes before importing keeps the per-zone
+     rules PhunZones was still supplying instead of silently losing them. Cached off
+     `Limes.onChanged` — this sits on the zombie spawn path.
+   - **Installation is deferred and idempotent.** Mod load order decides whether Dirge
+     parsed first, and the server's `Mods=` line is not ours to depend on; both bridges
+     install immediately if their host is present and retry on boot otherwise.
+   The registry now does the coercion and clamping that `getEffectiveRules` used to do per
+   lookup — PhunZones persisted these as strings, and registering them as typed numbers is
+   what turns `"15"` into `15` once at resolve time. The spawn path deliberately carries no
+   clamp of its own.
 3. **M2** — LMStats (sprinters first), LMZeds, LMWidget. PhunSprinters retires.
 4. **M3** — LMLoot both directions. PhunLewt retires.
 5. **M4** — LMRestrict tiers + LMEditor (after LM-EDIT-1 re-authoring). PhunZones
