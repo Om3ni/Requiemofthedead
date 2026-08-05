@@ -386,8 +386,13 @@ function V.attach(panel)
         local i = ((T.gotoIdx or 0) % #sp) + 1   -- cycles, so one button walks the batch
         T.gotoIdx = i
         local s = sp[i]
-        SendCommandToServer(string.format("/teleportto %d,%d,%d",
-            math.floor(s.x or 0), math.floor(s.y or 0), math.floor(s.z or 0)))
+        -- RDTeleport (Core) is the family's one gated coordinate teleport. This
+        -- button used to send the command itself behind a bare isAdmin(), which
+        -- is a different and looser gate than the Capability.TeleportToCoordinates
+        -- the other call sites use; routing through Core settles that at one
+        -- answer.
+        local ok, why = RDTeleport.toCoords(s.x, s.y, s.z)
+        if not ok then setStatus(why or "Teleport refused."); return end
         setStatus(string.format("%d of %d: %s at %d,%d - placed near %s.",
             i, #sp, tostring(s.model or "?"), s.x or 0, s.y or 0, tostring(s.near or "?")))
     end, "action",

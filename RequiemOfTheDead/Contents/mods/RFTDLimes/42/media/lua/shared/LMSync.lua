@@ -181,6 +181,41 @@ if isServer() then
         finishImport(player, who, "(pasted " .. math.floor(#text / 1024 + 0.5) .. "KB)", text)
     end)
 
+    -- CLEAR ALL. Built for the test rig: the way to prove a dial does what it
+    -- claims is to wipe the map to nothing, draw a handful of zones with the
+    -- dial at 100%, and see whether the world obeys - which is impossible while
+    -- 76 production zones are still answering lookups.
+    --
+    -- Destructive and admin-only, so it snapshots first. That snapshot is ONE
+    -- level of undo, not a backup: the jail has no rename and no delete, so
+    -- each clear overwrites the previous snapshot. The reply says so rather
+    -- than letting an admin infer a safety net that is not there.
+    --
+    -- Deliberately NOT re-seeding the templates. seedIfEmpty runs at boot, so a
+    -- cleared store stays genuinely empty until the next restart - which is
+    -- what a controlled experiment wants. An admin who wants the ladder back
+    -- restarts, or re-imports.
+    RDNet.register(TOKEN, "clearAll", { capability = "any", rate = 1 }, function(player)
+        local who = adminGate(player)
+        if not who then return end
+
+        local had = #Limes.zoneNames()
+        local snapped = LMPersist.snapshot("before clearAll", who)
+
+        LMPersist.save({}, "clearAll by " .. who, who)
+        Limes.apply({})
+        LMSync.broadcastBaseline()
+
+        forensic("LM.CLEAR", player, { zones = had, snapshot = snapped })
+        RDNet.reply(player, TOKEN, "notice", {
+            msg = string.format("cleared %d zones, revision %d. %s", had, Limes.revision,
+                snapped and ("Previous store snapshotted to " .. LMPersist.BACKUP
+                    .. " - one level of undo, overwritten by the next clear.")
+                    or "SNAPSHOT FAILED - the previous store was not saved."),
+        })
+        print("[Limes] " .. who .. " cleared all zones (" .. had .. " removed)")
+    end)
+
     -- The chunked paste route: layers past MAX_PASTE arrive in pieces and are
     -- reassembled here, then take the same finishImport tail as everything
     -- else - the server still parses ONE text authoritatively.

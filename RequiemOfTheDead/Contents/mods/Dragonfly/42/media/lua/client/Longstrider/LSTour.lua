@@ -81,7 +81,10 @@ function LSTour.countCells(jobs, cellSize)
 end
 
 local function teleportTo(x, y, z)
-    SendCommandToServer(string.format("/teleportto %d,%d,%d", math.floor(x), math.floor(y), math.floor(z or 0)))
+    -- RDTeleport is the family's single gated coordinate teleport (Core). The
+    -- capability check moved inside it; the preflight in LSTab still refuses
+    -- the whole tour up front so a run cannot start and then stall on step one.
+    RDTeleport.toCoords(x, y, z)
 end
 
 local function applyProtection(player)

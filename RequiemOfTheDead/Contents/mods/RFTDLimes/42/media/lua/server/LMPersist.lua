@@ -195,6 +195,37 @@ local function forensic(evt, payload)
 end
 
 -- Truncate-overwrite with the journal line first (see header). Returns ok.
+-- Snapshot the CURRENT store to a second file before something destructive.
+--
+-- The jail gives Lua no rename and no delete (engine-file-io determination), so
+-- there is no atomic "move the old one aside" - a snapshot is a second write to
+-- a second allowlisted name, and it necessarily overwrites the previous
+-- snapshot. One level of undo, not a history: enough to survive a mis-clicked
+-- Clear All, not enough to be a backup strategy. Say so where it is offered.
+--
+-- Serialises Limes.raw() rather than taking an argument, because the only
+-- honest thing to snapshot is what is live right now.
+LMPersist.BACKUP = "RFTDLimes.backup.ini"
+
+function LMPersist.snapshot(why, who)
+    local text = LMPersist.serialize(Limes.raw())
+    local ok = false
+    pcall(function()
+        local w = getFileWriter(LMPersist.BACKUP, true, false)
+        if not w then return end
+        w:write(text)
+        w:close()
+        ok = true
+    end)
+    pcall(function()
+        writeLog("RFTDLimes", string.format("snapshot %s: %s by %s, %d bytes",
+            ok and "ok" or "FAILED", tostring(why), tostring(who), #text))
+    end)
+    forensic(ok and "LM.SNAPSHOT" or "LM.SNAPSHOT_FAIL",
+        { why = tostring(why), who = tostring(who), bytes = #text })
+    return ok
+end
+
 function LMPersist.save(rawZones, why, who)
     local text = LMPersist.serialize(rawZones)
     local n = 0

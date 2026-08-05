@@ -138,6 +138,66 @@ local function sendImport()
     if ui and ui.importBtn then ui.importBtn.enable = false end
 end
 
+-- ---------------------------------------------------------------------------
+-- The test rig: wipe the map, then go stand in what you drew
+-- ---------------------------------------------------------------------------
+
+-- Templates are listed but marked, because they are the one thing in the store
+-- you cannot travel to - no geometry, nothing to stand in. Better to show them
+-- greyed with a reason than to hide them and leave an admin wondering where
+-- Hard went.
+local function refreshZoneList()
+    if not ui or not ui.zoneList then return end
+    local sel = ui.zoneList.items[ui.zoneList.selected]
+    local keep = sel and sel.item and sel.item.name
+    DFKit.refillList(ui.zoneList, function(box)
+        local names = Limes.zoneNames()
+        for i = 1, #names do
+            local z = Limes.getZone(names[i])
+            local cx, cy = Limes.getZoneCenter(names[i])
+            local label = names[i]
+            if not cx then label = label .. "   (template - no geometry)"
+            elseif z and z.disabled then label = label .. "   (disabled)" end
+            box:addItem(label, { name = names[i], x = cx, y = cy })
+            if names[i] == keep then box.selected = box:size() end
+        end
+    end)
+end
+
+local function teleportToSelected()
+    if not ui or not ui.zoneList then return end
+    local row = ui.zoneList.items[ui.zoneList.selected]
+    local z = row and row.item
+    if not z then setStatus("Select a zone first."); return end
+    if not z.x then
+        setStatus(z.name .. " is a template - no geometry to stand in.")
+        return
+    end
+    if not RDTeleport then setStatus("RDTeleport missing - Core out of date?"); return end
+    local ok, why = RDTeleport.toCoords(z.x, z.y, 0)
+    if ok then setStatus(string.format("Teleporting to %s (%d, %d).", z.name, z.x, z.y), true)
+    else       setStatus(why or "Teleport refused.") end
+end
+
+local function clearAll()
+    local n = #Limes.zoneNames()
+    if n == 0 then setStatus("Store is already empty."); return end
+    -- No confirm dialog available means no clear. The button already holds-to-
+    -- fire (DFKit's "danger" kind), but a wipe of every zone on the server
+    -- should not rest on that alone.
+    if not (DFConfirm and DFConfirm.ask) then
+        setStatus("DFConfirm unavailable - refusing to clear without a confirmation.")
+        return
+    end
+    DFConfirm.ask(string.format(
+        "Delete all %d zones on the server?\n\nThe current store is snapshotted to %s first,"
+        .. " but that is ONE level of undo - the next clear overwrites it.", n, "RFTDLimes.backup.ini"),
+        function()
+            RDNet.send(TOKEN, "clearAll", {})
+            setStatus("Clear sent - waiting for the verdict...")
+        end)
+end
+
 -- Positioning only, no widget creation. Split out from build() so a deck
 -- resize can reflow in place instead of destroying and rebuilding - a rebuild
 -- would throw away the parsed preview sitting in LMImportTab.pending.
@@ -156,15 +216,27 @@ local function layout(panel, x, y, w, h)
     place(ui.sub1, 16)
     place(ui.sub2, 24)
 
-    -- both buttons share one row, so take the row once and place across it
+    -- the import buttons share one row, so take the row once and place across it
     local bx, by = s:row(m.btnH + m.pad)
     ui.readBtn:setX(bx);         ui.readBtn:setY(by)
     ui.importBtn:setX(bx + 150); ui.importBtn:setY(by)
+    -- Clear sits at the far right of the same row, deliberately away from
+    -- Import: the two are one careless click apart and mean opposite things.
+    ui.clearBtn:setX(bx + w - 130 - m.pad * 2)
+    ui.clearBtn:setY(by)
 
     place(ui.status, 22)
     for i = 1, #ui.warns do place(ui.warns[i], 16) end
     s.y = s.y + 6
     place(ui.store, 16)
+
+    -- The list takes whatever vertical space is left, with the teleport button
+    -- parked under it - so a tall panel shows more zones rather than more gap.
+    local lx, ly = s:row(0)
+    local listH = math.max(60, (y + h) - ly - m.btnH - m.pad * 3)
+    DFKit.sizeList(ui.zoneList, lx, ly, w - m.pad * 2, listH)
+    ui.gotoBtn:setX(lx)
+    ui.gotoBtn:setY(ly + listH + m.pad)
 end
 
 local function build(spec, panel, x, y, w, h)
@@ -180,17 +252,45 @@ local function build(spec, panel, x, y, w, h)
     local readBtn   = DFKit.button(panel, 0, 0, 140, "Read clipboard",   panel, readClipboard)
     local importBtn = DFKit.button(panel, 0, 0, 150, "Import to server", panel, sendImport, "primary")
     importBtn.enable = false
+    local clearBtn  = DFKit.button(panel, 0, 0, 130, "Clear all zones", panel, clearAll, "danger",
+        { tooltip = "Wipe every zone on the server, so a dial can be tested against an empty"
+                 .. " map instead of 76 zones answering lookups.\n\nThe current store is"
+                 .. " snapshotted to RFTDLimes.backup.ini first - ONE level of undo, overwritten"
+                 .. " by the next clear. Templates are not re-seeded; the store stays empty until"
+                 .. " the next server restart." })
 
     local status = DFKit.label(panel, 0, 0, "No preview yet.")
     local warns = {}
     for i = 1, 8 do warns[i] = DFKit.label(panel, 0, 0, "", C.warn) end
     local store = DFKit.label(panel, 0, 0, "")
 
+    -- The drill-down: every zone, click one, go stand in it. This is the
+    -- verification half of the test rig - a dial set to 100% is only proof if
+    -- you can get inside the zone that carries it - and it is deliberately the
+    -- plainest thing that works, because the M4 map editor replaces this panel
+    -- wholesale rather than growing out of it.
+    local zoneList = ISScrollingListBox:new(0, 0, 10, 10)
+    zoneList:initialise()
+    zoneList:instantiate()
+    zoneList.itemheight = DFKit.metrics.rowH or 18
+    zoneList.drawBorder = true
+    zoneList.selected = 0
+    panel:addChild(zoneList)
+
+    local gotoBtn = DFKit.button(panel, 0, 0, 150, "Teleport to zone", panel, teleportToSelected,
+        "action",
+        { tooltip = "Teleport to the centre of the selected zone - the middle of its LARGEST"
+                 .. " rectangle, so the destination is always inside the zone even when it is"
+                 .. " L-shaped or split across the map.\n\nNeeds the Teleport-to-coordinates"
+                 .. " capability. Templates have no geometry and cannot be visited." })
+
     ui = {
         title = title, sub1 = sub1, sub2 = sub2,
-        readBtn = readBtn, importBtn = importBtn,
+        readBtn = readBtn, importBtn = importBtn, clearBtn = clearBtn,
         status = status, store = store, warns = warns,
+        zoneList = zoneList, gotoBtn = gotoBtn,
     }
+    refreshZoneList()
     LMImportTab.pending = nil
     setStoreLine()
     layout(panel, x, y, w, h)
@@ -203,7 +303,13 @@ Events.OnServerCommand.Add(function(module, command, args)
     if args and args.msg then setStatus(tostring(args.msg), true) end
 end)
 
-Limes.onChanged(function() setStoreLine() end)
+-- Both halves of the panel follow the store: the count line and the drill-down
+-- list. onChanged fires on the baseline that lands after an import or a clear,
+-- so the list is never stale against what the server actually holds.
+Limes.onChanged(function()
+    setStoreLine()
+    refreshZoneList()
+end)
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
