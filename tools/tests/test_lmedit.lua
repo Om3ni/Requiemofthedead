@@ -21,8 +21,9 @@
 -- wire, resolves live - and is GONE after the next server restart, silently,
 -- because the section header will not match on the way back in. The editor
 -- refuses that name at the point it is typed. The grammar is duplicated in
--- LMEdit (LMPersist is behind an isServer() guard); the last block here reads
--- LMPersist's source as text so the copy cannot rot unnoticed.
+-- LMEdit; the last block here reads LMIni's source as text so the copy cannot
+-- rot unnoticed. (It watched LMPersist until the dialect moved to LMIni on
+-- 2026-08-05 - and caught the move, which is the point of the guard.)
 --
 -- Usage (normally via tools\run-tests.bat):
 --   lua5.1.exe tools/tests/test_lmedit.lua <repo-root>
@@ -80,7 +81,7 @@ local function fixture()
         Westpoint = {
             inherits = "Hard",
             rects  = { { 11000, 6600, 11800, 7200 }, { 11900, 6600, 12000, 6700 } },
-            fields = { title = "West Point", zeds = "remove" },
+            fields = { title = "West Point", futureThing = "remove" },
         },
     }
 end
@@ -150,7 +151,7 @@ d = LMEdit.new(fixture(), 7)
 d:setField("Westpoint", "title", "")
 changed = d:changeSet()
 eq('setting a field to "" clears it', changed.Westpoint.fields.title, nil)
-eq("...siblings survive",             changed.Westpoint.fields.zeds, "remove")
+eq("...siblings survive",             changed.Westpoint.fields.futureThing, "remove")
 
 d = LMEdit.new(fixture(), 7)
 d:setRects("Riverside", {})
@@ -302,13 +303,19 @@ eq("the string 'true' is accepted for a boolean", d:errorCount(), 0)
 
 -- An unregistered key is how a field from an unbuilt milestone survives a round
 -- trip through the editor. It must warn, never block, and never be dropped.
+--
+-- The fixture uses a made-up name on purpose. It used to use `zeds`, which was a
+-- real unregistered key right up until LMCore declared the zone policy
+-- vocabulary - at which point this stopped testing the unregistered path at all
+-- and started testing a registered string. A synthetic name cannot be claimed
+-- out from under the test.
 d = LMEdit.new(fixture(), 7)
 isTrue("an unregistered field warns",
     findProblem(d:validate(), "Westpoint", "warning", "no consumer installed"))
 eq("...and does not block save", d:errorCount(), 0)
 d:setField("Westpoint", "title", "West Point 2")
 changed = d:changeSet()
-eq("...and rides through the change set untouched", changed.Westpoint.fields.zeds, "remove")
+eq("...and rides through the change set untouched", changed.Westpoint.fields.futureThing, "remove")
 
 -- Deleting a template that others stand on is allowed, but the children are
 -- named so the admin sees who they just changed.
@@ -485,11 +492,41 @@ eq("the tree nests and orders", table.concat(flat, " "),
    "Hard Region >Town >>Block Rosewood")
 eq("every zone appears exactly once", #t, 5)
 
+
 for _, n in ipairs(t) do
     if n.name == "Town"  then eq("Town is not a leaf",  n.leaf, false) end
     if n.name == "Block" then eq("Block is a leaf",     n.leaf, true) end
     if n.name == "Block" then eq("Block knows its parent", n.parent, "Town") end
 end
+
+-- NESTING IS SPATIAL. A zone whose parent is a geometry-less TEMPLATE is a root,
+-- not a child - otherwise an imported layer files every zone on the map under
+-- Easy / Hard / Intermediate, because that is what `inherits` means there, and
+-- finding a town means knowing its difficulty first. Templates are not places.
+d = LMEdit.new(nested(), 1)
+d:setInherits("Rosewood", "Hard")      -- Hard has no rects: a tier, not a place
+t = d:tree()
+flat = {}
+for _, n in ipairs(t) do flat[#flat + 1] = string.rep(">", n.depth) .. n.name end
+eq("a template parent does not nest its children", table.concat(flat, " "),
+   "Block Hard Region Rosewood Town")
+eq("...every zone still appears", #t, 5)
+
+-- ...and the FIELD chain is untouched: only the list SHAPE changed. Rosewood
+-- still takes Hard's tier, it just does not file itself underneath it.
+eq("a template parent still supplies fields", (d:effective("Rosewood", "tier")), 4)
+
+-- Alphabetical at every level, digits included.
+d = LMEdit.new({
+    Zulu    = { rects = { { 0, 0, 100, 100 } } },
+    alpha   = { rects = { { 200, 200, 300, 300 } } },
+    Mike    = { rects = { { 400, 400, 500, 500 } } },
+    Bravo2  = { rects = { { 600, 600, 700, 700 } } },
+    Bravo10 = { rects = { { 800, 800, 900, 900 } } },
+}, 1)
+flat = {}
+for _, n in ipairs(d:tree()) do flat[#flat + 1] = n.name end
+eq("roots sort alphabetically", table.concat(flat, ","), "Bravo10,Bravo2,Mike,Zulu,alpha")
 
 -- An orphan is a ROOT, not a disappearance. The live imported layer has several
 -- zones inheriting from templates that are not in the store; hiding them because
@@ -576,9 +613,9 @@ eq("a cycle still terminates and finds the value", v, 3)
 -- editor starts accepting names that vanish on restart.
 -- ---------------------------------------------------------------------------
 
-local f = io.open(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDLimes/42/media/lua/server/LMPersist.lua", "r")
+local f = io.open(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDLimes/42/media/lua/shared/LMIni.lua", "r")
 if not f then
-    print("FAIL could not read LMPersist.lua to check the grammar copy")
+    print("FAIL could not read LMIni.lua to check the grammar copy")
     fail = fail + 1
 else
     local text = f:read("*a")
@@ -586,16 +623,74 @@ else
     -- Plain substring search (find's 4th argument), not a pattern match: what
     -- is being compared here IS a pattern, and escaping one to look for the
     -- other is how this check would end up passing for the wrong reason.
-    isTrue("LMPersist still parses sections as [%w_%-%.]+",
+    isTrue("LMIni still parses sections as [%w_%-%.]+",
         text:find("%[([%w_%-%.]+)%]", 1, true) ~= nil,
-        "LMPersist's section pattern changed - update LMEdit.NAME_PATTERN")
-    isTrue("LMPersist still parses keys as [%w_]+",
+        "the section pattern changed - update LMEdit.NAME_PATTERN")
+    isTrue("LMIni still parses keys as [%w_]+",
         text:find("([%w_]+)%s*=", 1, true) ~= nil,
-        "LMPersist's key pattern changed - update LMEdit.KEY_PATTERN")
+        "the key pattern changed - update LMEdit.KEY_PATTERN")
     -- And the editor's copies say the same thing.
     eq("LMEdit name pattern", LMEdit.NAME_PATTERN, "^[%w_%-%.]+$")
     eq("LMEdit key pattern",  LMEdit.KEY_PATTERN,  "^[%w_]+$")
 end
+
+-- ---------------------------------------------------------------------------
+-- 10. The store must survive a round trip through its own export
+--
+-- The import route spoke PhunZones and nothing else, so the .ini Limes writes
+-- could not be pasted back: it died on line 1, because parseLua wants a Lua
+-- table and an .ini opens with a comment. Backing up by copying the file out and
+-- restoring by pasting it back is the first thing an admin tries, and "you can
+-- export your store but not restore it" is not a property a store may have.
+--
+-- This pins the whole loop: serialize -> sniff -> parse -> identical records.
+-- ---------------------------------------------------------------------------
+
+-- The stub has to be in place before LMIni, which requires RDJson - stock Lua's
+-- require would go looking for a .dll. Everything these two need is dofile'd.
+local realRequire = require
+require = function() end
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDJson.lua")
+dofile(LM .. "shared/LMIni.lua")
+dofile(LM .. "shared/LMImport.lua")
+require = realRequire
+
+local roundTrip = fixture()
+roundTrip.Westpoint.fields.nobuilding = true      -- a boolean
+roundTrip.Riverside.fields.title = "Riverside"    -- a string
+local text = LMIni.serialize(roundTrip)
+
+isTrue("our own export sniffs as an .ini", LMIni.looksLikeIni(text))
+isTrue("a PhunZones export does not",
+    not LMIni.looksLikeIni("return { version = 2, data = { A = { points = {} } } }"))
+isTrue("a leading comment does not fool the sniffer",
+    LMIni.looksLikeIni("; a comment\n\n[Zone]\nrects = 1,2,3,4\n"))
+
+local okRt, res = LMImport.parseAny(text)
+isTrue("parseAny accepts our own export", okRt, tostring(res))
+if okRt then
+    eq("...and reports the dialect", res.format, "ini")
+    eq("...with every zone",         res.count, 4)
+    eq("...inherits survives",       res.zones.Riverside.inherits, "Hard")
+    eq("...rects survive",           res.zones.Westpoint.rects[2][3], 12000)
+    eq("...numbers stay numbers",    res.zones.Hard.fields.tier, 4)
+    eq("...booleans stay booleans",  res.zones.Westpoint.fields.nobuilding, true)
+    eq("...strings stay strings",    res.zones.Riverside.fields.title, "Riverside")
+
+    -- The real test: a draft built from the re-imported store is IDENTICAL to
+    -- one built from the original. Any lossy field would show up as a change.
+    local before = LMEdit.new(roundTrip, 1)
+    local after  = LMEdit.new(res.zones, 1)
+    local a, b = before:snapshot(), after:snapshot()
+    local diff = LMEdit.new(a, 1)
+    diff.base = b
+    eq("a round trip changes nothing at all", select(3, diff:changeSet()), 0)
+end
+
+-- An .ini with no sections is refused as an .ini rather than being handed to the
+-- PhunZones parser, which would report something misleading about Lua syntax.
+local okEmpty, whyEmpty = LMImport.parseAny("; just a comment\n")
+eq("a section-less .ini is refused", okEmpty, false)
 
 print(string.format("LMEdit: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

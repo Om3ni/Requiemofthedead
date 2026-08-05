@@ -27,10 +27,11 @@
 -- every lookup. It also silences the "no registered consumer yet" warnings
 -- that these keys have been producing since the import.
 --
--- SIDE = server. Only server-side Dirge reads these; shipping the whole dirge
--- vocabulary to every client would be join bytes for nothing and would put the
--- server's difficulty tuning in every player's memory (§5, §6). Single-player
--- is unaffected: there is no wire to strip anything from.
+-- SIDE = both, revised 2026-08-05. These were server-only - only the spawn path
+-- reads them, so shipping them was join bytes for nothing - until the Details
+-- panel arrived, whose whole job is tuning them per zone. A field the client is
+-- never sent renders as its registered default, so an admin would be editing
+-- blanks over values they cannot see. See the registration block below.
 
 require "LMCore"
 
@@ -81,15 +82,28 @@ local function prettify(name)
     return (body:sub(1, 1):upper() .. body:sub(2))
 end
 
+-- side = "both", REVISED 2026-08-05, and the reason is the editor.
+--
+-- These were server-only on the §5 argument that only the spawn path reads them,
+-- so they were dead weight in every client's memory. True, until Limes grew a
+-- Details panel whose entire job is tuning them per zone: a field the client is
+-- never sent renders as its default, so the admin would be editing blanks and
+-- writing over values they cannot see. The wire cost is a one-time join baseline
+-- of eleven numbers per zone that sets them - a few KB across the whole layer -
+-- against a panel that otherwise cannot work. PhunZones' 62.8% was never
+-- baseline size; it was re-broadcasting the whole table per player per change.
+--
+-- LMSync's save path carries server-only fields across regardless, so `side`
+-- stays a wire-cost decision rather than a correctness one.
 for name in pairs(WEIGHT_FIELDS) do
     Limes.fields.register("LMDirge", name,
-        { type = "number", min = 0, max = 100, side = "server",
+        { type = "number", min = 0, max = 100, side = "both",
           order = (name == "dirgeSpawnChance") and 1 or 2, label = prettify(name),
           help = "Relative share of this zone's special spawns. 0 means never." })
 end
 for name in pairs(SPACING_FIELDS) do
     Limes.fields.register("LMDirge", name,
-        { type = "number", min = 0, max = 300, side = "server",
+        { type = "number", min = 0, max = 300, side = "both",
           order = 3, unit = "tiles", label = prettify(name),
           help = "Minimum tiles between two of this kind in this zone." })
 end

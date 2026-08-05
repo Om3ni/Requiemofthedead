@@ -22,9 +22,13 @@
 -- rarely. Mixing them puts a fourteen-field Dirge table between an admin and the
 -- tier they came to change.
 --
--- LMCore IS NOT LISTED. Its fields are the Zone Selector's properties cell, and
--- a dial that appears in two places is a dial an admin will change in one and
--- look for in the other.
+-- LMCore IS LISTED, first (revised 2026-08-05). Its fields used to be a
+-- properties cell under the Zone Selector's tree, and this view excluded them so
+-- one dial had one home. That cell is gone: the tree needs the whole column once
+-- zones nest, and the honest split turned out to be geometry on one tab and
+-- policy on the other. So "Zone basics" is simply the first registrant in the
+-- list, above Dirge and anything else installed - which is what it always was in
+-- the registry.
 
 if isServer() then return end
 
@@ -111,10 +115,7 @@ end
 
 rebuildMods = function()
     if not (ui and ui.list) then return end
-    local mods = {}
-    for _, mo in ipairs(Limes.mods.list()) do
-        if mo.id ~= "LMCore" then mods[#mods + 1] = mo end
-    end
+    local mods = Limes.mods.list()
     DFKit.refillList(ui.list, function(box)
         for i = 1, #mods do
             box:addItem(mods[i].label, mods[i])
@@ -190,9 +191,7 @@ function LMDetailsView.attach(panel)
     -- Build every registered mod's form up front. Lazily would mean a form
     -- appearing mid-layout with no rect, and the set is small - one per mod that
     -- registered a field, not one per zone.
-    for _, mo in ipairs(Limes.mods.list()) do
-        if mo.id ~= "LMCore" then formFor(panel, mo.id) end
-    end
+    for _, mo in ipairs(Limes.mods.list()) do formFor(panel, mo.id) end
     for _, el in ipairs(ui.formWidgets) do w[#w + 1] = el end
 
     refresh()

@@ -7,10 +7,15 @@
 -- because they were a fixed strip of mostly-blank that the map was paying for.
 -- The map is full height on the right. The left column is two stacked cells:
 --
---   top     the zone TREE. Zones drawn inside zones are children, and children
---           display under their parent, indented, because that is what they are.
---   bottom  the selected zone's own policies - the ones that are true for it
---           absent any other mod. Other mods' overrides live on Details.
+-- The left column is the zone TREE, full height: zones drawn inside zones are
+-- children, and children display under their parent, indented, because that is
+-- what they are.
+--
+-- THE SPLIT IS GEOMETRY vs POLICY. This tab finds a zone, draws it, shapes it
+-- and says where it lives; Details says what it does. Every settable field -
+-- including LMCore's own tier/priority/announce - lives on Details, so a dial
+-- has exactly one home. The one exception is Disable, which is a toolbar button
+-- here because it changes what the MAP means.
 --
 -- CONTAINMENT MAKES A CHILD, with one guard. Drop a zone inside another and it
 -- adopts that zone as its parent (LMEdit:reparentByContainment). The guard is
@@ -38,9 +43,14 @@ local selected = nil    -- zone name
 local statusMsg, statusGood = "", false
 
 local LEFT_W  = 268
-local TREE_SPLIT = 0.58   -- share of the left column the tree takes
+-- No split any more: the tree owns the whole left column (2026-08-05). The
+-- properties form that used to sit under it moved to Details, which is now
+-- "everything you can set on this zone, grouped by who owns it" - LMCore's own
+-- vocabulary included. The tree is the NAVIGATION surface once zones nest, and
+-- it was getting 58% of a 268px column while a form sat underneath.
+local FONT_HGT   = getTextManager():getFontHeight(UIFont.Small)
 
-local rebuildTree, refreshChrome, selectZone
+local rebuildTree, refreshChrome, selectZone, frameSelected
 
 -- ---------------------------------------------------------------------------
 -- The tree widget
@@ -52,6 +62,11 @@ local rebuildTree, refreshChrome, selectZone
 
 local TreeList = ISScrollingListBox:derive("LMZoneTree")
 local INDENT   = 12
+-- Rows are font-derived now (DFKit.rowHeight), so nothing inside one may be
+-- pinned to a constant: text and swatch centre themselves against whatever
+-- height the row turned out to be, or a larger UI font gets taller rows with
+-- the content still stuck to the top of them.
+local function rowText(h) return math.floor((h - FONT_HGT) / 2) end
 
 function TreeList:doDrawItem(y, item, alt)
     local n = item.item
@@ -75,19 +90,21 @@ function TreeList:doDrawItem(y, item, alt)
     -- list and the map name the same thing the same way.
     local c = LMMapEditor and LMMapEditor.colourFor and LMMapEditor.colourFor(n.name)
              or { 0.8, 0.8, 0.8 }
-    self:drawRect(x, y + 5, 8, 8, n.template and 0.35 or 1, c[1], c[2], c[3])
-    if n.template then self:drawRectBorder(x, y + 5, 8, 8, 0.8, c[1], c[2], c[3]) end
+    local sy = y + math.floor((h - 8) / 2)
+    self:drawRect(x, sy, 8, 8, n.template and 0.35 or 1, c[1], c[2], c[3])
+    if n.template then self:drawRectBorder(x, sy, 8, 8, 0.8, c[1], c[2], c[3]) end
 
     local tx = x + 14
+    local ty = y + rowText(h)
     local a  = n.off and 0.45 or 1
-    self:drawText(n.name, tx, y + 2, 0.92, 0.92, 0.92, a, UIFont.Small)
+    self:drawText(n.name, tx, ty, 0.92, 0.92, 0.92, a, UIFont.Small)
 
     -- The badge says what the row IS, on the right where it does not push the
     -- name around: a folder count, a rect count, "off", or nothing at all.
     local badge = n.badge
     if badge and badge ~= "" then
         local bw = getTextManager():MeasureStringX(UIFont.Small, badge)
-        self:drawText(badge, self.width - bw - 8, y + 2, 0.62, 0.68, 0.75, a, UIFont.Small)
+        self:drawText(badge, self.width - bw - 8, ty, 0.62, 0.68, 0.75, a, UIFont.Small)
     end
     return y + h
 end
@@ -99,6 +116,23 @@ function TreeList:onMouseDown(x, y)
     if not (row and row.item) then return end
     self.selected = idx
     selectZone(row.item.name)
+end
+
+-- DOUBLE-CLICK GOES THERE. Selecting a zone and then hunting for it on a
+-- 15,000-tile map is the single most repeated action in this panel, and Frame
+-- is a button two hundred pixels away from the name you just clicked. The
+-- button stays for discoverability; this is the gesture you actually use.
+--
+-- Selection happens on the first click of the pair, so this only has to frame -
+-- and it frames the whole zone rather than one rectangle, because a zone split
+-- across the map is exactly the case where you cannot find it by eye.
+function TreeList:onMouseDoubleClick(x, y)
+    local idx = self:rowAt(x, y)
+    if idx <= 0 then return end
+    local row = self.items[idx]
+    if not (row and row.item) then return end
+    selectZone(row.item.name)
+    frameSelected()
 end
 
 -- ---------------------------------------------------------------------------
@@ -244,16 +278,6 @@ refreshChrome = function()
         ui.toggleBtn:setTitle("Disable")
     end
 
-    -- The header over the properties cell names the zone and where its
-    -- unset values come from, which is the one thing a form of inherited
-    -- numbers cannot show by itself.
-    if selected then
-        local parent = rec and rec.inherits
-        ui.propHead:setName(selected .. (parent and ("   <  " .. parent) or "   (no parent)"))
-    else
-        ui.propHead:setName("No zone selected")
-    end
-
     -- The status line is only rewritten by the things that have something to
     -- say. Left alone here it keeps the last real message instead of being
     -- overwritten by a count on every frame - but a blocking error outranks
@@ -270,9 +294,15 @@ refreshChrome = function()
         setStatus(n .. " unsaved change" .. (n == 1 and "" or "s") .. ".")
     end
 
-    ui.counts:setName(string.format("%d zones   |   draft rev %d, %d change%s%s",
-        #draft:names(), draft:revision(), n, n == 1 and "" or "s",
-        errs > 0 and ("   |   " .. errs .. " blocking") or ""))
+    -- SHORT ENOUGH FOR THE COLUMN IT LIVES IN. ISLabel does not clip, so the
+    -- old wording ("44 zones | draft rev 1, 0 changes") simply ran out over the
+    -- map. The column is LEFT_W wide and that is the budget: counts as digits,
+    -- the revision abbreviated, and the change count only when there ARE
+    -- changes - which is also when it is worth reading.
+    local bits = { #draft:names() .. " zones", "r" .. draft:revision() }
+    if n > 0 then bits[#bits + 1] = n .. (n == 1 and " edit" or " edits") end
+    if errs > 0 then bits[#bits + 1] = errs .. " blocking" end
+    ui.counts:setName(table.concat(bits, "  -  "))
 end
 
 -- ---------------------------------------------------------------------------
@@ -295,8 +325,22 @@ local function addZone()
         local ok, why = draft:create(name)
         if not ok then setStatus(why); return end
         selectZone(name)
-        setStatus("Created " .. name .. ". Ctrl-drag on the map to draw it; drawn inside"
-            .. " another zone, it becomes that zone's child.", true)
+        -- A NEW ZONE ARRIVES WITH A BOX. Creating a geometry-less record and
+        -- telling the admin to ctrl-drag made Add produce a template, which is
+        -- not what anyone pressing Add wanted, and left nothing on the map to
+        -- grab. Longstrider's Add has always dropped a region at the view centre;
+        -- this now matches it.
+        local placed = editor and editor:addRectAtView(name)
+        if placed then
+            selectZone(name, placed)
+            autoReparent(name)
+            setStatus("Created " .. name .. " in the middle of the view - drag its handles"
+                .. " to shape it. Ctrl-drag adds another rectangle; drawn inside another"
+                .. " zone, it becomes that zone's child.", true)
+        else
+            setStatus("Created " .. name .. " as a template (no map available)."
+                .. " Ctrl-drag on the map to give it geometry.", true)
+        end
     end)
 end
 
@@ -358,7 +402,7 @@ local function deleteRect()
     LMEditView.refresh()
 end
 
-local function frameZone()
+frameSelected = function()
     if not (selected and editor) then return end
     if not editor:frameZone(selected) then setStatus(selected .. " has no geometry to frame.") end
 end
@@ -428,7 +472,7 @@ function LMEditView.attach(panel)
 
     local tree = TreeList:new(0, 0, 10, 10)
     tree:initialise(); tree:instantiate()
-    tree.itemheight = 18
+    tree.itemheight = DFKit.rowHeight()
     tree.drawBorder = true
     tree.selected   = 0
     DFKit.well(tree)
@@ -441,18 +485,6 @@ function LMEditView.attach(panel)
     end
     panel:addChild(tree)
     w[#w + 1] = tree
-
-    -- The properties cell: LMCore's own vocabulary only. Other mods' per-zone
-    -- overrides are the Details view's whole subject, and putting them here too
-    -- would give an admin two places to change one number.
-    local form = LMFieldForm.new{
-        owner = "LMCore",
-        title = "Zone policy",
-        zone  = function() return selected end,
-        draft = function() return draft end,
-        onChange = function() LMEditView.refresh() end,
-    }
-    for _, el in ipairs(form:attach(panel)) do w[#w + 1] = el end
 
     local function btn(label, width, cb, kind, tip)
         local b = DFKit.button(panel, 0, 0, width, label, panel, cb, kind,
@@ -477,7 +509,7 @@ function LMEditView.attach(panel)
     local delRectBtn  = btn("Delete rect", 88, deleteRect, "action",
         "Remove the highlighted rectangle. A zone with none left is a template: it"
         .. " still exists and can still be inherited from, it just has no place on the map.")
-    local frameBtn    = btn("Frame", 58, frameZone, "action",
+    local frameBtn    = btn("Frame", 58, function() frameSelected() end, "action",
         "Zoom and centre on the whole selected zone, including parts of it elsewhere"
         .. " on the map.")
     local reparentBtn = btn("Reparent", 78, reparentNow, "action",
@@ -500,11 +532,10 @@ function LMEditView.attach(panel)
 
     local status   = DFKit.label(panel, 0, 0, "")
     local counts   = DFKit.label(panel, 0, 0, "", C.textDim)
-    local propHead = DFKit.label(panel, 0, 0, "No zone selected", C.textDim)
-    for _, l in ipairs({ status, counts, propHead }) do w[#w + 1] = l end
+    for _, l in ipairs({ status, counts }) do w[#w + 1] = l end
 
     ui = {
-        tree = tree, form = form, status = status, counts = counts, propHead = propHead,
+        tree = tree, status = status, counts = counts,
         addBtn = addBtn, renameBtn = renameBtn, deleteBtn = deleteBtn, toggleBtn = toggleBtn,
         delRectBtn = delRectBtn, frameBtn = frameBtn, reparentBtn = reparentBtn,
         importBtn = importBtn, saveBtn = saveBtn, revertBtn = revertBtn,
@@ -546,19 +577,12 @@ function LMEditView.layout(panel, x, y, w, h)
     local bodyY = ty + BTN + PAD
     local bodyH = math.max(120, (y + h) - bodyY - PAD)
 
-    -- Left column: tree over properties, with a one-line header on the
-    -- properties cell naming the zone and its parent.
+    -- Left column: the tree, full height, with one counts line under it.
     local colX  = x + PAD
-    local treeH = math.floor(bodyH * TREE_SPLIT)
+    local treeH = math.max(80, bodyH - 18)
     DFKit.sizeList(ui.tree, colX, bodyY, LEFT_W, treeH)
-
     ui.counts:setX(colX)
     ui.counts:setY(bodyY + treeH + 2)
-
-    local propY = bodyY + treeH + 20
-    ui.propHead:setX(colX)
-    ui.propHead:setY(propY)
-    ui.form:layout(colX, propY + 18, LEFT_W, math.max(60, (bodyY + bodyH) - (propY + 18)))
 
     -- Right: the map takes the rest, full height.
     local mapX = colX + LEFT_W + PAD
@@ -567,12 +591,6 @@ function LMEditView.layout(panel, x, y, w, h)
         map:setX(mapX); map:setY(bodyY)
         map:setMapSize(mapW, bodyH)
     end
-end
-
--- The drawn form is chrome, not widgets, so it needs a draw pass. DFViews routes
--- this to whichever view is active; the host installs the single chain.
-function LMEditView.draw(el)
-    if ui and ui.form then ui.form:draw(el) end
 end
 
 -- Entering the view re-syncs with the server, but ONLY when there is nothing to

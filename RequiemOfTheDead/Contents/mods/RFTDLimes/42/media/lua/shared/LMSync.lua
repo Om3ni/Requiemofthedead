@@ -48,6 +48,7 @@
 
 require "RDNet"
 require "LMCore"
+require "LMIni"
 require "LMEdit"
 
 LMSync = LMSync or {}
@@ -123,7 +124,7 @@ if isServer() then
     -- Shared tail: parse AUTHORITATIVELY (the tab's preview is UX, not
     -- trust), persist, apply, re-baseline every client, report back.
     local function finishImport(player, who, source, text)
-        local ok, res = LMImport.parsePhunZones(text)
+        local ok, res = LMImport.parseAny(text)
         if not ok then
             forensic("LM.IMPORT_FAIL", player, { source = source, err = tostring(res) })
             RDNet.reply(player, TOKEN, "notice", { msg = "import failed: " .. tostring(res) })
@@ -138,6 +139,18 @@ if isServer() then
             print("[Limes] import: " .. res.warnings[i])
         end
 
+        -- SNAPSHOT FIRST. An import replaces the store WHOLESALE - it is exactly
+        -- as destructive as clearAll, which has snapshotted since the day it was
+        -- written, while this path did not. That asymmetry cost a 76-zone layer
+        -- on 2026-08-04: an import replaced it with 44 zones (no backup taken),
+        -- and the clear three minutes later then spent the single backup slot on
+        -- the 44 that had already overwritten them. Both destructive routes
+        -- snapshot now.
+        --
+        -- Still ONE slot, because the jail has no rename and no delete - so the
+        -- reply says so rather than letting an admin infer a safety net with
+        -- more depth than it has.
+        local snapped = LMPersist.snapshot("before import from " .. source, who)
         LMPersist.save(res.zones, "import from " .. source, who)
         local warnings = Limes.apply(res.zones)
         for i = 1, #warnings do
@@ -147,8 +160,11 @@ if isServer() then
         forensic("LM.IMPORT", player, { source = source, zones = res.count,
                                         warnings = #res.warnings + #warnings })
         RDNet.reply(player, TOKEN, "notice", {
-            msg = string.format("imported %d zones from %s (%d import warnings, %d resolve warnings), revision %d",
-                res.count, source, #res.warnings, #warnings, Limes.revision),
+            msg = string.format("imported %d zones (%s) from %s (%d import warnings, %d resolve warnings), revision %d. %s",
+                res.count, tostring(res.format or "?"), source, #res.warnings, #warnings, Limes.revision,
+                snapped and ("Previous store snapshotted to " .. LMPersist.BACKUP
+                    .. " - one level of undo, overwritten by the next import or clear.")
+                    or "SNAPSHOT FAILED - the previous store was not saved."),
         })
         print("[Limes] " .. who .. " imported " .. res.count .. " zones from " .. source)
     end
@@ -286,6 +302,35 @@ if isServer() then
         if nChanged == 0 and #removed == 0 then
             RDNet.reply(player, TOKEN, "notice", { msg = "nothing to save" })
             return
+        end
+
+        -- A CLIENT CANNOT DESTROY WHAT IT WAS NEVER SENT.
+        --
+        -- A save carries whole pruned RECORDS, not per-field deltas, and
+        -- forClients() strips every field registered `side = "server"` on the
+        -- way out. Put those together and an editor that touches one dial on a
+        -- zone sends back a record with no server-only fields in it at all -
+        -- and applyChangeSet replaces the record wholesale. Every dirge weight
+        -- and spacing on that zone would have been silently erased by editing
+        -- its title, and the .ini rewritten to match before anyone noticed.
+        --
+        -- So the authoritative side carries them across. This is not a
+        -- courtesy: the client was never shown these values, so its silence
+        -- about them is not an instruction. Clearing a server-only field is
+        -- consequently not possible from the editor, which is the correct
+        -- trade - it is done in the .ini, by someone who can see it.
+        local existing = Limes.raw()
+        for name, rec in pairs(changed) do
+            local was = existing[name]
+            if was and was.fields then
+                for k, v in pairs(was.fields) do
+                    local spec = Limes.fields.spec(k)
+                    if spec and spec.side == "server" then
+                        rec.fields = rec.fields or {}
+                        if rec.fields[k] == nil then rec.fields[k] = v end
+                    end
+                end
+            end
         end
 
         -- Fold, then validate the result. Folding first is what makes a cycle or

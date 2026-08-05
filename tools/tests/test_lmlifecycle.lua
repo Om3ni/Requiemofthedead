@@ -230,7 +230,13 @@ isTrue("later listeners still run", reached, "a pcall per listener, not per even
 -- Field side tags + wire strip (§5, §6)
 -- ---------------------------------------------------------------------------
 
-eq("server-only registers", Limes.fields.register("T", "lewtkey",  { type = "string",  side = "server" }), true)
+-- A SYNTHETIC name, not a real one. This block used `lewtkey` as its
+-- server-only example because that is what a server-only field looked like -
+-- right up until LMCore declared the zone policy vocabulary and claimed it (as
+-- "both", so the editor can show it). First-claim-wins then made the
+-- registration fail and four assertions here went red for a reason that had
+-- nothing to do with sides. A name no module will ever want cannot be taken.
+eq("server-only registers", Limes.fields.register("T", "secretLoot", { type = "string",  side = "server" }), true)
 eq("client-only registers", Limes.fields.register("T", "banner",   { type = "string",  side = "client" }), true)
 eq("both registers",        Limes.fields.register("T", "shared",   { type = "number",  side = "both"   }), true)
 eq("side defaults to both", Limes.fields.register("T", "untagged", { type = "number" }), true)
@@ -250,7 +256,7 @@ eq("priority is both",                 Limes.fields.spec("priority").side, "both
 
 eq("list exposes side", (function()
     for _, f in ipairs(Limes.fields.list()) do
-        if f.name == "lewtkey" then return f.side end
+        if f.name == "secretLoot" then return f.side end
     end
 end)(), "server")
 
@@ -258,14 +264,14 @@ local store = {
     Gunstore = {
         inherits = "_default",
         rects    = { { 0, 0, 9, 9 } },
-        fields   = { lewtkey = "GunStores", banner = "Gun Store", shared = 3,
+        fields   = { secretLoot = "GunStores", banner = "Gun Store", shared = 3,
                      mystery = "unregistered", disabled = false },
     },
-    ServerOnlyZone = { rects = { { 10, 10, 19, 19 } }, fields = { lewtkey = "Ammos" } },
+    ServerOnlyZone = { rects = { { 10, 10, 19, 19 } }, fields = { secretLoot = "Ammos" } },
 }
 local wire = Limes.fields.stripServerOnly(store)
 
-eq("server-only field stripped",  wire.Gunstore.fields.lewtkey, nil)
+eq("server-only field stripped",  wire.Gunstore.fields.secretLoot, nil)
 eq("client-only field kept",      wire.Gunstore.fields.banner, "Gun Store")
 eq("both-sided field kept",       wire.Gunstore.fields.shared, 3)
 eq("unregistered field kept",     wire.Gunstore.fields.mystery, "unregistered")
@@ -285,8 +291,8 @@ eq("emptied zone kept geometry",      wire.ServerOnlyZone.rects[1][1], 10)
 
 -- The live store must be untouched: handing the serializer a table with fields
 -- deleted out of it would strip the SERVER's own data.
-eq("source store not mutated",      store.Gunstore.fields.lewtkey, "GunStores")
-eq("source store intact elsewhere", store.ServerOnlyZone.fields.lewtkey, "Ammos")
+eq("source store not mutated",      store.Gunstore.fields.secretLoot, "GunStores")
+eq("source store intact elsewhere", store.ServerOnlyZone.fields.secretLoot, "Ammos")
 isTrue("strip returns a new table",  wire.Gunstore ~= store.Gunstore, "same record object would alias the store")
 
 print(string.format("LMLifecycle: %d passed, %d failed", pass, fail))
