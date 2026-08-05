@@ -1,6 +1,6 @@
 name=Requiem of the Dead: Dragonfly
 id=RFTDDragonfly
-modversion=1.0.0
+modversion=1.1.0
 require=RFTDCore
 description=Dragonfly - the deck. The family's admin surface reborn in its own skin: near-black murk, hairline scars, and the sight-green that only appears where the panel is paying attention. This is the incubating next generation of the Requiem admin panel - it renders every tab the family registers (players, console, zones, the dead and the living) inside new chrome while the classic panel keeps working alongside it. Presentation only, by design: the tools live in their own mods; the deck is the glass they present through. When the skin is done, the old panel retires and this becomes the panel that Project Zomboid deserves. Requires Requiem of the Dead: Core.
 pzversion=42
