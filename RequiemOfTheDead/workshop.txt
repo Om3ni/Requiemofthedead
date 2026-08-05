@@ -30,7 +30,6 @@ description=[*][b]RFTDDirge[/b] - specialty zombies, each with its own aura: Scr
 description=[*][b]RFTDHusbandry[/b] - taming, breeding, hutches and lifespans. Animals do not die of hunger or thirst.
 description=[*][b]RFTDLastRites[/b] - client-side survival HUD for severe cold, severe heat and bleeding. Safe to add or remove at any time.
 description=[*][b]RFTDReaper[/b] - detects vanilla zombie blooms and culls the excess before they spiral. Retires if 42.20's cull fix holds.
-description=[*][b]RFTDEchoes[/b] - thirteen instruments, 89 songs, sheet music to find and group performances to run. Forked with thanks from Musicians of the Wasteland.
 description=[*][b]RFTDLimes[/b] - one zone substrate for the whole family: named regions that decide how hard the world bites there. Substrate release.
 description=[*][b]RFTDOddsAndEnds[/b] - small modules, each with a kill switch: Reliquary, RIPIT, Sticky Headwear, Lumberjack, Action Speed, Container Order, Inventory Collapse, Bookmark.
 description=[/list]

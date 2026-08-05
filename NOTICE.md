@@ -21,15 +21,18 @@ to file a DMCA notice with Valve. Enforcement is a takedown process, not a techn
 
 ## Third-party components
 
-The licence above covers Project_Omen's own work. Portions of this repository derive from
-other authors and remain governed by their original terms. **Anything listed here is not
-Project_Omen's to relicense**, and a GPL grant over these sections is not asserted until
-each item's status is settled.
+**None.** As of 2026-08-04 every mod in the bundle is Project_Omen's own work, and the GPL
+grant above covers all of it without carve-out. Both previously outstanding items were
+resolved rather than papered over:
 
-| Component | Origin | Status |
+| Component | Was | Resolution |
 |---|---|---|
-| `Dragonfly/.../Longstrider/LSMap.lua`, `LSGridOverlay.lua` | PhunZones2 (UburGeek) — the `ISMiniMapInner` bring-up ritual and the overlay hook/transform mechanics, marked in-file with `LS-DERIVED BEGIN`/`END` | **Unresolved.** Marked `RE-AUTHOR before Workshop publish` and tracked as **LM-EDIT-1** in `docs/limes-design.md` §2. Re-authoring these from the engine decompile removes the dependency entirely and is the intended resolution. |
-| `RFTDEchoes` | Forked from *Musicians of the Wasteland* (Steam Workshop `3301008514`), noted in `ECCore.lua` as carrying an "open-use license" | **Needs confirming.** "Open-use" is a description, not a named licence. The upstream terms should be read and recorded here before this mod is published under GPL-3.0. |
+| `Longstrider/LSMap.lua`, `LSGridOverlay.lua` | Flagged as deriving the map-widget bring-up and overlay hook mechanics from PhunZones2 (UburGeek) | **Re-authored 2026-08-04** (LM-EDIT-1). The bring-up sequence proved to be *vanilla's own* — `ISUI/Maps/ISMiniMap.lua:709-723` and `ISMapDefinitions.lua:22-30` run it, across eight vanilla call sites — so it was rewritten from The Indie Stone's shipped Lua and the engine decompile. The zoom-fit search loop, which genuinely was PhunZones', is replaced by a direct solve from the published projection formula. No `LS-DERIVED` markers remain anywhere in the tree. |
+| `RFTDEchoes` | A fork of *Musicians of the Wasteland* by Gravy (Workshop `3301008514`), recorded in-file as "open-use license" | **Pulled from the bundle 2026-08-04** to `wip/echoes-fork/`. The claimed licence could not be substantiated — the Workshop description states no licensing or reuse terms at all — so a fork of it is not ours to relicense. It ships nowhere until the upstream author grants permission. See [wip/echoes-fork/README.md](wip/echoes-fork/README.md). |
+
+The standing rule, from `docs/limes-design.md` §2: **ideas, never lines.** Where a mechanism
+can only be expressed one way, the authority to cite is the engine decompile or vanilla's
+own shipped Lua — not the mod that called it first.
 
 `docs/limes-design.md` §2 states the standing rule the family works under: **ideas, never
 lines.** Where a mechanism can only be expressed one way, the authority to cite is the

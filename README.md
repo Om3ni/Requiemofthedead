@@ -58,7 +58,11 @@ All mods carry the **suite version: 1.0.0** (lockstep - see Conventions).
 | `RFTDLastRites` | Client QoL HUD: life-threat indicators (cold, heat, bleeding) |
 | `RFTDOddsAndEnds` | Catch-all for small self-contained modules: Reliquary handover stash, RIPIT bulk rip, Sticky Headwear, Lumberjack forestry (wood weight, tree sweep), timed-action speed scaling |
 | `RFTDReaper` | Twin-spawn bloom detector/culler - **pending the 42.20 verdict**; may retire with the Necro tab folding into Dirge |
-| `RFTDEchoes` | Musician zombies (Wasteland Musicians fork) - **in construction**; songbook pending |
+
+`RFTDEchoes` is **pulled from the bundle** and parked in [wip/echoes-fork/](wip/echoes-fork/).
+It is a fork of *Musicians of the Wasteland*, whose upstream licence could not be
+established, so it cannot ship under this repository's terms. See
+[wip/echoes-fork/README.md](wip/echoes-fork/README.md).
 
 **The migration is complete.** `C:\VSCodeProjects\PZMod` (repo `Om3ni/PZMods`) is the
 frozen archive: history, tooling, the engine decompile, retired test forks, and what stays
@@ -127,6 +131,8 @@ Redistribute it if you like, including on the Workshop, but a redistributed copy
 the copyright notices, stay under GPL-3.0, ship its complete source, and state what was
 changed. Stripping the attribution is a licence violation, not a style choice.
 
-Two components are **not** Project_Omen's to relicense and are excluded until their status
-is settled — the PhunZones2-derived map-widget ritual in `Longstrider/` (tracked as
-LM-EDIT-1) and the `RFTDEchoes` fork. See [NOTICE.md](NOTICE.md).
+The grant covers the whole bundle without carve-out. The two components that previously
+could not be licensed are settled: the `Longstrider/` map-widget code was re-authored from
+vanilla's own Lua and the engine decompile (LM-EDIT-1), and `RFTDEchoes` — a fork whose
+upstream licence could not be established — is pulled to [wip/echoes-fork/](wip/echoes-fork/).
+See [NOTICE.md](NOTICE.md).

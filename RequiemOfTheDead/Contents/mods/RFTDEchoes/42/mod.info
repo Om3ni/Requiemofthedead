@@ -1,6 +1,0 @@
-name=Requiem of the Dead: Echoes
-id=RFTDEchoes
-modversion=1.0.0
-require=RFTDCore
-description=Echoes - music from before, played by whoever is left. Thirteen playable instruments (guitars, basses, banjo, keytar, flute, saxophone, trumpet, violin and a drum kit you can set down and play), 89 recorded songs, and a three-tier skill per instrument family that grows as you perform. Songs are learned from sheet music scattered through the world - bookstores, classrooms, band rooms, the odd prison cell - or sight-read instantly with the Musical Savant trait, which can also transcribe known songs onto blank paper for trade. The Songbook window runs it all: your songs, your skill, and in multiplayer the group performances - open a session, friends claim the other instrument slots, and the band starts together. Pianos standing in the world are playable where they stand. Live music calms everyone in earshot (unhappiness, boredom, stress and panic, each on its own dial) and carries - loud instruments reach further ears than yours, so mind the dead. Forked with thanks from Musicians of the Wasteland. Requires Requiem of the Dead: Core.
-pzversion=42
