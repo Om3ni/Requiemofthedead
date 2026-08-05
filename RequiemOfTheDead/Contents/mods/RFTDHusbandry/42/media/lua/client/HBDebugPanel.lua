@@ -517,11 +517,9 @@ function HBDebugPanel:layoutChildren()
     self.headerY = headerY
     self.statusTop = statusTop
 
-    self.list:setX(PAD);    self.list:setY(listY)
-    self.list:setWidth(innerW); self.list:setHeight(listH)
+    DFKit.sizeList(self.list, PAD, listY, innerW, listH)
 
-    self.logList:setX(PAD); self.logList:setY(logY)
-    self.logList:setWidth(innerW); self.logList:setHeight(LOG_H)
+    DFKit.sizeList(self.logList, PAD, logY, innerW, LOG_H)
 
     local bx = PAD
     for _, b in ipairs({ self.btnRefresh, self.btnProbe, self.btnTeleport, self.btnRefill, self.btnStarve, self.btnTimePush, self.btnCopyLog, self.btnClearLog }) do
@@ -945,9 +943,21 @@ end
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= "RFTDHusbandry" then return end
     if command ~= HBCmd.DEBUG_PROBE_RESULT then return end
+    local line = tostring(args and args.line or "(no line)")
+
+    -- To DFLog FIRST, and unconditionally. The Animals tab used to carry a
+    -- second handler that did this push, and it went when the probe pane did -
+    -- but the probe still runs from THIS panel, and its output should still
+    -- reach the Console tab's cross-admin view. Above the visibility check
+    -- deliberately: the panel is usually closed while a probe is in flight, and
+    -- gating the push on it would drop exactly the output worth keeping.
+    if DFLog then
+        DFLog.push{ source = "Mod:RFTDHusbandry", level = "info", text = line }
+    end
+
     local panel = HBDebugPanel._instance
     if not panel or not panel:isVisible() then return end
-    panel:logLine(tostring(args and args.line or "(no line)"))
+    panel:logLine(line)
 end)
 
 -- ─── Startup probe: player position API surface ──────────────────────────

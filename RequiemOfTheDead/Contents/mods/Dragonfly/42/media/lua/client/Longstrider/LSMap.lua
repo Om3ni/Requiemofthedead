@@ -50,6 +50,28 @@ function LSMap:createChildren()
     self.map = ISMiniMapInner:new(0, 0, self.width, self.height, self.playerIndex)
     self:addChild(self.map)
 
+    -- VANILLA CLICK = OPEN THE FULLSCREEN MAP, and that is a trap in an
+    -- embedded editor. ISMiniMapInner is the HUD minimap widget: its contract
+    -- is "click me to expand", so onMouseUp ends the drag and, if the mouse
+    -- moved under 4px, calls ISWorldMap.ToggleWorldMap
+    -- (media/lua/client/ISUI/Maps/ISMiniMap.lua:239-245). Every plain click on
+    -- our canvas - selecting a region, clicking empty space - threw the admin
+    -- into the fullscreen map. LSGridOverlay cannot prevent it: it only
+    -- consumes while a handle or body drag is live, so a click always reaches
+    -- the original handler.
+    --
+    -- Replaced per INSTANCE, never on the class: the HUD minimap and any other
+    -- mod's ISMiniMapInner keep vanilla behaviour. Clearing the drag flag is
+    -- the only other thing the original does, so nothing is lost. Done before
+    -- LSGridOverlay:hookNow() captures its `origUp`, so the overlay wraps this
+    -- safe version rather than the toggling one.
+    --
+    -- onMouseUpOutside delegates to onMouseUp in vanilla (:247), so releasing
+    -- off-widget reopened the map too - it gets the same treatment.
+    local function endDrag(s) s.dragging = false end
+    self.map.onMouseUp        = function(s) endDrag(s) end
+    self.map.onMouseUpOutside = function(s) endDrag(s) end
+
     self:initMap()
 end
 

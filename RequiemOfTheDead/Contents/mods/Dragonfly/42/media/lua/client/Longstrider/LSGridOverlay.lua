@@ -142,6 +142,27 @@ function LSGridOverlay:hookNow()
         if not consumed and origUp then origUp(s, x, y) end
     end
 
+    -- RELEASING OUTSIDE THE WIDGET MUST END THE DRAG. Without this, dragging a
+    -- handle past the panel edge and letting go leaves _handleDrag/_bodyDrag
+    -- set, so _consuming() keeps swallowing pan and zoom - and capture is never
+    -- released - until the next in-widget release. Easy to hit on a small map
+    -- pane, and it looks like the map froze.
+    --
+    -- Only the drag path is forwarded: _onMouseUp ignores x/y once a drag is
+    -- live (the geometry was already applied during the move), but its other
+    -- branch treats the coordinates as a click and can select a region. An
+    -- off-widget release is not a click, so that branch is deliberately skipped
+    -- and the click origin cleared instead.
+    local origUpOut = mapWidget.onMouseUpOutside
+    mapWidget.onMouseUpOutside = function(s, x, y)
+        if overlay._handleDrag or overlay._bodyDrag then
+            overlay:_onMouseUp(s, x, y)
+            return
+        end
+        overlay._clickStartX, overlay._clickStartY = nil, nil
+        if origUpOut then origUpOut(s, x, y) end
+    end
+
     self._hooked = true
 end
 -- ===== LS-DERIVED END (PhunZones2 ui_map_overlay.lua : _hookMapWidget) ======

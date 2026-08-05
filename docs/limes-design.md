@@ -133,10 +133,61 @@ A zone is a named record: multi-rect geometry + named fields + `inherits` chain.
 - **Inheritance:** resolved at load into flattened records (cycle-guarded,
   `_default` root), so runtime lookup never walks a chain. Templates (zones with no
   geometry — `Hard`, `Very_Easy`, `StartingZone` in the live data) are first-class.
-- **Field registry:** consumers declare `{type, default, clamp, owner}` before boot
+- **Field registry:** consumers declare `{type, default, clamp, owner, side}` before boot
   completes; unknown keys in loaded data are preserved verbatim (forward compat)
   but warned on. The registry is what the editor renders — the PhunZones idea, with
   types instead of stringly everything.
+- **Field `side` — `"server" | "client" | "both"` (default `"both"`).** Declares where a
+  field is *consumed*, not where it lives. Loot tables and dirge weights are read only by
+  server code (§7.5, §7.1); titles and the cognition/hearing modulation are read only by
+  client code (§7.4). The tag exists so LMSync can **strip server-only fields from the
+  baseline and delta** (§6): smaller join payload, and zone loot tables and difficulty
+  stop sitting in every client's memory where a curious player can read them — a leak
+  PhunZones has and we decline to inherit. Unregistered fields ship (the forward-compat
+  path must never silently drop data).
+  **This is a field property, never a zone property.** Zone *types* were considered and
+  rejected: one physical place — a gun store — wants a client title, server loot shaping,
+  and server no-build at once, so typing the zone would force the admin to draw the same
+  rectangle twice, double the geometry the lookup scans, and fracture the single-record
+  `getLocation` contract the whole zero-wire design rests on.
+
+### 5.1 Zone lifecycle events
+
+`Limes.onChanged(fn)` reports *that* the store moved (revision only). Consumers with
+**standing side effects** need to know *which zone* changed and *how*, because their undo
+path is a zone exit that will never fire if the zone stops existing underneath the player:
+
+- LMStats modulates **global sandbox values** per the local player's zone and restores on
+  exit (§7.4). Disable or delete that zone while a player stands in it and the restore
+  never runs — the sandbox stays modulated for the rest of the session. This is the
+  motivating leak.
+- LMWidget keeps announcing a title for a zone that is gone.
+- LMZeds' standing sweep (§7.3) should stop; already-converted sprinters stay converted
+  unless a consumer chooses to revert them (`doShambler()` exists; a design call per
+  feature, not a store concern).
+
+```
+Limes.onZoneEvent(fn)   -- fn(event, name, zone, rev)
+                        -- "added" | "edited" | "enabled" | "disabled" | "deleted"
+```
+
+**Derived, never transmitted.** The events are computed by diffing inside `rebuild()`,
+which both `Limes.apply` and `Limes.applyDelta` already funnel through — so server and
+client derive identical events from the same engine-free shared code, and no event ever
+touches the wire (§6 rule 1). `zone` is the resolved record for every event except
+`deleted`, where it is the last-known record so consumers can unwind by geometry.
+
+Keep the admin's three editor verbs — **On / Disable / Delete** — distinct from these
+five observations. The verbs are editor operations that produce a delta (`disabled` field
+flip, or a `removed[]` entry); the events are what consumers see afterwards.
+
+**Disable and Delete are genuinely different states and both must be reachable.**
+`disabled` is already modelled: registered field, resolved onto the record, and `rebuild`
+declines to index a disabled zone while `Limes.getZone` still returns it so the editor can
+see it. Delete removes the record outright (`applyDelta` nils it from the raw store).
+PhunZones conflated the two — its "delete" only writes `disabled = true` and the dead zone
+persists and re-transmits forever — which is precisely how a zone store becomes
+append-only (Appendix A).
 
 ## 6. Sync — under the verified constraints
 
@@ -153,6 +204,50 @@ each. Therefore:
 - **No periodic anything.** The RQReconcile gap-recovery pattern (revision counter,
   client pull on detected gap only) is adopted verbatim as a pattern; zone edits are
   rare enough that a gap is a curiosity, not a correctness problem.
+- **Raw, not resolved, on the wire.** The resolver is shared code, so the unflattened form
+  ships and both sides expand identically. Smaller payload, and identical resolution is
+  provable rather than hoped for.
+- **Server-only fields are stripped** from baseline and delta per the `side` tag (§5).
+
+### 6.1 Invariants — the rules the editor must not break
+
+M4 is the first feature that *generates* traffic, and a map editor is the worst possible
+shape for it: drag-resize fires at frame rate. These are hard rules, each one bought with
+a verified failure in Appendix A.
+
+1. **State replicates; events derive.** Never send "zone X was disabled" as a message.
+   Send state; both sides compute transitions in shared code (§5.1). This is why the
+   lifecycle hook lives in LMCore and not LMSync.
+2. **The editor edits a local working copy and sends one command on explicit Save.**
+   Never on drag, never on field-blur, never on a timer. The 300/sec client-command budget
+   is shared with every other mod on the server and **fails silently** — no error, just
+   missing packets.
+3. **No optimistic local apply.** The editing client learns about its own edit from the
+   server echo, like every other client. Mutating the store under a drag would fire every
+   local consumer at frame rate and show the admin a preview of state nobody else has.
+   Marginally less snappy; provably consistent; zero special-case paths in the editor.
+4. **One announcement per edit.** `broadcastDelta` is the only path out of a save. There
+   is no "and re-baseline to be safe" reflex — that reflex, in one line, is the whole of
+   PhunZones' 62.8% wire share (A.3).
+5. **Prune on save.** A field cleared in the editor is *removed* from the raw record, never
+   written as a sentinel or an empty value. Merge-never-prune is how a store silently
+   becomes append-only (A.2).
+6. **The replicated store holds zones and nothing else.** No edit history, no undo stack,
+   no per-player state, no orphaned records. Editor history and audit trails live
+   server-side, unreplicated. Better packets around a ratcheting table only reach the same
+   wall more slowly — unbounded growth *through* a good protocol was PhunZones' actual
+   killer, not the protocol alone.
+7. **Optimistic concurrency on save.** The editor sends the revision it was editing
+   against; the server rejects a stale save with a notice rather than applying it. Server
+   Lua is single-threaded so revisions cannot interleave, but two admins in the tab at
+   once is otherwise a silent lost update.
+8. **Rate-gate the save command** at the RDNet registration, as the import routes already
+   are (`rate = 1`).
+
+Compliance is measurable: RDMeter/RDWire is the instrument that caught PhunZones, and a
+violation of (2), (4), or (6) shows up as payload growth in a capture. Caveat for anyone
+re-reading captures taken before 2026-08-02: those under-report the tail and mislabel any
+key travelling both directions — re-aggregate raw JSONL on `dir|key` first.
 
 ## 7. Feature matrix — verified mechanisms and honest authority
 
@@ -261,6 +356,24 @@ defaults ← `.ini` ← editor deltas; every edit rewrites the file atomically
 `writeLog` journal line first, so a crash mid-write is diagnosable). The zone audit
 stream (`who edited what`) goes through `writeLog` — the engine's own rotating logs.
 
+### 8.1 Shipped seed — templates yes, geography no
+
+Limes ships a small **template library** (geometry-less zones) plus an explicit
+`_default` root, seeded **only when the store is empty** — first boot, no `.ini`, no
+import candidate.
+
+- **Why templates:** they are already first-class in the model, and the live PhunZones
+  data proves the idiom (`Hard`, `Very_Easy`, `StartingZone` carry no geometry). Shipping
+  them gives the editor something to inherit from on day one, turns `_default` into a
+  documented answer to "how does an unzoned tile behave" instead of an implicit root, and
+  demonstrates the inheritance contract rather than describing it. A template with no
+  rects cannot affect anyone who does not reference it, so the risk is nil.
+- **Why not geography:** it would be deleted by the first thing we tell an admin to do.
+  `finishImport` calls `Limes.apply(res.zones)`, which *replaces* the store wholesale — so
+  any shipped rectangles vanish on import. Baked coordinates also assume a map set.
+- **Seed only when empty, never merge on boot.** A merge would resurrect templates an
+  admin deliberately deleted — the tombstone trap from the other direction.
+
 ## 9. Importer — one-way, once
 
 `LMImport.parsePhunZones(text)` consumes the persisted custom layer
@@ -295,7 +408,9 @@ PhunZones formats at runtime.
 ## 11. Rollout
 
 1. **M0** — LMCore + LMPersist + LMSync + `Limes.getLocation` + LMImport. Parallel
-   install with PhunZones (read-only shadow; log divergence).
+   install with PhunZones (read-only shadow; log divergence). **Built 2026-08-02**
+   (LMCore, LMImport, LMSync, LMPersist, LMShadow, LMImportTab + three suites, green);
+   deviations from this document recorded in §11.2.
 2. **M1** — LMDirge + LMSuppress bridges; Dirge reads Limes when present, PhunZones
    otherwise (both bridges are soft-deps; flip is server-side).
 3. **M2** — LMStats (sprinters first), LMZeds, LMWidget. PhunSprinters retires.
@@ -307,6 +422,101 @@ Each milestone is uploadable alone (lockstep version bump per conventions), each
 feature file removable alone, and every Lua file passes `tools\check-lua.bat` before
 any upload.
 
+### 11.1 M4 editor — embedded map, not the vanilla map screen
+
+**Decided 2026-08-04: the editor draws on an embedded map widget inside the Dragonfly
+Zones tab**, not on the vanilla M-key world map.
+
+- **The pattern is already built and shipping.** `LSMap` wraps `ISMiniMapInner` in an
+  `ISPanel` and owns the one-time bring-up ritual; `LSGridOverlay` is already a rectangle
+  editor — world↔screen transforms, draw-all-with-only-selected-showing-handles, corner
+  resize, shift-drag body move, hit testing, cell lattice, a max-cells refusal, and a
+  `locked` mode that keeps pan/zoom alive while edits are off. Swap "tour" for "zone" and
+  that is the whole interaction model, already debugged against a real map widget.
+- **No vanilla surface to contend for.** The M-key screen is shared ground with every
+  player and every other UI mod. Dragonfly is admin-gated, ours, and the Zones tab is
+  already where the importer lives.
+- **The editor is more than a map.** Zone editing is map + zone list + the typed field
+  form rendered from `Limes.fields.list()` + save. In Dragonfly that is a split pane in an
+  existing tab; on the vanilla map it is a floating window over a fullscreen map.
+- **Cost accepted:** less screen area than a fullscreen map, against a live layer of ~75
+  zones. Mitigation is an expand/maximise mode on the map pane, designed in from the
+  start rather than retrofitted.
+- **Build it as `LMMapEditor(host)`**, the way `LSGridOverlay:new(lsmap)` already takes its
+  host, so the choice of frame — tab pane now, fullscreen window later — stays a
+  parenting decision rather than a rewrite.
+- **Not a network consideration.** Map bring-up is pure local cost — `getLotDirectories()`,
+  `fileExists`, `api:addData` / `api:addImages` against local `media/maps/*`, zero packets
+  — and it is already solved by caching the widget per player index and re-parenting it
+  across tab rebuilds. Restart-to-apply was considered and rejected: it would buy only the
+  §5.1 transition handlers (~30 lines) and would cost a server restart per zone tweak on a
+  live dedi. `Limes.apply` already rebuilds live, and every consumer read is a local
+  lookup, so live application is free for all but the three standing-effect features.
+  The real safety requirement — never apply half-drawn state — is §6.1 rules 2 and 3.
+  If large batch edits later warrant it, the answer is a staged Save/Publish split, not a
+  restart.
+- **LM-EDIT-1 still gates this.** The `LSMap`/`LSGridOverlay` hook-and-transform ritual is
+  PhunZones-derived (§2) and must be re-authored from the decompile before Limes ships an
+  editor. The embedded route does not increase that debt materially: the bring-up ritual
+  is the most-cribbed part, but the transform and hook mechanics are flagged as derived
+  too, so the vanilla-map route would owe the same re-authoring minus one function.
+
+### 11.2 M0 deviations from this document
+
+Recorded 2026-08-02 at build time; the doc above is amended, these are the *changes*.
+
+- **LMSync lives in `shared/`, not `server/`** (§4's map said server). It follows RDNet's
+  one-file-owns-the-channel precedent, both halves behind `isServer()` branches, so "LMSync
+  is the only writer on the wire" is true by construction on both sides and deleting the
+  file severs the channel whole rather than leaving a half-registered client. Nothing else
+  about the §6 contract moved. The file header documents it.
+- **The primary import route is the Dragonfly "Zones" tab** (`client/LMImportTab.lua`, tab
+  id `limes`), not a file probe: the admin pastes the export text, previews locally with
+  the shared parser, and an RDNet `pasteImport` command ships the text for the
+  server to re-parse authoritatively (the preview is UX, never trust). File-probe boot and
+  the `import`-by-filename command remain as fallbacks. The M4 editor lands in this same
+  tab.
+- **CORRECTION, 2026-08-04 — the paste route has a 32767-byte engine ceiling and the
+  live layer does not fit.** `ByteBufferReader.getUTF` reads a string's length as a
+  **signed short** (`short length = this.bb.getShort()` then `new byte[length]`,
+  `ByteBufferReader.java:52`), so a 38453-byte payload wraps to -27083 and the server
+  throws `NegativeArraySizeException` inside `GameServer.receiveClientCommand` — *before*
+  any Lua handler runs, so no reply is possible and the admin's status line hangs on
+  "waiting for the verdict" forever. Observed on Mosaic, twice, with that exact value.
+  The original "~40KB against the 1MB connection buffer" reasoning was wrong: the
+  connection buffer is not the binding constraint, the per-string length prefix is, and it
+  is 16× smaller. **Fixed by chunking** (`pasteChunk`, shipped 2026-08-04): the client
+  splits at 24000 bytes, the server reassembles **by index** — never by arrival order — and
+  runs one authoritative parse on the joined text. Assembly is per username, discarded on a
+  fresh `seq 1` or on disconnect, and bounded by `MAX_ASSEMBLY` (512KB) and `MAX_CHUNKS`
+  (64, which also bounds the completeness scan against a hostile `total`).
+  One subtlety worth keeping: the chunk command is registered at **rate 30, not 1**.
+  `RDRate` buckets are keyed by *username alone* and shared across every RDNet command,
+  compared against whichever command's max is being checked (`RDRate.lua:38-52`) — at rate
+  1 the second chunk is rejected and the payload silently loses its tail. The filename
+  route and hand-editing `RFTDLimes.ini` remain equally valid ways in.
+- **`phunzones.txt` is the real persisted filename** on the 42.20 dedi — the `.txt`
+  allowlist forces it. Grabbed off the production box 2026-08-02 along with
+  `phunlewt.txt`. Note PhunZones' own constant is `PhunZones.txt` (capitalised);
+  `LMPersist.IMPORT_CANDIDATES` probes both casings because the allowlist is
+  case-sensitive and the dedi is Linux.
+- **The live custom layer is 75 zones and dirty**: three inherit targets exist nowhere in
+  it (Intermediate ×12 chains, ProtectedCountryAreas ×3, Greenport ×1) — either PhunZones
+  base-layer templates or genuinely dangling after an editor delete. Limes cuts the chain
+  and warns; the shadow watch shows whether live answers differ. `docs/dirge-phunzones.md`
+  (107 zones) is a **stale** snapshot — 49 zones changed, 7 live-only RP-reservation zones
+  — keep it as a frozen test fixture; live is authority. `void` in the production data is
+  a zone *name* (a template), not a stray key.
+- **`phunlewt.txt`**: 6 loot tables, of which live zones reference 3 (Gun Stores ×19,
+  Gun's Unlimited ×3, No Pillows/Ammos ×1); no dangling lewtkeys. An M3 ingredient.
+- **No sandbox page in M0** — LMConfig deferred; nothing to configure yet.
+- **Zone record shape:** consumers read `zone.fields.X`, not fields flattened onto the
+  record; `Limes.fields.get(zone, name)` applies the registry default. Resolved fields
+  hold only SET values — the blank-inherits contract.
+- **Shadow** uses forensic stream `limes` with events `LM.SHADOW_DIVERGE` / `LM.IMPORT` /
+  `LM.SAVE`. `RDLog.forensic` does not gate event names (only `chronicle` does), so no
+  Core edits were needed.
+
 ## 12. Open questions (deliberately unresolved)
 
 - Whether `noplayers` should also gate via vehicle-exit like safehouses do
@@ -316,5 +526,76 @@ any upload.
 - Grid index threshold (ship linear scan; measure on the live box first).
 - Whether the widget adopts PhunZones' difficulty-stars idiom or the family's own
   visual language (art direction question, not engineering).
+
+## Appendix A — PhunZones2 wire pathology, read from source
+
+*Read 2026-08-04 from the installed Workshop copy (item `3676252660`) for **lessons
+only**, under the §2 covenant: no line of it enters RFTDLimes. Engine claims verified
+against the decompile; traffic numbers from the 9h live RDWire capture (`wire3`), on which
+PhunZones was **62.8% of all mod wire bytes** — 6.54 MB of 10.42 MB, against the whole
+RFTD suite's 6.6%.*
+
+**The choice, charitably.** PhunZones needs what Limes needs: zone data resident on every
+client so a widget title is not a round trip. It reached for `GlobalModData`, the engine's
+own shared-table primitive. That is the sanctioned path — mutate the table, call
+`transmit()`, every client has it; join is handled for you. No protocol to design, no
+versioning, no delta logic, no gap recovery. It is the path of least resistance and the
+one the engine's API surface points at.
+
+**A.1 — `transmit()` has no delta mode.** The server branch loops every connection and
+calls `packet.write(bbw)` **inside the loop** (`GlobalModData.java:126-142`) — the entire
+tagged table, re-serialized per connection, on the main thread, each under that
+connection's bufferLock and 1 MB buffer. Any mutation costs `table × players`. 240 KB × 2
+clients was 480 KB per burst in the capture; at 20 players it is 4.8 MB in one burst, which
+is the >10-population wall.
+
+**A.2 — Delete is a tombstone, so the store only grows.** `Core.addDeletion(key)`
+(`process.lua`) does not remove the zone: it writes `custom[key].disabled = true`, persists
+that to disk, and the dead record re-transmits forever. There is no true delete in the mod.
+Deleting a zone makes the payload permanently *larger*. `Core.saveChanges` compounds it —
+`custom[key][field] = val` merges fields in and never clears one — so the custom layer is
+append-only by construction. **Limes' answers: §5.1 (Disable and Delete are distinct
+states, Delete nils the record) and §6.1 rule 5 (prune on save).**
+
+**A.3 — The double send, and the clearest lesson in the whole appendix.** On one
+`modifyZone` command, `Core.saveChanges` (server branch) **already broadcasts a correct
+delta** — `sendServerCommand(zoneUpdated, {changes = changes})` at `process.lua:527`. Then
+`server_commands.lua:36` *additionally* calls `ModData.transmit(...)`, blasting the whole
+table at every connection. `deleteZone` does the same at `:45`. They wrote the cheap path,
+it works, and then paid the expensive one on top of it. The 62.8% is a redundant line.
+**Limes' answer: §6.1 rule 4 — `broadcastDelta` is the only path out of a save.**
+
+**A.4 — Join ships the layer twice.** `playerSetup` replies with
+`data = ModData.get(modifiedModData)` — the entire custom layer (`server_commands.lua:19-21`)
+— and the same client also receives it via `OnReceiveGlobalModData`
+(`client_events.lua:280-288`). Two full copies per join. **Limes' answer: one unicast
+`RDNet.reply` baseline, server-only fields stripped (§6).**
+
+**A.5 — Two owners for one structure.** The editor writes geometry straight into the
+client's ModData copy before any server round trip (`ui_zones.lua:2003-2007`), and a client
+can `ModData.transmit` upward (`ui_editor.lua:251`). Their own code carries the scar:
+`client_commands.lua:22-24` warns that `ModData.add` with an empty table "can wipe the
+client's zone data" and guards against it — a workaround for an architectural problem.
+**Limes' answer: §6.1 rule 3, no optimistic local apply.**
+
+**A.6 — Gated, then trusted.** `modifyZone` checks `CanSetupNonPVPZone`
+(`server_commands.lua:28`) and then feeds client-supplied `data.changes` into `saveChanges`
+unvalidated. **Limes' answer: capability gate *and* authoritative server-side re-parse —
+already the shape of `finishImport`.**
+
+**Credit where it is due.** Their editor batches correctly: pending edits accumulate in
+`_pendingChanges` and only changed keys are sent (`ui_zones.lua:1988-2021`). That is the
+right shape, and §6.1 rule 2 arrived at it independently. The save path is not the problem;
+the `transmit` layered on top of it is.
+
+**Not a packet-count problem — the trap for anyone tuning this.** Aggregate was 0.68
+calls/sec against a `MaxPacketsPerSecond` already at 1000. Rate limiting, the instinctive
+fix, buys nothing. It is payload size × serialization × connections.
+
+**What was not confirmed.** The producer of the ~29.7 KB growth steps in the capture
+(29.6 KB → 239.7 KB over 9h, persisting to disk and reloading at ~181 KB after restart).
+The editor sends genuine deltas and `Core.updateModData` writes to the *player's* moddata
+rather than the global table, so neither is the source. A.2 explains why the table never
+shrinks, not what wrote 29.7 KB at a time. Left open rather than guessed.
 
 -- Copyright Project_Omen

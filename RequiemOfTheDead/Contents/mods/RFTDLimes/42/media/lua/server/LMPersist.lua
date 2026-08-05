@@ -26,7 +26,9 @@
 -- own rotating log machinery (LuaManager.java:7448) - the zone audit stream
 -- ("who edited what") rides it by design.
 --
--- BOOT ORDER (OnServerStarted): defaults <- RFTDLimes.ini <- editor deltas.
+-- BOOT ORDER (OnServerStarted): defaults <- RFTDLimes.ini <- editor deltas,
+-- with the §8.1 template seed as the last resort when the .ini is absent and
+-- no import candidate exists.
 -- First boot with no .ini probes IMPORT_CANDIDATES in Zomboid/Lua/ and runs
 -- the §9 one-way import on the first hit, writing the .ini it will read
 -- forevermore. "phunzones.txt" leads the list because that is the name
@@ -35,6 +37,13 @@
 -- too) - so a fresh Limes install on the box that matters imports the real
 -- dataset with zero admin ceremony. Re-import later is the capability-gated
 -- RDNet command in LMSync.
+--
+-- BOTH CASINGS of the PhunZones filename are probed. Their source constant is
+-- "PhunZones.txt" (core.lua: Core.const.modifiedLuaFile) while the copy taken
+-- off production arrived lowercase; the 42.20 allowlist check is
+-- case-sensitive and the dedi is Linux, so guessing one casing silently loses
+-- the fallback route on the box it exists for. Cheap to probe, expensive to
+-- get wrong.
 --
 -- parse()/serialize() are pure (stock Lua 5.1) and sit above the engine
 -- section so tools\run-tests.bat exercises the round trip without a game.
@@ -48,7 +57,7 @@ require "LMImport"
 LMPersist = LMPersist or {}
 
 LMPersist.FILE              = "RFTDLimes.ini"
-LMPersist.IMPORT_CANDIDATES = { "phunzones.txt", "PhunZonesExport.lua" }
+LMPersist.IMPORT_CANDIDATES = { "phunzones.txt", "PhunZones.txt", "PhunZonesExport.lua" }
 
 -- ---------------------------------------------------------------------------
 -- Pure half: text -> raw zones -> text
@@ -257,6 +266,17 @@ local function boot()
     zones = zones or {}
     local warnings = Limes.apply(zones, 1)
     for i = 1, #warnings do print("[Limes] resolve: " .. warnings[i]) end
+
+    -- Nothing on disk and nothing to import: lay down the §8.1 template seed
+    -- and write it out, so the next boot reads it back as ordinary data the
+    -- admin can edit or delete like any other zone. seedIfEmpty is a no-op on
+    -- any non-empty store - that is what keeps a deleted template deleted
+    -- instead of resurrecting it every boot.
+    if Limes.seedIfEmpty() then
+        LMPersist.save(Limes.raw(), "first-boot template seed", "server")
+        print("[Limes] empty store - seeded " .. #Limes.zoneNames() .. " templates")
+    end
+
     print("[Limes] store up: " .. #Limes.zoneNames() .. " zones, revision " .. Limes.revision)
 end
 
