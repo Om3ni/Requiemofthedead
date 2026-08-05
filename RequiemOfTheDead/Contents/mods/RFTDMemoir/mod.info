@@ -1,6 +1,6 @@
 name=Requiem of the Dead: Memoirs
 id=RFTDMemoir
-modversion=1.0.0
+modversion=1.1.0
 require=RFTDCore
 description=The Memoir - a craftable character snapshot/restore journal. Write to it while you live and it records your skills, traits, and recipes; read it after you die and the survivor you built comes back, with a server-tunable XP restore percentage (global or per-skill). Bound to its owner, so a stolen journal will not rebuild a stranger. Shaken out of Dragonfly as its own mod. Requires Requiem of the Dead: Core; integrates with the Dragonfly admin panel when present (staff restore action). Designed for dedicated multiplayer servers.
 pzversion=42

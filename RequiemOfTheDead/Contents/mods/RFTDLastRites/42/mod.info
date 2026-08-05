@@ -1,6 +1,6 @@
 name=Requiem of the Dead: Last Rites
 id=RFTDLastRites
-modversion=1.0.0
+modversion=1.1.0
 require=RFTDCore
 description=Last Rites - client-side QoL HUD. Over-head / sidebar indicators for life-threatening states (severe cold, severe heat, bleeding) and more to come. Requires Requiem of the Dead: Core.
 pzversion=42
