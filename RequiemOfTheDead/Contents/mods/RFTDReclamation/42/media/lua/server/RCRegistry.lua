@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- RCRegistry - the claim index (server only).
 --
 -- AUTHORITY MODEL (this is the important part - an earlier version got it
@@ -555,3 +556,13 @@ end
 -- Re-bind to the authoritative table AFTER global ModData has loaded, so we
 -- never keep a stale empty reference created by an earlier call.
 Events.OnInitGlobalModData.Add(function() reg = nil; ensure() end)
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

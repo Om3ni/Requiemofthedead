@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- BMClient.lua - Bookmark: a short public-domain quote on login, purely for
 -- flavor. Client-only by design - there is nothing here for a server to know
 -- about, so there is no server file, no RDNet token, and no sandbox option.
@@ -179,3 +180,13 @@ end)
 
 -- Exposed for manual testing from the Lua console: Bookmark.debugShow()
 function BM.debugShow() show() end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

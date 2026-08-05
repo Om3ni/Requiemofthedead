@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- MMClient.lua - owning-client half: send requests, mirror-apply results, feedback.
 -- The client NEVER mutates authoritatively; it only asks the server and then mirrors
 -- the server-sent result locally (dual-apply). Mirror-apply is SAFE because the
@@ -107,3 +108,13 @@ end
 Events.OnServerCommand.Add(onServerCommand)
 
 MMlog("MMClient ready")
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

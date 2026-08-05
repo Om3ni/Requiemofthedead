@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- RCFleet - the admin fleet snapshot, paged and budgeted (server only).
 --
 -- Answers ONE question for the Dragonfly vehicles tab: what vehicles exist,
@@ -437,3 +438,13 @@ function RCFleet.cancel(player)
 end
 
 print("[RC] RCFleet loaded (paged fleet snapshot)")
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

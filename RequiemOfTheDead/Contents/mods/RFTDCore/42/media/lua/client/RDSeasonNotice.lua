@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- RDSeasonNotice.lua - on-screen warning that the season name needs changing.
 --
 -- Sent by RDSeasonServer to the first admin who joins when the configured
@@ -73,3 +74,13 @@ Events.OnServerCommand.Add(function(module, command, args)
     ticks = 0
     print("[RFTDCore] season notice received: '" .. tostring(pending) .. "' already has records")
 end)
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

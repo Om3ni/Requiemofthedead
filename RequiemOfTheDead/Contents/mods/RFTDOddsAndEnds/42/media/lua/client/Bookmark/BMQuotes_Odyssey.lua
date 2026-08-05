@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- BMQuotes_Odyssey.lua - Bookmark quote chunk: Homer (public domain).
 -- These eight came from RFTDCore's RDOdysseySmoke.lua, the throwaway popup that
 -- proved the Mosaic junction loop worked; Bookmark superseded it, so they moved
@@ -21,3 +22,13 @@ Bookmark.QuoteChunks.Odyssey = {
     { text = "A man who has seen much and travelled far enjoys even his sufferings after a time.", author = "Homer", work = "The Odyssey", quip = "every survivor, around day 100" },
     { text = "It is tedious to tell again tales already plainly told.", author = "Homer", work = "The Odyssey", quip = "Odysseus, declining the recap" },
 }
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

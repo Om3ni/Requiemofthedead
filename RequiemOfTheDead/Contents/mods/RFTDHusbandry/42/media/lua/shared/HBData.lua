@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- HBData - ModData schema, persistent ID generation, herd registry, seen list.
 -- Read operations (getRecord, constants) are safe from both sides.
 -- Write operations are server-only and guarded accordingly.
@@ -144,3 +145,13 @@ else
     print("[HB] WARNING: no player-connect event available; " ..
           "clients joining mid-game may have empty herd list until re-register")
 end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

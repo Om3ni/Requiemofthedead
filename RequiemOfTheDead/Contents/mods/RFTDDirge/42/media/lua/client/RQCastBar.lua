@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQCastBar - progress bars above zombies or at world positions
 -- Two modes: follow a living zombie, or hover at a fixed spot
 -- (like the EMP death location). Uses a 1x1 pixel ISUIElement
@@ -294,4 +295,12 @@ end
 Events.OnTick.Add(onTick)
 Events.OnGameStart.Add(onGameStart)
 
--- Copyright Project_Omen
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

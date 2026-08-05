@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- LRPrefs.lua  (client)
 --
 -- Tiny persistence layer for *client-side cosmetic preferences* (the LRHub
@@ -84,3 +85,13 @@ end
 
 -- Load once at startup so the first get() never races a file read mid-frame.
 Events.OnGameStart.Add(function() LRPrefs.load() end)
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

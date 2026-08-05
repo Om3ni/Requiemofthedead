@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- RCParking - "where may a car legally stand?" (server only).
 --
 -- The lifecycle respawner needs somewhere to put a car, and the owner's rule
@@ -411,3 +412,13 @@ function RCParking.status()
              -- would read as "strictly spaced" on a search that was relaxed.
              relaxed = l.relaxed and true or false }
 end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

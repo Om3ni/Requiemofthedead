@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- MMContext.lua - right-click options on the journal: Write / Read / Dump.
 -- All three just send a request to the server (the authority). Write is gated on a
 -- writing tool present (pen/pencil) so the book is "reusable as long as pen/pencil".
@@ -66,3 +67,13 @@ function MMContext.fill(playerID, context, items)
 end
 
 Events.OnFillInventoryObjectContextMenu.Add(MMContext.fill)
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>
