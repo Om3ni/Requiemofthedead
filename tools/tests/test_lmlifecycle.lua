@@ -86,6 +86,44 @@ eq("seed does not resurrect",     Limes.seedIfEmpty(), false)
 eq("still deleted",               Limes.getZone("Medium"), nil)
 
 -- ---------------------------------------------------------------------------
+-- Zone centre - "take me there" must land INSIDE the zone
+-- ---------------------------------------------------------------------------
+
+Limes.apply({
+    -- Two far-apart rects: the bounding-box centre sits in empty space between
+    -- them, which is the bug this function exists to avoid. HavenOutpost in the
+    -- live layer is exactly this shape.
+    Split = { rects = { { 0, 0, 9, 9 }, { 1000, 1000, 1019, 1019 } }, fields = {} },
+    -- An L: box centre is in the notch.
+    Elbow = { rects = { { 0, 0, 99, 9 }, { 0, 0, 9, 99 } }, fields = {} },
+    Solid = { rects = { { 200, 200, 209, 209 } }, fields = {} },
+    Tmpl  = { rects = {}, fields = {} },
+}, 100)
+
+local function centreIsInside(name)
+    local cx, cy = Limes.getZoneCenter(name)
+    if not cx then return false end
+    local z = Limes.getZone(name)
+    for _, r in ipairs(z.rects) do
+        if cx >= r[1] and cx <= r[3] and cy >= r[2] and cy <= r[4] then return true end
+    end
+    return false
+end
+
+eq("solid zone centre",           select(1, Limes.getZoneCenter("Solid")), 204)
+isTrue("split zone centre is inside", centreIsInside("Split"),
+    "bounding-box centre would land in the empty space between the two rects")
+isTrue("L-shaped centre is inside",   centreIsInside("Elbow"),
+    "bounding-box centre would land in the notch")
+eq("largest rect wins",           select(1, Limes.getZoneCenter("Split")), 1009)
+eq("template has no centre",      Limes.getZoneCenter("Tmpl"), nil)
+eq("unknown zone has no centre",  Limes.getZoneCenter("Nope"), nil)
+
+-- The lookup must agree: standing at the centre puts you in that zone.
+local cx, cy = Limes.getZoneCenter("Solid")
+eq("centre resolves back to the zone", Limes.getLocation(cx, cy).name, "Solid")
+
+-- ---------------------------------------------------------------------------
 -- Lifecycle events (§5.1)
 -- ---------------------------------------------------------------------------
 

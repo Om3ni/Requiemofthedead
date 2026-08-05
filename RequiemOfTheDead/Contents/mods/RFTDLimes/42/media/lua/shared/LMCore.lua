@@ -515,6 +515,33 @@ function Limes.getZone(name)
     return resolved[name]
 end
 
+-- A point guaranteed to be INSIDE the named zone, for "take me there".
+--
+-- NOT the bounding-box centre, which is the obvious implementation and is
+-- wrong: zones are multi-rect and frequently L-shaped or split across the map
+-- (Irvington is two rects, SunstarMotel is nine, HavenOutpost's two sit 5000
+-- tiles apart). The centre of the box enclosing those can easily be empty
+-- field, which for a teleport means arriving outside the zone you asked to
+-- inspect - the exact thing that makes someone doubt the zone rather than the
+-- button.
+--
+-- Largest rect by area, centre of that. Always inside, and it picks the part of
+-- the zone worth standing in when the others are slivers. Ties break on rect
+-- order so the answer is stable between calls and between machines.
+--
+-- Returns x, y (tile coords), or nil for a template / unknown zone.
+function Limes.getZoneCenter(name)
+    local z = resolved[name]
+    if not z or not z.rects or #z.rects == 0 then return nil end
+    local best, bestArea = nil, -1
+    for i = 1, #z.rects do
+        local r = z.rects[i]
+        local area = (r[3] - r[1] + 1) * (r[4] - r[2] + 1)
+        if area > bestArea then best, bestArea = r, area end
+    end
+    return math.floor((best[1] + best[3]) / 2), math.floor((best[2] + best[4]) / 2)
+end
+
 function Limes.zoneNames()
     local names = {}
     for name in pairs(resolved) do names[#names + 1] = name end
