@@ -8,9 +8,15 @@
 -- rather than rebuilt each time (see DFPanel:showTab, which recreates the
 -- tab content area on every switch).
 --
--- Cribbed from PhunZones2's ui_map.lua (UburGeek), reshaped to Dragonfly
--- conventions. We only need: the widget, the mapAPI coord transforms, and
--- a frame-the-bounds helper. All zone/rect interaction lives in LSGridOverlay.
+-- PROVENANCE: re-authored 2026-08-04 (LM-EDIT-1). Written from vanilla's own
+-- shipped Lua - ISUI/Maps/ISMiniMap.lua and ISMapDefinitions.lua - and from the
+-- engine decompile, with the reasoning recorded at each call site. Earlier
+-- revisions of this file were shaped by reading PhunZones2's ui_map.lua; no
+-- line of it survives here. See docs/limes-design.md §2.
+--
+-- We need three things and no more: the widget, the mapAPI coordinate
+-- transforms, and a frame-the-bounds helper. All zone/rect interaction lives in
+-- LSGridOverlay.
 
 if isServer() then return end
 
@@ -75,18 +81,33 @@ function LSMap:createChildren()
     self:initMap()
 end
 
--- ===== LS-DERIVED BEGIN ====================================================
--- SOURCE: PhunZones2 (UburGeek) - ui_map.lua : ISMiniMapInner setup ritual.
--- Mostly required engine boilerplate to bring up an embedded map, but the call
--- sequence was lifted from PhunZones. RE-AUTHOR / make it ours before Workshop.
--- ===========================================================================
 -- The one-time world data load + view defaults. Guarded heavily because a
 -- single bad lot dir shouldn't kill the whole tab.
+--
+-- PROVENANCE (LM-EDIT-1, resolved 2026-08-04): this sequence is THE INDIE
+-- STONE'S, not another mod's. Vanilla runs the identical ritual in its own
+-- shipped Lua - media/lua/client/ISUI/Maps/ISMiniMap.lua:709-723 walks
+-- getLotDirectories(), addData()s each existing worldmap.xml, calls
+-- endDirectoryData() per directory and addImages() for the folder, then
+-- setBoundsFromWorld() - and MapUtils in ISMapDefinitions.lua:22-30 repeats the
+-- same walk for map data, streets and annotations. Eight call sites in vanilla
+-- use it. The order is not a style choice either: endDirectoryData() marks the
+-- boundary after which no later data may claim a cell already covered by this
+-- directory, which is why directories are walked highest-priority (mods) to
+-- lowest (vanilla) and why the call sits INSIDE the loop. Written here from
+-- that vanilla source and the engine's own API, not transcribed from the other
+-- mod that also copied it.
 function LSMap:initMap()
     if self._initialised then return end
 
-    -- The minimap API depends on the global world map instance existing.
-    -- Touch it the way PhunZones does to force-create it, harmlessly.
+    -- Warm the global world-map screen first. ISMiniMapInner builds its own
+    -- UIWorldMap in instantiate(), but the shared map singletons (styles,
+    -- symbol defaults) are brought up by the full-screen map, and an embedded
+    -- instance created before anything has opened it has been seen to come up
+    -- without a usable mapAPI. Show-then-hide is the cheapest way to force that
+    -- initialisation using vanilla's own public entry points, and it is a no-op
+    -- once the instance exists. pcall'd because it is a convenience, not a
+    -- requirement - if it fails we still check the API below.
     if not ISWorldMap_instance then
         pcall(function()
             ISWorldMap.ShowWorldMap(self.playerIndex)
@@ -136,7 +157,6 @@ function LSMap:initMap()
     self._initialised = true
     print("[Dragonfly] LSMap initialised for player " .. tostring(self.playerIndex))
 end
--- ===== LS-DERIVED END (PhunZones2 ui_map.lua : setup ritual) ================
 
 -- Convenience accessors -----------------------------------------------------
 
@@ -144,37 +164,63 @@ function LSMap:getAPI()
     return self.map and self.map.mapAPI
 end
 
--- ===== LS-DERIVED BEGIN ====================================================
--- SOURCE: PhunZones2 (UburGeek) - ui_map.lua : zoomAndCentreMapToBounds.
--- The zoom-fit search loop (24..10 step -0.5, worldScale vs viewport) is a
--- near-verbatim paraphrase of theirs. RE-AUTHOR before Workshop publish.
--- ===========================================================================
 -- Frame the map view on a world-space rectangle, with a small margin.
+--
+-- SOLVED, NOT SEARCHED (LM-EDIT-1, re-authored 2026-08-04). The engine's zoom
+-- is logarithmic and the relationship is published in the decompile:
+--
+--   metersPerPixel = 40075016.686 / (2^zoom * tileSize)   MapProjection.java:26-28
+--   worldScale     = 1 / metersPerPixel                   WorldMapRenderer.java:373-377
+--
+-- so worldScale - the pixels-per-world-tile the API reports - is proportional
+-- to 2^zoom for a given widget. Everything else in those formulae is constant
+-- here, which means the constant never has to be written down:
+--
+--   worldScale(z2) / worldScale(z1) = 2 ^ (z2 - z1)
+--   z2 = z1 + log2( needed / have )
+--
+-- Ask the API what scale we have at the zoom we are on, work out the scale that
+-- would make the rectangle fit, and the answer is one logarithm. One setZoom,
+-- no stepping, and it lands on the exact fractional zoom instead of the nearest
+-- half-step - so a small region frames tightly rather than being rounded out to
+-- the next rung. math.log is registered by Kahlua (MathLib.names[14]), checked
+-- rather than assumed.
+local LOG2 = math.log(2)
+
 function LSMap:zoomAndCentreMapToBounds(x1, y1, x2, y2)
     local api = self:getAPI()
     if not api then return end
 
     local margin = 10
-    local wx, wy   = x1 - margin, y1 - margin
+    local wx1, wy1 = x1 - margin, y1 - margin
     local wx2, wy2 = x2 + margin, y2 + margin
-    local width, height = wx2 - wx, wy2 - wy
-    local bound  = math.max(width, height)
-    local cx, cy = wx + width / 2, wy + height / 2
-
-    local viewport = math.max(self.map:getWidth(), self.map:getHeight())
+    local ww = math.max(1, wx2 - wx1)
+    local wh = math.max(1, wy2 - wy1)
+    local cx, cy = wx1 + ww / 2, wy1 + wh / 2
 
     api:centerOn(cx, cy)
-    for zoom = 24, 10, -0.5 do
-        api:setZoom(zoom)
-        local scale = api:getWorldScale()
-        if bound * scale < viewport then
-            api:centerOn(cx, cy)
-            return zoom
-        end
-    end
+
+    local vw, vh = self.map:getWidth(), self.map:getHeight()
+    if vw <= 0 or vh <= 0 then return end
+
+    -- The tighter axis decides, so the whole rectangle fits rather than the
+    -- larger dimension merely fitting its own axis.
+    local need = math.min(vw / ww, vh / wh)
+    local have = api:getWorldScale()
+    if not have or have <= 0 or need <= 0 then return end
+
+    -- setZoom clamps into [baseZoom, maxZoom] itself
+    -- (WorldMapRenderer.java:439-443), so an out-of-range answer for a huge or
+    -- microscopic region resolves to the nearest legal zoom rather than needing
+    -- its own guard here.
+    local zoom = api:getZoomF() + math.log(need / have) / LOG2
+    api:setZoom(zoom)
+
+    -- Re-centre after zooming: the zoom is applied about the current view, so
+    -- the centre drifts if it is only set beforehand.
     api:centerOn(cx, cy)
+    return zoom
 end
--- ===== LS-DERIVED END (PhunZones2 ui_map.lua : zoomAndCentreMapToBounds) ====
 
 -- Resize both the wrapper and the inner map together.
 function LSMap:setMapSize(w, h)

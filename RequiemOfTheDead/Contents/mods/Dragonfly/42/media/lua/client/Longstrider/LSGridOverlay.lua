@@ -7,8 +7,9 @@
 -- consuming the mouse.
 --
 -- Decoupled from storage: the tab feeds it the tour list + selection and wires
--- onSelect / onRegionEdited back to LSTours. Hook/transform mechanics are the
--- proven ones from PhunZones2's ui_map_overlay.lua.
+-- onSelect / onRegionEdited back to LSTours. The hook and transform mechanics
+-- were re-authored 2026-08-04 (LM-EDIT-1) against the engine's own map API; see
+-- hookNow and docs/limes-design.md §2.
 
 if isServer() then return end
 
@@ -89,12 +90,23 @@ end
 -- ---------------------------------------------------------------------------
 -- Hooking (forward to originals only when we are NOT consuming the drag)
 -- ---------------------------------------------------------------------------
--- ===== LS-DERIVED BEGIN ====================================================
--- SOURCE: PhunZones2 (UburGeek) - ui_map_overlay.lua : _hookMapWidget.
--- The "wrap the map widget's mouse/render and forward to the originals only
--- when not consuming the drag" technique is a close paraphrase of theirs.
--- RE-AUTHOR before Workshop publish.
--- ===========================================================================
+-- Take over one method on the widget, handing the replacement its predecessor
+-- so each wrapper decides for itself whether, when and with what to call
+-- through. Written as a helper because the alternative is the same
+-- capture-then-assign preamble six times over, and because the interesting part
+-- of each hook is the forwarding RULE, which differs every time: render
+-- composes, the mouse handlers gate on who owns the drag, and the outside
+-- release routes rather than forwards. A single shared policy would have to
+-- lie about at least one of them.
+local function takeOver(widget, name, replace)
+    widget[name] = replace(widget[name])
+end
+
+-- PROVENANCE (LM-EDIT-1, re-authored 2026-08-04): earlier revisions followed
+-- PhunZones2's ui_map_overlay.lua for this; nothing of it survives. Wrapping a
+-- widget's handlers and delegating to the captured original is the ordinary Lua
+-- decorator idiom - the design decisions that matter here are ours and are
+-- written down where they are made. See docs/limes-design.md §2.
 function LSGridOverlay:hookNow()
     -- Reset accumulated absolute mouse position on every (re)attach. A cached map
     -- re-parented into a rebuilt tab would otherwise carry stale deltas. Must run
@@ -106,41 +118,56 @@ function LSGridOverlay:hookNow()
     if not mapWidget then return end
     local overlay = self
 
-    local origRender = mapWidget.render
-    mapWidget.render = function(s)
-        if origRender then origRender(s) end
-        overlay:_render(s)
+    -- THE OWNERSHIP RULE, which every mouse hook below is an application of:
+    -- the widget owns the mouse until the overlay starts a drag, and gets it
+    -- back the moment that drag ends. So we always observe first, then forward
+    -- unless we are mid-drag - forwarding during a drag would let the map pan
+    -- under the handle the user is dragging, which reads as the rectangle
+    -- sliding away from the cursor.
+    local function forward(orig, ...)
+        if not overlay:_consuming() and orig then orig(...) end
     end
 
-    local origDown = mapWidget.onMouseDown
-    mapWidget.onMouseDown = function(s, x, y)
-        overlay._mouseX, overlay._mouseY = x, y
-        overlay:_onMouseDown(s, x, y)
-        if not overlay:_consuming() and origDown then origDown(s, x, y) end
-    end
+    -- Render last so the overlay draws on top of the map, never under it.
+    takeOver(mapWidget, "render", function(orig)
+        return function(s)
+            if orig then orig(s) end
+            overlay:_render(s)
+        end
+    end)
 
-    local origMove = mapWidget.onMouseMove
-    mapWidget.onMouseMove = function(s, dx, dy)
-        overlay._mouseX = (overlay._mouseX or 0) + dx
-        overlay._mouseY = (overlay._mouseY or 0) + dy
-        overlay:_onMouseMove(s, overlay._mouseX, overlay._mouseY)
-        if not overlay:_consuming() and origMove then origMove(s, dx, dy) end
-    end
+    -- Down and up carry absolute widget coordinates; the move handlers carry
+    -- deltas, so the absolute position has to be accumulated by hand.
+    takeOver(mapWidget, "onMouseDown", function(orig)
+        return function(s, x, y)
+            overlay._mouseX, overlay._mouseY = x, y
+            overlay:_onMouseDown(s, x, y)
+            forward(orig, s, x, y)
+        end
+    end)
 
-    local origMoveCap = mapWidget.onMouseMoveWhileCapture
-    mapWidget.onMouseMoveWhileCapture = function(s, dx, dy)
-        overlay._mouseX = (overlay._mouseX or 0) + dx
-        overlay._mouseY = (overlay._mouseY or 0) + dy
-        overlay:_onMouseMove(s, overlay._mouseX, overlay._mouseY)
-        if not overlay:_consuming() and origMoveCap then origMoveCap(s, dx, dy) end
+    local function onMoved(orig)
+        return function(s, dx, dy)
+            overlay._mouseX = (overlay._mouseX or 0) + dx
+            overlay._mouseY = (overlay._mouseY or 0) + dy
+            overlay:_onMouseMove(s, overlay._mouseX, overlay._mouseY)
+            forward(orig, s, dx, dy)
+        end
     end
+    takeOver(mapWidget, "onMouseMove", onMoved)
+    -- Same treatment while the widget holds capture: once a drag begins the
+    -- engine routes movement here instead, and the overlay must not go blind.
+    takeOver(mapWidget, "onMouseMoveWhileCapture", onMoved)
 
-    local origUp = mapWidget.onMouseUp
-    mapWidget.onMouseUp = function(s, x, y)
-        overlay._mouseX, overlay._mouseY = x, y
-        local consumed = overlay:_onMouseUp(s, x, y)
-        if not consumed and origUp then origUp(s, x, y) end
-    end
+    -- Release is the one place the overlay reports back: a live drag consumes
+    -- the event outright, so the widget never sees the click that ended it.
+    takeOver(mapWidget, "onMouseUp", function(orig)
+        return function(s, x, y)
+            overlay._mouseX, overlay._mouseY = x, y
+            local consumed = overlay:_onMouseUp(s, x, y)
+            if not consumed and orig then orig(s, x, y) end
+        end
+    end)
 
     -- RELEASING OUTSIDE THE WIDGET MUST END THE DRAG. Without this, dragging a
     -- handle past the panel edge and letting go leaves _handleDrag/_bodyDrag
@@ -153,19 +180,19 @@ function LSGridOverlay:hookNow()
     -- branch treats the coordinates as a click and can select a region. An
     -- off-widget release is not a click, so that branch is deliberately skipped
     -- and the click origin cleared instead.
-    local origUpOut = mapWidget.onMouseUpOutside
-    mapWidget.onMouseUpOutside = function(s, x, y)
-        if overlay._handleDrag or overlay._bodyDrag then
-            overlay:_onMouseUp(s, x, y)
-            return
+    takeOver(mapWidget, "onMouseUpOutside", function(orig)
+        return function(s, x, y)
+            if overlay._handleDrag or overlay._bodyDrag then
+                overlay:_onMouseUp(s, x, y)
+                return
+            end
+            overlay._clickStartX, overlay._clickStartY = nil, nil
+            if orig then orig(s, x, y) end
         end
-        overlay._clickStartX, overlay._clickStartY = nil, nil
-        if origUpOut then origUpOut(s, x, y) end
-    end
+    end)
 
     self._hooked = true
 end
--- ===== LS-DERIVED END (PhunZones2 ui_map_overlay.lua : _hookMapWidget) ======
 
 function LSGridOverlay:_consuming()
     return self._handleDrag or self._bodyDrag
