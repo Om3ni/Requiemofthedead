@@ -1,34 +1,72 @@
--- HBAnimalsTab - registers an Animals tab on Dragonfly's admin panel.
+-- HBAnimalsView - the Animals view behind the Husbandry tab.
 --
--- Soft-depends on Dragonfly: bails inside OnGameStart if DFRegistry isn't
--- loaded. Husbandry's standalone HBDebugPanel keeps working in that case.
+-- NOT A TAB. This registers nothing with DFRegistry; HBHusbandryTab hosts it as
+-- one of two views behind an inner strip (see DFViews). The exported table is
+-- the host contract: attach / layout / draw / onShow.
 --
--- Columnar layout via DFColumns - same idiom as HBDebugPanel itself uses
--- internally. Reuses HBDebugPanel.scanCell() for the two-pass animal scan
--- so this tab doesn't reimplement the loose-and-trailer-and-hutch walk.
--- Probe output goes to an inline log pane at the bottom of the tab, the
--- way the original HBDebugPanel renders it.
+-- TWO PANES, ONE JOB EACH (rewritten 2026-08-04):
+--
+--   list  |  portrait + card
+--
+-- The list answers ONE question - which of these needs me, and can I get there.
+-- The card answers "what is wrong with this one".
+--
+-- THERE IS NO PROBE HERE ANY MORE. It briefly had a third pane running
+-- HBAPIProbe on the selected animal, and the card made it redundant: the probe
+-- existed to read stats the display could not show, and the display now shows
+-- them. The probe itself is not gone - HBDebugPanel still owns it
+-- (HBDebugPanel.lua:755), which is the right home for a raw API dump. An admin
+-- panel should not carry a diagnostic that duplicates its own readout.
+--
+-- WHAT THIS REPLACED, AND WHY. The view carried a twelve-column table: OID,
+-- RQHB, Species, Name, Sex, Age, HP, Hng:get, Hng:stat, Thr:get, Thr:stat,
+-- Strs, Loc. Four of those columns were a live A/B of two hunger/thirst APIs,
+-- amber whenever they disagreed - a question HBAPIProbe.lua:6-9 already
+-- ANSWERED (stats:get is engine-authoritative) and which every writer in the
+-- mod already acted on: HBKeepAlive.lua:48-49 and HBCommands.lua:91-92 both go
+-- through getStats():set(). Nothing outside the probe reads getHunger() at all.
+-- So the table was rendering two columns of an API we deliberately do not use
+-- and colouring them for a disagreement we expect. The comparison keeps its
+-- home in the probe, where an experiment belongs.
+--
+-- The rest went to the card because it is not scan data: OID and the RQHB id
+-- are keys the machine needs and the eye does not, and sex/age/stress never
+-- make you look twice while scanning. What is left - name, state, distance,
+-- and a severity stripe - is what triage actually reads.
 
 if isServer() then return end
 
--- DFRegistry check happens inside the OnGameStart callback below, not here.
--- Top-of-file early return would prevent the OnGameStart hook from ever
--- being registered if Husbandry loads before DragonflyAdmin.
+-- DFRegistry is not consulted here at all any more; the host owns registration.
 
 require "ISUI/ISScrollingListBox"
 require "ISUI/ISButton"
 require "ISUI/ISLabel"
+require "ISUI/ISUI3DModel"
 
-local FONT = UIFont.Code
+local FONT       = UIFont.Code    -- data: monospace so columns and cards align
+local LABEL_FONT = UIFont.Small   -- group headings
+
+local STRIPE_W = 3     -- severity stripe down the left edge of a list row
+local BAR_H    = 7     -- condition bar
+local GUTTER   = 66    -- card label column
+local AV_H     = 156   -- portrait pane
+
+HBAnimalsView = HBAnimalsView or {}
 
 local AnimalsTab = {
     rows            = {},
     listBox         = nil,
-    logBox          = nil,
     statsLabel      = nil,
     selectedOid     = nil,
     highlightTarget = nil,  -- IsoAnimal kept lit while its row is selected
+    avatar          = nil,
+    avatarOid       = nil,  -- which OID the 3D panel is currently showing
+    card            = nil,  -- rect the card draws into, set by layout
 }
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- World highlight
+-- ─────────────────────────────────────────────────────────────────────────
 
 -- World-outline pattern lifted from RPNecroTab. Outline state on the animal
 -- decays when the panel stops re-asserting it each frame, so we (re)apply
@@ -49,57 +87,208 @@ local function applyHighlight(oid)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
--- Column model - matches HBDebugPanel's COLS shape so the eye flows the
--- same between the standalone panel and this tab. A few columns trimmed
--- to fit the Dragonfly panel width.
+-- Severity - the one thing the list exists to show
 -- ─────────────────────────────────────────────────────────────────────────
 
-local function divergeColor(row, _)
-    -- Hunger/thirst values: amber when getHunger() and stats:get diverge,
-    -- since that's the API divergence the dual columns exist to surface.
-    return { 1, 1, 1 }
-end
+-- Thresholds live in HBVitals, not here. The Hutches view's occupant pane asks
+-- the same question about the same animals, and two copies of "is this one in
+-- trouble" would drift - a threshold that disagrees between two panels of the
+-- SAME TAB is worse than either, because you stop trusting both.
+--
+-- A scanned row carries hp / hunger / thirst / stress under exactly the names
+-- HBVitals.read produces, so severity() takes either without caring which.
+local function severityOf(row) return HBVitals.severity(row) end
+local function sevColor(level) return HBVitals.sevColor(level) end
+local function barColor(frac, invert) return HBVitals.barColor(frac, invert) end
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Column model - three columns, and one of them is a word not a number
+-- ─────────────────────────────────────────────────────────────────────────
 
 local COLS = {
-    { key = "oid",     label = "OID",      w = 70, align = "center",
-      format = function(r) return tostring(r.oid or 0) end },
-    { key = "id",      label = "RQHB",     w = 80, align = "center",
-      format = function(r) return tostring(r.id or "-") end },
-    { key = "species", label = "Species",  w = 70, align = "center" },
-    { key = "name",    label = "Name",     w = 130, align = "center" },
-    { key = "sex",     label = "S",        w = 18, align = "center" },
-    { key = "age",     label = "Age",      w = 50, align = "center" },
-    { key = "hp",      label = "HP",       w = 44, align = "center",
-      format = function(r) return string.format("%.0f", r.hp or 0) end,
+    { key = "name",  label = "Animal", w = 150 },
+    { key = "state", label = "State",  w = 80,
+      format = function(r) local _, why = severityOf(r); return why end,
       color  = function(r)
-          if (r.hp or 0) < 30 then return { 0.95, 0.40, 0.40 } end
-          if (r.hp or 0) < 60 then return { 0.95, 0.80, 0.40 } end
-          return { 1, 1, 1 }
+          local lvl = severityOf(r)
+          local c = sevColor(lvl)
+          if lvl <= 0 then return { 0.45, 0.45, 0.45 } end
+          return { c.r, c.g, c.b }
       end },
-    { key = "hngA", label = "Hng:get",  w = 64, align = "center",
-      format = function(r) return r.hngA and string.format("%.2f", r.hngA) or "-" end,
+    { key = "dist",  label = "Dist",   w = 54, align = "right",
+      format = function(r) return r.dist and string.format("%d", r.dist) or "-" end,
       color  = function(r)
-          if r.hngA and r.hngB and math.abs(r.hngA - r.hngB) > 0.001 then
-              return { 0.95, 0.55, 0.30 }
-          end
-          return { 0.85, 0.95, 0.85 }
+          if not r.dist then return { 0.45, 0.45, 0.45 } end
+          return { 0.80, 0.80, 0.80 }
       end },
-    { key = "hngB", label = "Hng:stat", w = 64, align = "center",
-      format = function(r) return r.hngB and string.format("%.2f", r.hngB) or "-" end,
-      color  = function(r)
-          if r.hngA and r.hngB and math.abs(r.hngA - r.hngB) > 0.001 then
-              return { 0.95, 0.55, 0.30 }
-          end
-          return { 0.85, 0.95, 0.85 }
-      end },
-    { key = "thrA", label = "Thr:get",  w = 64, align = "center",
-      format = function(r) return r.thrA and string.format("%.2f", r.thrA) or "-" end },
-    { key = "thrB", label = "Thr:stat", w = 64, align = "center",
-      format = function(r) return r.thrB and string.format("%.2f", r.thrB) or "-" end },
-    { key = "stress", label = "Strs", w = 44, align = "center",
-      format = function(r) return r.stress and string.format("%.2f", r.stress) or "-" end },
-    { key = "loc",   label = "Loc",   w = 70, align = "center" },
 }
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- The card - fixed gutter, constant shape, every field every time
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- A field that vanishes when nil shifts everything under it, and you lose the
+-- ability to flick between two animals and see what moved. That property is the
+-- entire point of the card, so nothing here is conditional: a missing value
+-- renders as "-" in the same place it would have rendered a number.
+local CARD = {
+    { group = "IDENTITY" },
+    { label = "Name",    get = function(r) return r.name end },
+    { label = "Species", get = function(r) return r.species end },
+    { label = "Sex",     get = function(r)
+        if r.sex == "F" then return "Female" end
+        if r.sex == "M" then return "Male" end
+        return "?"
+      end },
+    { label = "Age",     get = function(r) return r.age end },
+    { label = "OID",     get = function(r) return tostring(r.oid or 0) end,
+      dim = true },
+
+    { group = "CONDITION" },
+    { label = "Health",  bar = function(r) return (r.hp or 0) / 100 end, invert = true,
+      get = function(r) return string.format("%.0f%%", r.hp or 0) end },
+    { label = "Hunger",  bar = function(r) return r.hunger or 0 end,
+      get = function(r) return string.format("%.2f", r.hunger or 0) end },
+    { label = "Thirst",  bar = function(r) return r.thirst or 0 end,
+      get = function(r) return string.format("%.2f", r.thirst or 0) end },
+    { label = "Stress",  bar = function(r) return r.stress or 0 end,
+      get = function(r) return string.format("%.2f", r.stress or 0) end },
+
+    { group = "WHERE" },
+    { label = "Loc",     get = function(r) return r.loc end },
+    { label = "Dist",    get = function(r)
+        return r.dist and string.format("%d tiles", r.dist) or "unresolved"
+      end },
+}
+
+local function drawBar(el, x, y, w, frac, invert)
+    frac = math.max(0, math.min(1, frac or 0))
+    local c = barColor(frac, invert)
+    el:drawRect(x, y, w, BAR_H, 0.20, 1, 1, 1)
+    if frac > 0 then
+        el:drawRect(x, y, math.floor(w * frac), BAR_H, 0.85, c.r, c.g, c.b)
+    end
+    el:drawRectBorder(x, y, w, BAR_H, 0.25, 1, 1, 1)
+end
+
+local function drawCard(el, row, x, y, w, h)
+    local m  = DFKit.metrics
+    local tm = getTextManager()
+    local fh = tm:getFontHeight(FONT)
+    local lh = tm:getFontHeight(LABEL_FONT)
+    local rowH   = fh + 4
+    local groupH = lh + 8
+    local dim    = DFKit.col.textDim
+    local txt    = DFKit.col.text
+    local line   = DFKit.col.line
+
+    local cy = y
+    for _, f in ipairs(CARD) do
+        if cy + rowH > y + h then break end   -- ran out of pane; stop cleanly
+
+        if f.group then
+            cy = cy + 4
+            el:drawText(f.group, x, cy, dim.r, dim.g, dim.b, 0.9, LABEL_FONT)
+            local lw = tm:MeasureStringX(LABEL_FONT, f.group)
+            el:drawRect(x + lw + 6, cy + math.floor(lh / 2), w - lw - 6, 1,
+                        0.35, line.r, line.g, line.b)
+            cy = cy + groupH
+        else
+            el:drawText(f.label, x, cy, dim.r, dim.g, dim.b, 1, FONT)
+
+            local value = "-"
+            if row then
+                local ok, v = pcall(f.get, row)
+                if ok and v ~= nil and tostring(v) ~= "" then value = tostring(v) end
+            end
+
+            if f.bar then
+                -- Bar first, value right of it: within one animal you compare
+                -- the bars, and the number is there when you need the exact.
+                local barW = w - GUTTER - 52
+                if barW < 24 then barW = 24 end
+                local frac = 0
+                if row then
+                    local ok, v = pcall(f.bar, row)
+                    if ok and type(v) == "number" then frac = v end
+                end
+                drawBar(el, x + GUTTER, cy + math.floor((fh - BAR_H) / 2) + 1,
+                        barW, frac, f.invert)
+                el:drawText(value, x + GUTTER + barW + 8, cy,
+                            txt.r, txt.g, txt.b, row and 1 or 0.4, FONT)
+            else
+                local a = row and 1 or 0.4
+                local c = f.dim and dim or txt
+                el:drawText(DFColumns.truncate(value, FONT, w - GUTTER),
+                            x + GUTTER, cy, c.r, c.g, c.b, a, FONT)
+            end
+            cy = cy + rowH
+        end
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Portrait
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- Derived straight from ISUI3DModel rather than ISCharacterScreenAvatar, which
+-- is what vanilla's ISAnimalUI.lua:369 uses. That class adds nothing but a
+-- pass-through onMouseUp and new (ISCharacterScreen.lua), and it lives in
+-- XpSystem - depending on it would tie this file to that one's load order for
+-- no gain. Drag-to-rotate comes free from the base class either way.
+local AnimalAvatar = ISUI3DModel:derive("HBAnimalAvatar")
+
+-- Vanilla indexes AnimalAvatarDefinition raw (ISAnimalUI.lua:622), so a modded
+-- species with no entry nil-crashes vanilla's own window. We fall back instead.
+local AVATAR_FALLBACK = {
+    zoom = 0, xoffset = 0, yoffset = 0,
+    avatarDir = IsoDirections and IsoDirections.SE or nil,
+}
+
+local function avatarDef(animalType)
+    local def = AnimalAvatarDefinition and AnimalAvatarDefinition[animalType]
+    return def or AVATAR_FALLBACK
+end
+
+-- Point the panel at a row's animal. Only re-seats the model when the OID
+-- actually changes: setCharacter restarts the anim state, so calling it every
+-- frame (or every refresh) would leave the animal permanently twitching.
+local function updateAvatar(row)
+    local av = AnimalsTab.avatar
+    if not av then return end
+
+    local animal
+    if row and row.oid and row.oid ~= 0 then
+        pcall(function() animal = getAnimal(tonumber(row.oid)) end)
+    end
+
+    if not animal then
+        AnimalsTab.avatarOid = nil
+        pcall(function() av:setVisible(false) end)
+        return
+    end
+
+    if AnimalsTab.avatarOid ~= row.oid then
+        AnimalsTab.avatarOid = row.oid
+        pcall(function()
+            local def  = avatarDef(animal:getAnimalType())
+            local size = 1
+            pcall(function() size = animal:getData():getSize() or 1 end)
+
+            av:setAnimSetName(animal:GetAnimSetName())
+            av:setCharacter(animal)
+            av:setState("idle")
+            av:setIsometric(false)
+            av:setDirection(def.avatarDir or IsoDirections.S)
+            -- Per-species framing that TIS already hand-tuned, scaled by the
+            -- animal's own size so a calf frames like a calf.
+            av:setZoom((def.zoom or 0) * size)
+            av:setXOffset((def.xoffset or 0) * size)
+            av:setYOffset((def.yoffset or 0) * size)
+        end)
+    end
+    pcall(function() av:setVisible(true) end)
+end
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- List rendering
@@ -122,23 +311,88 @@ function AnimalsList:doDrawItem(y, item, alt)
     end
     self:drawRectBorder(0, y, self.width, self.itemheight, 0.12, 1, 1, 1)
 
-    DFColumns.drawRow(self, COLS, row, 4, y, FONT, { 0.92, 0.92, 0.92 }, 4, self.itemheight)
+    -- The stripe answers the list's question before any text is read.
+    local lvl = severityOf(row)
+    if lvl > 0 then
+        local c, a = sevColor(lvl)
+        self:drawRect(0, y + 1, STRIPE_W, self.itemheight - 3, a, c.r, c.g, c.b)
+    end
+
+    DFColumns.drawRow(self, COLS, row, STRIPE_W + 4, y, FONT,
+                      { 0.92, 0.92, 0.92 }, 4, self.itemheight)
     return y + self.itemheight
+end
+
+local function selectRow(idx)
+    local item = AnimalsTab.listBox and AnimalsTab.listBox.items[idx]
+    local row  = item and item.item
+    if not row then return nil end
+    -- Force to Lua number so the doDrawItem equality check doesn't get tripped
+    -- up by Java short vs Lua number.
+    AnimalsTab.selectedOid = tonumber(row.oid) or 0
+    AnimalsTab.listBox.selected = idx
+    applyHighlight(AnimalsTab.selectedOid)
+    updateAvatar(row)
+    return row
 end
 
 function AnimalsList:onMouseDown(x, y)
     local idx = self:rowAt(x, y)
     if idx <= 0 then return end
-    local item = self.items[idx]
-    if item and item.item then
-        -- Force to Lua number so the doDrawItem equality check below doesn't
-        -- get tripped up by Java short vs Lua number.
-        AnimalsTab.selectedOid = tonumber(item.item.oid) or 0
-        self.selected = idx
-        -- Light the animal up in the world so the admin can spot it without
-        -- teleporting first. Same pattern as RPNecroTab's zombie outline.
-        applyHighlight(AnimalsTab.selectedOid)
+    selectRow(idx)
+end
+
+-- Right-click a row -> vanilla's AnimalContextMenu for the underlying animal:
+-- the same menu the player gets right-clicking it in the world (Feed, Water,
+-- Pet, Milk, Shear, Slaughter, Add to Trailer), plus the cheat-only entries.
+-- Ported from HBDebugPanel.lua:325 - which this view never had.
+--
+-- rowAt(), NOT hand-rolled arithmetic. HBDebugPanel computes the row as
+-- `math.floor((y - self:getYScroll()) / self.itemheight) + 1` and that
+-- double-subtracts the scroll: ISScrollingListBox's draw loop starts at
+-- `local y = 0` (:507) and only the BACKGROUND is drawn at -getYScroll() (:485),
+-- because the scroll is a Java-layer translate. Lua coords and incoming mouse
+-- coords are both already content-space - which is why vanilla's own
+-- onMouseDown passes the raw y straight to rowAt (:579). The hand-rolled
+-- version is correct only at scroll position zero.
+function AnimalsList:onRightMouseUp(x, y)
+    if not self.items or #self.items == 0 then return false end
+    local idx = self:rowAt(x, y)
+    if idx <= 0 or idx > #self.items then return false end
+
+    local row = selectRow(idx)
+    if not row or not row.oid or row.oid == 0 then return false end
+
+    local animal = getAnimal(row.oid)
+    if not animal then return false end
+    local player = getPlayer()
+    if not player then return false end
+
+    local ok, err = pcall(function()
+        require "ISUI/Animal/ISAnimalContextMenu"
+        local pn      = player:getPlayerNum()
+        local context = ISContextMenu.get(pn, self:getAbsoluteX() + x,
+                                              self:getAbsoluteY() + y)
+        if context and AnimalContextMenu and AnimalContextMenu.doMenu then
+            -- Force cheat-mode for the duration of the menu BUILD. Two reasons:
+            --   1. Vanilla's distance check (ISAnimalContextMenu.lua:159) nil-
+            --      indexes when getCurrentSquare() is nil - a containerised or
+            --      edge-of-load animal. The `not cheat` guard short-circuits
+            --      that whole branch.
+            --   2. Cheat-mode surfaces the debug entries (set acceptance,
+            --      fertilize, set age) that are exactly what this panel wants.
+            -- Menu building is synchronous, so restoring after doMenu is safe;
+            -- note the option CALLBACKS run later, under the original flag.
+            local prevCheat = AnimalContextMenu.cheat
+            AnimalContextMenu.cheat = true
+            AnimalContextMenu.doMenu(pn, context, animal, false)
+            AnimalContextMenu.cheat = prevCheat
+        end
+    end)
+    if not ok then
+        print("[HB] Animals right-click context menu error: " .. tostring(err))
     end
+    return true
 end
 
 -- Re-assert the outline every frame while a row is selected. The engine's
@@ -153,75 +407,16 @@ end
 
 -- Wrap render with explicit stencil clipping. B42's ISScrollingListBox
 -- doesn't always restrict drawing to its visible box, so rows can paint
--- past the list's bounds and overdraw sibling widgets above (action row,
--- column header). Stencil rect forces all drawing inside render to clip
--- to the list's local 0,0,width,height.
+-- past the list's bounds and overdraw sibling widgets above.
 function AnimalsList:render()
     self:setStencilRect(0, 0, self.width, self.height)
     ISScrollingListBox.render(self)
     self:clearStencilRect()
 end
 
--- Reads its origin from AnimalsTab each frame rather than closing over the
--- coords it was built with, so a reflow can move the header without rebuilding
--- the panel (a rebuild would re-wrap prerender).
-local function attachHeader(panel)
-    panel.drawColumnsHeader = function(self_)
-        DFColumns.drawHeader(self_, COLS, AnimalsTab.headerX or 8, AnimalsTab.headerY or 8, FONT)
-    end
-    local origPrerender = panel.prerender
-    panel.prerender = function(self_)
-        if origPrerender then origPrerender(self_) end
-        self_:drawColumnsHeader()
-    end
-end
-
 -- ─────────────────────────────────────────────────────────────────────────
--- Log pane (probe results land here)
+-- Chrome
 -- ─────────────────────────────────────────────────────────────────────────
-
-local LogList = ISScrollingListBox:derive("HBAnimalsLogList")
-
-function LogList:doDrawItem(y, item, alt)
-    if not item.item then return y + self.itemheight end
-    if alt then self:drawRect(0, y, self.width, self.itemheight - 1, 0.18, 0.08, 0.08, 0.08) end
-    self:drawText(tostring(item.item), 4, y + 1, 0.85, 0.85, 0.85, 1, FONT)
-    return y + self.itemheight
-end
-
--- Match HBDebugPanel:logLine - cap visible rows at what fits in the box and
--- drop oldest. Avoids the overflow we saw where probe results spilled out
--- the top of the log pane; vanilla ISScrollingListBox's stencil clipping
--- alone wasn't keeping them inside.
-local function logLine(text)
-    local box = AnimalsTab.logBox
-    if not box then return end
-    box:addItem("", tostring(text or ""))
-    local maxRows = math.max(1, math.floor(box.height / box.itemheight))
-    while #box.items > maxRows do
-        table.remove(box.items, 1)
-    end
-    box.selected = #box.items
-end
-
--- ─────────────────────────────────────────────────────────────────────────
--- Data + actions
--- ─────────────────────────────────────────────────────────────────────────
-
-local function refresh()
-    if not AnimalsTab.listBox then return end
-    local rows = (HBDebugPanel and HBDebugPanel.scanCell) and HBDebugPanel.scanCell() or {}
-    AnimalsTab.rows = rows
-    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
-    -- addItem stacks onto it, which eventually scrolls the list off its own
-    -- rows. See that function's header.
-    DFKit.refillList(AnimalsTab.listBox, function(box)
-        for _, row in ipairs(rows) do box:addItem("", row) end
-    end)
-    if AnimalsTab.statsLabel then
-        AnimalsTab.statsLabel:setName(string.format("Loaded animals: %d", #rows))
-    end
-end
 
 local function selectedRow()
     if not AnimalsTab.selectedOid then return nil end
@@ -229,6 +424,111 @@ local function selectedRow()
         if e.oid == AnimalsTab.selectedOid then return e end
     end
     return nil
+end
+
+-- DRAWN CHROME HAS NO VISIBILITY FLAG, which is why this is a plain function
+-- the host calls rather than a prerender hook this file installs. Two views
+-- sharing one panel would each chain their own prerender and BOTH draw, so the
+-- hidden view's chrome would bleed through the visible one - widgets can be
+-- hidden, a drawRect cannot. The host routes this to whichever view is active
+-- (DFViews:draw), so the branch IS the visibility.
+function HBAnimalsView.draw(el)
+    DFColumns.drawHeader(el, COLS, AnimalsTab.headerX or 8, AnimalsTab.headerY or 8, FONT)
+
+    local c = AnimalsTab.card
+    if c then
+        -- Frame the portrait the way vanilla frames its own (ISAnimalUI.lua:38).
+        local a = AnimalsTab.avatarRect
+        if a then
+            el:drawRectBorder(a.x, a.y, a.w, a.h, 0.5, 0.3, 0.3, 0.3)
+            if not AnimalsTab.avatarOid then
+                DFKit.drawEmpty(el, a.x, a.y, a.w, a.h, "no animal selected")
+            end
+        end
+        drawCard(el, selectedRow(), c.x, c.y, c.w, c.h)
+    end
+end
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- Data + actions
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- Everything the new columns need that scanCell does not itself produce.
+-- Kept HERE rather than pushed into HBDebugPanel.buildRow because that scan is
+-- shared with the standalone panel, which still wants the raw A/B fields.
+local function derive(rows)
+    local p = getPlayer()
+    local px, py
+    if p then pcall(function() px, py = p:getX(), p:getY() end) end
+
+    for _, r in ipairs(rows) do
+        -- Authoritative reads only. getHunger()/getThirst() are the OTHER API;
+        -- HBAPIProbe settled which one the engine writes, and every writer in
+        -- the mod goes through getStats():set(). Fall back to the getter only
+        -- so a row is never blank if the stats read itself failed.
+        r.hunger = r.hngB or r.hngA or 0
+        r.thirst = r.thrB or r.thrA or 0
+
+        r.dist = nil
+        if px and r.oid and r.oid ~= 0 then
+            pcall(function()
+                local a = getAnimal(tonumber(r.oid))
+                if not a then return end
+                local ax, ay = a:getX(), a:getY()
+                if ax and ay then
+                    r.dist = math.floor(math.sqrt((ax - px) ^ 2 + (ay - py) ^ 2) + 0.5)
+                end
+            end)
+        end
+    end
+end
+
+local function refresh()
+    if not AnimalsTab.listBox then return end
+    local rows = (HBDebugPanel and HBDebugPanel.scanCell) and HBDebugPanel.scanCell() or {}
+    derive(rows)
+
+    -- Nearest first. A triage list sorted by proximity puts what you can
+    -- actually reach at the top; severity is already carried by the stripe.
+    table.sort(rows, function(a, b)
+        local da = a.dist or math.huge
+        local db = b.dist or math.huge
+        if da ~= db then return da < db end
+        return tostring(a.name or "") < tostring(b.name or "")
+    end)
+
+    AnimalsTab.rows = rows
+
+    -- DFKit.refillList: a bare clear() leaves the scroll height behind and
+    -- addItem stacks onto it, which eventually scrolls the list off its own
+    -- rows. See that function's header.
+    DFKit.refillList(AnimalsTab.listBox, function(box)
+        for _, row in ipairs(rows) do box:addItem("", row) end
+    end)
+
+    -- Keep the selection pointed at the same ANIMAL, not the same index - the
+    -- sort above moves rows around as the admin walks.
+    if AnimalsTab.selectedOid then
+        local found
+        for i, row in ipairs(rows) do
+            if tonumber(row.oid) == tonumber(AnimalsTab.selectedOid) then found = i break end
+        end
+        AnimalsTab.listBox.selected = found or -1
+        if not found then
+            AnimalsTab.selectedOid = nil
+            clearHighlight()
+        end
+    end
+    updateAvatar(selectedRow())
+
+    if AnimalsTab.statsLabel then
+        local needy = 0
+        for _, row in ipairs(rows) do
+            if severityOf(row) >= 2 then needy = needy + 1 end
+        end
+        AnimalsTab.statsLabel:setName(string.format("%d loaded  -  %d need attention",
+                                                    #rows, needy))
+    end
 end
 
 local function teleportToSelected()
@@ -253,159 +553,136 @@ local function teleportToSelected()
     if not (tx and ty) then return end
     local p = getPlayer()
     pcall(function() p:setX(tx); p:setY(ty); p:setZ(tz or 0) end)
-    logLine(string.format("[teleport] -> %s @ %d,%d", row.name or row.species or "?", tx, ty))
     if DFFeedback then
         DFFeedback.good(string.format("Teleported to %s.", row.name or row.species or "animal"))
     end
 end
 
-local function probeSelected()
-    local row = selectedRow()
-    if not row then
-        logLine("[probe] no animal selected")
-        return
-    end
-    sendClientCommand(getPlayer(), "RFTDHusbandry", HBCmd.DEBUG_PROBE, { id = tostring(row.oid) })
-    logLine(string.format("[probe] requested OID %d", row.oid or 0))
-end
-
+-- Receipts go to DFFeedback, which every other tab in the family already uses
+-- and which the Console tab mirrors. They used to go to an inline log pane that
+-- only existed to catch probe output; with the probe gone there was nothing
+-- left for that pane to say that the toast does not.
 local function refillAll()
     sendClientCommand(getPlayer(), "RFTDHusbandry", HBCmd.DEBUG_REFILL, { value = 0.0, label = "refill" })
-    logLine("[refill] sent (all animals -> 0.0)")
+    if DFFeedback then DFFeedback.good("Refill sent - all loaded animals to full.") end
 end
-
--- Copy every line in the log pane to the system clipboard so the admin can
--- paste the probe output into Discord / a bug report without retyping it.
--- Clipboard is exposed via LuaManager.setExposed at boot.
-local function copyLog()
-    if not AnimalsTab.logBox then return end
-    local items = AnimalsTab.logBox.items
-    if not items or #items == 0 then
-        if DFFeedback then DFFeedback.bad("Log is empty.") end
-        return
-    end
-    local buf = {}
-    for _, it in ipairs(items) do
-        buf[#buf + 1] = tostring(it.item or "")
-    end
-    local text = table.concat(buf, "\n")
-    local ok = pcall(function() Clipboard.setClipboard(text) end)
-    if ok then
-        if DFFeedback then
-            DFFeedback.good(string.format("Copied %d log line(s) to clipboard.", #buf))
-        end
-    else
-        if DFFeedback then DFFeedback.bad("Clipboard call failed.") end
-    end
-end
-
-local function starveAll()
-    sendClientCommand(getPlayer(), "RFTDHusbandry", HBCmd.DEBUG_REFILL, { value = 0.9, label = "starve" })
-    logLine("[starve] sent (all animals -> 0.9)")
-end
-
--- Probe results echo here (inline) AND get pushed to DFLog for the Console
--- tab's cross-admin view. Two surfaces, same data; admins reading either
--- get the same picture.
-local function onServerCommand(module, command, args)
-    if module ~= "RFTDHusbandry" then return end
-    if command ~= HBCmd.DEBUG_PROBE_RESULT then return end
-    if not args then return end
-    local line = tostring(args.line or "(probe: no line)")
-    logLine(line)
-    if DFLog then
-        DFLog.push{ source = "Mod:RFTDHusbandry", level = "info", text = line }
-    end
-end
-Events.OnServerCommand.Add(onServerCommand)
 
 -- ─────────────────────────────────────────────────────────────────────────
--- Tab build
+-- Layout
 -- ─────────────────────────────────────────────────────────────────────────
 
-local LOG_H = 130   -- probe/audit pane; fixed, the list absorbs the slack
-
--- Positioning only. Same geometry as the hand-rolled version - the buttons keep
--- their exact offsets - but PAD/BTN_H/HEADER_H now come from DFKit.metrics.
+-- Buttons are positioned by walking their OWN widths plus one gap, not from a
+-- hardcoded offset table. The old `offs = { 0, 100, 220, ... }` was measured
+-- against one font size and overlapped at every other one.
 local function layout(panel, x, y, w, h)
     local m = DFKit.metrics
     local R = DFKit.layout(panel, x, y, w, h)
-    local s = R:stack(0)
 
-    -- Row 1: action buttons, all on one line
-    local bx, by = s:row(m.btnH + m.pad)
-    local B = AnimalsTab.btns
-    local offs = { 0, 100, 220, 310, 420, 540, 650 }
-    for i = 1, #B do B[i]:setX(bx + offs[i]); B[i]:setY(by) end
+    local bar = R:header(m.btnH + m.pad)
+    local bx  = bar.x
+    for _, b in ipairs(AnimalsTab.btns or {}) do
+        b:setX(bx); b:setY(bar.y)
+        bx = bx + b:getWidth() + m.gap
+    end
 
-    -- Row 2: column header (drawn via panel.prerender)
-    local _, hy = s:row(m.headerH)
-    AnimalsTab.headerX, AnimalsTab.headerY = R.x, hy
+    -- list | portrait + card. The probe pane's width went to the other two
+    -- rather than leaving a gap: the list can now show a full name without
+    -- truncating, and the card's bars are long enough to read as bars.
+    local left, mid = R:splitH(0.44, 260, 300)
 
-    -- Row 3: animal list, sized to whatever the fixed rows leave behind
-    local listH = h - s.y - (LOG_H + m.pad * 2 + 22)
+    -- ── left: column header, list, count line ──────────────────────────
+    -- Name column absorbs the slack so the three columns always fill the pane.
+    local fixed = COLS[2].w + COLS[3].w + 8 + STRIPE_W + 8
+    COLS[1].w = math.max(90, left.w - fixed)
+
+    local ls = left:stack(0)
+    local _, hy = ls:row(m.headerH)
+    AnimalsTab.headerX, AnimalsTab.headerY = left.x + STRIPE_W + 4, hy
+
+    -- Measured from the region's own BOTTOM edge, never `h - cursor`: h is a
+    -- height and the cursor is absolute, so mixing them only balances while the
+    -- view happens to start at y = 0. Hosted behind a view strip it does not.
+    local listH = (left.y + left.h) - ls.y - (16 + m.gap)
     if listH < 60 then listH = 60 end
-    local lx, ly = s:row(listH + m.pad)
-    AnimalsTab.listBox:setX(lx);  AnimalsTab.listBox:setY(ly)
-    AnimalsTab.listBox:setWidth(R.w); AnimalsTab.listBox:setHeight(listH)
+    DFKit.sizeList(AnimalsTab.listBox, left.x, ls.y, left.w, listH)
+    ls:row(listH)
+    AnimalsTab.statsLabel:setX(left.x); AnimalsTab.statsLabel:setY(ls.y)
 
-    -- Row 4: log pane
-    local gx, gy = s:row(LOG_H + m.pad)
-    AnimalsTab.logBox:setX(gx);  AnimalsTab.logBox:setY(gy)
-    AnimalsTab.logBox:setWidth(R.w); AnimalsTab.logBox:setHeight(LOG_H)
-
-    -- Row 5: stats line
-    local sx, sy = s:row(16)
-    AnimalsTab.statsLabel:setX(sx); AnimalsTab.statsLabel:setY(sy)
+    -- ── middle: portrait over card ─────────────────────────────────────
+    local avH = math.min(AV_H, math.floor(mid.h * 0.42))
+    local av  = AnimalsTab.avatar
+    if av then
+        av:setX(mid.x);     av:setY(mid.y)
+        av:setWidth(mid.w); av:setHeight(avH)
+    end
+    AnimalsTab.avatarRect = { x = mid.x, y = mid.y, w = mid.w, h = avH }
+    AnimalsTab.card = {
+        x = mid.x, y = mid.y + avH + m.pad,
+        w = mid.w, h = mid.h - avH - m.pad,
+    }
 end
 
-local function build(spec, panel, x, y, w, h)
+-- ─────────────────────────────────────────────────────────────────────────
+-- Host contract
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- Builds every widget ONCE into the host's panel and hands back a flat list;
+-- the host toggles visibility on it and never asks what any of them are.
+-- Deliberately does NOT lay out or refresh - the host owns layout, and onShow
+-- owns the first scan, so entering the view is what reads the world rather
+-- than constructing it.
+function HBAnimalsView.attach(panel)
     AnimalsTab.selectedOid = nil
+    AnimalsTab.avatarOid   = nil
     clearHighlight()
 
+    -- Three buttons, down from seven. "Starve all" set every animal's hunger to
+    -- 0.9 to prove the write path worked - a debugging tool that could wreck a
+    -- live herd. "Probe", "Clear log" and "Copy log" all served the probe pane
+    -- that the card replaced. Everything the right-click menu already does
+    -- (feed, water, milk, shear, slaughter, set age) is not duplicated here.
     AnimalsTab.btns = {
         DFKit.button(panel, 0, 0, 90,  "Refresh",     panel, refresh),
         DFKit.button(panel, 0, 0, 110, "Teleport to", panel, teleportToSelected),
-        DFKit.button(panel, 0, 0, 80,  "Probe",       panel, probeSelected),
         DFKit.button(panel, 0, 0, 100, "Refill all",  panel, refillAll),
-        DFKit.button(panel, 0, 0, 100, "Starve all",  panel, starveAll, "danger"),
-        DFKit.button(panel, 0, 0, 100, "Clear log",   panel,
-            function() if AnimalsTab.logBox then AnimalsTab.logBox:clear() end end),
-        DFKit.button(panel, 0, 0, 100, "Copy log",    panel, copyLog),
     }
 
-    attachHeader(panel)
-
     local list = AnimalsList:new(0, 0, 10, 10)
-    list.itemheight = 32   -- bumped from 18 for breathing room between rows
+    list.itemheight = DFKit.metrics.rowH
     list.drawBorder = true
     DFKit.well(list)
     list:initialise(); list:instantiate()
     panel:addChild(list)
     AnimalsTab.listBox = list
 
-    local log = LogList:new(0, 0, 10, 10)
-    log.itemheight = 14
-    log.drawBorder = true
-    DFKit.well(log)
-    log:initialise(); log:instantiate()
-    panel:addChild(log)
-    AnimalsTab.logBox = log
+    local av = AnimalAvatar:new(0, 0, 10, 10)
+    av:initialise(); av:instantiate()
+    av:setVisible(false)
+    panel:addChild(av)
+    AnimalsTab.avatar = av
 
-    AnimalsTab.statsLabel = DFKit.label(panel, 0, 0, "Loaded animals: -")
+    AnimalsTab.statsLabel = DFKit.label(panel, 0, 0, "0 loaded")
 
-    layout(panel, x, y, w, h)
-    refresh()
+    -- APPENDED, never a table constructor. A nil in the middle of a literal
+    -- truncates ipairs at the hole and every widget after it would silently
+    -- never be shown or hidden again.
+    local widgets = {}
+    local function keep(wdg) if wdg then widgets[#widgets + 1] = wdg end end
+    for _, b in ipairs(AnimalsTab.btns) do keep(b) end
+    keep(AnimalsTab.listBox); keep(AnimalsTab.avatar); keep(AnimalsTab.statsLabel)
+    return widgets
 end
 
-Events.OnGameStart.Add(function()
-    if not DFRegistry then return end
-    DFRegistry.registerTab{
-        id     = "animals",
-        label  = "Animals",
-        order  = 6,
-        build  = build,
-        resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
-    }
-    print("[Husbandry] HBAnimalsTab registered into Dragonfly")
-end)
+HBAnimalsView.layout = layout
+
+-- Entering the view rescans. The cell's animals change while you are looking at
+-- the other view, so a snapshot taken at build time would be stale by the time
+-- anybody came back to it.
+--
+-- DFViews runs the setVisible pass BEFORE onShow (DFViews.lua:118-141), so the
+-- refresh here gets the last word on the portrait: the host's blanket
+-- setVisible(true) would otherwise leave an empty 3D pane showing when nothing
+-- is selected.
+function HBAnimalsView.onShow()
+    refresh()
+end

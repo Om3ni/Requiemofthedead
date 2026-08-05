@@ -54,6 +54,31 @@ function DFRegistry.getTabs()
     return out
 end
 
+-- PLACEHOLDER TABS. `spec.disabled = true` reserves a slot in the roster - the
+-- label renders greyed and cannot be selected - without the tab having any
+-- content behind it. It exists so a planned tab can take its final position in
+-- the nav NOW, while the order is being settled, rather than shuffling every
+-- other tab sideways on the day it ships.
+--
+-- Distinct from `capability`, which greys a REAL tab for a player whose role
+-- lacks the permission: that one is per-player and flips live, this one is a
+-- property of the build. Both shells render them the same way; only the reason
+-- differs.
+function DFRegistry.isSelectable(spec)
+    return spec ~= nil and spec.disabled ~= true
+end
+
+-- The tab a shell should land on. NOT simply tabs[1]: a disabled tab sorted to
+-- the front would leave the panel opening onto an empty content area with no
+-- way to tell it apart from a tab that failed to build. Returns nil when every
+-- registered tab is disabled, which callers treat as the empty state.
+function DFRegistry.firstSelectable(tabs)
+    for _, spec in ipairs(tabs or DFRegistry.getTabs()) do
+        if DFRegistry.isSelectable(spec) then return spec.id end
+    end
+    return nil
+end
+
 function DFRegistry.getRowActions(tabId)
     return DFRegistry.rowActions[tabId] or {}
 end

@@ -247,6 +247,46 @@ function DFKit.refillList(box, fill)
     return box
 end
 
+-- SIZE A SCROLLING LIST. Use this instead of setX/setY/setWidth/setHeight -
+-- the four of them alone leave the widget in a state where it cannot draw.
+--
+-- ISScrollingListBox:instantiate() calls addScrollBars() (:63), which builds the
+-- scrollbar against WHATEVER SIZE THE LIST IS AT THAT MOMENT. Vanilla gets away
+-- with this because it constructs lists at their final size. Every list in this
+-- family is constructed at a placeholder 10x10 and sized later from layout(),
+-- and ISUIElement:setWidth/setHeight (:230) update the element only - they never
+-- touch vscroll. So the bar keeps its 10x10 geometry for the widget's whole
+-- life, and two things follow from that:
+--
+--   1. isVScrollBarVisible() is `vscroll:getHeight() < getScrollHeight()`
+--      (ISUIElement.java:1412). Against a stale tiny height that is TRUE for
+--      any non-empty list.
+--   2. Which makes prerender clamp the stencil to `vscroll.x + 3`
+--      (ISScrollingListBox.lua:495). Against a stale tiny x that is a ~2px
+--      sliver, and EVERY ROW IS CLIPPED AWAY.
+--
+-- The result is a list that is fully populated, correctly hit-tested and
+-- completely invisible, inside a border that draws fine because the border is
+-- drawn BEFORE the stencil is set. That 2px sliver at the top-left corner of an
+-- empty-looking list is the whole bug, visible.
+--
+-- Rebuilding the bars after sizing puts the widget in exactly the state vanilla
+-- would have constructed it in. removeScrollBars() detaches the old ones first,
+-- so this does not accumulate children, and layout runs rarely (open, resize,
+-- view switch) rather than per frame.
+function DFKit.sizeList(box, x, y, w, h)
+    if not box then return box end
+    if x then box:setX(x) end
+    if y then box:setY(y) end
+    if w then box:setWidth(w) end
+    if h then box:setHeight(h) end
+    -- Order matters: bars first so they take the new geometry, then re-clamp
+    -- yScroll against the scroll area the new size implies.
+    pcall(function() box:addScrollBars() end)
+    pcall(function() box:updateScrollbars() end)
+    return box
+end
+
 -- NOTE the originalX guard. ISLabel:setName does `self:setX(self.originalX)`
 -- (ISLabel.lua:17), and originalX is captured ONCE at construction. Every tab
 -- here builds its labels at (0,0) and positions them later from layout() - so

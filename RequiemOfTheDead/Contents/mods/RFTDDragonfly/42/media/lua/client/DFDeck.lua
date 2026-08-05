@@ -108,12 +108,22 @@ function DFDeck:rebuild()
             id      = spec.id,
             spec    = spec,
             label   = string.upper(tostring(spec.label or spec.id)),
-            enabled = true,
+            -- Placeholder rows start disabled and refreshBeat leaves them so.
+            -- The roster already renders !enabled in scar rather than ash and
+            -- onMouseDown already refuses them, so reserving a slot costs
+            -- nothing but this flag.
+            enabled = DFRegistry.isSelectable(spec),
             hoverT  = 0,
         }
     end
     if #self.rows > 0 then
-        self:showTab(self.activeId or self.rows[1].id)
+        -- Never land on a placeholder: the deck would show its empty content
+        -- pane with no way to tell that apart from a tab that failed to build.
+        local landing = self.activeId
+        if not DFRegistry.isSelectable(DFRegistry.tabs[landing or ""]) then
+            landing = DFRegistry.firstSelectable(tabs)
+        end
+        if landing then self:showTab(landing) end
     end
 end
 
@@ -162,8 +172,16 @@ function DFDeck:refreshBeat()
     -- capability greying, same beat (mirrors DFPanel's live prerender check)
     local p = getPlayer()
     for i = 1, #self.rows do
-        local cap = self.rows[i].spec.capability
-        self.rows[i].enabled = (cap == nil) or RDAccess.roleHas(p, cap)
+        local spec = self.rows[i].spec
+        -- `disabled` is a property of the build and outranks the per-player
+        -- capability check - without this the beat would re-enable a
+        -- placeholder a third of a second after rebuild set it false.
+        if not DFRegistry.isSelectable(spec) then
+            self.rows[i].enabled = false
+        else
+            local cap = spec.capability
+            self.rows[i].enabled = (cap == nil) or RDAccess.roleHas(p, cap)
+        end
     end
 end
 

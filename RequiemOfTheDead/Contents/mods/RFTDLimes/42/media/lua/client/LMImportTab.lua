@@ -5,9 +5,11 @@
 -- to the OS clipboard, open Dragonfly -> Zones, [Read clipboard] to preview -
 -- the SHARED LMImport parser runs locally, so "75 zones, 9 warnings" appears
 -- before anything touches the wire - then [Import to server] ships the raw
--- TEXT in one RDNet command (one ~40KB packet against the 1MB connection
--- buffer; the engine limiter counts packets, not bytes, so one big send is
--- the cheap shape). The SERVER re-parses authoritatively - the client preview
+-- TEXT in one RDNet command when it fits under CHUNK_BYTES, and in as many
+-- commands as it takes when it does not - the engine caps a single command
+-- string at 32767 bytes, which a live ~38KB PhunZones layer exceeds. The
+-- packet limiter counts packets rather than bytes, so few-and-large stays the
+-- cheap shape either way. The SERVER re-parses authoritatively - the client preview
 -- is UX, never trust - writes RFTDLimes.ini, applies, and broadcasts the new
 -- baseline to everyone including us; the status line mirrors the server's
 -- notice so the admin sees the authoritative outcome, not the preview.
@@ -31,7 +33,17 @@ require "LMImport"
 LMImportTab = LMImportTab or {}
 
 local TOKEN    = "RFTDLimes"
-local MAX_TEXT = 512 * 1024   -- matches the server's cap; the live layer is ~40KB
+
+-- CHUNK_BYTES is an ENGINE ceiling, not a policy: a string inside a client
+-- command carries a signed-short length (ByteBufferReader.getUTF, :52), so
+-- 32767 bytes is the wall. Past it the server throws inside
+-- receiveClientCommand BEFORE any Lua runs and cannot reply at all - the
+-- status line hangs on "waiting for the verdict" forever. 24000 keeps
+-- headroom under it. Anything larger is split and reassembled server-side
+-- (LMSync "pasteChunk"), so a live layer of any realistic size goes through.
+-- MAX_TEXT then only mirrors the server's assembly cap.
+local CHUNK_BYTES = 24000
+local MAX_TEXT    = 512 * 1024
 
 local ui = nil   -- { status, store, warns = {labels}, importBtn }
 
@@ -70,8 +82,14 @@ local function readClipboard()
         return
     end
     if #text > MAX_TEXT then
-        setStatus("Clipboard is " .. math.floor(#text / 1024) .. "KB - over the "
-            .. math.floor(MAX_TEXT / 1024) .. "KB cap. Wrong copy?")
+        setStatus("Clipboard is " .. math.floor(#text / 1024) .. "KB - over the server's "
+            .. math.floor(MAX_TEXT / 1024) .. "KB assembly cap. Put the file in the "
+            .. "server's Zomboid/Lua/ and use the filename route instead.")
+        print("[Limes] paste refused: " .. #text .. " bytes exceeds the "
+            .. MAX_TEXT .. "-byte assembly cap. Copy the export to "
+            .. "<server>/Lua/phunzones.txt, then either restart the server "
+            .. "(first-boot import) or run LMSync.requestImport(\"phunzones.txt\") "
+            .. "from the client console. Hand-editing RFTDLimes.ini also works.")
         return
     end
 
@@ -89,10 +107,33 @@ local function readClipboard()
     for i = 1, #res.warnings do print("[Limes] preview: " .. res.warnings[i]) end
 end
 
+-- One command when it fits, N when it does not. The single-shot path is kept
+-- rather than folded into the chunked one so the common case stays one packet
+-- and one handler - and so a layer that fits never depends on assembly state
+-- existing on the server at all.
 local function sendImport()
-    if not LMImportTab.pending then return end
-    RDNet.send(TOKEN, "pasteImport", { text = LMImportTab.pending })
-    setStatus("Sent to server - waiting for the verdict...")
+    local text = LMImportTab.pending
+    if not text then return end
+
+    if #text <= CHUNK_BYTES then
+        RDNet.send(TOKEN, "pasteImport", { text = text })
+        setStatus("Sent to server - waiting for the verdict...")
+    else
+        local total = math.ceil(#text / CHUNK_BYTES)
+        for i = 1, total do
+            local from = (i - 1) * CHUNK_BYTES + 1
+            RDNet.send(TOKEN, "pasteChunk", {
+                seq   = i,
+                total = total,
+                text  = string.sub(text, from, from + CHUNK_BYTES - 1),
+            })
+        end
+        -- Say the count out loud: if the verdict never lands, the admin can see
+        -- how many pieces were owed rather than staring at a silent spinner.
+        setStatus("Sent " .. math.floor(#text / 1024) .. "KB in " .. total
+            .. " chunks - waiting for the verdict...")
+    end
+
     if ui and ui.importBtn then ui.importBtn.enable = false end
 end
 

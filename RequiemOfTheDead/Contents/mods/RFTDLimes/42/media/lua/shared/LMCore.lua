@@ -2,7 +2,10 @@
 --
 -- THE public surface (docs/limes-design.md §4-§5). Satellites never touch the
 -- store; they call Limes.getLocation(x, y), register typed fields, and listen
--- for change callbacks. Everything else in this mod is a producer feeding this
+-- for change callbacks - Limes.onChanged(fn) for "the store moved, re-derive"
+-- and Limes.onZoneEvent(fn) for per-zone added/edited/enabled/disabled/deleted,
+-- which is what a consumer holding a standing side effect needs in order to
+-- unwind it (§5.1). Everything else in this mod is a producer feeding this
 -- file: LMPersist reads the .ini into it, LMSync carries it over the wire,
 -- LMImport translates a PhunZones export into its raw shape. Consumers on the
 -- client and the server read the SAME resolved records through the SAME
@@ -64,7 +67,21 @@ local specs = {}     -- field name -> { owner, type, default, min, max }
 -- them in the .ini section and in resolved records.
 local RESERVED = { rects = true, inherits = true, name = true }
 
--- spec: { type = "number"|"boolean"|"string", default = ?, min = ?, max = ? }
+-- Fields the RESOLVER itself reads (rebuild/getLocation). These must reach every
+-- machine or the two sides resolve differently in silence - the worst class of
+-- bug this store can have - so side is forced to "both" no matter what a
+-- registrant asks for.
+local RESOLVER_CRITICAL = { disabled = true, priority = true }
+
+local SIDES = { server = true, client = true, both = true }
+
+-- spec: { type = "number"|"boolean"|"string", default = ?, min = ?, max = ?,
+--         side = "server"|"client"|"both" }
+--
+-- `side` declares where a field is CONSUMED, not where it lives (§5). LMSync
+-- strips server-only fields from what it sends clients: smaller baseline, and
+-- loot tables / difficulty stop riding in every client's memory. It never
+-- affects resolution on the authoritative side.
 function Limes.fields.register(owner, name, spec)
     owner, name = tostring(owner), tostring(name)
     spec = spec or {}
@@ -85,8 +102,21 @@ function Limes.fields.register(owner, name, spec)
             .. ", ignoring claim from " .. owner)
         return false
     end
+    -- An unusable side is corrected to "both" and never to a narrower value:
+    -- over-sending is a wire cost, under-sending is a correctness bug.
+    local side = spec.side or "both"
+    if not SIDES[side] then
+        warn("fields.register: '" .. name .. "' has unknown side '" .. tostring(side)
+            .. "' (" .. owner .. "), treating as both")
+        side = "both"
+    end
+    if RESOLVER_CRITICAL[name] and side ~= "both" then
+        warn("fields.register: '" .. name .. "' is resolver-critical, side forced to both ("
+            .. owner .. ")")
+        side = "both"
+    end
     specs[name] = {
-        owner = owner, type = spec.type,
+        owner = owner, type = spec.type, side = side,
         default = spec.default, min = spec.min, max = spec.max,
     }
     return true
@@ -104,7 +134,7 @@ function Limes.fields.list()
     local out = {}
     for i = 1, #names do
         local s = specs[names[i]]
-        out[i] = { name = names[i], owner = s.owner, type = s.type,
+        out[i] = { name = names[i], owner = s.owner, type = s.type, side = s.side,
                    default = s.default, min = s.min, max = s.max }
     end
     return out
@@ -117,6 +147,31 @@ function Limes.fields.get(zone, name)
     if v ~= nil then return v end
     local s = specs[name]
     return s and s.default or nil
+end
+
+-- Raw zones with server-only fields removed, for LMSync to put on the wire
+-- (§6). Returns a NEW table - the caller must never hand the live store to the
+-- serializer with fields deleted out of it.
+--
+-- Rules, all in the safe direction: unregistered keys ship (forward compat must
+-- never silently drop an admin's data), a zone whose every field was stripped
+-- still ships because its geometry and its place in the inheritance chain both
+-- matter to the client, and rects are shared by reference because stripping
+-- does not touch them and the wire copies them anyway.
+function Limes.fields.stripServerOnly(rawZones)
+    local out = {}
+    for name, rec in pairs(rawZones or {}) do
+        local fields = nil
+        if rec.fields then
+            fields = {}
+            for k, v in pairs(rec.fields) do
+                local s = specs[k]
+                if not s or s.side ~= "server" then fields[k] = v end
+            end
+        end
+        out[name] = { inherits = rec.inherits, rects = rec.rects, fields = fields }
+    end
+    return out
 end
 
 -- Coerce a stored value to its registered type. nil = unusable/unset, which
@@ -146,13 +201,17 @@ end
 -- consumer installed yet.
 -- ---------------------------------------------------------------------------
 
-Limes.fields.register("LMCore", "title",      { type = "string",  default = "" })
-Limes.fields.register("LMCore", "subtitle",   { type = "string",  default = "" })
-Limes.fields.register("LMCore", "order",      { type = "number",  default = 0 })
-Limes.fields.register("LMCore", "noannounce", { type = "boolean", default = false })
-Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = false })
-Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0 })
-Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0, min = 0, max = 10 })
+-- side: the widget's vocabulary is client-consumed; disabled/priority are
+-- resolver-critical (forced "both" regardless); tier is a scalar both halves
+-- read. Satellites declare their own - loot tables and dirge weights are the
+-- server-only cases the tag exists for.
+Limes.fields.register("LMCore", "title",      { type = "string",  default = "",    side = "client" })
+Limes.fields.register("LMCore", "subtitle",   { type = "string",  default = "",    side = "client" })
+Limes.fields.register("LMCore", "order",      { type = "number",  default = 0,     side = "client" })
+Limes.fields.register("LMCore", "noannounce", { type = "boolean", default = false, side = "client" })
+Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = false, side = "both" })
+Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0,     side = "both" })
+Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0,     side = "both", min = 0, max = 10 })
 
 -- ---------------------------------------------------------------------------
 -- Store state
@@ -162,12 +221,103 @@ local rawStore   = {}    -- name -> raw zone (ownership transfers to LMCore on a
 local resolved   = {}    -- name -> resolved zone
 local index      = {}    -- array of resolved zones with geometry, lookup order
 local warnedKeys = {}    -- unknown field key -> true (warn once per key, not per zone)
-local listeners  = {}
+local listeners  = {}    -- onChanged   : fn(rev)
+local zoneListeners = {} -- onZoneEvent : fn(event, name, zone, rev)
 
 Limes.revision = 0
 
 function Limes.onChanged(fn)
     listeners[#listeners + 1] = fn
+end
+
+-- ---------------------------------------------------------------------------
+-- Zone lifecycle events (§5.1)
+--
+-- onChanged says THAT the store moved. Consumers holding standing side effects
+-- need to know WHICH zone and HOW, because their undo path is a zone exit that
+-- never fires if the zone stops existing under the player's feet: LMStats
+-- modulates global sandbox values and restores on exit, LMWidget announces a
+-- title, LMZeds runs a standing sweep.
+--
+--   fn(event, name, zone, rev)
+--   event = "added" | "edited" | "enabled" | "disabled" | "deleted"
+--
+-- DERIVED, NEVER TRANSMITTED. Events are diffed out of rebuild(), which both
+-- apply() and applyDelta() funnel through, so both sides compute the identical
+-- sequence from the baseline or delta they already received - no event ever
+-- costs a packet (§6.1 rule 1). Order is name-sorted so the sequence matches
+-- machine to machine.
+--
+-- One event per zone per rebuild, prioritised added > deleted > enabled/
+-- disabled > edited: a zone that is disabled AND edited in one delta reports
+-- the transition, because that is the actionable half. `zone` is the new
+-- resolved record except on "deleted", which carries the last-known one so a
+-- consumer can unwind by geometry.
+--
+-- The diff is CONTENT-based, so a redundant baseline (a gap re-pull that turns
+-- out to match) fires nothing at all. First boot on an empty store does report
+-- every zone as "added"; consumers that only care about teardown should watch
+-- "disabled" and "deleted".
+-- ---------------------------------------------------------------------------
+
+function Limes.onZoneEvent(fn)
+    zoneListeners[#zoneListeners + 1] = fn
+end
+
+local function sameFields(a, b)
+    for k, v in pairs(a) do if b[k] ~= v then return false end end
+    for k in pairs(b) do if a[k] == nil then return false end end
+    return true
+end
+
+local function sameRecord(a, b)
+    if a.inherits ~= b.inherits or a.template ~= b.template
+        or a.disabled ~= b.disabled or a.priority ~= b.priority
+        or a.area ~= b.area or #a.rects ~= #b.rects then
+        return false
+    end
+    for i = 1, #a.rects do
+        local r, s = a.rects[i], b.rects[i]
+        if r[1] ~= s[1] or r[2] ~= s[2] or r[3] ~= s[3] or r[4] ~= s[4] then return false end
+    end
+    -- Comparing RESOLVED records means a zone whose parent template moved
+    -- reports "edited" too, which is the point: its effective config changed
+    -- even though its own raw record did not.
+    return sameFields(a.fields, b.fields)
+end
+
+local function diffEvents(prev, cur)
+    local names, seen = {}, {}
+    for n in pairs(prev) do names[#names + 1] = n; seen[n] = true end
+    for n in pairs(cur) do if not seen[n] then names[#names + 1] = n end end
+    table.sort(names)
+
+    local events = {}
+    for i = 1, #names do
+        local n = names[i]
+        local a, b = prev[n], cur[n]
+        if not a then
+            events[#events + 1] = { event = "added",   name = n, zone = b }
+        elseif not b then
+            events[#events + 1] = { event = "deleted", name = n, zone = a }
+        elseif a.disabled ~= b.disabled then
+            events[#events + 1] = { event = b.disabled and "disabled" or "enabled",
+                                    name = n, zone = b }
+        elseif not sameRecord(a, b) then
+            events[#events + 1] = { event = "edited",  name = n, zone = b }
+        end
+    end
+    return events
+end
+
+local function fireZoneEvents(events)
+    for i = 1, #events do
+        local e = events[i]
+        for j = 1, #zoneListeners do
+            local ok, err = pcall(zoneListeners[j], e.event, e.name, e.zone, Limes.revision)
+            if not ok then warn("onZoneEvent listener error: " .. tostring(err)) end
+        end
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -240,7 +390,10 @@ local function flattenChain(name, raw, warnings)
     return out
 end
 
+-- Returns the lifecycle events this rebuild implies (§5.1). Callers stamp the
+-- revision before firing them, so listeners see the rev the events belong to.
 local function rebuild(warnings)
+    local prev = resolved
     resolved, index = {}, {}
     local names = {}
     for name in pairs(rawStore) do names[#names + 1] = name end
@@ -279,6 +432,8 @@ local function rebuild(warnings)
             index[#index + 1] = { rec = rec, bbox = bbox }
         end
     end
+
+    return diffEvents(prev, resolved)
 end
 
 local function fireChanged()
@@ -294,8 +449,11 @@ end
 function Limes.apply(rawZones, rev)
     rawStore = rawZones or {}
     local warnings = {}
-    rebuild(warnings)
+    local events = rebuild(warnings)
     Limes.revision = tonumber(rev) or (Limes.revision + 1)
+    -- Zone events first, so standing side effects unwind against the rebuilt
+    -- store before the wholesale re-derivers run.
+    fireZoneEvents(events)
     fireChanged()
     return warnings
 end
@@ -311,8 +469,9 @@ function Limes.applyDelta(changed, removed, rev)
         rawStore[name] = rec
     end
     local warnings = {}
-    rebuild(warnings)
+    local events = rebuild(warnings)
     Limes.revision = tonumber(rev) or (Limes.revision + 1)
+    fireZoneEvents(events)
     fireChanged()
     return warnings
 end
@@ -366,6 +525,63 @@ end
 -- no business here - read resolved records.
 function Limes.raw()
     return rawStore
+end
+
+-- ---------------------------------------------------------------------------
+-- Shipped seed (§8.1) - TEMPLATES ONLY, never geography.
+--
+-- Baked rectangles would be deleted by the first thing we tell an admin to do:
+-- import replaces the store wholesale. Baked coordinates also assume a map set.
+-- Geometry-less templates have neither problem - they cannot affect a zone that
+-- does not name them - and they buy three things: the editor has something to
+-- inherit from on day one, "_default" becomes a real editable record instead of
+-- an implicit root (flattenChain already prepends raw["_default"] when it
+-- exists), and the inheritance contract is demonstrated rather than described.
+--
+-- Only `tier` carries values here, because tier is the one scalar LMCore itself
+-- registers that means anything to a satellite later. When Dirge registers its
+-- vocabulary at M1 the admin adds those values to these same templates - that
+-- is the intended growth path, not a second ladder.
+--
+-- The "Tier_" prefix is a namespace: imported PhunZones data brings bare names
+-- like Hard and Very_Easy, and an admin reading an inherits chain should never
+-- have to guess which system a template came from.
+-- ---------------------------------------------------------------------------
+
+Limes.SEED = {
+    _default    = {                        fields = { tier = 0 } },
+    Tier_Calm   = { inherits = "_default", fields = { tier = 2 } },
+    Tier_Normal = { inherits = "_default", fields = { tier = 5 } },
+    Tier_Harsh  = { inherits = "_default", fields = { tier = 8 } },
+    Tier_Lethal = { inherits = "_default", fields = { tier = 10 } },
+}
+
+local function copyRaw(src)
+    local out = {}
+    for name, rec in pairs(src) do
+        local fields = {}
+        for k, v in pairs(rec.fields or {}) do fields[k] = v end
+        local rects = {}
+        for i, r in ipairs(rec.rects or {}) do rects[i] = { r[1], r[2], r[3], r[4] } end
+        out[name] = { inherits = rec.inherits, rects = rects, fields = fields }
+    end
+    return out
+end
+
+-- Seed ONLY into an empty store - first boot, no .ini, no import candidate.
+-- Never a merge on every boot: that would resurrect templates an admin
+-- deliberately deleted, which is the tombstone trap from the other side.
+-- Returns true if it seeded. The copy matters - without it the module constant
+-- becomes the live store and the first edit mutates the shipped defaults.
+function Limes.seedIfEmpty()
+    -- pairs(), NOT next(): B42's Kahlua registers no global `next`, so
+    -- `next(t) ~= nil` throws "Object tried to call nil" on a dedicated server
+    -- while passing green under real Lua 5.1 in tools\run-tests. A single
+    -- pairs() step is the family idiom for the same test (RDSelect, RDWire,
+    -- RQSvDormant, COClient, ICClient all carry this note).
+    for _ in pairs(rawStore) do return false end
+    Limes.apply(copyRaw(Limes.SEED))
+    return true
 end
 
 return LMCore

@@ -50,6 +50,7 @@ local Select = RDSelect
 -- Shared scroll primitive (Core). Same thumb, same wheel distance, same
 -- track-click as the Janitor dial form - the parts grid is not its own dialect.
 require "DFScroll"
+require "DFViews"
 
 RCVehicleTab = RCVehicleTab or {}
 local T = RCVehicleTab
@@ -176,9 +177,10 @@ local STALL_TICKS = 300   -- ~10s at 30Hz with no new page
 
 T.rows    = T.rows or {}
 T.scope   = T.scope or "loaded"
--- Which inner view is showing. Defaulted at file scope as well as in build,
--- because the resize hook can reach layout() before build() has ever run.
-T.view    = T.view or "fleet"
+-- Which inner view is showing is DFViews' state now, not a field here. The
+-- resize hook can still reach layout() before build() has ever run, so every
+-- read of T.views is guarded - a nil one falls through to the Fleet path, which
+-- returns immediately on its own missing listBox.
 local pending = nil       -- { seq, rows, pages, idle, capped, seen }
 
 local function isAdmin()
@@ -1128,8 +1130,8 @@ local function attachChrome(panel)
         -- letting the fleet chrome run first is what keeps a hidden view's
         -- panes from bleeding through - drawn chrome has no visibility flag of
         -- its own, so the branch IS its visibility.
-        if T.view == "janitor" then
-            if RCJanitorView then RCJanitorView.draw(self_) end
+        if T.views and T.views:active() ~= "fleet" then
+            T.views:draw(self_)
             return
         end
         drawListHead(self_)
@@ -1171,17 +1173,14 @@ local function layout(panel, x, y, w, h)
     -- The view strip is claimed FIRST, above everything either view owns, so
     -- it stays in one place while the body underneath changes completely.
     local strip = R:header(m.btnH + m.gap)
-    local vx = strip.x
-    for _, b in ipairs(T.viewBtns or {}) do
-        b:setX(vx); b:setY(strip.y)
-        vx = vx + b:getWidth() + 2
-    end
+    if T.views then T.views:layoutStrip(strip.x, strip.y) end
 
-    if T.view == "janitor" then
+    -- Anything that is not the Fleet view owns its whole body rect and lays
+    -- itself out; DFViews dispatches to whichever is active, so adding a third
+    -- view later needs no change here.
+    if T.views and T.views:active() ~= "fleet" then
         local body = R:rest()
-        if RCJanitorView then
-            RCJanitorView.layout(panel, body.x, body.y, body.w, body.h)
-        end
+        T.views:layoutActive(panel, body.x, body.y, body.w, body.h)
         return
     end
 
@@ -1243,8 +1242,9 @@ local function layout(panel, x, y, w, h)
     T.listHeadRect = { x = listX, y = body.y, w = listW, h = LIST_HEAD_H }
     local listY = body.y + LIST_HEAD_H
     local listH = body.h - LIST_HEAD_H
-    T.listBox:setX(listX);      T.listBox:setY(listY)
-    T.listBox:setWidth(listW);  T.listBox:setHeight(listH)
+    -- sizeList, not four setters: the scrollbar is built at construction size
+    -- and a bare resize leaves it stale, which clips every row away. See DFKit.
+    DFKit.sizeList(T.listBox, listX, listY, listW, listH)
     T.listRect = { x = listX, y = listY, w = listW, h = listH }
 
     -- The verdict leads, across the full width of the evidence below it.
@@ -1275,39 +1275,18 @@ end
 -- to it over time. Splitting them across top-level tabs cost a slot and made
 -- the policy and its consequences feel unrelated.
 --
--- SWITCHING IS VISIBILITY, not rebuilding. Both views' widgets are constructed
--- once in build() and live in the same panel for the tab's whole life; setView
--- only toggles which set is visible and re-runs layout. That matters for
--- correctness as much as speed: setVisible(false) also stops an element
--- receiving mouse events, so a hidden view's buttons and hotspots cannot be
--- clicked through the visible one - which is exactly the bug that would follow
--- from merely drawing over them.
+-- The mechanism used to live here and now lives in DFViews (Core), because
+-- Husbandry wants the same thing for Animals|Hutches and this is forty lines
+-- whose subtlest part - that setVisible(false) also stops an element receiving
+-- MOUSE events, which is why switching is visibility and not drawing over the
+-- top - is exactly what a second copy would get wrong. See that file's header.
+--
+-- What stays here is the only part that is about vehicles: which views exist,
+-- what they are called, and that entering the Janitor re-reads server state
+-- (its onShow), which DFViews calls after the relayout.
 -- ---------------------------------------------------------------------------
 local function setView(view)
-    T.view = (view == "janitor") and "janitor" or "fleet"
-
-    local fleetOn = (T.view == "fleet")
-    for _, wdg in ipairs(T.fleetWidgets or {}) do
-        if wdg then pcall(function() wdg:setVisible(fleetOn) end) end
-    end
-    for _, wdg in ipairs(T.janitorWidgets or {}) do
-        if wdg then pcall(function() wdg:setVisible(not fleetOn) end) end
-    end
-
-    for _, b in ipairs(T.viewBtns or {}) do
-        b.borderColor = (b.dfView == T.view)
-            and { r = DFKit.col.accent.r, g = DFKit.col.accent.g, b = DFKit.col.accent.b, a = 0.9 }
-            or  { r = DFKit.col.line.r,   g = DFKit.col.line.g,   b = DFKit.col.line.b,   a = 0.4 }
-    end
-
-    if T.host then layout(T.host, T.hostX, T.hostY, T.hostW, T.hostH) end
-
-    -- Entering the Janitor view re-reads server state. The dials are server
-    -- truth and an admin coming back to them should not be shown a snapshot
-    -- taken before whatever they just did on the Fleet view.
-    if not fleetOn and RCJanitorView and RCJanitorView.onShow then
-        RCJanitorView.onShow()
-    end
+    if T.views then T.views:set(view) end
 end
 T.setView = setView
 
@@ -1424,20 +1403,24 @@ local function build(spec, panel, x, y, w, h)
     -- Built last so both views' widgets already exist to be hidden. Fleet is
     -- always the landing view: it is the one an admin opens the tab to use,
     -- and the Janitor's dials are a place you go deliberately.
-    T.viewBtns = {}
-    local VIEWS = {
-        { id = "fleet",   label = "Fleet",   w = 72,
-          tip = "The fleet itself - find a vehicle, inspect it, act on it." },
-        { id = "janitor", label = "Janitor", w = 82,
-          tip = "How reclamation and replacement behave: the dials, the token pools, and the vanilla retrofit. To see WHICH vehicles are about to be reclaimed, use the Due scope on Fleet." },
+    -- Fleet leads because it is what an admin opens the tab to use; the
+    -- Janitor's dials are a place you go deliberately.
+    T.views = DFViews.new{
+        views = {
+            { id = "fleet",   label = "Fleet",   w = 72,
+              tip = "The fleet itself - find a vehicle, inspect it, act on it." },
+            { id = "janitor", label = "Janitor", w = 82, view = RCJanitorView,
+              tip = "How reclamation and replacement behave: the dials, the token pools, and the vanilla retrofit. To see WHICH vehicles are about to be reclaimed, use the Due scope on Fleet." },
+        },
+        -- The strip lives above both views, so a switch has to re-run the
+        -- host's layout: the body rect underneath changes shape completely.
+        relayout = function()
+            if T.host then layout(T.host, T.hostX, T.hostY, T.hostW, T.hostH) end
+        end,
     }
-    for _, v in ipairs(VIEWS) do
-        local b = DFKit.button(panel, 0, 0, v.w, v.label, panel, function()
-            setView(v.id)
-        end, "action", { tooltip = v.tip })
-        b.dfView = v.id
-        T.viewBtns[#T.viewBtns + 1] = b
-    end
+    -- Strip buttons belong to the TAB, not to either view - they are never
+    -- hidden by a switch, so they go in neither widget list.
+    T.views:attachStrip(panel)
 
     -- APPENDED, never a literal list. T.btnSpawn is nil when the player lacks
     -- spawner access, and a nil in the middle of a table constructor truncates
@@ -1451,11 +1434,11 @@ local function build(spec, panel, x, y, w, h)
     keep(T.btnRefresh); keep(T.btnTeleport); keep(T.btnSpawn); keep(T.btnDelete)
     for _, b in ipairs(T.scopeBtns) do keep(b) end
 
-    -- The Janitor view builds its own widgets into this same panel and hands
-    -- back a flat list, so the host can toggle them without knowing what any
-    -- of them are.
-    T.janitorWidgets = (RCJanitorView and RCJanitorView.attach)
-        and RCJanitorView.attach(panel) or {}
+    -- Fleet is built inline by this file, so its widgets are handed over
+    -- directly. Every other view builds its own into the same panel and hands
+    -- back a flat list, which attachViews collects.
+    T.views:setWidgets("fleet", T.fleetWidgets)
+    T.views:attachViews(panel)
 
     attachChrome(panel)
     setView("fleet")

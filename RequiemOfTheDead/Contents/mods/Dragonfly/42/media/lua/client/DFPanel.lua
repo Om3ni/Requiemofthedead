@@ -120,8 +120,15 @@ function DFPanel:rebuild()
     y = y + TAB_HEIGHT + PADDING
     self.contentTopY = y
 
-    if #tabs > 0 then
-        self:showTab(self.activeTabId or tabs[1].id)
+    -- Landing tab skips placeholders. A disabled tab sorted to the front would
+    -- otherwise open the panel onto an empty content area, indistinguishable
+    -- from a tab whose build threw.
+    local landing = self.activeTabId
+    if not DFRegistry.isSelectable(DFRegistry.tabs[landing or ""]) then
+        landing = DFRegistry.firstSelectable(tabs)
+    end
+    if landing then
+        self:showTab(landing)
     else
         self:showEmptyState()
     end
@@ -132,6 +139,19 @@ function DFPanel:contentHeight()
 end
 
 function DFPanel:showEmptyState()
+    -- Build the content area if nothing has yet. It is normally created by
+    -- showTab, which by definition has not run when we land here - so on a
+    -- fresh panel self.contentArea is nil and this used to nil-index. Latent
+    -- while Console always registered; reachable now that a roster of nothing
+    -- but placeholders also arrives here.
+    if not self.contentArea then
+        local y = self.contentTopY or (self:titleBarHeight() + PADDING + TAB_HEIGHT + PADDING)
+        self.contentArea = ISPanel:new(PADDING, y, self.width - PADDING * 2, self:contentHeight())
+        self.contentArea.background = false
+        self.contentArea:initialise()
+        self.contentArea:instantiate()
+        self:addChild(self.contentArea)
+    end
     local msg = "No tabs registered. Install Reaper or Husbandry to add tabs."
     local lbl = ISLabel:new(PADDING, PADDING + 20, BADGE_HEIGHT, msg, 0.7, 0.7, 0.7, 1, UIFont.Small, true)
     lbl:initialise()
@@ -172,8 +192,14 @@ function DFPanel:showTab(id)
     end
 end
 
+-- Placeholders are refused here as well as being drawn greyed. ISButton's
+-- `enable` flag stops the mouse path, but joypad focus and any future
+-- programmatic showTab do not go through it - so the refusal lives at the one
+-- place every route passes.
 function DFPanel:onTabButton(button)
-    if button and button.internal then self:showTab(button.internal) end
+    if not (button and button.internal) then return end
+    if not DFRegistry.isSelectable(DFRegistry.tabs[button.internal]) then return end
+    self:showTab(button.internal)
 end
 
 -- Prerender refresh: live capability check on tab buttons so a role change
@@ -183,7 +209,12 @@ function DFPanel:prerender()
     local p = getPlayer()
     for _, btn in ipairs(self.tabButtons) do
         local spec = DFRegistry.tabs[btn.internal]
-        if spec and spec.capability then
+        -- Order matters: `disabled` is a property of the build and outranks the
+        -- per-player capability check, which would otherwise re-enable a
+        -- placeholder every frame for anyone whose role happens to pass.
+        if spec and spec.disabled then
+            btn.enable = false
+        elseif spec and spec.capability then
             btn.enable = DFCore.roleHas(p, spec.capability)
         else
             btn.enable = true

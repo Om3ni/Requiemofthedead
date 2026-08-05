@@ -80,8 +80,7 @@ local function layout(panel, x, y, w, h)
     ui.clearBtn:setX(bar.x + 280);    ui.clearBtn:setY(bar.y)
     ui.testBtn:setX(bar.x + 370);     ui.testBtn:setY(bar.y)
 
-    ui.list:setX(R.x);        ui.list:setY(R.y)
-    ui.list:setWidth(R.w);    ui.list:setHeight(R.h)
+    DFKit.sizeList(ui.list, R.x, R.y, R.w, R.h)
 end
 
 local function build(spec, panel, x, y, w, h)
