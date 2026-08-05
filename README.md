@@ -116,3 +116,17 @@ Husbandry and Last Rites. Display names are free text; mod ids are frozen.
   identifiers keep the id spelling - frozen, not prose.
 - Core emits its event registry as `RFTD/schema.json` at boot; external tooling in
   `tools/` consumes that artifact rather than carrying its own copy of the contract.
+
+## Licence
+
+Copyright © 2026 Project_Omen. Released under the **GNU General Public License v3.0** —
+full text in [LICENSE](LICENSE), plain-language summary and third-party notices in
+[NOTICE.md](NOTICE.md).
+
+Redistribute it if you like, including on the Workshop, but a redistributed copy must keep
+the copyright notices, stay under GPL-3.0, ship its complete source, and state what was
+changed. Stripping the attribution is a licence violation, not a style choice.
+
+Two components are **not** Project_Omen's to relicense and are excluded until their status
+is settled — the PhunZones2-derived map-widget ritual in `Longstrider/` (tracked as
+LM-EDIT-1) and the `RFTDEchoes` fork. See [NOTICE.md](NOTICE.md).
