@@ -1,19 +1,29 @@
 # RFTDLimes — what is left to build
 
-Handoff written 2026-08-05. Companion to `docs/limes-design.md`, which holds the
-*reasoning*; this file holds the *queue*. Where the two disagree, the design doc wins and
-this file is stale.
+Handoff written 2026-08-05, updated the same evening for the 1.1.0 upload. Companion to
+`docs/limes-design.md`, which holds the *reasoning*; this file holds the *queue*. Where the
+two disagree, the design doc wins and this file is stale.
 
 **State of play:** M0 (store, sync, persistence, import) and M1 (Dirge + suppression
 bridges) are shipped and live on Mosaic. M4a (the editor: draft model, save wire, map
-overlay, Zone Selector | Details tabs) is built and **green on the gates but never
-verified in game**. M2, M3 and the enforcement half of M4 do not exist yet.
+overlay, Zone Selector | Details tabs) is built and **green on the gates but never verified
+in game**. M2, M3 and the enforcement half of M4 do not exist yet.
+
+**Released as suite 1.1.0**, staged to the Workshop item `3772176444` on 2026-08-05
+(commit `d548d01`). Risk of shipping the unverified editor was raised and accepted: this is
+a mod for the RotD server and its subscribers know what they are running. So §0 below is no
+longer "verify before shipping" — it is "verify against the build that is live".
 
 ---
 
 ## 0. Verify M4a in game — do this before building anything else
 
 None of the editor has been driven by a human. Every item below assumes it works.
+
+Before debugging anything, run `tools\check-deploy.bat -Once`. Steam re-validates the
+workshop item on launch and silently rewrites both trees with the PUBLISHED build — a
+symptom that looks like a code bug is often a tree that quietly stopped being your code.
+Now that 1.1.0 is published, the deployed build and the repo should finally agree.
 
 - [ ] **Join baseline.** A client logging in to a populated store must receive it.
       *This has never been proven.* Every observation so far was either an empty store or
@@ -104,7 +114,22 @@ is honest today and becomes a lie the moment anyone assumes otherwise.
 - [ ] Live-store oddities seen 2026-08-05, admin's call, not bugs in our code:
       `RosewoodCommercial` has a `zlewtkey` typo, and `_default` carries `tier = 2.5`.
 
-## 6. Retirement — the point of all of this
+## 6. Release mechanics — learned the hard way on the 1.1.0 upload
+
+- **`stage-upload.ps1` mirrors the FILESYSTEM, not git.** A gitignored `RFTDLimes.zip` was
+  sitting in `Contents/mods/` and would have shipped inside the Workshop item. Before every
+  upload, look at `Contents/mods/` with your eyes — `git status` will not tell you.
+- **The version is lockstep**: one number across all 14 mods, 28 `mod.info` files, bumped
+  once per upload and sized by the batch's biggest change. There is no per-mod version.
+- **`workshop.txt` carries a mod COUNT in prose** ("all fourteen mod IDs arrive together")
+  as well as the list. The count went stale when Echoes was pulled and nothing caught it.
+  Check both whenever the family gains or loses a member.
+- **Publishing is a manual in-game step** — Workshop → Manage Workshop Items → Update.
+  Staging is only a local mirror, so it is safe to re-run and re-check.
+- Order that works: gates (`check-lua`, `stamp-license.py --check`, `run-tests`) → version
+  bump → `stage-upload.ps1 -DryRun` → real mirror → verify the staged tree → publish.
+
+## 7. Retirement — the point of all of this
 
 - [ ] PhunZones, PhunSprinters and PhunLewt come off the server's mod list once M2, M3 and
       M4b are enforcing. Legacy-item deprecation per `docs/legacy-items/DEPRECATION.md`.
