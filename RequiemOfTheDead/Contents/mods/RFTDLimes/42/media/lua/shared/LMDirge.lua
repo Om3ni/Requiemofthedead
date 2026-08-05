@@ -62,13 +62,36 @@ local SPACING_FIELDS = {
     dirgeScavengerSpacing  = "scavengerSpacing",
 }
 
+-- Presentation for the Details panel (§11.3). A registrant is the only thing
+-- that knows what its own dial means, so the label and the help travel WITH the
+-- registration rather than being restated in the panel - the panel would then be
+-- a second description of Dirge that drifts from Dirge.
+Limes.mods.register("LMDirge", { label = "Dirge", order = 10,
+    description = "Per-zone override of the special-infected spawn table. A zone that"
+        .. " sets nothing here inherits the sandbox values; a blank field means"
+        .. " inherit, not zero." })
+
+-- Pretty name from the field name, so eleven near-identical registrations do not
+-- need eleven hand-written strings that can disagree with the key they describe.
+-- dirgeJuggernautWeight -> "Juggernaut weight".
+local function prettify(name)
+    local body = name:gsub("^dirge", "")
+    body = body:gsub("(%l)(%u)", "%1 %2")       -- juggernautWeight -> ...t W...
+    body = body:gsub("(%u)(%u%l)", "%1 %2")     -- EMPWeight -> EMP Weight
+    return (body:sub(1, 1):upper() .. body:sub(2))
+end
+
 for name in pairs(WEIGHT_FIELDS) do
     Limes.fields.register("LMDirge", name,
-        { type = "number", min = 0, max = 100, side = "server" })
+        { type = "number", min = 0, max = 100, side = "server",
+          order = (name == "dirgeSpawnChance") and 1 or 2, label = prettify(name),
+          help = "Relative share of this zone's special spawns. 0 means never." })
 end
 for name in pairs(SPACING_FIELDS) do
     Limes.fields.register("LMDirge", name,
-        { type = "number", min = 0, max = 300, side = "server" })
+        { type = "number", min = 0, max = 300, side = "server",
+          order = 3, unit = "tiles", label = prettify(name),
+          help = "Minimum tiles between two of this kind in this zone." })
 end
 
 -- ---------------------------------------------------------------------------

@@ -312,13 +312,18 @@ local function build(spec, panel, x, y, w, h)
 
         if sel then
             local r = sel.region
-            local selN = #(LSTour.computeCells(r, LSTours.cellSize))
+            -- Count, don't build. A region is no longer clamped to the cap while
+            -- it is being drawn, so materialising its cells for a status line is
+            -- unbounded work on every handle release.
+            local selN = LSTour.cellCountOf(r, LSTours.cellSize)
             local selEta = math.ceil(selN * LSTours.dwellMs / 1000)
+            local over = selN > LSTours.maxCells
             stats:setName(string.format(
-                "%s: %dx%d  %d cells ~%ds    |    All %d tours: %d cells ~%ds  (cap %d)",
+                "%s: %dx%d  %d cells ~%ds%s    |    All %d tours: %d cells ~%ds  (cap %d)",
                 sel.name, r[3] - r[1], r[4] - r[2], selN, selEta,
+                over and "  OVER CAP" or "",
                 #LSTours.list, allN, allEta, LSTours.maxCells))
-            runSelBtn.enable = selN > 0 and selN <= LSTours.maxCells
+            runSelBtn.enable = selN > 0 and not over
         else
             stats:setName(#LSTours.list == 0
                 and "No tours yet - click Add to drop a region, then shape it with the handles."

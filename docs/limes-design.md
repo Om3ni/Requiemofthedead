@@ -449,6 +449,31 @@ PhunZones formats at runtime.
 4. **M3** — LMLoot both directions. PhunLewt retires.
 5. **M4** — LMRestrict tiers + LMEditor (after LM-EDIT-1 re-authoring). PhunZones
    retires; legacy-item deprecation per `docs/legacy-items/DEPRECATION.md` practice.
+   - **M4a — geometry, built 2026-08-04.** `shared/LMEdit.lua` (the draft: copy,
+     validate, prune, diff — `test_lmedit.lua`, 112 assertions), the `saveZones`
+     RDNet command in LMSync, `client/LMMapEditor.lua` (multi-rect draw / resize /
+     move / add on an embedded map), and the Zones tab split into **Import | Edit**
+     behind DFViews. Import stays the landing view until the editor has been used
+     in anger. Three things worth carrying forward:
+     - **The persist grammar is a validation rule, not a serialisation detail.**
+       `LMPersist.parse` matches sections against `[%w_%-%.]+` and keys against
+       `[%w_]+`. A zone named `Rosewood Fire Dept` serialises, crosses the wire and
+       resolves live — then vanishes on the next boot, silently, because the
+       section header will not match on the way back in. `LMEdit.nameProblem`
+       refuses it at the keystroke; a test reads LMPersist's source as text so the
+       duplicated pattern cannot rot.
+     - **Errors are scoped to what a save touched.** The server re-validates the
+       *merged* store but only refuses on errors in changed zones, so a
+       pre-existing defect somewhere else cannot wedge every future edit.
+     - **Rename rewrites the children in the same operation.** That is what
+       finally makes the Medium/Intermediate wart fixable (§8.1's known wart):
+       done as two steps the store spends the interval with every child pointing
+       at a zone that no longer exists.
+   - **M4b — the typed field form**, still to build: DFForm renders bool/int/enum
+     and Limes has string fields (`title`, `subtitle`, `zeds`, `lewtkey`), so the
+     shared form needs a text kind before the editor can drive it from
+     `Limes.fields.list()`. Only `disabled` is exposed today, via a button, because
+     it is the one field that changes what the map means.
 
 Each milestone is uploadable alone (lockstep version bump per conventions), each
 feature file removable alone, and every Lua file passes `tools\check-lua.bat` before
@@ -462,9 +487,20 @@ Zones tab**, not on the vanilla M-key world map.
 - **The pattern is already built and shipping.** `LSMap` wraps `ISMiniMapInner` in an
   `ISPanel` and owns the one-time bring-up ritual; `LSGridOverlay` is already a rectangle
   editor — world↔screen transforms, draw-all-with-only-selected-showing-handles, corner
-  resize, shift-drag body move, hit testing, cell lattice, a max-cells refusal, and a
-  `locked` mode that keeps pan/zoom alive while edits are off. Swap "tour" for "zone" and
-  that is the whole interaction model, already debugged against a real map widget.
+  resize, shift-drag body move, hit testing, cell lattice, and a `locked` mode that keeps
+  pan/zoom alive while edits are off. Swap "tour" for "zone" and that is the whole
+  interaction model, already debugged against a real map widget.
+- **One lesson from it is inherited as a rule: a limit never refuses a drag.**
+  `LSGridOverlay` used to refuse any resize that pushed a region past its cell cap, so the
+  handle "stuck" at the limit. In the field that read as *drag resizing is broken* — the
+  refusal was silent, and because a region could cross the cap by routes that never touch a
+  handle, an over-cap region had every handle frozen including the drags that would have
+  fixed it. The escape was to delete the region and start again. Fixed 2026-08-04
+  (`test_lsgrid.lua`, 54 assertions) by moving the cap to where it means something — the
+  run is refused with a message that names the number and the remedy, and the rectangle
+  itself is outlined and labelled while it is over. **Limes has more limits than Longstrider
+  does** (field ranges, rect counts, overlap): every one of them validates on Save, annotates
+  on the map, and never blocks the gesture.
 - **No vanilla surface to contend for.** The M-key screen is shared ground with every
   player and every other UI mod. Dragonfly is admin-gated, ours, and the Zones tab is
   already where the importer lives.
@@ -492,6 +528,62 @@ Zones tab**, not on the vanilla M-key world map.
   editor. The embedded route does not increase that debt materially: the bring-up ritual
   is the most-cribbed part, but the transform and hook mechanics are flagged as derived
   too, so the vanilla-map route would owe the same re-authoring minus one function.
+
+### 11.3 M4 editor — the shape, decided 2026-08-04 from the first render
+
+The first build put the map beside a list with a band of readouts underneath. Seeing it
+settled the shape, and the shape it settled on is not a bigger version of that.
+
+**Two views, renamed.** `Zone Selector` leads; `Details` is second. Import stops being a
+view: it becomes a button that pops out a window carrying the paste controls *and* a
+console filtered to Limes, so import warnings land in the log everyone already reads
+(`DFLog.push`, source `Limes`) instead of in eight fixed label slots that truncate.
+
+**Zone Selector.** Buttons along the top, the Husbandry/Vehicles idiom
+(`DFKit.layout(...):header(...)`), status in that same bar. Nothing across the bottom —
+the selection line, the help line and the reserved problem rows all go. The map is
+full height on the right. The left column is **two stacked cells**:
+
+- **top — the zone tree.** Zones nested inside zones display as folders and children,
+  because that is what they are.
+- **bottom — the properties of whatever is selected.** Name, tier, and the policies that
+  are true for that zone absent any other mod: loot, restrictions, sprinter allocation.
+
+**Containment makes a child.** Draw a zone inside another and it becomes that zone's
+child: it adopts the parent's policies as defaults and can override any of them. A
+harder pocket inside an otherwise intermediate area — one apartment building in Rosewood
+— is then a zone drawn inside Rosewood with `tier` overridden, and nothing else.
+
+> **This overloads `inherits`, and the resolution is deliberate.** The store has one
+> parent slot per zone, and the imported layer spends it on the tier ladder
+> (`Riverside inherits Hard`). Spatial nesting wants the same slot. Rather than add a
+> second chain and double the resolver, **the spatial parent IS `inherits`, and tier goes
+> back to being what it already is — a field you set, not a template you point at.**
+> Templates keep working unchanged (a template is just a zone with no rects, which is
+> why it shows in the tree as a folder with no geometry), and an imported layer keeps
+> resolving exactly as it does today. What changes is that new zones get their parent
+> from where they are drawn instead of from a dropdown. `Limes.getLocation` already
+> resolves overlaps smallest-area-first, so the lookup half of nesting has been correct
+> since M0 — this only makes the *fields* follow the geometry.
+
+**Details — Limes becomes a surface other mods register with.** Two panels: the list of
+registered mods, and that mod's settings. `Limes.fields.register` has carried an `owner`
+since M0, so the grouping already exists in the data; what M4 adds is the display
+metadata (`Limes.mods.register`) and the UI hints on a field spec — headers, pill
+buttons, integer boxes, colour wheels. This is where an admin tunes Dirge's or
+Reclamation's per-zone overrides, and where a third-party mod puts its own.
+
+Consequences worth stating, because they are load-bearing:
+
+- **A registered field is a public contract.** Once a mod registers `sprinterRisk`, the
+  editor renders it, the store persists it, the wire strips it by `side`, and an admin
+  expects it to keep meaning what it meant. Field registration is versioned by the suite
+  version like everything else, and a rename is a migration, not an edit.
+- **The colour wheel does not exist yet.** DFForm renders `bool`, `int` and `enum`. Text
+  and colour are new kinds, and they are new in *Core*, which means every form in the
+  family gets them — so they are designed there, not bolted onto this one panel.
+- **Nothing about this changes §6.1.** Deeper trees and more registered fields make the
+  store bigger, which makes rules 4, 5 and 6 matter more, not less.
 
 ### 11.2 M0 deviations from this document
 

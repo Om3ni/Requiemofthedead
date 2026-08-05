@@ -70,12 +70,32 @@ function LSTour.computeCells(region, cellSize)
     return cells, centers
 end
 
+-- How many cells a region WOULD produce, without building any of them.
+--
+-- computeCells materialises every cell as two four-number tables, which is the
+-- right thing when a tour is about to walk them and the wrong thing for a
+-- readout. The readout is the hot one: LSTab recomputes on every handle release
+-- and on every Cell-size keystroke, and since regions are no longer clamped at
+-- drag time (LSGridOverlay - the cap is a *run* limit, not a drawing limit) an
+-- admin can legitimately have a region on screen that would be millions of
+-- cells. Counting must therefore be O(1) and allocate nothing.
+--
+-- The arithmetic is lifted verbatim from computeCells' own loop bounds rather
+-- than re-derived, so the count and the walk cannot disagree about what a
+-- region contains.
+function LSTour.cellCountOf(region, cellSize)
+    if not region then return 0 end
+    local cs = math.max(1, math.floor(cellSize or 50))
+    local cols = math.max(1, math.ceil((region[3] - region[1]) / cs))
+    local rows = math.max(1, math.ceil((region[4] - region[2]) / cs))
+    return cols * rows
+end
+
 -- Total cell count for a list of jobs ({ name, region }), used for cap/ETA.
 function LSTour.countCells(jobs, cellSize)
     local n = 0
     for _, j in ipairs(jobs or {}) do
-        local cells = LSTour.computeCells(j.region, cellSize)
-        n = n + #cells
+        n = n + LSTour.cellCountOf(j.region, cellSize)
     end
     return n
 end

@@ -31,8 +31,16 @@ LMSuppress = LMSuppress or {}
 -- side = client: RQSuppress is the only consumer and it runs here, so the
 -- server has no use for this value - but unlike the dirge vocabulary it must
 -- reach clients, which is exactly the distinction the tag exists to make (§5).
+Limes.mods.register("LMSuppress", { label = "Weapon suppression", order = 20,
+    description = "Feeds the shared RQSuppress term group, so a zone can quieten"
+        .. " weapons the same way any other suppression source does." })
+
 Limes.fields.register("LMSuppress", "weaponDebuffMult",
-    { type = "number", min = 0, max = 1, side = "client" })
+    { type = "number", min = 0, max = 1, side = "client",
+      label = "Weapon debuff multiplier", step = 0.05,
+      help = "Multiplier applied to weapon effectiveness inside this zone."
+          .. " Left unset the zone says nothing at all, which keeps the whole"
+          .. " suppression group quiet - it is not the same as setting 1." })
 
 -- nil, not 1.0, when there is nothing to say. RQSuppress treats a falsey
 -- return as "this source is quiet", and a quiet source keeps the whole group
