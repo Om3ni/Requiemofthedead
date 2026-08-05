@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- DFServer - command dispatcher and audit log.
 --
 -- Every client action routes through here. We re-validate the action's
@@ -138,3 +139,13 @@ end
 if Events.OnPlayerDisconnect then Events.OnPlayerDisconnect.Add(onDisconnect) end
 
 print("[Dragonfly] DFServer loaded (v" .. tostring(DFCore.VERSION) .. ")")
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

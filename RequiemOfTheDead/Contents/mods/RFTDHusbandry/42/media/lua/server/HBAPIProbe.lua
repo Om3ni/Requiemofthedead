@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- HBAPIProbe - runtime verification of IsoAnimal API surface.
 --
 -- Given an animal OID, the probe empirically confirms the API catalog's
@@ -159,3 +160,13 @@ function HBAPIProbe.runOn(oid, player)
     local _, accept = tryGet(function() return animal:getAcceptanceLevel(player) end)
     emit(player, "[probe] acceptance(toward you): " .. fmt(accept))
 end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- HBHusbandryTab - one Husbandry tab hosting Animals and Hutches.
 --
 -- WHY ONE TAB. They were two top-level entries in a bar that had reached nine,
@@ -94,3 +95,13 @@ Events.OnGameStart.Add(function()
     if not ok then print("[Husbandry] HBHusbandryTab registerTab error: " .. tostring(err)) end
     print("[Husbandry] HBHusbandryTab registered into Dragonfly (Animals | Hutches)")
 end)
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

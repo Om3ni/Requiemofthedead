@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQCommon.lua - Dirge's shared brain stem (both sides).
 --
 -- Exists to kill two classes of drift that shipped in 1.0.x:
@@ -111,3 +112,13 @@ RQCommon.HEALTH_MULTIPLIER = {
 RQCommon.JUGGERNAUT_MIN_BASE_HEALTH = 1.0
 
 return RQCommon
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

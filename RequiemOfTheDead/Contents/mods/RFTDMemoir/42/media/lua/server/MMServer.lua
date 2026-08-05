@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- MMServer.lua - Memoir authority (RFTD convention: <Px>Server single dispatcher).
 -- The server is the ONLY place mutation happens. The client proposes; the server
 -- validates and disposes. Snapshot lives in the JOURNAL ITEM's modData, so the book
@@ -308,3 +309,13 @@ end
 Events.OnClientCommand.Add(onClientCommand)
 
 MMlog("MMServer dispatcher registered")
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

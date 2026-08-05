@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- MMRestore.lua - disaster-recovery character restore from the memoir archive.
 -- Why: a mid-season wipe or corrupted players.db should cost players THINGS, not
 -- PROGRESSION. MMAudit's per-player archive (latest.json) carries the full
@@ -450,3 +451,13 @@ Events.OnServerStarted.Add(function()
 end)
 
 return MMRestore
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

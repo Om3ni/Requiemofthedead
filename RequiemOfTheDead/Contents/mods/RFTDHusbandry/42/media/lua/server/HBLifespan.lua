@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- HBLifespan - server-side old-age mitigation for tame animals.
 --
 -- WHY: Vanilla animal lifespan is hard-capped at ~maxAgeGeriatric real days
@@ -263,3 +264,13 @@ end
 -- Hourly is plenty: engine age changes once per game-day, and we only need to
 -- clamp before an animal crosses the geriatric threshold.
 Events.EveryHours.Add(tick)
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- HBHutchUI - extends the vanilla hutch window (ISHutchRoostParentPanel) with
 -- a bedding "hay meter" beside the dirtiness meter, and an "Add Hay" button
 -- beside the "Clean" button. Reads HBBedding state; the button walks the player
@@ -98,3 +99,13 @@ function ISHutchRoostParentPanel:render()
         btn.enable = true;  btn.tooltip = nil
     end
 end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- RCPhunZones - soft-dependency integration with PhunZones2 (DESIGN §6; the
 -- Dirge RQPhunZones pattern - reuse zone frameworks, never reinvent them).
 --
@@ -28,3 +29,13 @@ if activeMods:contains("phunzones2") or activeMods:contains("phunzones2test") th
 else
     print("[RC] PhunZones2 not detected, zone dismantle rules inactive")
 end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

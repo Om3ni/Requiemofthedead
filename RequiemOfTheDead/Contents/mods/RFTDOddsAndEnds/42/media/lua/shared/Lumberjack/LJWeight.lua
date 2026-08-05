@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- LJWeight.lua - Lumberjack: wooden things weigh what you decide they weigh.
 --
 -- Hauling building material is the complaint. A Log is 9.0 and a Plank 3.0, so
@@ -178,3 +179,13 @@ Events.OnGameStart.Add(LJ.apply)
 if isServer() then
     Events.OnServerStarted.Add(LJ.apply)
 end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

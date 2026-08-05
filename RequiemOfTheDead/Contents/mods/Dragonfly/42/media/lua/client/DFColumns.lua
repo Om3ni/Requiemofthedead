@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- DFColumns - column-layout primitives for dense data tabs.
 --
 -- Pattern lifted from Husbandry's HBDebugPanel: a tab declares a `cols`
@@ -147,3 +148,13 @@ function DFColumns.drawInBox(panel, text, x, y, w, h, font, color, align, valign
 
     panel:drawText(s, tx, ty, color[1], color[2], color[3], color[4] or 1, font)
 end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

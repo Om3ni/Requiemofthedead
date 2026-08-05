@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
 -- BBLibrary_BanList.lua - bundled ban list for the RFTDBanBox engine.
 --
 -- This is the BBLibrary submod: the opinionated ban list (the Requiem of the Dead
@@ -23,3 +24,13 @@ DFBanBox.ban("Base.Yoyo")
 -- engine's generic default with this server's wording + ticket process. %s = item name.
 DFBanBox.removalMessage =
     "%s has been removed from your inventory. If you feel this is in error please submit a discord ticket with the current time."
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>
