@@ -378,5 +378,73 @@ eq("a membership-only change fires edited", sawEdit, true)
 -- The resolved record exposes the list (consumers like LMZeds walk it).
 eq("resolved records carry profiles", Limes.getZone("Z").profiles[1], "A")
 
+-- ---------------------------------------------------------------------------
+-- Moon phases (M-B, 2026-08-07): the vocabulary and the gate.
+-- ---------------------------------------------------------------------------
+
+local realRequire = require
+require = function() end
+dofile((arg[1] or ".") .. "/RequiemOfTheDead/Contents/mods/RFTDLimes/42/media/lua/shared/LMMoon.lua")
+require = realRequire
+
+-- parsePhases: names, aliases, ints, case, junk.
+local function setStr(set)
+    if set == nil then return "nil" end
+    local out = {}
+    for i = 0, 7 do if set[i] then out[#out + 1] = i end end
+    return table.concat(out, ",")
+end
+eq("nil parses to no-condition",       LMMoon.parsePhases(nil), nil)
+eq("'' parses to no-condition",        LMMoon.parsePhases(""), nil)
+eq("a single name",                    setStr(LMMoon.parsePhases("full")), "4")
+eq("names are case-insensitive",       setStr(LMMoon.parsePhases("FULL")), "4")
+eq("a comma list unions",              setStr(LMMoon.parsePhases("new, full")), "0,4")
+eq("the waxing alias",                 setStr(LMMoon.parsePhases("waxing")), "1,2,3")
+eq("the waning alias",                 setStr(LMMoon.parsePhases("waning")), "5,6,7")
+eq("aliases union with names",         setStr(LMMoon.parsePhases("waxing,full")), "1,2,3,4")
+eq("bare ints are accepted",           setStr(LMMoon.parsePhases("0,7")), "0,7")
+eq("junk tokens are skipped",          setStr(LMMoon.parsePhases("full, bloodmoon")), "4")
+eq("all-junk is the EMPTY set, never nil", setStr(LMMoon.parsePhases("bloodmoon")), "")
+eq("whitespace is trimmed",            setStr(LMMoon.parsePhases("  full  ")), "4")
+eq("unknownTokens names the junk",     LMMoon.unknownTokens("full, bloodmoon")[1], "bloodmoon")
+eq("unknownTokens is empty for clean input", #LMMoon.unknownTokens("waxing,4"), 0)
+eq("phaseName round-trips",            LMMoon.phaseName(4), "full")
+eq("phaseName of nil is nil",          LMMoon.phaseName(nil), nil)
+
+-- The gate, driven by an injected sky.
+local SKY = 4
+LMMoon.setProvider(function() return SKY end)
+eq("moonPhase serves the provider", Limes.moonPhase(), 4)
+LMMoon.setProvider(function() return 99 end)
+eq("an out-of-range provider is unknowable", Limes.moonPhase(), nil)
+LMMoon.setProvider(function() error("no sky") end)
+eq("a throwing provider is unknowable", Limes.moonPhase(), nil)
+LMMoon.setProvider(function() return SKY end)
+
+Limes.apply({
+    _default  = { fields = { tier = 1 } },
+    FullOnly  = { fields = { tier = 9, phases = "full" } },
+    Z         = { rects = { { 0, 0, 9, 9 } }, profiles = { "FullOnly" }, fields = {} },
+}, 60)
+eq("on-phase, the profile merges",  Limes.getZone("Z").fields.tier, 9)
+eq("...but never its phases key",   Limes.getZone("Z").fields.phases, nil)
+eq("...while the profile's own record keeps it",
+   Limes.getZone("FullOnly").fields.phases, "full")
+
+SKY = 0
+Limes.refresh()
+eq("off-phase, the profile is dormant", Limes.getZone("Z").fields.tier, 1)
+
+SKY = nil
+Limes.refresh()
+eq("an unknowable sky is dormant too", Limes.getZone("Z").fields.tier, 1)
+
+-- refresh() keeps the revision - the editor's save gate depends on it.
+SKY = 4
+local revWas = Limes.revision
+Limes.refresh()
+eq("refresh does not move the revision", Limes.revision, revWas)
+eq("...while re-resolving correctly", Limes.getZone("Z").fields.tier, 9)
+
 print(string.format("LMCore: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

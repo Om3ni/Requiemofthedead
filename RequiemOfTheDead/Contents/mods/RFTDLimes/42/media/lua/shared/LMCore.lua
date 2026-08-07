@@ -75,8 +75,9 @@ local RESERVED = { rects = true, inherits = true, name = true, profiles = true }
 -- Fields the RESOLVER itself reads (rebuild/getLocation). These must reach every
 -- machine or the two sides resolve differently in silence - the worst class of
 -- bug this store can have - so side is forced to "both" no matter what a
--- registrant asks for.
-local RESOLVER_CRITICAL = { disabled = true, priority = true }
+-- registrant asks for. `phases` joined 2026-08-07: it decides whether a
+-- profile's bag merges at all, which is as resolver-critical as it gets.
+local RESOLVER_CRITICAL = { disabled = true, priority = true, phases = true }
 
 local SIDES = { server = true, client = true, both = true }
 
@@ -339,6 +340,22 @@ Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0,  
 Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = false, side = "both",
     order = 3, group = "Zone", label = "Disabled",
     help = "Keeps the zone and its geometry but stops it answering lookups." })
+-- Meaningful on PROFILES (rect-less templates a zone applies): while set, the
+-- profile's fields merge only during the named moon phases. On an ordinary
+-- zone it is stored and inert. side is forced to "both" by RESOLVER_CRITICAL
+-- regardless of what this says - the gate runs on every machine.
+Limes.fields.register("LMCore", "phases", { type = "string", default = "", side = "both",
+    order = 8, group = "Zone", label = "Active moon phases",
+    ui = "text", maxLen = 96, empty = "(always)",
+    rule = "Comma list: new, waxing_crescent, first_quarter, waxing_gibbous, full,"
+        .. " waning_gibbous, last_quarter, waning_crescent - or waxing / waning, or 0-7."
+        .. " Empty means always active.",
+    help = "Only meaningful on a PROFILE. While set, this profile's fields apply"
+        .. " only during the listed moon phases - 'full' makes it a full-moon"
+        .. " event, 'waxing,full' ramps in ahead of it. The moon follows the"
+        .. " in-game calendar (about 29.5 days per cycle, roughly 3.7 days per"
+        .. " phase), and every player's game agrees on it. Empty means the"
+        .. " profile always applies." })
 Limes.fields.register("LMCore", "noannounce", { type = "boolean", default = false, side = "client",
     order = 4, group = "Announce", label = "No entry announce",
     help = "Suppress the on-screen title when a player walks in." .. NOT_YET_ANNOUNCE })
@@ -597,17 +614,30 @@ local function normalizeRects(name, rects, warnings)
     return out
 end
 
--- Is this profile active right now? M-A stub: always. M-B replaces the body
--- with the moon-phase gate; the SEAM exists now so flattenChain's shape does
--- not change when it does. Reads the record RAW - a profile's activation
--- condition is its own business, never inherited, never resolved.
+-- Is this profile active right now? Reads the record RAW - a profile's
+-- activation condition is its own business, never inherited, never resolved.
+--
+-- The gate (M-B, 2026-08-07): a profile carrying `phases` merges only while
+-- the moon is in one of them. No phases (or ""), always active. An UNKNOWABLE
+-- phase - engine not ready, headless test with no provider - reads as
+-- INACTIVE: deterministic, identical on both sides (they call the same API
+-- and fail the same way), and the honest reading of "off-phase contributes
+-- nothing" when there is no phase to be on. LMMoon owns the vocabulary and
+-- the provider; this file only asks.
 --
 -- EXPORTED as Limes.profileActive because LMEdit:effective is the second,
 -- independently-implemented resolver, and the activation gate is the one part
 -- of the two that must never be allowed to drift: both call THIS function, so
 -- there is exactly one answer to "is this profile on right now" per machine.
 local function phaseActive(rec)
-    return true
+    local phases = rec.fields and rec.fields.phases
+    if phases == nil or phases == "" then return true end
+    if not (LMMoon and LMMoon.parsePhases) then return true end
+    local set = LMMoon.parsePhases(phases)
+    if not set then return true end
+    local phase = Limes.moonPhase and Limes.moonPhase() or nil
+    if phase == nil then return false end
+    return set[phase] == true
 end
 
 function Limes.profileActive(rec)
@@ -771,6 +801,37 @@ function Limes.apply(rawZones, rev)
     Limes.revision = tonumber(rev) or (Limes.revision + 1)
     -- Zone events first, so standing side effects unwind against the rebuilt
     -- store before the wholesale re-derivers run.
+    fireZoneEvents(events)
+    fireChanged()
+    return warnings
+end
+
+-- Re-resolve the UNCHANGED raw store, because the world changed around it -
+-- the moon moved, so a phased profile now merges differently. Two properties
+-- are the contract, and both are load-bearing:
+--
+--   THE REVISION DOES NOT MOVE. Revision numbers what the sync domain
+--   replicated; a refresh replicates nothing, and bumping it would make the
+--   save gate refuse every open draft with a false "someone else saved
+--   first". A same-revision onChanged is therefore a REPAINT signal, and
+--   LMEditView's conflict message is guarded on the revision actually
+--   moving.
+--
+--   EVENTS STILL FIRE, content-diffed. Only zones whose resolved output
+--   actually changed report "edited" (or enabled/disabled when a profile
+--   toggles `disabled`), which is exactly what lets LMZeds sweep a zone
+--   whose full-moon zeds mode just switched on, Dirge re-check authority,
+--   and every other consumer stay correct with zero new code. A refresh
+--   where nothing resolves differently diffs to nothing and fires only
+--   onChanged.
+--
+-- No wire, no persistence: both sides derive the phase from the synced game
+-- calendar and refresh independently (§6.1 rule 1 - derived, never
+-- transmitted). Do not "fix" the ≤one-watcher-period divergence window with
+-- a broadcast; it heals itself and the rule exists for good reason.
+function Limes.refresh()
+    local warnings = {}
+    local events = rebuild(warnings)
     fireZoneEvents(events)
     fireChanged()
     return warnings
