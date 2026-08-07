@@ -61,6 +61,7 @@
 if not isServer() then return end
 
 require "LMCore"
+require "RDNet"
 
 LMZeds = LMZeds or {}
 
@@ -113,18 +114,39 @@ refreshArmed()
 -- Removal
 -- ---------------------------------------------------------------------------
 
--- Three steps, each pcall'd, mirroring RPCore.cullZombie. See the header for
--- why the cell-list removal is not optional.
+-- THE ENGINE'S OWN REMOVAL, not a hand-rolled one (corrected 2026-08-06).
+--
+-- This first mirrored RPCore.cullZombie - removeFromSquare, removeFromWorld,
+-- then prune the cell list by hand. Two things are wrong with that, both read
+-- from the decompile rather than reasoned about:
+--
+--   * removeFromWorld ALREADY does the cell-list removal (IsoZombie:3573), so
+--     the third step was never doing anything.
+--   * it leaks the sound emitter. VirtualZombieManager.removeZombieFromWorld
+--     (VirtualZombieManager:80-86) unregisters the emitter FIRST, then removes.
+--     Skip that and the zombie is gone from the world while its emitter is
+--     still registered - a zombie you can hear standing in an empty safe zone,
+--     which for a feature whose selling point is silence is the worst possible
+--     artefact.
+--
+-- The order also matters and is the engine's: emitter, world, square. So call
+-- the engine's method and stop maintaining a copy of it. VirtualZombieManager
+-- is Lua-exposed (LuaManager setExposed, and `instance` is a public static
+-- field, which Kahlua does expose - unlike instance fields). The hand-rolled
+-- version stays as a fallback, because a removal that half-happens is worse
+-- than either outcome and this must not depend on one symbol resolving.
 local function cull(z)
-    pcall(function() z:removeFromSquare() end)
-    pcall(function() z:removeFromWorld() end)
+    local ok = false
     pcall(function()
-        local cell = z:getCell()
-        if cell and cell.getZombieList then
-            local list = cell:getZombieList()
-            if list and list.remove then list:remove(z) end
+        if VirtualZombieManager and VirtualZombieManager.instance then
+            VirtualZombieManager.instance:removeZombieFromWorld(z)
+            ok = true
         end
     end)
+    if ok then return end
+    pcall(function() z:getEmitter():unregister() end)
+    pcall(function() z:removeFromWorld() end)
+    pcall(function() z:removeFromSquare() end)
 end
 
 local function record(name)
@@ -200,12 +222,42 @@ end
 -- A zone that just appeared, was edited, or was re-enabled may now be covering
 -- ground that already has zombies on it. The other events cannot create work:
 -- a deleted or disabled zone stops enforcing, it does not need a pass.
+--
+-- THE CLIENTS HAVE TO BE TOLD, and this is the one place it matters. The engine
+-- deletes a zombie for everyone by calling NetworkZombiePacker.deleteZombie(z)
+-- BEFORE removeFromWorld - the order is load-bearing, because removeFromWorld
+-- nulls onlineId to -1 (IsoZombie:3569) and the delete record carries that id
+-- (NetworkZombiePacker:69). Every engine removal path pairs them exactly that
+-- way (ZombieCountOptimiser:49-51, NetworkZombieManager:236-238).
+--
+-- NetworkZombiePacker is NOT Lua-exposed - it is absent from LuaManager's
+-- setExposed list and no vanilla Lua touches it - so no mod can send that
+-- packet. The design doc's §7.3 names that idiom as ours to use; it is not
+-- reachable, and the doc is wrong on that point.
+--
+-- The BIRTH path does not care: a zombie removed inside OnZombieCreate was
+-- never transmitted, so no client ever had one to keep. The SWEEP does care -
+-- it removes zombies that are on screen right now, and without a delete packet
+-- those clients keep painting them until the chunk re-streams. An admin drawing
+-- a remove-zone over a populated street would watch the zombies stand there and
+-- conclude the sweep is broken.
+--
+-- So the clients sweep too, from their own copy of the store, triggered by this
+-- broadcast. No ids on the wire and no per-zombie messages: both halves apply
+-- the same rule to the same replicated data at the same moment, which is the
+-- same "each machine enforces locally" shape §7.4 uses for stats. One tiny
+-- broadcast per admin-driven zone event, not per zombie.
 Limes.onZoneEvent(function(event, name)
     if event ~= "added" and event ~= "edited" and event ~= "enabled" then return end
     local removed = LMZeds.sweep()
     if removed > 0 then
         print("[Limes] zeds: " .. name .. " " .. event .. " - swept " .. removed .. " zombie(s)")
     end
+    -- Broadcast even when the server removed nothing. The server sweeps only
+    -- what IT has loaded; a client can be standing in loaded ground the server
+    -- is not simulating in this cell, and that client is exactly the one with a
+    -- ghost to clear.
+    pcall(function() RDNet.broadcast("RFTDLimes", "zedsSweep", { name = name }) end)
 end)
 
 -- ---------------------------------------------------------------------------
