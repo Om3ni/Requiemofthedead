@@ -21,11 +21,18 @@
 -- force, writing a redundant override into the store for nothing; showing the
 -- inherited value without marking it would hide which zone owns the setting.
 --
--- WHAT IT CANNOT RENDER YET: string fields. DFForm draws bool, int and enum, and
--- a text row means a real text widget inside a drawn form. `title`, `subtitle`,
--- `zeds` and `lewtkey` are therefore counted and reported rather than silently
--- dropped - see skipped(). That kind belongs in DFForm (Core), where every form
--- in the family gets it, not bolted onto this panel.
+-- STRING FIELDS RENDER NOW (2026-08-06). DFForm grew two kinds and they landed
+-- in Core, where every form in the family gets them, rather than being bolted
+-- onto this panel:
+--   choice - a pill cycling a closed set, storing the STRING (`zeds`)
+--   text   - a box that opens DFEntry to type in (`title`, `subtitle`, `lewtkey`)
+-- The distinction is whether anybody validates the value, not what its type is;
+-- `zeds` is a string whose only two honoured words are "none" and "remove", so a
+-- free text box there would let an admin type "Remove" and get silence.
+--
+-- skipped() therefore reports nothing today. It stays because the mechanism is
+-- the point: a registrant can declare a `ui` this form has never heard of, and
+-- counting those beats dropping them silently. `colour` is the next one.
 
 if isServer() then return end
 
@@ -41,11 +48,21 @@ local WIDE_MIN, WIDE_MAX = -100000, 100000
 
 -- Which DFForm control a spec deserves. `ui` from the registrant wins; otherwise
 -- the type decides. Returns nil for a field this form cannot draw.
+local KINDS = { bool = true, int = true, enum = true, choice = true, text = true }
+
 local function kindOf(spec)
-    if spec.ui == "bool" or spec.ui == "int" or spec.ui == "enum" then return spec.ui end
-    if spec.ui then return nil end                 -- "text", "colour": not yet
+    -- A choice with nothing to choose from is a pill that cannot be clicked out
+    -- of its current value. Fall back to text so the field stays editable, which
+    -- is the failure a registrant would want over a dead control.
+    if spec.ui == "choice" and #(spec.values or {}) == 0 then return "text" end
+    if spec.ui and KINDS[spec.ui] then return spec.ui end
+    if spec.ui then return nil end                 -- "colour": not yet
     if spec.type == "boolean" then return "bool" end
     if spec.type == "number"  then return "int"  end
+    -- A string with no declared ui is prose by default. A registrant with a
+    -- closed set has to say `ui = "choice"` and list it, because this file
+    -- cannot tell "any sentence" from "one of three words" by looking at a type.
+    if spec.type == "string"  then return "text" end
     return nil
 end
 
@@ -95,6 +112,14 @@ function LMFieldForm.new(opts)
             elseif kind == "enum" then
                 row.values    = s.values or {}
                 row.numValues = #(s.values or {})
+            elseif kind == "choice" then
+                row.values = s.values or {}
+                row.labels = s.labels
+            elseif kind == "text" then
+                row.empty       = s.empty
+                row.rule        = s.rule
+                row.maxLen      = s.maxLen
+                row.placeholder = s.placeholder
             end
             schema[#schema + 1] = row
         end

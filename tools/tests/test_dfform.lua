@@ -79,6 +79,15 @@ DFKit = {
 }
 DFHelp = { show = function() end }
 
+-- DFEntry is the typing popout a `text` row opens. Stubbed to RECORD rather
+-- than to no-op, because what these tests are really asking is whether the row
+-- hands it the right value and wires its commit back to set().
+local entryShown = nil
+DFEntry = {
+    show = function(opts) entryShown = opts end,
+    close = function() end,
+}
+
 -- ISPanel: only what DFForm touches. The Hotspot chains to these for anything
 -- it does not claim, so they must exist and must be harmless.
 ISPanel = {}
@@ -317,6 +326,109 @@ f:barUp()
 
 eq("every stencil set is cleared", stencilSet, stencilClear)
 ok("the form actually stencilled", stencilSet > 0, "sets " .. stencilSet)
+
+-- ---------------------------------------------------------------------------
+-- 8. choice and text - the two string kinds.
+--
+-- These exist because Limes' `zeds` is a string field whose value IS the word
+-- the consumer branches on. `enum` stores an index and would have written 2
+-- where LMZeds looks for "remove", which stores, replicates and displays
+-- perfectly while removing nothing - the kind of failure that looks like
+-- working software. So: what the pill SHOWS is the label, what the store gets
+-- is the string, and an off-list value is visibly off-list rather than being
+-- quietly presented as the first option.
+-- ---------------------------------------------------------------------------
+
+local strVals = {}
+local strSchema = {
+    { key = "zeds", kind = "choice", label = "Zombie handling",
+      values = { "", "none", "remove" },
+      labels = { "Leave alone", "No spawns", "No spawns + sweep" } },
+    { key = "title", kind = "text", label = "Announce title",
+      empty = "(the zone's name)", rule = "Empty uses the zone name.", maxLen = 64 },
+    { key = "bare", kind = "choice", label = "No options", values = {} },
+}
+local sf = DFForm.new{
+    schema  = strSchema,
+    title   = "Strings",
+    get     = function(k) return strVals[k] end,
+    set     = function(k, v) strVals[k] = v end,
+    enabled = function() return true end,
+}
+sf:layout(RX, RY, RW, 400)
+sf:draw(EL)
+
+-- Display: the label, never the stored string.
+strVals.zeds = ""
+eq("blank choice reads as its label", sf:display(strSchema[1]), "Leave alone")
+strVals.zeds = "remove"
+eq("set choice reads as its label", sf:display(strSchema[1]), "No spawns + sweep")
+strVals.zeds = "Remove"
+eq("off-list value is shown and marked", sf:display(strSchema[1]), "Remove (?)")
+-- nil is not the same as off-list: an unset field has simply never been touched.
+strVals.zeds = nil
+eq("unset choice reads as the blank label", sf:display(strSchema[1]), "Leave alone")
+
+-- Clicking cycles the STRING, and wraps.
+local zrow = rectFor(sf, "zeds")
+ok("choice row is hit-testable", zrow ~= nil)
+strVals.zeds = ""
+sf:click(zrow.pillX + 2, zrow.y + 2)
+eq("cycle stores the next string", strVals.zeds, "none")
+sf:click(zrow.pillX + 2, zrow.y + 2)
+eq("cycle again", strVals.zeds, "remove")
+sf:click(zrow.pillX + 2, zrow.y + 2)
+eq("cycle wraps back to blank", strVals.zeds, "")
+-- An off-list value lands somewhere valid rather than being treated as index 0.
+strVals.zeds = "Remove"
+sf:click(zrow.pillX + 2, zrow.y + 2)
+eq("off-list cycles to the first option", strVals.zeds, "")
+
+-- A choice with no options must not fault, and must not invent a value.
+local brow = rectFor(sf, "bare")
+strVals.bare = "keep"
+sf:click(brow.pillX + 2, brow.y + 2)
+eq("empty choice leaves the value alone", strVals.bare, "keep")
+
+-- Text: what an empty field reads as, and that the popout gets the real value.
+strVals.title = ""
+eq("empty text shows its empty label", sf:display(strSchema[2]), "(the zone's name)")
+strVals.title = "The City"
+eq("set text shows the value", sf:display(strSchema[2]), "The City")
+
+local trow = rectFor(sf, "title")
+ok("text row is hit-testable", trow ~= nil)
+ok("text row has a box, not a pill", trow.textX ~= nil and trow.pillX == nil)
+
+entryShown = nil
+sf:click(trow.textX - 20, trow.y + 2)
+eq("clicking beside the box opens nothing", entryShown, nil)
+
+sf:click(trow.textX + 2, trow.y + 2)
+ok("clicking the box opens the popout", entryShown ~= nil)
+eq("popout is seeded with the current value", entryShown.value, "The City")
+eq("popout carries the rule", entryShown.rule, "Empty uses the zone name.")
+eq("popout carries the cap", entryShown.maxLen, 64)
+eq("popout is titled with the label", entryShown.title, "Announce title")
+
+-- The commit writes through. This is the half that would silently do nothing if
+-- the callback closed over the wrong thing.
+entryShown.onCommit("Muldraugh")
+eq("commit writes the typed value", strVals.title, "Muldraugh")
+
+-- A read-only form (no set) must not offer to edit at all: the popout would
+-- take a value it has nowhere to put.
+local ro = DFForm.new{
+    schema = strSchema, title = "RO",
+    get = function(k) return strVals[k] end,
+    enabled = function() return true end,
+}
+ro:layout(RX, RY, RW, 400)
+ro:draw(EL)
+entryShown = nil
+local rrow = rectFor(ro, "title")
+ro:click(rrow.textX + 2, rrow.y + 2)
+eq("a form with no set() opens no popout", entryShown, nil)
 
 -- ---------------------------------------------------------------------------
 

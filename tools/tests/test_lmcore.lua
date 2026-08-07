@@ -55,6 +55,74 @@ eq("same-owner re-register ok",  Limes.fields.register("T", "hp", { type = "numb
 eq("re-register updated default", Limes.fields.spec("hp").default, 7)
 
 -- ---------------------------------------------------------------------------
+-- Presentation vocabulary (the `ui` contract, §11.3)
+--
+-- The registry carries presentation but never interprets it, so what these pin
+-- is that it carries the WHOLE of it. A key the panel needs and register()
+-- forgets to copy is invisible here and shows up in game as a dial that silently
+-- loses its options - the failure mode `values`/`labels` is most exposed to,
+-- because a choice with no values is a pill that cannot be clicked out of its
+-- current setting.
+-- ---------------------------------------------------------------------------
+
+local function listed(owner, name)
+    for _, s in ipairs(Limes.fields.list(owner)) do
+        if s.name == name then return s end
+    end
+    return nil
+end
+
+local zeds = Limes.fields.spec("zeds")
+eq("zeds is a choice",            zeds.ui, "choice")
+eq("zeds stores strings",         zeds.type, "string")
+eq("zeds offers three positions", #zeds.values, 3)
+eq("blank is the first position", zeds.values[1], "")
+eq("zeds honours 'none'",         zeds.values[2], "none")
+eq("zeds honours 'remove'",       zeds.values[3], "remove")
+-- Parallel arrays or the pill shows the wrong word for the value it holds.
+eq("every zeds value has a label", #zeds.labels, #zeds.values)
+-- The two words LMZeds actually branches on. If either is renamed here without
+-- LMZeds agreeing, the field goes inert with nothing to show for it.
+isTrue("no zeds label is blank",
+    zeds.labels[1] ~= "" and zeds.labels[2] ~= "" and zeds.labels[3] ~= "",
+    "a blank label renders as an empty pill")
+
+local zedsRow = listed("LMCore", "zeds")
+eq("list carries ui",     zedsRow.ui, "choice")
+eq("list carries values", zedsRow.values[3], "remove")
+eq("list carries labels", zedsRow.labels[1], zeds.labels[1])
+
+local title = Limes.fields.spec("title")
+eq("title is free text",     title.ui, "text")
+eq("title says what empty means", title.empty, "(the zone's name)")
+isTrue("title states a rule", type(title.rule) == "string" and title.rule ~= "",
+    "a text field with no rule gives the popout nothing to say")
+eq("title caps its length",  title.maxLen, 64)
+eq("list carries empty",     listed("LMCore", "title").empty, title.empty)
+eq("list carries maxLen",    listed("LMCore", "title").maxLen, 64)
+eq("list carries rule",      listed("LMCore", "title").rule, title.rule)
+
+eq("lewtkey is free text", Limes.fields.spec("lewtkey").ui, "text")
+
+-- maxLen is coerced to a number, so a registrant passing "64" cannot hand the
+-- entry box a string where it will compare against one.
+eq("maxLen is numeric", type(title.maxLen), "number")
+Limes.fields.register("T", "strLen", { type = "string", maxLen = "12" })
+eq("stringly maxLen coerced", Limes.fields.spec("strLen").maxLen, 12)
+
+-- A `ui` this build has never heard of is CARRIED, not dropped: the registry is
+-- forward-compatible by design and the panel is what decides it cannot draw one.
+Limes.fields.register("T", "tint", { type = "string", ui = "colour" })
+eq("unknown ui preserved", Limes.fields.spec("tint").ui, "colour")
+eq("unknown ui reaches the list", listed("T", "tint").ui, "colour")
+
+-- Coercion is by declared TYPE and ignores ui, so a choice stays a string even
+-- when its value looks like something else.
+Limes.apply({ Cast = { rects = { { 500, 500, 509, 509 } }, fields = { zeds = "remove" } } }, 2)
+eq("choice value survives as a string",
+   Limes.getZone("Cast").fields.zeds, "remove")
+
+-- ---------------------------------------------------------------------------
 -- Apply + resolution
 -- ---------------------------------------------------------------------------
 

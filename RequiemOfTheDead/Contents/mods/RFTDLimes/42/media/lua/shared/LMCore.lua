@@ -130,6 +130,13 @@ function Limes.fields.register(owner, name, spec)
         -- then disagree. Absent `ui`, the type decides.
         label = spec.label, help = spec.help, ui = spec.ui, group = spec.group,
         values = spec.values, step = spec.step, unit = spec.unit, zero = spec.zero,
+        -- `labels` pairs with `values` for a choice dial: values are the strings
+        -- the STORE holds, labels are what an admin reads. They are separate
+        -- because "" is a legitimate stored value and "leave alone" is the only
+        -- sane way to render it. `rule` and `empty` are the same idea for a text
+        -- dial - what a valid value looks like, and what nothing looks like.
+        labels = spec.labels, rule = spec.rule, empty = spec.empty,
+        maxLen = tonumber(spec.maxLen) or nil,
         order = tonumber(spec.order) or 0,
     }
     return true
@@ -161,7 +168,8 @@ function Limes.fields.list(owner)
                    default = s.default, min = s.min, max = s.max,
                    label = s.label, help = s.help, ui = s.ui, group = s.group,
                    values = s.values, step = s.step, unit = s.unit, zero = s.zero,
-                   order = s.order }
+                   labels = s.labels, rule = s.rule, empty = s.empty,
+                   maxLen = s.maxLen, order = s.order }
     end
     return out
 end
@@ -298,6 +306,17 @@ end
 Limes.mods.register("LMCore", { label = "Zone basics", order = 0,
     description = "The fields every zone has, whatever else is installed." })
 
+-- The honesty suffix, in two flavours. A dial that implies an effect it does not
+-- have is worse than no dial, so a field whose consumer is not built yet says so
+-- in the one place an admin will read it. Declared HERE rather than beside the
+-- restriction block that first used it, because the announce vocabulary needs it
+-- too and a `local` is only in scope after its own line - the restrictions loop
+-- happens to sit below, which made that easy to miss.
+local NOT_YET = "  NOTE: no module is enforcing this yet - the value is stored,"
+             .. " replicated and preserved, but nothing reads it."
+local NOT_YET_ANNOUNCE = "  NOTE: the zone announce widget (M2) is not built yet,"
+             .. " so this is stored and replicated but nothing displays it."
+
 Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0,     side = "both", min = 0, max = 10,
     order = 1, group = "Zone", label = "Difficulty tier", unit = "",
     help = "The one number other modules read to decide how hard this zone is."
@@ -313,11 +332,22 @@ Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = fals
     help = "Keeps the zone and its geometry but stops it answering lookups." })
 Limes.fields.register("LMCore", "noannounce", { type = "boolean", default = false, side = "client",
     order = 4, group = "Announce", label = "No entry announce",
-    help = "Suppress the on-screen title when a player walks in." })
+    help = "Suppress the on-screen title when a player walks in." .. NOT_YET_ANNOUNCE })
+-- Free prose, so `text`: nobody validates a place name. `empty` says what
+-- nothing means here, which for a title is not "unset" but "the zone's own
+-- name" - the widget falls back to it, and a dial that read "(not set)" would
+-- have an admin type the name in again to no effect.
 Limes.fields.register("LMCore", "title",      { type = "string",  default = "",    side = "client",
-    order = 5, group = "Announce", label = "Announce title" })
+    order = 5, group = "Announce", label = "Announce title",
+    ui = "text", maxLen = 64, empty = "(the zone's name)",
+    rule = "Left empty, the announce uses the zone's own name.",
+    help = "The large line shown when a player walks in. Leave it empty to use"
+        .. " the zone name itself." .. NOT_YET_ANNOUNCE })
 Limes.fields.register("LMCore", "subtitle",   { type = "string",  default = "",    side = "client",
-    order = 6, group = "Announce", label = "Announce subtitle" })
+    order = 6, group = "Announce", label = "Announce subtitle",
+    ui = "text", maxLen = 96, empty = "(none)",
+    rule = "A short second line. Leave it empty for no subtitle.",
+    help = "The smaller line under the title." .. NOT_YET_ANNOUNCE })
 Limes.fields.register("LMCore", "order",      { type = "number",  default = 0,     side = "client",
     order = 7, group = "Announce", label = "Display order" })
 
@@ -341,9 +371,6 @@ Limes.fields.register("LMCore", "order",      { type = "number",  default = 0,  
 -- are filled, which is the server.
 -- ---------------------------------------------------------------------------
 
-local NOT_YET = "  NOTE: no module is enforcing this yet - the value is stored,"
-             .. " replicated and preserved, but nothing reads it."
-
 local RESTRICTIONS = {
     { "nobuilding",    "No building",        "Blocks the build menu inside this zone." },
     { "nodestruction", "No destruction",     "Blocks sledging and structural damage." },
@@ -363,11 +390,25 @@ end
 -- field in this block that does something. Removal is deliberately silent (a
 -- corpse in a walled safe zone is worse than the spawn it replaces), which is
 -- why the help points at the census: it is the only way to watch it work.
+--
+-- A CHOICE AND NOT A TEXT BOX, though its type is string. LMZeds honours exactly
+-- two words; anything else is stored, replicated, shown in the panel and
+-- silently inert. Cycling a closed set makes that class of mistake unreachable,
+-- and the blank is one of the three positions rather than a way out of the
+-- control - "leave alone" is a policy an admin chooses, not an empty field.
 Limes.fields.register("LMCore", "zeds", { type = "string", default = "", side = "both",
     order = 30, group = "Zombies", label = "Zombie handling",
-    help = "'none' stops zombies spawning here - they are removed at birth, silently"
-        .. " and without a corpse. 'remove' does that AND sweeps any already standing"
-        .. " inside. Blank leaves the zone alone. Use Print Census to see it working." })
+    ui = "choice",
+    values = { "", "none", "remove" },
+    labels = { "Leave alone", "No spawns", "No spawns + sweep" },
+    help = "'No spawns' removes zombies as they are created here - silently, and"
+        .. " without leaving a corpse, because a walled safe zone that fills with"
+        .. " bodies is worse than the spawns it was meant to stop. 'No spawns +"
+        .. " sweep' also clears anything already standing inside when the zone is"
+        .. " added, edited or re-enabled; it does NOT keep killing zombies that"
+        .. " walk in through a door somebody opened. 'Leave alone' is the default."
+        .. "  Because removal is invisible, Census on the toolbar is how you watch"
+        .. " it work: it counts what is actually standing in each zone." })
 Limes.fields.register("LMCore", "minSprinterRisk", { type = "number", default = 0, side = "both",
     min = 0, max = 100, order = 31, group = "Zombies", label = "Sprinter risk (min)",
     help = "Lower bound of the per-zone sprinter chance band." .. NOT_YET })
@@ -380,6 +421,8 @@ Limes.fields.register("LMCore", "maxSprinterRisk", { type = "number", default = 
 -- loot TABLES themselves, when M3 brings them - stay server-only.
 Limes.fields.register("LMCore", "lewtkey", { type = "string", default = "", side = "both",
     order = 40, group = "Loot", label = "Loot table key",
+    ui = "text", maxLen = 48, empty = "(none)",
+    rule = "The name of a loot profile. Leave empty for the zone's normal loot.",
     help = "Names the loot profile applied to containers in this zone." .. NOT_YET })
 
 -- ---------------------------------------------------------------------------

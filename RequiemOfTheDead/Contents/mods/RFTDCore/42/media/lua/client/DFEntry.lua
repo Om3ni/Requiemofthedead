@@ -1,0 +1,325 @@
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- DFEntry - the family's type-a-value popout (client only).
+--
+-- WHY A POPOUT AND NOT A BOX IN THE ROW. DFForm rows are DRAWN chrome, not
+-- widgets: one invisible hotspot catches every interaction and the rows are
+-- rectangles painted each frame. That is what lets the form scroll, clip and
+-- reflow at any font without owning a widget tree. A text field is the one
+-- control that cannot be drawn, because typing needs a real UITextBox2 with
+-- keyboard focus.
+--
+-- Putting that widget INSIDE the form would break the two properties the form
+-- exists to have. Child widgets are not affected by the stencil DFScroll sets,
+-- so an entry box scrolled out of view keeps drawing over whatever is above it
+-- and stays clickable while invisible; and the form would have to create,
+-- destroy and reposition one widget per text row on every layout, at which
+-- point it is a widget tree with a drawing loop bolted on.
+--
+-- So the row stays drawn - it shows the value and reads as a control - and the
+-- typing happens here, in one window, over the top. One widget exists at a time
+-- no matter how many text fields a schema declares.
+--
+-- IT IS ALSO THE HONEST PLACE FOR VALIDATION. A value that the consumer will
+-- silently ignore ("Remove" where only "remove" is honoured) is the failure
+-- mode a free text box invites, and a row has no room to say why. A window has
+-- room: the rule is stated under the box, the message appears as you type, and
+-- Save refuses rather than storing something inert. A caller supplies
+-- validate() and gets all of that.
+--
+-- SINGLETON, same reasoning as DFHelp: a second one replaces the first. Two
+-- half-typed values in two windows over the same form is a way to lose an edit,
+-- not a feature.
+--
+-- NO ESCAPE-TO-CANCEL, deliberately rather than by omission. Key events reach
+-- the element holding keyboard focus, and that is the text box - so a panel
+-- level key handler here would either not fire or fight the box for input.
+-- Cancel and the X are both one click away and neither can be got wrong.
+
+if isServer() then return end
+
+require "ISUI/ISPanel"
+require "ISUI/ISTextEntryBox"
+
+DFEntry = ISPanel:derive("DFEntry")
+
+-- Survives a hot reload of this file, exactly as DFHelp's does: a window
+-- referenced only from the class global becomes unclosable the moment the
+-- global is replaced.
+DFEntryState = DFEntryState or { instance = nil }
+
+local PAD = 12
+
+local function fontBody()  return DFKit.font.small or UIFont.Small end
+local function fontTitle() return DFKit.font.label or UIFont.Small end
+
+local function lineH()
+    local fh = 14
+    pcall(function() fh = getTextManager():getFontHeight(fontBody()) end)
+    return math.max(14, fh + 2)
+end
+
+local function titleH()
+    local fh = 14
+    pcall(function() fh = getTextManager():getFontHeight(fontTitle()) end)
+    return math.max(24, fh + 12)
+end
+
+local function entryH()
+    local fh = 14
+    pcall(function() fh = getTextManager():getFontHeight(fontBody()) end)
+    return math.max(DFKit.metrics.btnH, fh + 10)
+end
+
+local function tw(s)
+    local n = 0
+    pcall(function() n = getTextManager():MeasureStringX(fontBody(), s or "") end)
+    return n
+end
+
+-- ---------------------------------------------------------------------------
+-- Window
+-- ---------------------------------------------------------------------------
+
+function DFEntry:new(x, y, w, h, opts)
+    local o = ISPanel:new(x, y, w, h)
+    setmetatable(o, self)
+    self.__index = self
+    o.background    = false
+    o.moveWithMouse = false
+    o.opts          = opts or {}
+    o.titleText     = o.opts.title or "Edit value"
+    o.dragging      = false
+    o.dragDX, o.dragDY = 0, 0
+    o.problem       = nil       -- current validation message, or nil
+    return o
+end
+
+function DFEntry:createChildren()
+    ISPanel.createChildren(self)
+
+    local c  = DFKit.col
+    local eh = entryH()
+    local ey = self.entryY or (titleH() + PAD)
+
+    local box = ISTextEntryBox:new(tostring(self.opts.value or ""),
+        PAD, ey, self.width - PAD * 2, eh)
+    box.font   = fontBody()
+    box.valign = "middle"
+    box:initialise()
+    box:instantiate()
+    -- setMaxTextLength before any text arrives, so a caller's cap applies to
+    -- the seeded value too rather than only to what is typed after it.
+    if self.opts.maxLen then pcall(function() box:setMaxTextLength(self.opts.maxLen) end) end
+    if self.opts.placeholder then
+        pcall(function() box:setPlaceholderText(self.opts.placeholder) end)
+    end
+    box:setText(tostring(self.opts.value or ""))
+    self:addChild(box)
+    self.entry = box
+    pcall(function() box:focus() end)
+
+    -- Enter commits. ISTextEntryBox:onCommandEntered is the engine's own hook
+    -- for it (ISTextEntryBox.lua:16, assigned this way by ISMPEditAccount), and
+    -- it is handed the BOX as self - so this closure ignores its argument and
+    -- reads the window from the upvalue instead.
+    local win = self
+    box.onCommandEntered = function() win:commit() end
+
+    local bw   = 86
+    local by   = self.height - PAD - DFKit.metrics.btnH
+    self.saveBtn = DFKit.button(self, self.width - PAD - bw, by, bw,
+        self.opts.saveLabel or "Save", self, DFEntry.onSave, "primary")
+    DFKit.button(self, self.width - PAD - bw * 2 - DFKit.metrics.gap, by, bw,
+        "Cancel", self, DFEntry.onCancel, "action")
+end
+
+function DFEntry:onSave()   self:commit() end
+function DFEntry:onCancel() DFEntry.close() end
+
+-- The current text, whatever the engine will actually hand the consumer.
+function DFEntry:text()
+    local s = ""
+    if self.entry then
+        local ok = pcall(function() s = self.entry:getInternalText() end)
+        if not ok or s == nil then pcall(function() s = self.entry:getText() end) end
+    end
+    return tostring(s or "")
+end
+
+-- Run the caller's rule. No rule means anything is acceptable, which is the
+-- right default for free prose like a zone subtitle.
+function DFEntry:check(s)
+    if type(self.opts.validate) ~= "function" then return true, nil end
+    local ok, good, msg = pcall(self.opts.validate, s)
+    if not ok then return true, nil end      -- a broken rule must not lock the box
+    if good then return true, nil end
+    return false, msg or "Not a value this setting accepts."
+end
+
+function DFEntry:commit()
+    local s = self:text()
+    local ok, msg = self:check(s)
+    if not ok then
+        self.problem = msg
+        return
+    end
+    local fn = self.opts.onCommit
+    -- Closed BEFORE the callback: the callback usually rebuilds the surface
+    -- underneath, and a window still on the UIManager while its host is being
+    -- torn down is how an orphan ends up painting over the new one.
+    DFEntry.close()
+    if fn then pcall(fn, s) end
+end
+
+function DFEntry:prerender()
+    local c  = DFKit.col
+    local a  = DFKit.alpha
+    local w, h = self.width, self.height
+
+    self:drawRect(0, 0, w, h, math.min(0.95, (a.window or 0.6) + 0.3),
+        c.bg.r, c.bg.g, c.bg.b)
+    self:drawRectBorder(0, 0, w, h, 0.7, c.accent.r, c.accent.g, c.accent.b)
+
+    local fTitle, fBody = fontTitle(), fontBody()
+    local th, lh = titleH(), lineH()
+
+    self:drawRect(0, 0, w, th, 0.5, c.panel.r, c.panel.g, c.panel.b)
+    local ty = math.floor((th - lh) / 2) + 1
+    self:drawText(self.titleText, PAD, ty, c.text.r, c.text.g, c.text.b, 1, fTitle)
+
+    local closeHot = self.hoverClose
+    self:drawText("X", w - 18, ty,
+        closeHot and c.accent.r or c.textDim.r,
+        closeHot and c.accent.g or c.textDim.g,
+        closeHot and c.accent.b or c.textDim.b, 1, fTitle)
+    self:drawRect(0, th, w, 1, 0.4, c.line.r, c.line.g, c.line.b)
+
+    -- Validate every frame rather than on keystroke: it is a string compare
+    -- against a short rule, and doing it here means the message tracks the box
+    -- without this file having to own an onTextChange hook as well.
+    local s = self:text()
+    local ok, msg = self:check(s)
+    self.problem = (not ok) and msg or nil
+
+    -- The rule, and then whatever is currently wrong with the text. The rule
+    -- stays visible while the message comes and goes, because a message alone
+    -- tells you that you are wrong and not what right looks like.
+    local y = self.entryY + entryH() + 6
+    for _, ln in ipairs(self.ruleLines or {}) do
+        self:drawText(ln, PAD, y, c.textDim.r, c.textDim.g, c.textDim.b, 0.9, fBody)
+        y = y + lh
+    end
+    if self.problem then
+        self:drawText(DFKit.fitText(self.problem, fBody, w - PAD * 2), PAD, y,
+            c.warn.r, c.warn.g, c.warn.b, 1, fBody)
+    end
+
+    -- Save is disabled while the value would be refused, so the button agrees
+    -- with the message instead of being a click that silently does nothing.
+    if self.saveBtn then self.saveBtn:setEnable(self.problem == nil) end
+end
+
+function DFEntry:onMouseMove(dx, dy)
+    local x, y = self:getMouseX(), self:getMouseY()
+    self.hoverClose = (y < titleH() and x > self.width - 26)
+    if self.dragging then
+        self:setX(getMouseX() - self.dragDX)
+        self:setY(getMouseY() - self.dragDY)
+    end
+end
+
+function DFEntry:onMouseMoveOutside(dx, dy)
+    self.hoverClose = false
+    if self.dragging then
+        self:setX(getMouseX() - self.dragDX)
+        self:setY(getMouseY() - self.dragDY)
+    end
+end
+
+function DFEntry:onMouseDown(x, y)
+    if y < titleH() then
+        if x > self.width - 26 then DFEntry.close(); return end
+        self.dragging = true
+        self.dragDX = getMouseX() - self:getX()
+        self.dragDY = getMouseY() - self:getY()
+    end
+end
+
+function DFEntry:onMouseUp()        self.dragging = false end
+function DFEntry:onMouseUpOutside() self.dragging = false end
+
+-- ---------------------------------------------------------------------------
+-- API
+-- ---------------------------------------------------------------------------
+
+function DFEntry.close()
+    local w = DFEntryState.instance
+    if w then
+        -- Hand keyboard focus back BEFORE the window goes away. A UITextBox2
+        -- that is removed while still focused keeps eating keystrokes, which
+        -- reads as the game ignoring movement keys after closing a dialog -
+        -- and there is then nothing on screen to click to give the focus back.
+        if w.entry then pcall(function() w.entry:unfocus() end) end
+        pcall(function() w:removeFromUIManager() end)
+        DFEntryState.instance = nil
+    end
+end
+
+-- opts:
+--   title        window heading
+--   value        the string to seed the box with
+--   rule         one line under the box saying what a valid value looks like
+--   placeholder  ghost text for an empty box
+--   maxLen       hard cap, applied to the seeded value as well
+--   validate(s)  -> ok, message. Absent means anything goes.
+--   onCommit(s)  called with the accepted string. Not called on cancel.
+--   saveLabel    override for the commit button
+--   nearX/nearY  open beside a point rather than centre-screen
+function DFEntry.show(opts)
+    opts = opts or {}
+    DFEntry.close()
+
+    local fBody = fontBody()
+    local W = 420
+    -- Wide enough for the rule, because a rule that wraps to three lines under
+    -- a one-line box reads as the main content.
+    if opts.rule then W = math.max(W, math.min(680, tw(opts.rule) + PAD * 2 + 8)) end
+
+    local ruleLines = opts.rule and DFKit.wrapText(opts.rule, fBody, W - PAD * 2) or {}
+
+    local th, lh, eh = titleH(), lineH(), entryH()
+    local entryY = th + PAD
+    -- One spare line under the rule, always reserved: the validation message
+    -- appears and disappears as you type, and a window that resized under the
+    -- cursor to make room for it would move the button out from under a click.
+    local h = entryY + eh + 6 + (#ruleLines + 1) * lh + PAD
+              + DFKit.metrics.btnH + PAD
+
+    local sw = getCore():getScreenWidth()
+    local sh = getCore():getScreenHeight()
+    local x = opts.nearX and (opts.nearX + 16) or math.floor((sw - W) / 2)
+    local y = opts.nearY and (opts.nearY - 20) or math.floor((sh - h) / 2)
+    if x + W > sw - 8 then x = math.max(8, (opts.nearX or sw) - W - 16) end
+    if y + h > sh - 8 then y = math.max(8, sh - h - 8) end
+    if x < 8 then x = 8 end
+    if y < 8 then y = 8 end
+
+    local win = DFEntry:new(x, y, W, h, opts)
+    win.ruleLines = ruleLines
+    win.entryY    = entryY
+    win:initialise()
+    win:instantiate()
+    win:addToUIManager()
+    DFEntryState.instance = win
+    return win
+end
+
+-- ---------------------------------------------------------------------------
+-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
+--
+-- Free software under the GNU General Public License, version 3 or later.
+-- You may use, study, modify and share it. If you share it - modified or not,
+-- on the Workshop or anywhere else - keep this notice, license your version
+-- under the GPL too, publish your source, and say what you changed.
+-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.
+-- <https://www.gnu.org/licenses/gpl-3.0.html>

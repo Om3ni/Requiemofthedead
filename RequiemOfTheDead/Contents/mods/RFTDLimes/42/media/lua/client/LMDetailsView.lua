@@ -147,12 +147,15 @@ refresh = function()
     ui.desc:setName(desc or "")
 
     -- Say what could not be rendered rather than letting an admin conclude the
-    -- store has no such field. Text and colour kinds are Core work (DFForm), not
-    -- a patch to this panel.
+    -- store has no such field. String fields render since 2026-08-06 (DFForm
+    -- grew `choice` and `text`), so this line is normally empty - it stays
+    -- because a mod can register a `ui` this build has never heard of, and
+    -- `colour` is still Core work. Worded for the general case now rather than
+    -- for text specifically.
     local skipped = activeId and forms[activeId] and LMFieldForm.skipped(forms[activeId]) or {}
     ui.note:setName(#skipped > 0
-        and (#skipped .. " text field" .. (#skipped == 1 and "" or "s")
-             .. " not editable here yet: " .. table.concat(skipped, ", "))
+        and (#skipped .. " field" .. (#skipped == 1 and "" or "s")
+             .. " this build cannot draw: " .. table.concat(skipped, ", "))
         or "")
 end
 
