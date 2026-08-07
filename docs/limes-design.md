@@ -273,6 +273,25 @@ consumers (`svCheckZombie`) read server-local zone data. Nothing new on the wire
 | Vehicle dismantle | Already server-checked in Reclamation (`RCJanitor`/`RCShared`); swaps lookup source. | **S** |
 
 ### 7.3 Zombie removal (`zeds = remove` / `none`) — S, standing
+
+> **CORRECTION, 2026-08-06, found while building LMZeds.** The idiom below is the
+> engine's, and its ordering is right, but **it is not reachable from Lua** and this
+> section was wrong to hand it to us. `NetworkZombiePacker` is absent from LuaManager's
+> `setExposed` list and no vanilla Lua touches it, so `ZombieDeleteOnClient` is a packet
+> no mod can send. What we use instead is `VirtualZombieManager.instance:removeZombieFromWorld(z)`
+> — Lua-exposed, `instance` being a public static field — which is what the delete
+> packet's own client handler calls (`ZombieDeleteOnClientPacket.java:42`,
+> `VirtualZombieManager.java:80-86`) and which unregisters the sound emitter before
+> removing. Skipping that leaves a zombie you can hear but not see.
+>
+> The consequence: a Lua removal is **server-local**. Birth suppression does not care —
+> a zombie removed inside `OnZombieCreate` was never transmitted — but the standing
+> sweep removes zombies already on screen, and those clients keep drawing them until the
+> chunk re-streams. `LMZedsCl` closes that: the server broadcasts one `zedsSweep` message
+> per zone event and each client sweeps its own world from its own copy of the store. No
+> zombie identities on the wire; both halves apply the same rule to the same data. Same
+> shape as §7.4's per-machine stat modulation, for the same reason.
+
 Canonical idiom, ordering verified: `NetworkZombiePacker.getInstance():deleteZombie(z)`
 **then** `z:removeFromWorld()` + `z:removeFromSquare()` — delete captures `onlineId`
 before removal nulls it to -1 (`IsoZombie.java:3569`; reversed order silently loses the
