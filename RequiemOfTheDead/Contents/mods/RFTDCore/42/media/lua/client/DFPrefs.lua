@@ -163,6 +163,21 @@ function DFPrefs.apply()
     clampState()
     local f = LADDER[DFPrefs.state.fontScale] or LADDER[1]
 
+    -- Tell the kit's own tier tracker FIRST. DFKit.setFontScale keeps
+    -- DFKit.fontScale in step, and that tracker is what the deck compares the
+    -- tier it last BUILT at against to decide whether a rebuild is owed
+    -- (DFDeck's onChange listener). Writing the font tables behind its back
+    -- (as this used to) is how the two systems fought: the tracker said
+    -- "still tier 1" while the fonts said Medium, so the rebuild that
+    -- re-bakes every label never happened and the glyphs moved under widgets
+    -- laid out for the old size. One owner now: this preference; the deck
+    -- resyncs from it and never derives a tier of its own. Note the sync
+    -- happens BEFORE notify(), which is exactly why listeners must not ask
+    -- setFontScale "did anything move?" - by then the answer is always no.
+    if DFKit and DFKit.setFontScale then
+        DFKit.setFontScale(DFPrefs.state.fontScale)
+    end
+
     -- DFKit: what the tabs draw with.
     if DFKit and DFKit.font then
         DFKit.font.small = f.small

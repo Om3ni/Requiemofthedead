@@ -84,7 +84,17 @@ if isServer() then
 
     -- Join baseline and gap recovery are the same request: "give me everything,
     -- on my connection only".
-    RDNet.register(TOKEN, "pull", { rate = 2 }, function(player)
+    --
+    -- RATE 10, NOT 2. The bug this once compensated for is fixed at the
+    -- source - RDRate buckets are now scoped per command, so other traffic no
+    -- longer drains this one's budget - but the rate stays high because two
+    -- eaters remain that no bucket fix reaches: RDNet's rejection path is
+    -- still SILENT to the client, and since 42.16 the engine itself throttles
+    -- client packets by type underneath us, join floods included. A dropped
+    -- pull costs a session (empty store, every save refused on revision 0),
+    -- so this route gets headroom, not a razor's edge. The real gate is that
+    -- it fires once per observed revision; the rate is only flood cover.
+    RDNet.register(TOKEN, "pull", { rate = 10 }, function(player)
         RDNet.reply(player, TOKEN, "baseline", baselinePayload())
     end)
 
@@ -160,6 +170,7 @@ if isServer() then
         forensic("LM.IMPORT", player, { source = source, zones = res.count,
                                         warnings = #res.warnings + #warnings })
         RDNet.reply(player, TOKEN, "notice", {
+            ok = true,
             msg = string.format("imported %d zones (%s) from %s (%d import warnings, %d resolve warnings), revision %d. %s",
                 res.count, tostring(res.format or "?"), source, #res.warnings, #warnings, Limes.revision,
                 snapped and ("Previous store snapshotted to " .. LMPersist.BACKUP
@@ -185,7 +196,7 @@ if isServer() then
     -- and it is 16x smaller. A live PhunZones layer (~38KB) does not fit in one
     -- command, which is what "pasteChunk" below exists for.
     local MAX_PASTE = 32000
-    RDNet.register(TOKEN, "pasteImport", { capability = "any", rate = 1 }, function(player, args)
+    RDNet.register(TOKEN, "pasteImport", { capability = "any", rate = 6 }, function(player, args)
         local who = adminGate(player)
         if not who then return end
         local text = args and args.text
@@ -215,7 +226,7 @@ if isServer() then
     -- cleared store stays genuinely empty until the next restart - which is
     -- what a controlled experiment wants. An admin who wants the ladder back
     -- restarts, or re-imports.
-    RDNet.register(TOKEN, "clearAll", { capability = "any", rate = 1 }, function(player)
+    RDNet.register(TOKEN, "clearAll", { capability = "any", rate = 6 }, function(player)
         local who = adminGate(player)
         if not who then return end
 
@@ -228,12 +239,59 @@ if isServer() then
 
         forensic("LM.CLEAR", player, { zones = had, snapshot = snapped })
         RDNet.reply(player, TOKEN, "notice", {
+            ok = true,
             msg = string.format("cleared %d zones, revision %d. %s", had, Limes.revision,
                 snapped and ("Previous store snapshotted to " .. LMPersist.BACKUP
                     .. " - one level of undo, overwritten by the next clear.")
                     or "SNAPSHOT FAILED - the previous store was not saved."),
         })
         print("[Limes] " .. who .. " cleared all zones (" .. had .. " removed)")
+    end)
+
+    -- THE CENSUS, and its master switch.
+    --
+    -- Registered HERE rather than in LMZeds because this file is the only writer
+    -- on the wire by construction (see the placement note at the top) - a second
+    -- file registering commands on this token would make that claim false and
+    -- leave a half-severed channel behind if either were deleted.
+    --
+    -- The full report goes to the SERVER log, which is the point: it is evidence
+    -- to read next to the settings that produced it, not a status line. The
+    -- admin gets back the one line that says whether it reconciled, so a census
+    -- can be triggered and judged without alt-tabbing to the console.
+    --
+    -- Both are guarded on LMZeds existing: it is a removable file (delete it and
+    -- `zeds` goes inert), and a removable file that leaves an RDNet command
+    -- answering into a nil is not removable, it is a crash waiting for an admin.
+    RDNet.register(TOKEN, "census", { capability = "any", rate = 4 }, function(player, args)
+        local who = adminGate(player)
+        if not who then return end
+        if not LMZeds then
+            RDNet.reply(player, TOKEN, "notice", { msg = "census unavailable: LMZeds is not installed" })
+            return
+        end
+        local rep = LMZeds.census(args and args.verbose == true)
+        local ok = (rep.inZone + rep.outside) == rep.total
+        RDNet.reply(player, TOKEN, "notice", { ok = ok, msg = string.format(
+            "census printed to the server log: %d zombies in cell, %d inside zones,"
+            .. " %d suppressed since boot%s",
+            rep.total, rep.inZone, rep.removed,
+            ok and "" or " - TOTALS DID NOT RECONCILE, see the log") })
+        print("[Limes] " .. who .. " printed the zone census")
+    end)
+
+    RDNet.register(TOKEN, "censusSwitch", { capability = "any", rate = 4 }, function(player, args)
+        local who = adminGate(player)
+        if not who then return end
+        if not LMZeds then
+            RDNet.reply(player, TOKEN, "notice", { msg = "census unavailable: LMZeds is not installed" })
+            return
+        end
+        local on = LMZeds.setCensus(args and args.on == true)
+        RDNet.reply(player, TOKEN, "notice", { ok = true, msg = on
+            and "census ON - the server log gets a full report every ten game minutes"
+            or  "census OFF" })
+        print("[Limes] " .. who .. " turned the zone census " .. (on and "on" or "off"))
     end)
 
     -- SAVE, the M4 editor's one command (§6.1 rules 2, 4, 7, 8).
@@ -265,7 +323,15 @@ if isServer() then
     local MAX_SAVE_ZONES = 512    -- a rename can legitimately touch every child
     local MAX_RECTS      = 128    -- the live layer's worst zone has nine
 
-    RDNet.register(TOKEN, "saveZones", { capability = "any", rate = 1 }, function(player, args)
+    -- RATE 8, NOT 1. The shared-bucket bug that made rate=1 a coin flip is
+    -- fixed at the source (RDRate now scopes buckets per command), but a
+    -- dropped save is the worst outcome this mod has - the admin's work
+    -- silently never written, the status line hung on "waiting for the
+    -- verdict..." - and RDNet rejections are still silent while the engine's
+    -- own per-type packet throttle (42.16+) sits underneath us. Real
+    -- protections here are adminGate, the revision gate and re-validation;
+    -- the rate is flood cover and 8/second is still nothing.
+    RDNet.register(TOKEN, "saveZones", { capability = "any", rate = 8 }, function(player, args)
         local who = adminGate(player)
         if not who then return end
 
@@ -274,10 +340,29 @@ if isServer() then
 
         local rev = tonumber(args and args.rev)
         if rev == nil or rev ~= Limes.revision then
-            RDNet.reply(player, TOKEN, "notice", { msg = string.format(
-                "save refused: you were editing revision %s, the store is on %d."
-                .. " Someone else saved first - reopen the tab to pick up their"
-                .. " changes before redoing yours.", tostring(rev), Limes.revision) })
+            -- REVISION 0 IS NOT A CONFLICT. The store is stamped revision 1 the
+            -- moment it boots, so a draft taken against 0 was taken against a
+            -- client that never received a baseline at all - its join pull was
+            -- dropped and nothing re-armed. Blaming "someone else saved first"
+            -- there sends an admin hunting a second admin who does not exist,
+            -- while the actual state is that their whole zone list is missing
+            -- and anything they build on top of it is a new store, not an edit.
+            -- Cost a session on 2026-08-06: the .ini was fine and holding 44
+            -- zones the entire time.
+            local msg
+            if rev == 0 then
+                msg = "save refused: your client never received the zone list"
+                    .. " (it is on revision 0, the store is on " .. Limes.revision
+                    .. "). Nobody else saved - your draft is built on an EMPTY"
+                    .. " store, so saving it would not be an edit. Rejoin to pull"
+                    .. " the zones, then redo your changes."
+            else
+                msg = string.format(
+                    "save refused: you were editing revision %s, the store is on %d."
+                    .. " Someone else saved first - reopen the tab to pick up their"
+                    .. " changes before redoing yours.", tostring(rev), Limes.revision)
+            end
+            RDNet.reply(player, TOKEN, "notice", { msg = msg })
             return
         end
 
@@ -368,7 +453,9 @@ if isServer() then
 
         forensic("LM.SAVE", player, { changed = nChanged, removed = #removed,
                                       rev = Limes.revision, warnings = #warnings })
-        RDNet.reply(player, TOKEN, "notice", { msg = string.format(
+        -- ok = true is what paints this green on the admin's status line; every
+        -- refusal above deliberately omits it (see LMEditView's notice handler).
+        RDNet.reply(player, TOKEN, "notice", { ok = true, msg = string.format(
             "saved: %d zone%s changed, %d removed, revision %d%s",
             nChanged, nChanged == 1 and "" or "s", #removed, Limes.revision,
             #warnings > 0 and (" (" .. #warnings .. " resolve warnings - see the server log)") or "") })
@@ -380,13 +467,17 @@ if isServer() then
     -- reassembled here, then take the same finishImport tail as everything
     -- else - the server still parses ONE text authoritatively.
     --
-    -- RATE 30, NOT 1 like the single-shot routes, and this is not a preference:
-    -- RDRate's buckets are keyed by USERNAME ALONE and shared across every
-    -- RDNet command, then compared against whichever command's max is being
-    -- checked (RDRate.lua:38-52). At rate 1, chunk 1 opens the bucket and
-    -- chunk 2 is rejected the moment count reaches 2 - the send would lose its
-    -- tail silently, which is the exact failure mode this route exists to fix.
-    -- The real bound is MAX_ASSEMBLY plus MAX_CHUNKS, not the rate.
+    -- RATE 30, NOT 1 like the single-shot routes: a chunked send fires many
+    -- commands in one second BY DESIGN, so its budget must cover a full burst
+    -- - at rate 1, chunk 2 would be dropped the moment count reached 2 and
+    -- the send would lose its tail silently, the exact failure mode this
+    -- route exists to fix. (Historically the hazard was doubled: RDRate
+    -- buckets were keyed by username alone and SHARED across every command,
+    -- so any concurrent traffic drained this budget too. That is fixed -
+    -- buckets are now scoped per command - which makes 30 mean what it says:
+    -- thirty chunks per second on this route, regardless of what else the
+    -- admin's client is doing.) The real bound is MAX_ASSEMBLY plus
+    -- MAX_CHUNKS, not the rate.
     local MAX_ASSEMBLY = 512 * 1024
     local MAX_CHUNKS   = 64      -- bounds the completeness scan against a hostile `total`
     local assembly     = {}      -- username -> { parts, total, bytes }
@@ -447,7 +538,7 @@ if isServer() then
     if Events.OnPlayerDisconnect then Events.OnPlayerDisconnect.Add(dropAssembly) end
 
     -- The filename route, against the Zomboid/Lua/ jail.
-    RDNet.register(TOKEN, "import", { capability = "any", rate = 1 }, function(player, args)
+    RDNet.register(TOKEN, "import", { capability = "any", rate = 6 }, function(player, args)
         local who = adminGate(player)
         if not who then return end
         local file = args and tostring(args.file or "") or ""
@@ -493,6 +584,17 @@ else
         RDNet.send(TOKEN, "import", { file = file })
     end
 
+    -- The census pair. Both are fire-and-forget: the report lands in the server
+    -- log and the verdict comes back as an ordinary notice, so neither needs a
+    -- reply path of its own.
+    function LMSync.printCensus(verbose)
+        RDNet.send(TOKEN, "census", { verbose = verbose == true })
+    end
+
+    function LMSync.setCensus(on)
+        RDNet.send(TOKEN, "censusSwitch", { on = on == true })
+    end
+
     -- The editor's Save. One command, on an explicit click, carrying the draft's
     -- revision so the server can refuse a stale write (§6.1 rules 2 and 7).
     --
@@ -511,6 +613,29 @@ else
     end
 
     Events.OnGameStart.Add(pull)
+
+    -- BASELINE INSURANCE. The join pull is one command with no delivery
+    -- guarantee: RDNet's rejection paths are silent to the client, and since
+    -- 42.16 the engine itself throttles client packets by type - and a join
+    -- is exactly when every mod's handshake floods the wire at once. If the
+    -- pull is eaten, pulledAtRev already equals lastRev, so nothing would
+    -- ever re-arm - this client shows an empty store for the whole session
+    -- and every save it attempts carries revision 0, which reads as "zones
+    -- did not survive the restart" even though the ini on disk is fine.
+    -- Until the first baseline lands, ask again every GAME minute -
+    -- EveryOneMinute is DayLength-compressed game time, so at a 1-hour day
+    -- that is roughly every 2.5 real seconds, which is fine for one tiny
+    -- command against a rate of 10. The moment the baseline lands (lastRev
+    -- moves off 0) this costs nothing forever. isClient() gates the resend
+    -- because SP is neither client nor server: the server half above never
+    -- registered, no baseline can ever arrive, and without the gate this
+    -- would ping the void every game minute for the whole session.
+    Events.EveryOneMinute.Add(function()
+        if lastRev == 0 and isClient() then
+            pulledAtRev = -1
+            pull()
+        end
+    end)
 
     Events.OnServerCommand.Add(function(module, command, args)
         if module ~= TOKEN then return end

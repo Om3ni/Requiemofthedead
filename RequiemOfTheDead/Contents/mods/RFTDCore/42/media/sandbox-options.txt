@@ -24,12 +24,22 @@ option RFTDCore.DeathCaptureEnabled
     translation = RD_DeathCaptureEnabled,
 }
 
+option RFTDCore.ForensicSegmentHours
+{
+    type = integer,
+    min = 1,
+    max = 24,
+    default = 4,
+    page = RFTDCore,
+    translation = RD_ForensicSegmentHours,
+}
+
 option RFTDCore.ForensicRingSegments
 {
     type = integer,
     min = 2,
-    max = 32,
-    default = 8,
+    max = 96,
+    default = 42,
     page = RFTDCore,
     translation = RD_ForensicRingSegments,
 }
@@ -49,7 +59,7 @@ option RFTDCore.ForensicSegmentKB
     type = integer,
     min = 256,
     max = 65536,
-    default = 4096,
+    default = 2048,
     page = RFTDCore,
     translation = RD_ForensicSegmentKB,
 }

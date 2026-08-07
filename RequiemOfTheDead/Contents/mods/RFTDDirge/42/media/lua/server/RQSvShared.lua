@@ -472,6 +472,31 @@ function RQSvShared.setActiveZombies(tbl)
     _activeZombies = tbl
 end
 
+-- READ-ONLY WINDOW onto the live special-infected set, for observers.
+--
+-- Added for Limes' zone census, which needs to answer "what fraction of this
+-- zone's standing population is actually special" - the only empirical check
+-- that the per-zone spawn dials are reaching the world rather than merely being
+-- stored. Nothing in Dirge needs it.
+--
+-- A CALLBACK, not the table. svActiveZombies is weak-keyed and four modules
+-- share the one reference (RQServer:95-98); handing it out would let any caller
+-- hold a strong reference to a zombie the collector is trying to release, or
+-- write into a structure Dirge's own bookkeeping depends on. The callback sees
+-- each pair and can keep whatever it wants.
+--
+-- Returns the number of entries visited, so a caller can distinguish "no
+-- specials alive" from "Dirge is not tracking anything".
+function RQSvShared.eachActiveZombie(fn)
+    if not _activeZombies or type(fn) ~= "function" then return 0 end
+    local n = 0
+    for zombie, zType in pairs(_activeZombies) do
+        n = n + 1
+        fn(zombie, zType)
+    end
+    return n
+end
+
 local function svFindActiveZombieByOnlineID(onlineID)
     if not _activeZombies then return nil, nil end
     for zombie, zType in pairs(_activeZombies) do

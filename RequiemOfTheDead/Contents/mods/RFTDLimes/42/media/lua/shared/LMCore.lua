@@ -43,10 +43,12 @@
 -- Lookup: linear scan, per-zone bounding box first (~90 zones x few rects is
 -- microseconds; the 256-tile grid index drops in behind this same function if
 -- the live box ever says otherwise). Containment is tile-inclusive on all four
--- edges. Overlaps resolve smallest-total-area-first - the nested-zone intuition:
--- the gun store inside Louisville is the gun store - with the explicit
--- "priority" field (higher wins) as the tiebreak, then name order so equal
--- claims resolve the same way on every machine.
+-- edges. Overlaps resolve smallest-COVERING-RECT-first - the nested-zone
+-- intuition: the gun store inside Louisville is the gun store - with the
+-- explicit "priority" field (higher wins) as the tiebreak, then name order so
+-- equal claims resolve the same way on every machine. Per RECT and not per zone
+-- total, so one name placed in five unrelated spots stays five independent
+-- claims; see Limes.getLocation for what that fixes.
 
 Limes  = Limes or {}
 LMCore = LMCore or {}
@@ -304,8 +306,8 @@ Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0,  
         .. " and overrides it only if you set one here." })
 Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0,     side = "both",
     order = 2, group = "Zone", label = "Overlap priority",
-    help = "Breaks a tie when two zones of the SAME total area cover a tile."
-        .. " Smaller area already wins, so this only matters for exact ties." })
+    help = "Breaks a tie when the two rectangles covering a tile are the SAME SIZE."
+        .. " The smaller rectangle already wins, so this only matters for exact ties." })
 Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = false, side = "both",
     order = 3, group = "Zone", label = "Disabled",
     help = "Keeps the zone and its geometry but stops it answering lookups." })
@@ -357,10 +359,15 @@ for i, r in ipairs(RESTRICTIONS) do
         order = 10 + i, group = "Restrictions", label = r[2], help = r[3] .. NOT_YET })
 end
 
+-- ENFORCED since 2026-08-06 by LMZeds, so no NOT_YET note here - it is the one
+-- field in this block that does something. Removal is deliberately silent (a
+-- corpse in a walled safe zone is worse than the spawn it replaces), which is
+-- why the help points at the census: it is the only way to watch it work.
 Limes.fields.register("LMCore", "zeds", { type = "string", default = "", side = "both",
     order = 30, group = "Zombies", label = "Zombie handling",
-    help = "'remove' clears zombies standing in the zone; 'none' stops them spawning."
-        .. " Blank leaves the zone alone." .. NOT_YET })
+    help = "'none' stops zombies spawning here - they are removed at birth, silently"
+        .. " and without a corpse. 'remove' does that AND sweeps any already standing"
+        .. " inside. Blank leaves the zone alone. Use Print Census to see it working." })
 Limes.fields.register("LMCore", "minSprinterRisk", { type = "number", default = 0, side = "both",
     min = 0, max = 100, order = 31, group = "Zombies", label = "Sprinter risk (min)",
     help = "Lower bound of the per-zone sprinter chance band." .. NOT_YET })
@@ -642,27 +649,59 @@ end
 -- Reads
 -- ---------------------------------------------------------------------------
 
--- The lookup. Returns the resolved zone containing (x, y), or nil. Smallest
--- total area wins overlaps; priority (higher first), then name break ties.
+-- The lookup. Returns the resolved zone containing (x, y), or nil.
+--
+-- THE WINNER IS DECIDED BY THE RECT THAT COVERS THE TILE, not by the zone's
+-- total footprint (changed 2026-08-06). Smallest covering rect wins; priority
+-- (higher first), then name, break exact ties.
+--
+-- It used to compare z.area, the SUM of every rect the zone owns, and that is
+-- wrong the moment one name is placed in several unrelated spots - which is the
+-- whole point of allowing a zone to hold many rects. Five 400-tile "Guns"
+-- patches summed to 2000, so any single 1500-tile warehouse overlapping ONE of
+-- them took that ground, even though the Guns patch sitting inside it was
+-- plainly the smaller, more specific thing. Worse, it acted at a distance:
+-- drawing the fifth patch could flip the winner at the first, somewhere nobody
+-- had touched, with nothing in the editor to suggest a link.
+--
+-- Per-rect restores the nesting intuition locally and makes each placement
+-- independent: a zone's rules are king inside its own rectangle, and a larger
+-- zone drawn over it keeps everything its rectangle covers EXCEPT that hole.
+-- Single-rect zones are unaffected (the rect is the zone), and so are clustered
+-- multi-rect zones like SunstarMotel, whose 180-tile VainsLair still wins
+-- against the 261-tile rect it sits in exactly as it did against the 1735-tile
+-- total.
+--
+-- z.area is still the summed total and is still what change detection compares -
+-- it answers "did this zone's footprint change", which is a different question
+-- from "who owns this tile".
+--
+-- The smallest MATCHING rect is taken rather than the first, so a zone whose own
+-- rects overlap compares on the tightest one covering the tile instead of
+-- whichever happened to be drawn first.
 function Limes.getLocation(x, y)
     if not x or not y then return nil end
-    local best = nil
+    local best, bestArea = nil, nil
     for i = 1, #index do
         local e = index[i]
         local b = e.bbox
         if x >= b[1] and x <= b[3] and y >= b[2] and y <= b[4] then
             local rects = e.rec.rects
+            local hit = nil
             for j = 1, #rects do
                 local r = rects[j]
                 if x >= r[1] and x <= r[3] and y >= r[2] and y <= r[4] then
-                    local z = e.rec
-                    if not best
-                        or z.area < best.area
-                        or (z.area == best.area and z.priority > best.priority)
-                        or (z.area == best.area and z.priority == best.priority and z.name < best.name) then
-                        best = z
-                    end
-                    break
+                    local a = (r[3] - r[1] + 1) * (r[4] - r[2] + 1)
+                    if not hit or a < hit then hit = a end
+                end
+            end
+            if hit then
+                local z = e.rec
+                if not best
+                    or hit < bestArea
+                    or (hit == bestArea and z.priority > best.priority)
+                    or (hit == bestArea and z.priority == best.priority and z.name < best.name) then
+                    best, bestArea = z, hit
                 end
             end
         end

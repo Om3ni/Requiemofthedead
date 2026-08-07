@@ -55,3 +55,10 @@ guardiant.log
 # of RFTDEchoes\42\media\sound before anything destructive (see 2026-08-02).
 RequiemOfTheDead/Contents/mods/RFTDEchoes/42/media/sound/
 RequiemOfTheDead/Contents/mods/RFTDEchoes/42/media/anims_X/
+
+# --- Bug-hunt working set: pulled server logs and the files under review ---
+# Same rule as netprobe captures. bughuntresults/remote and wireremotetest.log
+# are raw dedi output carrying steam-ids, IPs and usernames; the .lua copies in
+# there are snapshots of files that already live in the tree. Nothing here is
+# repo content, and one of them is 2.3MB of live player data.
+bughuntresults/

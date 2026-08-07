@@ -10,29 +10,34 @@
 --              irreplaceable, so every line is flushed the moment it exists.
 --
 --   FORENSIC   bounded ring for high-volume telemetry ("what happened last
---              Tuesday"). Rotates; volume is bounded by segment size x ring
---              length, not by discipline. Buffered (<=25 lines or ~1s) because
---              the traffic is continuous and replaceable. Segments roll on
---              BYTES or lines, whichever trips first - see flushStream for why
---              a line count alone never bounded the disk.
+--              Tuesday"). Rotates ON THE WALL CLOCK - one segment per period,
+--              4 h by default - so the ring holds `ring x period` of history
+--              (42 x 4 h = one week at the defaults) regardless of traffic
+--              shape. Buffered (<=25 lines or ~1s) because the traffic is
+--              continuous and replaceable. Size settings are per-segment
+--              CEILINGS, not triggers; see the segment clock below for why
+--              accumulated counters could not do this job.
 --
 -- Durability model: nothing here may depend on a graceful exit. The restart
 -- scripts force-kill java (documented data-loss history), and while the
 -- production dedi saves every 30 minutes, the local/test setup runs with
 -- SaveWorldEveryMinutes=0 - so engine-save cadence is environment-dependent
 -- and these files never rely on it. Chronicle lines are durable per line.
--- Forensic loses at
--- most one buffer (<=25 lines / <=1s). head.txt is rewritten every 500 lines,
--- so after a force-kill the line counter can be <=500 lines stale and a
--- segment runs slightly long or short. THAT IS ACCEPTABLE - do not "fix" it
--- with a boot-time full-file line count; that is an O(20k) Kahlua read per
--- stream on the tick thread.
+-- Forensic loses at most one buffer (<=25 lines / <=1s).
+--
+-- A force-kill CANNOT move a segment boundary or lose the ring's place: the
+-- segment is a pure function of the clock (see the segment clock below), so it
+-- survives by being recomputed rather than by being saved. Only the advisory
+-- lines/bytes counters can go stale (<=500 lines), which slightly softens the
+-- ceilings and nothing else. Do NOT "fix" that with a boot-time full-file line
+-- count; that is an O(20k) Kahlua read per stream on the tick thread.
 --
 -- Rotation without a delete primitive: PZ Lua cannot delete files, but
 -- getFileWriter(path, createIfNull, false) truncates to zero bytes - that IS
--- the reclaim. Ring of RING segments x SEG_LINES lines, line-counted (Lua has
--- no stat). Existence probing would use cacheFileExists (roots at
--- cacheDir/Lua/); fileExists and serverFileExists root elsewhere.
+-- the reclaim, and it happens exactly once per segment, at the moment the ring
+-- wraps back onto it. Ring of RING segments, one per time period. Existence
+-- probing would use cacheFileExists (roots at cacheDir/Lua/); fileExists and
+-- serverFileExists root elsewhere.
 --
 -- 42.20 WRITE-EXTENSION ALLOWLIST - why these files are named ".jsonl.log":
 -- getFileWriter returns nil unless the extension is in
@@ -60,7 +65,7 @@
 --   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/events.jsonl.log  permanent
 --   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/index.json.txt    rewritten
 --   RFTD/season/<SeasonName>/chronicle/world.jsonl.log                server scope
---   RFTD/forensic/<stream>/head.txt                    "<segment> <lines> <bytes>"
+--   RFTD/forensic/<stream>/head.txt        "<segment> <lines> <bytes> <bucket>"
 --   RFTD/forensic/<stream>/000.<stream>.jsonl.log ..         ring segments
 --     e.g. forensic/guardian/000.guardian.jsonl.log - the name repeats the
 --     stream so a segment stays identifiable once copied out of its folder.
@@ -99,6 +104,53 @@ local function cfgNum(key, default)
 end
 
 local HEAD_SYNC_LINES = 500
+
+-- ---------------------------------------------------------------------------
+-- THE SEGMENT CLOCK - why rotation is a function of the wall clock and nothing
+-- else (2026-08-05).
+--
+-- Rotation used to trigger on accumulated lines/bytes. Both counters live in
+-- the `streams` table, which is a file-scope Lua local, so BOTH RESET TO ZERO
+-- ON EVERY BOOT while the file they describe keeps appending. Measured on the
+-- live remote server: 1553 lines / 2.26 MB of wire telemetry over 19.5 h, but
+-- the longest single uninterrupted run contributed only 414 lines / 0.62 MB.
+-- The gates were 20000 lines and 4 MB, so ONE boot would have had to run ~22 h
+-- to rotate on bytes and ~7 days to rotate on lines. Neither gate was ever
+-- reachable, head.txt was never written on any stream on any server, and the
+-- segment grew without bound. The ring had never rotated once, anywhere.
+--
+-- So the segment index is now DERIVED, not accumulated:
+--
+--     bucket = floor(epochSeconds / periodSeconds)
+--     seg    = bucket % ring
+--
+-- Nothing carries across a restart, because nothing needs to: two processes
+-- asking the same question at the same moment get the same answer. A crash, a
+-- force-kill, a counter reset - none of them can move the boundary. "A new log
+-- every four hours" is then true by construction rather than by bookkeeping,
+-- and any timestamp can be mapped straight to the file that holds it.
+--
+-- Boundaries are ABSOLUTE, not relative to boot: with the 4 h default they
+-- land on 00:00, 04:00, 08:00, ... UTC, so segments line up across streams and
+-- across servers instead of drifting with each restart.
+--
+-- head.txt survives as bookkeeping only - it says which BUCKET the segment on
+-- disk holds, which is what distinguishes "same period, resume appending" from
+-- "a full ring ago, truncate first". Position no longer depends on it.
+local function periodSec()
+    local h = cfgNum("ForensicSegmentHours", 4)
+    if h < 1 then h = 1 elseif h > 24 then h = 24 end
+    return math.floor(h * 3600)
+end
+
+-- nil when the clock is unavailable - callers then leave the segment alone
+-- rather than guessing. Fail-safe: an unreadable clock must not rotate, and
+-- must never truncate.
+local function bucketNow()
+    local now = RDShared.nowSec()
+    if type(now) ~= "number" or now <= 0 then return nil end
+    return math.floor(now / periodSec())
+end
 
 -- ---------------------------------------------------------------------------
 -- Low-level file helpers (every touch pcall-wrapped; a logging fault must
@@ -269,13 +321,21 @@ local function headPath(name)
     return DIR .. "forensic/" .. name .. "/head.txt"
 end
 
--- "<seg> <lines> <bytes>". The third field is an EXTENSION: pre-2026-08-02 heads
--- carry only two, parse fine, and resume with bytes=0 - which under-counts the
--- current segment exactly once, then self-corrects at the next rotation. Do not
--- "fix" that by measuring the file; there is no stat and a read is O(segment).
+-- "<seg> <lines> <bytes> <bucket>". Fields have only ever been APPENDED, and
+-- every historical shape still loads: two-field heads (pre-2026-08-02) resume
+-- with bytes=0, three-field heads (pre-2026-08-05) resume with no bucket, which
+-- reads as "unknown period" and costs one truncation of the current partial
+-- segment. Parsed by scanning for integers rather than by a positional pattern,
+-- so a missing trailing field cannot silently shift the others.
+--
+-- The BUCKET is the load-bearing field now. lines/bytes are advisory: they feed
+-- the ceilings below and may be up to HEAD_SYNC_LINES stale after a force-kill.
+-- Do not "fix" that staleness by measuring the file; there is no stat and a read
+-- is O(segment) on the tick thread.
 local function writeHead(st, name)
     rewrite(headPath(name),
-        tostring(st.seg) .. " " .. tostring(st.lines) .. " " .. tostring(st.bytes) .. "\n")
+        tostring(st.seg) .. " " .. tostring(st.lines) .. " " .. tostring(st.bytes)
+        .. " " .. tostring(st.bucket or 0) .. "\n")
     st.headDirty = 0
 end
 
@@ -315,68 +375,112 @@ local function stream(name)
     name = safePath(name)
     local st = streams[name]
     if st then return st, name end
-    st = { seg = 0, lines = 0, bytes = 0, buf = {}, lastMs = 0, headDirty = 0 }
+    st = { seg = 0, lines = 0, bytes = 0, bucket = nil,
+           buf = {}, lastMs = 0, headDirty = 0, over = false, fresh = false }
+
     local head = readFirstLine(headPath(name))
     if head then
-        local seg, lines, bytes = head:match("^(%d+)%s+(%d+)%s*(%d*)")
-        if seg then
-            st.seg   = tonumber(seg) or 0
-            st.lines = tonumber(lines) or 0
-            st.bytes = tonumber(bytes) or 0
-            -- head.txt can describe a segment that does not exist, and the 42.20
-            -- allowlist outage is exactly how: head.txt is ".txt" so it stayed
-            -- writable while every ".jsonl" segment write returned nil, leaving
-            -- the counter advancing over records that never landed. A pre-42.20
-            -- head also points at the old ".jsonl" segment names. Either way the
-            -- counter is not describing the file it names, so trust the disk and
-            -- restart the ring rather than resuming at a fabricated offset.
-            -- Probed once per stream per boot, and only when a head exists - a
-            -- fresh install never gets here. cacheFileExists roots at
-            -- cacheDir/Lua/, the same root these paths are relative to.
-            local ok, exists = pcall(function() return cacheFileExists(segPath(name, st.seg)) end)
-            if not ok or exists ~= true then
-                st.seg, st.lines, st.bytes = 0, 0, 0
-                st.headDirty = HEAD_SYNC_LINES   -- force a rewrite so disk stops lying
-            end
+        -- Scan for integers rather than matching positionally, so a two-, three-
+        -- or four-field head all load correctly and a missing trailing field
+        -- cannot shift the ones before it.
+        local n = {}
+        for d in head:gmatch("%d+") do n[#n + 1] = tonumber(d) end
+        st.seg    = n[1] or 0
+        st.lines  = n[2] or 0
+        st.bytes  = n[3] or 0
+        st.bucket = n[4]          -- nil for a pre-2026-08-05 head
+    end
+
+    local ring = cfgNum("ForensicRingSegments", 42)
+    local b    = bucketNow()
+    if b then
+        -- THE CLOCK DECIDES, not the head. The head is consulted only to answer
+        -- "does the file already hold THIS period?" - if it does, resume
+        -- appending with its counters; if it does not (a different period, a
+        -- head from before buckets existed, or no head at all) the file on disk
+        -- is from an earlier turn of the ring and must be reclaimed before the
+        -- first write, or a wrap would silently splice new records onto records
+        -- up to `ring` periods old.
+        local want = b % ring
+        if st.bucket ~= b or st.seg ~= want then
+            st.seg, st.lines, st.bytes = want, 0, 0
+            st.bucket = b
+            st.fresh  = true      -- truncate on first write; see flushStream
+        end
+    else
+        -- No clock. Keep whatever the head named and never truncate - a broken
+        -- clock must not be able to erase a segment. `seg` can still be outside
+        -- a shrunken ring here (the modulo above never ran), so clamp it.
+        if st.seg >= ring then
+            st.seg, st.lines, st.bytes = 0, 0, 0
+            st.headDirty = HEAD_SYNC_LINES
         end
     end
-    -- A head written under a LARGER ring can name a segment outside the current
-    -- one. Left alone the stream would keep appending to it until it filled, then
-    -- wrap inside the ring and never return - so the file it was writing becomes
-    -- an orphan holding a full segment. Clamp before any write happens.
-    local ring = cfgNum("ForensicRingSegments", 8)
-    if st.seg >= ring then
-        st.seg, st.lines, st.bytes = 0, 0, 0
-        st.headDirty = HEAD_SYNC_LINES
-    end
+
     reclaimOutsideRing(name, ring)
     streams[name] = st
     return st, name
 end
 
--- Rotate on LINES OR BYTES, whichever trips first.
+-- TIME ROTATES; SIZE ONLY CAPS.
 --
--- Lines alone never bounded the thing that actually fills a disk. Record size
--- across these streams spans more than an order of magnitude - a legacyLine is a
--- couple of hundred bytes, an RD.WIRE_TOP envelope carrying its full row list is
--- kilobytes - so one "20000 lines" segment is 4 MB for one stream and 30+ MB for
--- another, and the operator setting it cannot tell which they are getting. The
--- 2026-08-02 wire capture averaged ~900 B/line at topN=12; raising topN to 25 the
--- same day roughly doubled it, silently doubling the ring's disk footprint
--- without touching the setting that supposedly governs it. Bytes are the resource,
--- so bytes get a bound; the line cap stays as a secondary guard.
+-- The period boundary is the only thing that moves the segment, so every
+-- segment is exactly one wall-clock window and the ring holds
+-- `ring x period` of history no matter how the traffic is shaped. Lines and
+-- bytes stay as CEILINGS on a single segment - a flood inside one window is
+-- dropped rather than allowed to spend the whole ring's disk in twenty
+-- minutes. They no longer rotate anything, because a size-triggered rotation
+-- would break the property that makes this reliable: that the segment holding
+-- a given moment can be computed from that moment alone.
+--
+-- Dropping is the correct response to a flood on THIS tier and only this tier.
+-- Forensic is explicitly the bounded, replaceable stream; the chronicle is the
+-- permanent one and is never rotated, never capped, and never dropped. A flood
+-- that would blow the ceiling is itself the interesting event, so it is
+-- announced once per segment rather than silently discarded.
 --
 -- Counted, not measured: `#s` is bytes in Lua 5.1 (and Kahlua), so the buffer is
 -- summed as it is written. There is no stat call and reading the file back to
 -- size it would be O(segment) on the tick thread.
 local function flushStream(st, name)
     if #st.buf == 0 then return end
-    local ring  = cfgNum("ForensicRingSegments", 8)
+    local ring  = cfgNum("ForensicRingSegments", 42)
     local segLn = cfgNum("ForensicSegmentLines", 20000)
-    local segBy = cfgNum("ForensicSegmentKB", 4096) * 1024
+    local segBy = cfgNum("ForensicSegmentKB", 2048) * 1024
+
+    -- The period boundary. Crossing it reclaims the segment being entered,
+    -- which is what bounds the ring: that file holds records from `ring`
+    -- periods ago and this is the only moment anything can reclaim them.
+    local b = bucketNow()
+    if b and st.bucket ~= b then
+        st.seg    = b % ring
+        st.bucket = b
+        st.lines, st.bytes, st.over = 0, 0, false
+        st.fresh  = true
+    end
+
+    -- Deferred to the first actual write so an idle stream never truncates a
+    -- segment it is not going to use.
+    if st.fresh then
+        rewrite(segPath(name, st.seg), "")   -- truncate-to-zero IS the reclaim
+        st.fresh = false
+        writeHead(st, name)                  -- head exists from the first flush on
+    end
 
     local added = 0
     for i = 1, #st.buf do added = added + #st.buf[i] + 1 end   -- +1 = the newline
+
+    if st.lines + #st.buf > segLn or st.bytes + added > segBy then
+        if not st.over then
+            st.over = true
+            print("[RFTDCore] RDLog: forensic stream '" .. name .. "' hit its segment"
+                .. " ceiling (" .. st.lines .. " lines / " .. st.bytes .. " B); further"
+                .. " records are dropped until the next period")
+            writeHead(st, name)
+        end
+        st.buf = {}
+        return
+    end
 
     appendMany(segPath(name, st.seg), st.buf)
     st.lines     = st.lines + #st.buf
@@ -385,13 +489,7 @@ local function flushStream(st, name)
     st.buf       = {}
     st.lastMs    = RDShared.nowMs()
 
-    if st.lines >= segLn or st.bytes >= segBy then
-        st.seg   = (st.seg + 1) % ring
-        st.lines = 0
-        st.bytes = 0
-        rewrite(segPath(name, st.seg), "")   -- truncate-to-zero IS the reclaim
-        writeHead(st, name)
-    elseif st.headDirty >= HEAD_SYNC_LINES then
+    if st.headDirty >= HEAD_SYNC_LINES then
         writeHead(st, name)
     end
 end

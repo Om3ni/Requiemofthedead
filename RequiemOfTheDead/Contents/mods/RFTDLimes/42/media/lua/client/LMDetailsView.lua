@@ -161,6 +161,16 @@ end
 -- ---------------------------------------------------------------------------
 
 function LMDetailsView.attach(panel)
+    -- THE FORM CACHE DIES WITH THE PANEL. The deck rebuilds tab content on
+    -- every roster switch, so this attach runs again on a FRESH panel while
+    -- the previous one - and every hotspot the old forms attached to it - is
+    -- already destroyed. The module-level cache made formFor() hand those
+    -- orphans back: they still painted (draw() renders onto whatever panel is
+    -- passed each frame) but nothing could be clicked, their widgets were
+    -- missing from ui.formWidgets so visibility switching no longer covered
+    -- them, and the whole Details view read as "drawn but dead" after any
+    -- trip to another tab. A DFForm is a per-panel object; cache accordingly.
+    forms = {}
     local C, w = DFKit.col, {}
 
     local list = ModList:new(0, 0, 10, 10)
@@ -207,12 +217,20 @@ function LMDetailsView.layout(panel, x, y, w, h)
 
     local rx = x + PAD + LEFT_W + PAD
     local rw = math.max(120, (x + w) - rx - PAD)
-    ui.head:setX(rx); ui.head:setY(y + PAD)
-    ui.desc:setX(rx); ui.desc:setY(y + PAD + 20)
-    ui.note:setX(rx); ui.note:setY(y + h - 20)
 
-    local fy = y + PAD + 40
-    local fh = math.max(60, (y + h) - fy - 24)
+    -- Line pitch is the glyph, measured - the old fixed 20px was only true at
+    -- the font it was tuned against; at a larger text-size preference the
+    -- description drew into the heading and the note into the form.
+    local lh = 20
+    pcall(function()
+        lh = getTextManager():getFontHeight(DFKit.font.small or UIFont.Small) + 4
+    end)
+    ui.head:setX(rx); ui.head:setY(y + PAD)
+    ui.desc:setX(rx); ui.desc:setY(y + PAD + lh)
+    ui.note:setX(rx); ui.note:setY(y + h - lh)
+
+    local fy = y + PAD + lh * 2
+    local fh = math.max(60, (y + h) - fy - lh - 4)
     for _, f in pairs(forms) do f:layout(rx, fy, rw, fh) end
 end
 

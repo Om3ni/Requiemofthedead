@@ -138,6 +138,46 @@ Limes.apply({
 eq("name breaks the full tie deterministically", Limes.getLocation(5, 5).name, "Aleph")
 
 -- ---------------------------------------------------------------------------
+-- Scattered multi-rect: one name in several places is several INDEPENDENT
+-- claims, arbitrated by the rect covering the tile and never by the zone's
+-- summed footprint.
+--
+-- This is the case the old total-area rule got wrong. Guns holds five 400-tile
+-- patches (2000 summed) and Warehouse is a single 1521-tile rect containing the
+-- first patch. By total area Warehouse (1521) beat Guns (2000) on Guns' own
+-- ground; by covering rect Guns (400) wins its patch and Warehouse keeps
+-- everything around it - and, critically, patches two through five cannot
+-- change the answer at patch one.
+-- ---------------------------------------------------------------------------
+
+Limes.apply({
+    Warehouse = { rects = { { 0, 0, 38, 38 } }, fields = {} },          -- 39x39 = 1521
+    Guns      = { rects = { { 10, 10, 29, 29 },                          -- 20x20 = 400, inside Warehouse
+                            { 200, 200, 219, 219 },                      -- 400, elsewhere
+                            { 400, 400, 419, 419 },                      -- 400
+                            { 600, 600, 619, 619 },                      -- 400
+                            { 800, 800, 819, 819 } },                    -- 400  (2000 summed)
+                  fields = {} },
+}, 4)
+
+eq("multi-rect total is still the summed footprint", Limes.getZone("Guns").area, 2000)
+eq("smaller covering rect wins inside the larger zone", Limes.getLocation(15, 15).name, "Guns")
+eq("larger zone keeps the ground around the hole",     Limes.getLocation(5, 5).name,   "Warehouse")
+eq("a distant patch of the same name still matches",   Limes.getLocation(610, 610).name, "Guns")
+eq("border of the inner patch is inclusive",           Limes.getLocation(29, 29).name, "Guns")
+eq("one tile past the patch falls back to the larger", Limes.getLocation(30, 30).name, "Warehouse")
+
+-- Placement is independent: dropping the four remote patches must not change
+-- the verdict at the first one. Under the old rule it did - Guns' total fell
+-- from 2000 to 400 and flipped tile (15,15) from Warehouse to Guns.
+Limes.apply({
+    Warehouse = { rects = { { 0, 0, 38, 38 } }, fields = {} },
+    Guns      = { rects = { { 10, 10, 29, 29 } }, fields = {} },
+}, 5)
+eq("verdict unchanged when the other placements go away",
+   Limes.getLocation(15, 15).name, "Guns")
+
+-- ---------------------------------------------------------------------------
 -- Deltas
 -- ---------------------------------------------------------------------------
 
