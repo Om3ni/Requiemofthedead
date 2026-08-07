@@ -433,5 +433,76 @@ RDLog.flush()
 eq("a same-period head resumes its segment", headSeg("fourfield"), 1)
 eq("and appends to it", FS[segPath("fourfield", 1)], "same period\nmore\n")
 
+-- --------------------------------------------------------------------------
+-- Refused writers are counted and announced (2026-08-07)
+--
+-- The 42.20 allowlist outage shape: getFileWriter returns nil, the pcall
+-- around it succeeds, and before this change the record simply ceased to
+-- exist with `ok = true`. What these pin: the failure is COUNTED, the console
+-- line fires ONCE PER EXTENSION rather than per write, and the self-test
+-- answers false while the writer is refused and true again when it recovers.
+-- --------------------------------------------------------------------------
+
+reboot()
+SandboxVars.RFTDCore.ForensicRingSegments = 4
+SandboxVars.RFTDCore.ForensicSegmentLines = 100000
+SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
+setHours(100)
+
+local function ok(name, cond, detail)
+    if cond then pass = pass + 1
+    else fail = fail + 1; print("FAIL " .. name .. (detail and (": " .. detail) or "")) end
+end
+
+eq("no failures on a healthy filesystem", RDLog.writeFailures(), 0)
+
+-- The healthy self-test round-trips through the stub FS.
+eq("self-test passes while writes work", RDLog.selfTest(), true)
+eq("a passing self-test is not a failure", RDLog.writeFailures(), 0)
+
+-- Now the engine refuses everything - the allowlist outage, reproduced.
+local said = {}
+local realPrint = print
+print = function(s) said[#said + 1] = tostring(s) end
+local realWriter = getFileWriter
+getFileWriter = function() return nil end
+
+RDLog.legacyLine("refused", "line one")
+RDLog.flush()
+local afterOne = RDLog.writeFailures()
+RDLog.legacyLine("refused", "line two")
+RDLog.flush()
+local afterTwo = RDLog.writeFailures()
+
+getFileWriter = realWriter
+print = realPrint
+
+ok("refused writes are counted", afterOne > 0, "count " .. afterOne)
+ok("and keep counting", afterTwo > afterOne,
+   "first " .. afterOne .. " second " .. afterTwo)
+eq("nothing landed in the file while refused", FS[segPath("refused", 0)], nil)
+
+-- Two writes to the .log segment failed but only ONE .log line printed; the
+-- second CRITICAL is the head.txt rewrite - a different extension, its own
+-- line. Counted per extension, which is the design.
+local logLines, txtLines = 0, 0
+for _, s in ipairs(said) do
+    if s:find("CRITICAL", 1, true) then
+        if s:find(".log file", 1, true) then logLines = logLines + 1 end
+        if s:find(".txt file", 1, true) then txtLines = txtLines + 1 end
+    end
+end
+eq("the console line fires once per extension, not per write", logLines, 1)
+eq("the head's extension gets its own single line", txtLines, 1)
+
+-- Self-test says BROKEN while refused, and recovers with the writer.
+print = function(s) said[#said + 1] = tostring(s) end
+getFileWriter = function() return nil end
+local broken = RDLog.selfTest()
+getFileWriter = realWriter
+print = realPrint
+eq("self-test fails while the writer is refused", broken, false)
+eq("self-test passes again once the writer recovers", RDLog.selfTest(), true)
+
 print(string.format("test_rdlog: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

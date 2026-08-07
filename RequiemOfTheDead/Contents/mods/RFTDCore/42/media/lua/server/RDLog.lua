@@ -40,19 +40,24 @@
 -- serverFileExists root elsewhere.
 --
 -- 42.20 WRITE-EXTENSION ALLOWLIST - why these files are named ".jsonl.log":
--- getFileWriter returns nil unless the extension is in
--- Set.of("ini","cfg","txt","log") (LuaManager.java:9884, gate at :5514; the set
--- does not exist in 42.19.1). getFileExtension() takes the substring after the
--- LAST dot, so "events.jsonl.log" presents as "log" and passes while the name
--- still declares its real format. This was NOT a cosmetic choice: it is the
--- only route that keeps append=true, and the chronicle's per-line durability
--- depends on appending. getFileOutput() is ungated but cannot append at all
--- (no append arg - it truncates every open) and parks its stream in a single
--- private static field, so it is one file process-wide; getModFileWriter is
--- ungated but roots inside the mod dir, which is replaced on every update.
--- The check is CASE-SENSITIVE and unlowercased: ".LOG" fails. Extensionless
--- names fail too. Only the final path segment is inspected, so the dots in a
--- "<SafeName>.<SteamID>" DIRECTORY are irrelevant.
+-- getFileWriter returns nil unless the extension is in the allowlist
+-- (LuaManager gate; the set does not exist in 42.19.1). As of the 42.20.2
+-- hotfix the set is Set.of("ini","cfg","txt","log","json") - "json" was ADDED
+-- BACK (LuaManager.java:1045, gate at :5526, verified in the decompile). That
+-- does NOT reopen ".jsonl": getFileExtension() takes the substring after the
+-- LAST dot, so "events.jsonl" presents as "jsonl", and "jsonl" is not "json".
+-- Renaming segments to ".json" would work but would orphan every current
+-- segment a second time (Lua cannot rename or delete), for a purely cosmetic
+-- win - so the names STAY ".jsonl.log", which passes as "log" while still
+-- declaring the real format in the middle. This was NOT a cosmetic choice: it
+-- is the only route that keeps append=true, and the chronicle's per-line
+-- durability depends on appending. getFileOutput() is ungated but cannot
+-- append at all (no append arg - it truncates every open) and parks its stream
+-- in a single private static field, so it is one file process-wide;
+-- getModFileWriter is ungated but roots inside the mod dir, which is replaced
+-- on every update. The check is CASE-SENSITIVE and unlowercased: ".LOG" fails.
+-- Extensionless names fail too. Only the final path segment is inspected, so
+-- the dots in a "<SafeName>.<SteamID>" DIRECTORY are irrelevant.
 -- Reads are NOT gated - getFileReader still opens the pre-42.20 ".jsonl"
 -- files, which is why nothing here migrates them: they stay on disk as
 -- immutable history and a reader concatenates legacy-then-current. Lua cannot
@@ -155,31 +160,72 @@ end
 -- ---------------------------------------------------------------------------
 -- Low-level file helpers (every touch pcall-wrapped; a logging fault must
 -- never disturb the caller)
+--
+-- A REFUSED WRITER IS REPORTED, NOT SWALLOWED (2026-08-07). Every helper here
+-- used to treat `getFileWriter(...) == nil` as success: the pcall completed, so
+-- `ok` was true, and the record simply ceased to exist. That is the exact shape
+-- of the 42.20 allowlist outage - every ".jsonl" write silently returned nil
+-- for days while head.txt (".txt", still allowed) kept advancing - and nothing
+-- anywhere printed a single line about it. A logging system whose own failure
+-- is invisible cannot be trusted about anything else, so: the failure count is
+-- kept, and the FIRST failure per file extension prints loudly to the console.
+-- Per extension rather than per path, because the plausible causes (allowlist
+-- change, case regression) bite whole extensions at a time, and per-path would
+-- print thousands of lines for one cause.
 -- ---------------------------------------------------------------------------
 
+local writeFailCount = 0
+local writeFailSaid  = {}   -- extension -> true, printed once each
+
+local function reportRefused(path)
+    writeFailCount = writeFailCount + 1
+    local ext = tostring(path):match("%.([^%./\\]+)$") or "(none)"
+    if not writeFailSaid[ext] then
+        writeFailSaid[ext] = true
+        print("[RFTDCore] RDLog CRITICAL: getFileWriter refused '" .. tostring(path)
+            .. "' - every write to a ." .. ext .. " file is being DROPPED."
+            .. " The engine's write-extension allowlist has probably changed"
+            .. " (42.20.2 allows ini/cfg/txt/log/json). Records are lost until"
+            .. " this is fixed; the failure count is in RDLog.writeFailures().")
+    end
+end
+
+-- How many writes the engine has refused since boot. Zero is the only good
+-- answer; anything else means records are being dropped RIGHT NOW.
+function RDLog.writeFailures() return writeFailCount end
+
 local function appendLine(path, line)
-    local ok = pcall(function()
+    local wrote = false
+    pcall(function()
         local w = getFileWriter(path, true, true)
-        if w then w:write(line .. "\n"); w:close() end
+        if w then w:write(line .. "\n"); w:close(); wrote = true end
     end)
-    return ok
+    if not wrote then reportRefused(path) end
+    return wrote
 end
 
 local function appendMany(path, lines)
+    local wrote = false
     pcall(function()
         local w = getFileWriter(path, true, true)
         if w then
             for i = 1, #lines do w:write(lines[i] .. "\n") end
             w:close()
+            wrote = true
         end
     end)
+    if not wrote then reportRefused(path) end
+    return wrote
 end
 
 local function rewrite(path, content)
+    local wrote = false
     pcall(function()
         local w = getFileWriter(path, true, false)   -- truncate: the only "delete"
-        if w then w:write(content); w:close() end
+        if w then w:write(content); w:close(); wrote = true end
     end)
+    if not wrote then reportRefused(path) end
+    return wrote
 end
 
 local function readFirstLine(path)
@@ -546,6 +592,42 @@ end)
 Events.EveryOneMinute.Add(function()
     RDLog.flush()
 end)
+
+-- ---------------------------------------------------------------------------
+-- BOOT SELF-TEST - one decisive console line per boot (2026-08-07).
+--
+-- Write a canary through the SAME extension every stream uses, read it back,
+-- and say plainly whether logging works. This exists because both historical
+-- outages were silent: the 42.20 allowlist change dropped every write for days
+-- with nothing in the console, and "is logging working?" was answerable only by
+-- ssh-ing into the box and looking for files. After this, the boot console
+-- answers it: one VERIFIED line, or one BROKEN line naming the failure.
+--
+-- Round-trip, not just open: getFileWriter returning non-nil proves the gate
+-- passed, but only reading the line back proves the bytes landed where the
+-- reader roots. The canary is truncate-mode so it never grows, and it doubles
+-- as a boot marker - its one line records when this server last verified.
+-- ---------------------------------------------------------------------------
+
+function RDLog.selfTest()
+    local path  = DIR .. "forensic/selftest" .. RDShared.EXT_STREAM
+    local stamp = "verified " .. tostring(RDShared.nowSec())
+    local wrote = rewrite(path, stamp .. "\n")
+    local back  = wrote and readFirstLine(path) or nil
+    if back == stamp then
+        print("[RFTDCore] RDLog: write path VERIFIED (" .. path .. ")")
+        return true
+    end
+    print("[RFTDCore] RDLog CRITICAL: write path BROKEN - "
+        .. (wrote and "wrote but could not read back" or "getFileWriter refused the stream extension")
+        .. " (" .. path .. "). NOTHING IS BEING LOGGED. If the engine just"
+        .. " updated, check the write-extension allowlist against the decompile.")
+    return false
+end
+
+if Events.OnServerStarted then
+    Events.OnServerStarted.Add(function() pcall(RDLog.selfTest) end)
+end
 
 return RDLog
 

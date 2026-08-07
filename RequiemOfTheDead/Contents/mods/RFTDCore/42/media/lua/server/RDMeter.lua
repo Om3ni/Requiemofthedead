@@ -279,8 +279,23 @@ end
 -- One listener: first-tick install, then the throttled dump.
 -- ---------------------------------------------------------------------------
 
+local waitedTicks = 0
+
 Events.OnTick.Add(function()
     if not installed then
+        -- DO NOT LATCH AN ABSENT SANDBOX (2026-08-07). This used to resolve
+        -- config unconditionally on the first tick: if SandboxVars.RFTDCore was
+        -- not populated yet, `enabled` latched false and stayed false for the
+        -- whole session - the probe off, silently, with the sandbox file saying
+        -- ON. So: wait until the table actually exists, or the server says it
+        -- has finished starting, or ~10s of ticks have passed (the backstop for
+        -- a world with no RFTDCore sandbox page at all). Whichever comes first
+        -- is the moment the answer is real rather than merely early.
+        waitedTicks = waitedTicks + 1
+        local haveSandbox = false
+        pcall(function() haveSandbox = type(SandboxVars.RFTDCore) == "table" end)
+        if not haveSandbox and not serverReady and waitedTicks < 600 then return end
+
         installed = true
         cfg = resolveConfig()
         if cfg.enabled then
@@ -288,6 +303,28 @@ Events.OnTick.Add(function()
             print("[RFTDCore] RDMeter armed: wire probe on, dump every "
                 .. tostring(cfg.dumpMs / 1000) .. "s, top " .. tostring(cfg.topN)
                 .. ", oversized > " .. tostring(cfg.oversized) .. "B -> forensic stream 'wire'.")
+            -- The stream's birth certificate: one record the moment the probe
+            -- arms, so forensic/wire/ exists and is proven writable BEFORE any
+            -- traffic arrives. An armed probe over an idle server produces no
+            -- dumps (nothing to dump), and without this line that state is
+            -- indistinguishable from broken - which is precisely the misread
+            -- that burned a day in 2026-08-07's "logging is shattered" hunt.
+            RDLog.forensic("wire", "RD.WIRE_ARMED", nil, {
+                dumpSec   = cfg.dumpMs / 1000,
+                topN      = cfg.topN,
+                oversized = cfg.oversized,
+            }, "RFTDCore")
+            -- Flushed now rather than on the next cadence, so the directory
+            -- exists the moment the armed line prints and the two cannot
+            -- disagree. pcall'd like every logging touch.
+            pcall(function() RDLog.flush() end)
+        else
+            -- OFF IS SAID OUT LOUD, once. A silent default-off is how "the
+            -- probe is off" gets diagnosed as "logging is shattered": no wire
+            -- directory, no console line, nothing to distinguish disabled from
+            -- broken. One sentence closes that hole.
+            print("[RFTDCore] RDMeter: wire probe OFF"
+                .. " (RFTDCore.WireProbeEnabled=false; flip it and restart to arm)")
         end
         return
     end
