@@ -269,5 +269,114 @@ eq("onChanged fired once for the delta", changed, 1)
 Limes.apply({ Rev = { rects = { { 9, 9, 0, 0 } }, fields = {} } }, 20)
 eq("reversed rect corners normalize", Limes.getLocation(5, 5).name, "Rev")
 
+-- ---------------------------------------------------------------------------
+-- Profiles (M-A, 2026-08-07): flat bags in the resolver.
+--
+-- The one-sentence contract under test: every record in the spatial chain
+-- contributes its active profiles' OWN raw fields (array order, later wins),
+-- then its own fields - and nothing of a profile's is followed beyond that.
+-- The precedence ladder below is the normative order from the plan; if it
+-- moves, client and server resolve differently, which is the worst class of
+-- bug this store can have.
+-- ---------------------------------------------------------------------------
+
+Limes.fields.register("T", "loot",  { type = "string", default = "" })
+Limes.fields.register("T", "speed", { type = "number", default = 0, min = 0, max = 100 })
+
+Limes.apply({
+    _default = { profiles = { "Ambient" }, fields = { tier = 1, loot = "root" } },
+    Ambient  = { fields = { loot = "ambient", speed = 10 } },
+    Spooky   = { fields = { loot = "rare", speed = 20 } },
+    Sprinty  = { fields = { speed = 30 } },
+    -- A profile whose own structure must NOT be followed:
+    Trap     = { inherits = "Spooky", profiles = { "Sprinty" },
+                 rects = { { 900, 900, 909, 909 } }, fields = { hp = 9 } },
+    Parent   = { inherits = "_default", rects = { { 0, 0, 199, 199 } },
+                 profiles = { "Spooky" }, fields = { tier = 2 } },
+    Child    = { inherits = "Parent", rects = { { 10, 10, 19, 19 } },
+                 profiles = { "Sprinty" }, fields = {} },
+    OwnWins  = { inherits = "Parent", rects = { { 50, 50, 59, 59 } },
+                 profiles = { "Sprinty" }, fields = { speed = 99 } },
+}, 30)
+
+-- The ladder, bottom up.
+eq("_default's profile reaches everything",  Limes.getZone("Child").fields.loot ~= nil, true)
+eq("_default's own beats _default's profile", Limes.getZone("_default").fields.loot, "root")
+eq("a parent's profile reaches the child",    Limes.getZone("Parent").fields.loot, "rare")
+eq("...and the child inherits it",            Limes.getZone("Child").fields.loot, "rare")
+eq("the zone's own profile beats the chain",  Limes.getZone("Child").fields.speed, 30)
+eq("own field beats own profile",             Limes.getZone("OwnWins").fields.speed, 99)
+
+-- Not-followed pins: Trap is applied as a profile somewhere and its own
+-- inherits/profiles/rects must contribute nothing.
+Limes.apply({
+    Spooky = { fields = { loot = "rare" } },
+    Sprinty = { fields = { speed = 30 } },
+    Trap   = { inherits = "Spooky", profiles = { "Sprinty" }, fields = { hp = 9 } },
+    Z      = { rects = { { 0, 0, 9, 9 } }, profiles = { "Trap" }, fields = {} },
+}, 31)
+eq("a profile's own fields contribute", Limes.getZone("Z").fields.hp, 9)
+eq("a profile's inherits is not followed", Limes.getZone("Z").fields.loot, nil)
+eq("a profile's profiles are not followed", Limes.getZone("Z").fields.speed, nil)
+
+-- Unknown profile: warns, contributes nothing, zone otherwise fine.
+local warnedUnknown = Limes.apply({
+    Z = { rects = { { 0, 0, 9, 9 } }, profiles = { "Ghost" }, fields = { hp = 2 } },
+}, 32)
+eq("unknown profile still resolves the zone", Limes.getZone("Z").fields.hp, 2)
+local sawWarn = false
+for _, w in ipairs(warnedUnknown) do
+    if w:find("unknown profile", 1, true) then sawWarn = true end
+end
+eq("...and warns", sawWarn, true)
+
+-- "" in a profile bag is explicit-unset for a NUMBER field: it fails coercion
+-- silently and the earlier value survives - the same rule zones already live
+-- by. (A registered STRING field's "" coerces to "" and lands; that too is
+-- the pre-existing zone contract, and prune strips "" before it ever
+-- persists, so it only matters for imported data.)
+Limes.apply({
+    Muffle = { fields = { tier = "" } },
+    Z      = { rects = { { 0, 0, 9, 9 } }, profiles = { "Muffle" },
+               fields = {} },
+    _default = { fields = { tier = 7 } },
+}, 33)
+eq("'' in a profile inherits through", Limes.getZone("Z").fields.tier, 7)
+
+-- disabled via a profile takes the zone out of the lookup (RESOLVER_CRITICAL
+-- path through a bag).
+Limes.apply({
+    Off = { fields = { disabled = true } },
+    Z   = { rects = { { 0, 0, 9, 9 } }, profiles = { "Off" }, fields = {} },
+}, 34)
+eq("disabled-via-profile leaves the lookup", Limes.getLocation(5, 5), nil)
+eq("...but the zone still resolves by name", Limes.getZone("Z").disabled, true)
+
+-- THE WIRE PIN (silent-erasure site #1): stripServerOnly carries the list.
+Limes.fields.register("T", "secret", { type = "string", default = "", side = "server" })
+local stripped = Limes.fields.stripServerOnly({
+    Z = { inherits = "P", profiles = { "A", "B" },
+          rects = { { 0, 0, 9, 9 } }, fields = { secret = "x", hp = 1 } },
+})
+eq("stripServerOnly carries profiles", stripped.Z.profiles[2], "B")
+eq("...still strips server-only fields", stripped.Z.fields.secret, nil)
+eq("...and keeps the rest", stripped.Z.fields.hp, 1)
+
+-- Membership edits fire "edited" even when resolved fields happen to match.
+Limes.apply({
+    A = { fields = {} },                       -- an empty profile
+    Z = { rects = { { 0, 0, 9, 9 } }, fields = { hp = 1 } },
+}, 35)
+local fired = {}
+Limes.onZoneEvent(function(event, name) fired[#fired + 1] = event .. ":" .. name end)
+Limes.applyDelta({ Z = { rects = { { 0, 0, 9, 9 } }, profiles = { "A" },
+                         fields = { hp = 1 } } }, {}, 36)
+local sawEdit = false
+for _, e in ipairs(fired) do if e == "edited:Z" then sawEdit = true end end
+eq("a membership-only change fires edited", sawEdit, true)
+
+-- The resolved record exposes the list (consumers like LMZeds walk it).
+eq("resolved records carry profiles", Limes.getZone("Z").profiles[1], "A")
+
 print(string.format("LMCore: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

@@ -584,6 +584,22 @@ harder pocket inside an otherwise intermediate area — one apartment building i
 > from where they are drawn instead of from a dropdown. `Limes.getLocation` already
 > resolves overlaps smallest-area-first, so the lookup half of nesting has been correct
 > since M0 — this only makes the *fields* follow the geometry.
+>
+> **AMENDED 2026-08-07 — profiles, and why they are not the second chain this
+> paragraph declined.** The co-owners' ask ("a difficulty profile AND a sprinter
+> profile AND a loot profile on one zone") is exactly what a single parent slot cannot
+> express, so records gained `profiles` — an ordered list of template names. The
+> objection above was to a second *chain*: doubled resolver, diamond ordering,
+> cross-machine divergence. Profiles dodge all of it by being **flat bags**: a profile
+> contributes its own raw fields only; its `inherits`, `rects` and `profiles` are
+> never followed. No recursion, no DAG, one pass. Expansion is per record on the
+> spatial chain — each record's active profiles merge before its own fields, chain
+> walked root→zone — so precedence is, weakest→strongest: `_default`'s profiles <
+> `_default`'s own < ancestors likewise < the zone's profiles (later beats earlier) <
+> the zone's own fields. A profile applied to `_default` reaches the whole map, which
+> is what makes one "BloodMoon" profile a map-wide event rather than ninety edits.
+> The parent-slot argument stands: `inherits` is still the spatial parent, and
+> profiles are cargo, not ancestry.
 
 **Details — Limes becomes a surface other mods register with.** Two panels: the list of
 registered mods, and that mod's settings. `Limes.fields.register` has carried an `owner`

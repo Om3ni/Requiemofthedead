@@ -141,8 +141,14 @@ local zone = Limes.getLocation(x, y)     -- resolved zone at a tile, or nil
 local zone = Limes.getZone("Riverside")  -- by name, or nil
 ```
 
-A resolved zone is a table with `name`, `rects`, `inherits`, `template`,
-`fields`, and a few internals. Read fields two ways:
+A resolved zone is a table with `name`, `rects`, `inherits`, `profiles`,
+`template`, `fields`, and a few internals. `profiles` (since 2026-08-07) is the
+ordered list of profile names the record applies — profiles are rect-less
+template zones whose fields merge into every zone that lists them (own fields
+beat profiles; later profiles beat earlier; a profile's own `inherits` is never
+followed). By the time you read `fields`, all of that has already happened —
+a satellite never needs to know whether a value came from a profile. Read
+fields two ways:
 
 ```lua
 zone.fields.patrolChance                        -- nil when nothing sets it

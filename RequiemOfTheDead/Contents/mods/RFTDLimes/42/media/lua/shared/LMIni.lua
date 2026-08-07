@@ -90,6 +90,21 @@ function LMIni.parse(text)
                     .. "' before any [section], skipped"
             elseif key == "inherits" then
                 if value ~= "" then cur.inherits = value end
+            elseif key == "profiles" then
+                -- STRUCTURAL, like rects, and it must be: through the field
+                -- fall-through this would land as one string - and worse,
+                -- autoType would turn a single numeric-looking profile name
+                -- into a NUMBER, silently. Comma-separated; zone names cannot
+                -- contain a comma (the section grammar above is the proof), so
+                -- the split is unambiguous. An empty value stays absent (rule
+                -- 5: cleared means absent, not present-empty).
+                for pname in value:gmatch("[^,]+") do
+                    pname = pname:match("^%s*(.-)%s*$")
+                    if pname ~= "" then
+                        cur.profiles = cur.profiles or {}
+                        cur.profiles[#cur.profiles + 1] = pname
+                    end
+                end
             elseif key == "rects" then
                 for rect in value:gmatch("[^;]+") do
                     local x1, y1, x2, y2 = rect:match("^%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*,%s*(%-?%d+%.?%d*)%s*$")
@@ -122,6 +137,9 @@ function LMIni.serialize(rawZones)
         out[#out + 1] = "\n[" .. name .. "]\n"
         if z.inherits then
             out[#out + 1] = "inherits = " .. tostring(z.inherits) .. "\n"
+        end
+        if z.profiles and #z.profiles > 0 then
+            out[#out + 1] = "profiles = " .. table.concat(z.profiles, ",") .. "\n"
         end
         if z.rects and #z.rects > 0 then
             local parts = {}

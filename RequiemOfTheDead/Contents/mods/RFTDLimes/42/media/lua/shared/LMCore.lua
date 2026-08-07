@@ -67,8 +67,10 @@ Limes.fields = Limes.fields or {}
 local specs = {}     -- field name -> { owner, type, default, min, max }
 
 -- Names the record structure itself uses; a field by these names would shadow
--- them in the .ini section and in resolved records.
-local RESERVED = { rects = true, inherits = true, name = true }
+-- them in the .ini section and in resolved records. `profiles` joined 2026-08-07:
+-- it is the ordered list of profile names a record applies, structural like
+-- rects, never a field.
+local RESERVED = { rects = true, inherits = true, name = true, profiles = true }
 
 -- Fields the RESOLVER itself reads (rebuild/getLocation). These must reach every
 -- machine or the two sides resolve differently in silence - the worst class of
@@ -267,7 +269,14 @@ function Limes.fields.stripServerOnly(rawZones)
                 if not s or s.side ~= "server" then fields[k] = v end
             end
         end
-        out[name] = { inherits = rec.inherits, rects = rec.rects, fields = fields }
+        -- `profiles` rides by reference like rects: stripping does not touch
+        -- it and the wire copies it anyway. MISSING IT HERE IS THE #1 SILENT
+        -- ERASURE: this is a whitelist rebuild, so a key it does not name never
+        -- reaches a client, the client's draft base never has it, and the next
+        -- save of an unrelated dial folds the record back WITHOUT it - profile
+        -- membership deleted by editing a number, with no symptom until then.
+        out[name] = { inherits = rec.inherits, rects = rec.rects,
+                      profiles = rec.profiles, fields = fields }
     end
     return out
 end
@@ -505,6 +514,13 @@ local function sameFields(a, b)
     return true
 end
 
+local function sameProfiles(a, b)
+    a, b = a or {}, b or {}
+    if #a ~= #b then return false end
+    for i = 1, #a do if a[i] ~= b[i] then return false end end
+    return true
+end
+
 local function sameRecord(a, b)
     if a.inherits ~= b.inherits or a.template ~= b.template
         or a.disabled ~= b.disabled or a.priority ~= b.priority
@@ -515,6 +531,11 @@ local function sameRecord(a, b)
         local r, s = a.rects[i], b.rects[i]
         if r[1] ~= s[1] or r[2] ~= s[2] or r[3] ~= s[3] or r[4] ~= s[4] then return false end
     end
+    -- Membership is compared as well as the merged result: two profile lists
+    -- can flatten to identical fields today and diverge the moment one of the
+    -- profiles is edited, so a membership change IS an edit even when the
+    -- resolved values happen to match.
+    if not sameProfiles(a.profiles, b.profiles) then return false end
     -- Comparing RESOLVED records means a zone whose parent template moved
     -- reports "edited" too, which is the point: its effective config changed
     -- even though its own raw record did not.
@@ -576,9 +597,58 @@ local function normalizeRects(name, rects, warnings)
     return out
 end
 
+-- Is this profile active right now? M-A stub: always. M-B replaces the body
+-- with the moon-phase gate; the SEAM exists now so flattenChain's shape does
+-- not change when it does. Reads the record RAW - a profile's activation
+-- condition is its own business, never inherited, never resolved.
+--
+-- EXPORTED as Limes.profileActive because LMEdit:effective is the second,
+-- independently-implemented resolver, and the activation gate is the one part
+-- of the two that must never be allowed to drift: both call THIS function, so
+-- there is exactly one answer to "is this profile on right now" per machine.
+local function phaseActive(rec)
+    return true
+end
+
+function Limes.profileActive(rec)
+    return phaseActive(rec)
+end
+
+-- PROFILES ARE FLAT BAGS (2026-08-07). A zone carries an ordered list of
+-- profile names; a profile is just another record in this store (by
+-- convention a template - no rects), and it contributes ITS OWN RAW FIELDS
+-- ONLY. Its `inherits`, `rects` and `profiles` are never followed. That single
+-- rule is what keeps §11.3's objection answered: there is no second chain, no
+-- diamond to order, and the resolver stays one pass. The store still has one
+-- parent slot per zone; profiles are cargo, not ancestry.
+--
+-- Expansion is PER RECORD, not per zone: every record in the spatial chain
+-- contributes its active profiles' bags and then its own fields. So a profile
+-- applied to `_default` reaches every zone on the map - which is the whole
+-- moon use-case ("full-moon sprinters everywhere" is ONE profile on _default,
+-- not an edit to ninety zones) - and "a child inherits its parent's effective
+-- config" stays true with profiles in the picture.
+--
+-- Walked with ipairs in declared order, never pairs: merge order is an
+-- invariant across machines (the header's worst-class-of-bug), and array
+-- order is the only order both sides share.
+local function appendBags(bags, rec, name, raw, warnings)
+    for _, pname in ipairs(rec.profiles or {}) do
+        local prof = raw[pname]
+        if not prof then
+            warnings[#warnings + 1] = name .. ": applies unknown profile '" .. tostring(pname) .. "'"
+        elseif phaseActive(prof) then
+            bags[#bags + 1] = { fields = prof.fields, profile = true }
+        end
+    end
+    bags[#bags + 1] = { fields = rec.fields }
+end
+
 -- Flatten one zone's inheritance chain into a fresh field map. Chain order:
 -- "_default" first (implicit root under every zone), then each ancestor from
--- the top down, the zone's own fields last - so nearer always wins.
+-- the top down, the zone's own fields last - so nearer always wins. Within
+-- one record, its profiles come before its own fields (own always wins), and
+-- a later profile beats an earlier one.
 local function flattenChain(name, raw, warnings)
     local chain, seen, cur = {}, {}, name
     while cur do
@@ -599,25 +669,37 @@ local function flattenChain(name, raw, warnings)
         table.insert(chain, 1, raw["_default"])
     end
 
-    local out = {}
+    local bags = {}
     for i = 1, #chain do
-        for k, v in pairs(chain[i].fields or {}) do
-            local spec = specs[k]
-            if spec then
-                local typed = coerce(spec, v)
-                if typed ~= nil then
-                    out[k] = typed
-                elseif v ~= "" then
-                    -- "" is PhunZones-style explicit unset, silently inherited;
-                    -- anything else that will not coerce is a data defect.
-                    warnings[#warnings + 1] = name .. ": field '" .. k .. "' = '"
-                        .. tostring(v) .. "' does not coerce to " .. spec.type .. ", inherited instead"
-                end
-            else
-                out[k] = v
-                if not warnedKeys[k] then
-                    warnedKeys[k] = true
-                    warn("field '" .. k .. "' has no registered consumer yet - preserved verbatim")
+        appendBags(bags, chain[i], name, raw, warnings)
+    end
+
+    local out = {}
+    for i = 1, #bags do
+        for k, v in pairs(bags[i].fields or {}) do
+            -- A profile never contributes `phases`: that key is the profile's
+            -- own activation condition, not cargo to hand down. Without this
+            -- skip, applying a full-moon profile would write phases onto the
+            -- ZONE's resolved fields, where it means nothing and reads as
+            -- config.
+            if not (bags[i].profile and k == "phases") then
+                local spec = specs[k]
+                if spec then
+                    local typed = coerce(spec, v)
+                    if typed ~= nil then
+                        out[k] = typed
+                    elseif v ~= "" then
+                        -- "" is PhunZones-style explicit unset, silently inherited;
+                        -- anything else that will not coerce is a data defect.
+                        warnings[#warnings + 1] = name .. ": field '" .. k .. "' = '"
+                            .. tostring(v) .. "' does not coerce to " .. spec.type .. ", inherited instead"
+                    end
+                else
+                    out[k] = v
+                    if not warnedKeys[k] then
+                        warnedKeys[k] = true
+                        warn("field '" .. k .. "' has no registered consumer yet - preserved verbatim")
+                    end
                 end
             end
         end
@@ -655,6 +737,7 @@ local function rebuild(warnings)
         local rec = {
             name     = name,
             inherits = rawStore[name].inherits,
+            profiles = rawStore[name].profiles,
             template = (#rects == 0),
             disabled = fields.disabled == true,
             priority = tonumber(fields.priority) or 0,
@@ -876,7 +959,13 @@ local function copyRaw(src)
         for k, v in pairs(rec.fields or {}) do fields[k] = v end
         local rects = {}
         for i, r in ipairs(rec.rects or {}) do rects[i] = { r[1], r[2], r[3], r[4] } end
-        out[name] = { inherits = rec.inherits, rects = rects, fields = fields }
+        local profiles = nil
+        if rec.profiles then
+            profiles = {}
+            for i, p in ipairs(rec.profiles) do profiles[i] = p end
+        end
+        out[name] = { inherits = rec.inherits, rects = rects,
+                      profiles = profiles, fields = fields }
     end
     return out
 end

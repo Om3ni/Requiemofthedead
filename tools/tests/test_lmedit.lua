@@ -692,6 +692,194 @@ end
 local okEmpty, whyEmpty = LMImport.parseAny("; just a comment\n")
 eq("a section-less .ini is refused", okEmpty, false)
 
+-- ---------------------------------------------------------------------------
+-- Profiles (M-A, 2026-08-07): the draft half. Flat bags, ordered, structural.
+--
+-- The stakes are the silent-erasure class: `profiles` is the fourth key the
+-- copy/prune/equality trio enumerates, and a site that misses it deletes
+-- profile membership as a side effect of editing an unrelated dial - no error,
+-- no symptom, discovered when the moon stops mattering. Each site gets its own
+-- pin here.
+-- ---------------------------------------------------------------------------
+
+local function profFixture()
+    local f = fixture()
+    f.Spooky   = { fields = { futureLoot = "rare" } }              -- a profile
+    f.Sprinty  = { fields = { title = "fast" } }                   -- another
+    f.Riverside.profiles = { "Spooky", "Sprinty" }
+    return f
+end
+
+-- Copy: a draft carries the list, and carries it by value.
+local pd = LMEdit.new(profFixture(), 3)
+eq("a draft copies the profiles list", pd:profilesOf("Riverside")[1], "Spooky")
+local srcStore = profFixture()
+local pd2 = LMEdit.new(srcStore, 3)
+srcStore.Riverside.profiles[1] = "Mutated"
+eq("...by value, not by reference", pd2:profilesOf("Riverside")[1], "Spooky")
+
+-- A clean draft with profiles is still silent - the equality half of the pin.
+eq("a clean profiled draft has no changes", select(3, pd:changeSet()), 0)
+
+-- Mutators.
+isTrue("addProfile appends", pd:addProfile("Westpoint", "Spooky"))
+eq("...at the end", pd:profilesOf("Westpoint")[1], "Spooky")
+local okDup = pd:addProfile("Riverside", "Spooky")
+eq("adding a duplicate is refused", okDup, false)
+local okSelf = pd:addProfile("Riverside", "Riverside")
+eq("a zone cannot apply itself", okSelf, false)
+isTrue("removeProfile removes", pd:removeProfile("Westpoint", "Spooky"))
+eq("...and an empty list goes absent, not empty", pd.work.Westpoint.profiles, nil)
+local okGone = pd:removeProfile("Westpoint", "Spooky")
+eq("removing what is not there is refused", okGone, false)
+
+-- Order is precedence, so move must actually move.
+isTrue("moveProfile toward the end", pd:moveProfile("Riverside", "Spooky", 1))
+eq("...reorders", pd:profilesOf("Riverside")[2], "Spooky")
+local okEnd = pd:moveProfile("Riverside", "Spooky", 1)
+eq("moving past the end is refused", okEnd, false)
+
+-- The cap.
+local capd = LMEdit.new({ Z = { rects = { { 0, 0, 9, 9 } }, fields = {} } }, 1)
+for i = 1, LMEdit.MAX_PROFILES do
+    capd:addProfile("Z", "P" .. i)
+end
+local okOver = capd:addProfile("Z", "POver")
+eq("the profile cap holds", okOver, false)
+
+-- changeSet: membership and ORDER are both edits.
+local cd = LMEdit.new(profFixture(), 3)
+cd:removeProfile("Riverside", "Sprinty")
+local changed = select(1, cd:changeSet())
+isTrue("removing a profile is a change", changed.Riverside ~= nil)
+eq("...and the saved record keeps the rest", changed.Riverside.profiles[1], "Spooky")
+local od = LMEdit.new(profFixture(), 3)
+od:moveProfile("Riverside", "Spooky", 1)
+isTrue("reordering alone is a change", (select(1, od:changeSet())).Riverside ~= nil)
+
+-- THE ERASURE PIN: editing an unrelated dial must not touch the list.
+local ed = LMEdit.new(profFixture(), 3)
+ed:setField("Riverside", "tier", 5)
+local echanged = select(1, ed:changeSet())
+eq("an unrelated edit still carries the profiles list",
+   echanged.Riverside.profiles and echanged.Riverside.profiles[2], "Sprinty")
+-- ...and folding it back into a store keeps it.
+local folded = LMEdit.applyChangeSet(profFixture(), echanged, {})
+eq("applyChangeSet preserves membership", folded.Riverside.profiles[1], "Spooky")
+
+-- Prune canonicalisation: junk drops, duplicates collapse to first.
+local jd = LMEdit.new({ Z = { rects = { { 0, 0, 9, 9 } },
+    profiles = { "A", "", "A", 7, "B" }, fields = { tier = 1 } } }, 1)
+local jchanged = select(1, LMEdit.new({}, 1) and jd:changeSet())
+-- base was the same store, so force a change to see the pruned shape
+jd:setField("Z", "tier", 2)
+jchanged = select(1, jd:changeSet())
+eq("prune drops junk and duplicates", #jchanged.Z.profiles, 2)
+eq("...first occurrence wins", jchanged.Z.profiles[1], "A")
+eq("...order otherwise kept", jchanged.Z.profiles[2], "B")
+
+-- Rename rewrites BOTH reference kinds in one step.
+local rd = LMEdit.new(profFixture(), 3)
+local okRen, nRefs = rd:rename("Spooky", "Haunted")
+isTrue("rename succeeds", okRen)
+eq("profile references rewrote", rd:profilesOf("Riverside")[1], "Haunted")
+local rd2 = LMEdit.new(profFixture(), 3)
+rd2:addProfile("Hard", "Spooky")
+local _, n2 = rd2:rename("Hard", "Harder")
+isTrue("inherits rewrites still counted alongside", n2 >= 2)
+eq("...children repointed", rd2.work.Riverside.inherits, "Harder")
+
+-- effective(): profile values show, precedence holds, source is named.
+local fd = LMEdit.new(profFixture(), 3)
+local v, srcName = fd:effective("Riverside", "futureLoot")
+eq("a profile's value resolves on the zone", v, "rare")
+eq("...and the source names the profile", srcName, "Spooky")
+-- Later profile beats earlier: both set `title`.
+fd.work.Spooky.fields.title = "spooky"
+local tv, tsrc = fd:effective("Riverside", "title")
+eq("later profile wins", tv, "fast")
+eq("...source agrees", tsrc, "Sprinty")
+-- Own field beats profiles.
+fd:setField("Riverside", "title", "mine")
+eq("own field beats profiles", (fd:effective("Riverside", "title")), "mine")
+-- A parent's profile reaches the child.
+local gd = LMEdit.new(profFixture(), 3)
+gd.work.Hard.profiles = { "Spooky" }
+gd.work.Riverside.profiles = nil
+eq("a parent's profile reaches the child",
+   (gd:effective("Riverside", "futureLoot")), "rare")
+-- isOverride stays own-fields-only: a profile-supplied value is not "moved".
+eq("profile values are not overrides", gd:isOverride("Riverside", "futureLoot"), false)
+
+-- Validate rules.
+local vd = LMEdit.new(profFixture(), 3)
+vd.work.Riverside.profiles[3] = "Riverside"
+isTrue("self-application is an error",
+    findProblem(vd:validate(), "Riverside", "error", "applies itself"))
+vd.work.Riverside.profiles[3] = "Ghost"
+isTrue("an unknown profile warns",
+    findProblem(vd:validate(), "Riverside", "warning", "not in the store"))
+vd.work.Riverside.profiles[3] = "Westpoint"
+isTrue("a placed zone as a profile warns",
+    findProblem(vd:validate(), "Riverside", "warning", "placed zone"))
+vd.work.Riverside.profiles[3] = "Hard"
+isTrue("a profile with inherits warns it is not followed",
+    findProblem(vd:validate(), "Riverside", "warning", "not followed"))
+vd.work.Riverside.profiles[3] = "Spooky"
+isTrue("a duplicate application warns",
+    findProblem(vd:validate(), "Riverside", "warning", "more than once"))
+vd.work.Riverside.profiles[3] = nil
+vd:remove("Spooky")
+isTrue("deleting an applied profile warns the zone that loses it",
+    findProblem(vd:validate(), "Riverside", "warning", "being deleted"))
+
+-- keyProblem refuses the structural name as a field.
+isTrue("'profiles' is refused as a field key", LMEdit.keyProblem("profiles") ~= nil)
+
+-- Ini round-trip: structural, ordered, absent-when-empty.
+local rtStore = profFixture()
+local rtText = LMIni.serialize(rtStore)
+isTrue("serialize writes a profiles line", rtText:find("profiles = Spooky,Sprinty", 1, true) ~= nil)
+local rtZones = LMIni.parse(rtText)
+eq("parse reads it back ordered", rtZones.Riverside.profiles[2], "Sprinty")
+eq("zones without profiles stay without", rtZones.Westpoint.profiles, nil)
+-- The numeric-name hazard: structural parsing keeps names as STRINGS.
+local numZones = LMIni.parse("[Z]\nprofiles = 42\n")
+eq("a numeric-looking profile name stays a string", numZones.Z.profiles[1], "42")
+-- An empty value is absent, not present-empty.
+local emptyZones = LMIni.parse("[Z]\nprofiles =\n")
+eq("an empty profiles line is absent", emptyZones.Z.profiles, nil)
+eq("...and does not become a field either", emptyZones.Z.fields.profiles, nil)
+
+-- ---------------------------------------------------------------------------
+-- RESOLVER PARITY (the standing fixture). LMCore.flattenChain and
+-- LMEdit:effective are two independent implementations of one contract; this
+-- drives the same store through both and diffs every key. M-B extends it
+-- across moon phases. If this fails, nothing else about profiles matters.
+-- ---------------------------------------------------------------------------
+
+local parityStore = {
+    _default = { profiles = { "Ambient" }, fields = { tier = 2, futureA = "root" } },
+    Ambient  = { fields = { futureB = "ambient", futureA = "amb-a" } },
+    Spooky   = { fields = { futureLoot = "rare", title = "spooky" } },
+    Sprinty  = { fields = { title = "fast" } },
+    Hard     = { inherits = "_default", fields = { tier = 4 } },
+    Town     = { inherits = "Hard", rects = { { 0, 0, 99, 99 } },
+                 profiles = { "Spooky", "Sprinty" },
+                 fields = { priority = 1 } },
+}
+Limes.apply(parityStore, 40)
+local parityDraft = LMEdit.new(parityStore, 40)
+local KEYS = { "tier", "priority", "futureA", "futureB", "futureLoot", "title" }
+for _, k in ipairs(KEYS) do
+    local resolved = Limes.getZone("Town").fields[k]
+    local eff      = parityDraft:effective("Town", k)
+    -- flattenChain COERCES registered fields and effective() deliberately does
+    -- not - compare through tostring so "4" and 4 agree, which is exactly the
+    -- looseness the panel itself lives with.
+    eq("parity on '" .. k .. "'", tostring(eff), tostring(resolved))
+end
+
 print(string.format("LMEdit: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
 
