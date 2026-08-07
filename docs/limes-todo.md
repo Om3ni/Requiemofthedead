@@ -157,6 +157,29 @@ is honest today and becomes a lie the moment anyone assumes otherwise.
 - Order that works: gates (`check-lua`, `stamp-license.py --check`, `run-tests`) → version
   bump → `stage-upload.ps1 -DryRun` → real mirror → verify the staged tree → publish.
 
+## 6a. Profiles + moon phases — built 2026-08-07, not yet driven in game
+
+The co-owners' request, all three milestones landed (`limes-design.md` §11.3 amendment
+holds the reasoning; the plan file has the normative precedence spec):
+
+- **M-A** — `profiles` structural key: ordered flat bags, per-record expansion,
+  `_default` reach, every copy/prune/wire/file site + pin tests, `MAX_PROFILES = 16`.
+  The shipped ladder templates are appliable difficulty profiles with zero migration.
+- **M-B** — `phases` field + LMMoon + `Limes.refresh()` (revision-stable, content-diffed
+  events) + the editor's same-revision guard. Phase changes cost zero wire traffic.
+- **M-C** — Details-tab block: ordered profile rows with `^ v > x` hotspots, off-phase
+  "waiting for" badges, moon caption, Apply picker (template candidates via
+  `LMEdit:profileCandidates`), New Profile via DFEntry that creates + applies + selects.
+
+- [ ] **Not verified in game** — same status every editor milestone starts with. The
+      §Verification list in the plan: ini `profiles = Hard` round trip through an
+      unrelated-dial save (the erasure acceptance), rename rewrite of both reference
+      kinds, a full-moon profile crossing a phase boundary under a dirty draft (no
+      false "another admin saved"), and the M-C workflow end-to-end.
+- [ ] A bespoke phase-picker for the `phases` field (deferred polish; it is a text
+      field with the vocabulary in its rule text today).
+- [ ] `LMZeds.census` could name profile provenance in its rows ("via BloodMoon").
+
 ## 6b. Schema divergence — decided 2026-08-06, not yet built
 
 The store's *format* is already ours (`RFTDLimes.ini`, LMIni's own grammar). What was

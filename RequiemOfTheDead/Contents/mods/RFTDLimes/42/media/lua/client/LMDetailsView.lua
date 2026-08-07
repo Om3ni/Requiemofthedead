@@ -34,6 +34,8 @@ if isServer() then return end
 
 require "LMCore"
 require "LMEdit"
+require "LMMoon"
+require "DFEntry"
 
 LMDetailsView = LMDetailsView or {}
 
@@ -43,7 +45,7 @@ local forms    = {}      -- mod id -> DFForm (built once, on demand)
 
 local LEFT_W = 232
 
-local rebuildMods, refresh
+local rebuildMods, refresh, rebuildProfiles
 
 -- ---------------------------------------------------------------------------
 -- The mod list
@@ -82,6 +84,195 @@ function ModList:onMouseDown(x, y)
     self.selected = idx
     activeId = row.item.id
     refresh()
+end
+
+-- ---------------------------------------------------------------------------
+-- The profiles block (M-C, 2026-08-07) - which bags this zone applies, in
+-- which order, and whether the moon currently lets them speak.
+--
+-- ORDER IS PRECEDENCE (later beats earlier), so the list is ordered UI with
+-- move buttons, not a checklist. The rows carry their own controls as drawn
+-- hotspots resolved by x in onMouseDown - the ISScrollingListBox idiom the
+-- ModList above already uses - because sixteen rows of real ISButtons is a
+-- widget tree for a list that mostly holds two entries.
+--
+-- A profile row that is off-phase says so. The Details forms show RESOLVED
+-- values through the same phase gate the game uses, which is honest but
+-- reads as "my BloodMoon numbers vanished" at new moon - the badge is the
+-- missing sentence: they are not gone, they are waiting.
+-- ---------------------------------------------------------------------------
+
+local ProfileList = ISScrollingListBox:derive("LMProfileList")
+
+-- Per-row hotspot columns, right-aligned: [up][down][edit][remove].
+local COLW = 22
+
+local function profileHot(list, x)
+    local edge = list.width - 4
+    if x > edge - COLW then return "remove" end
+    if x > edge - COLW * 2 then return "edit" end
+    if x > edge - COLW * 3 then return "down" end
+    if x > edge - COLW * 4 then return "up" end
+    return nil
+end
+
+function ProfileList:doDrawItem(y, item, alt)
+    local it = item.item
+    if not it then return y + self.itemheight end
+    local h = self.itemheight
+    if alt then self:drawRect(0, y, self.width, h - 1, 0.18, 0.08, 0.08, 0.08) end
+
+    local label = tostring(item.text)
+    if it.missing then
+        self:drawText(label .. "  (missing)", 6, y + 2, 0.85, 0.45, 0.30, 1, UIFont.Small)
+    elseif it.inactive then
+        self:drawText(label, 6, y + 2, 0.55, 0.55, 0.62, 1, UIFont.Small)
+        local tag = "waiting for " .. tostring(it.phases)
+        local lw = getTextManager():MeasureStringX(UIFont.Small, label)
+        self:drawText(tag, 12 + lw, y + 2, 0.45, 0.50, 0.60, 1, UIFont.Small)
+    else
+        self:drawText(label, 6, y + 2, 0.92, 0.92, 0.92, 1, UIFont.Small)
+    end
+
+    local edge = self.width - 4
+    local glyphs = { { "^", 4 }, { "v", 3 }, { ">", 2 }, { "x", 1 } }
+    for _, g in ipairs(glyphs) do
+        local gx = edge - COLW * g[2]
+        self:drawText(g[1],
+            gx + math.floor((COLW - getTextManager():MeasureStringX(UIFont.Small, g[1])) / 2),
+            y + 2, 0.62, 0.68, 0.75, 1, UIFont.Small)
+    end
+    return y + h
+end
+
+function ProfileList:onMouseDown(x, y)
+    local idx = self:rowAt(x, y)
+    if idx <= 0 then return end
+    local row = self.items[idx]
+    if not (row and row.item) then return end
+    local zone  = LMEditView.selected()
+    local draft = LMEditView.draft()
+    if not (zone and draft) then return end
+    local pname = row.item.name
+
+    local hot = profileHot(self, x)
+    if hot == "remove" then
+        draft:removeProfile(zone, pname)
+    elseif hot == "up" then
+        draft:moveProfile(zone, pname, -1)
+    elseif hot == "down" then
+        draft:moveProfile(zone, pname, 1)
+    elseif hot == "edit" then
+        -- Jump the shared selection to the profile itself, so the forms below
+        -- edit ITS fields - where phases and the actual numbers live.
+        if not row.item.missing then LMEditView.select(pname) end
+        return
+    else
+        return
+    end
+    LMEditView.refresh()
+    refresh()
+end
+
+rebuildProfiles = function()
+    if not (ui and ui.profList) then return end
+    local zone  = LMEditView.selected()
+    local draft = LMEditView.draft()
+    local phase = Limes.moonPhase and Limes.moonPhase() or nil
+
+    DFKit.refillList(ui.profList, function(box)
+        if not (zone and draft) then return end
+        for i, pname in ipairs(draft:profilesOf(zone)) do
+            local prec = draft:get(pname)
+            local phases = prec and prec.fields and prec.fields.phases
+            local inactive = false
+            if prec and phases and phases ~= "" and LMMoon and LMMoon.parsePhases then
+                local set = LMMoon.parsePhases(phases)
+                inactive = (set ~= nil) and (phase == nil or set[phase] ~= true)
+            end
+            box:addItem(i .. ". " .. pname, {
+                name = pname, missing = (prec == nil),
+                inactive = inactive, phases = phases,
+            })
+        end
+    end)
+
+    -- The moon caption: the one line that explains why a dormant profile's
+    -- numbers are not in the forms below.
+    if ui.profMoon then
+        local pn = LMMoon and LMMoon.phaseName and LMMoon.phaseName(phase)
+        ui.profMoon:setName("Moon: " .. (pn or "unknown"))
+    end
+end
+
+local function applyProfilePick(pname)
+    local zone  = LMEditView.selected()
+    local draft = LMEditView.draft()
+    if not (zone and draft) then return end
+    local ok, why = draft:addProfile(zone, pname)
+    if not ok and why then print("[Limes] " .. tostring(why)) end
+    if ui and ui.picker then ui.picker:setVisible(false) end
+    LMEditView.refresh()
+    refresh()
+end
+
+local PickerList = ISScrollingListBox:derive("LMProfilePicker")
+
+function PickerList:doDrawItem(y, item, alt)
+    local h = self.itemheight
+    if alt then self:drawRect(0, y, self.width, h - 1, 0.18, 0.08, 0.08, 0.08) end
+    self:drawText(tostring(item.text), 6, y + 2, 0.92, 0.92, 0.92, 1, UIFont.Small)
+    return y + h
+end
+
+function PickerList:onMouseDown(x, y)
+    local idx = self:rowAt(x, y)
+    if idx <= 0 then return end
+    local row = self.items[idx]
+    if row and row.item then applyProfilePick(row.item) end
+end
+
+local function openPicker()
+    local zone  = LMEditView.selected()
+    local draft = LMEditView.draft()
+    if not (zone and draft and ui and ui.picker) then return end
+    local names = draft:profileCandidates(zone)
+    DFKit.refillList(ui.picker, function(box)
+        for _, n in ipairs(names) do box:addItem(n, n) end
+    end)
+    ui.picker:setVisible(#names > 0)
+    if #names == 0 then
+        print("[Limes] no templates left to apply - New makes one")
+    end
+end
+
+local function newProfile()
+    local zone  = LMEditView.selected()
+    local draft = LMEditView.draft()
+    if not (zone and draft) then return end
+    DFEntry.show{
+        title       = "New profile",
+        value       = "",
+        rule        = "Letters, digits, _ - . only. A profile is a zone with no"
+            .. " ground; it will be applied to " .. zone .. " immediately.",
+        maxLen      = 48,
+        validate    = function(s)
+            local why = LMEdit.nameProblem(s)
+            if why then return false, why end
+            if draft:get(s) then return false, "'" .. s .. "' already exists." end
+            return true
+        end,
+        onCommit    = function(s)
+            local ok, why = draft:create(s)      -- no rec: rect-less = template
+            if not ok then print("[Limes] " .. tostring(why)) return end
+            draft:addProfile(zone, s)
+            -- Land the admin on the new profile's own forms - the next thing
+            -- they will do is give it fields, and phases lives there too.
+            LMEditView.select(s)
+            LMEditView.refresh()
+            refresh()
+        end,
+    }
 end
 
 -- ---------------------------------------------------------------------------
@@ -137,6 +328,15 @@ refresh = function()
     for id, f in pairs(forms) do
         if f._el then pcall(function() f._el:setVisible(id == activeId) end) end
     end
+
+    -- The profiles block exists only with a zone in hand; the picker never
+    -- survives a refresh (a stale candidate list is worse than a second click).
+    local showProf = zone ~= nil
+    for _, el in ipairs({ ui.profHead, ui.profMoon, ui.profList, ui.applyBtn, ui.newBtn }) do
+        if el then pcall(function() el:setVisible(showProf) end) end
+    end
+    if ui.picker then pcall(function() ui.picker:setVisible(false) end) end
+    if showProf then rebuildProfiles() end
 
     local info = activeId and Limes.mods.info(activeId)
     ui.head:setName(zone
@@ -198,7 +398,53 @@ function LMDetailsView.attach(panel)
     local note = DFKit.label(panel, 0, 0, "", C.warn)
     for _, l in ipairs({ head, desc, note }) do w[#w + 1] = l end
 
-    ui = { list = list, head = head, desc = desc, note = note, formWidgets = {}, panel = panel }
+    -- The profiles block: header line (label + moon caption + two buttons),
+    -- the ordered list, and the transient Apply picker. Built fresh in every
+    -- attach like everything else here - the dead-orphan-widget rule above
+    -- applies to these exactly as it does to the forms.
+    local profHead = DFKit.label(panel, 0, 0, "Profiles")
+    local profMoon = DFKit.label(panel, 0, 0, "", C.textDim)
+    w[#w + 1] = profHead; w[#w + 1] = profMoon
+
+    local profList = ProfileList:new(0, 0, 10, 10)
+    profList:initialise(); profList:instantiate()
+    profList.itemheight = 20
+    profList.drawBorder = true
+    profList.selected   = 0
+    DFKit.well(profList)
+    local origProfRender = profList.render
+    profList.render = function(self_)
+        if origProfRender then origProfRender(self_) end
+        if self_:size() == 0 then
+            DFKit.drawEmpty(self_, 0, 0, self_.width, self_.height,
+                "No profiles applied - Apply picks a template, New makes one")
+        end
+    end
+    panel:addChild(profList)
+    w[#w + 1] = profList
+
+    local applyBtn = DFKit.button(panel, 0, 0, 58, "Apply", nil, openPicker, "action",
+        { tooltip = "Apply an existing profile (a template zone) to this zone."
+            .. " Later profiles in the list beat earlier ones." })
+    local newBtn = DFKit.button(panel, 0, 0, 44, "New", nil, newProfile, "action",
+        { tooltip = "Create a new empty profile, apply it here, and jump to its"
+            .. " fields. Set 'Active moon phases' there to make it phase-bound." })
+    w[#w + 1] = applyBtn; w[#w + 1] = newBtn
+
+    local picker = PickerList:new(0, 0, 10, 10)
+    picker:initialise(); picker:instantiate()
+    picker.itemheight = 20
+    picker.drawBorder = true
+    picker.selected   = 0
+    DFKit.well(picker)
+    picker:setVisible(false)
+    panel:addChild(picker)
+    w[#w + 1] = picker
+
+    ui = { list = list, head = head, desc = desc, note = note,
+           profHead = profHead, profMoon = profMoon, profList = profList,
+           applyBtn = applyBtn, newBtn = newBtn, picker = picker,
+           formWidgets = {}, panel = panel }
 
     rebuildMods()
     -- Build every registered mod's form up front. Lazily would mean a form
@@ -232,7 +478,32 @@ function LMDetailsView.layout(panel, x, y, w, h)
     ui.desc:setX(rx); ui.desc:setY(y + PAD + lh)
     ui.note:setX(rx); ui.note:setY(y + h - lh)
 
+    -- The profiles block claims its rows between the description and the
+    -- forms, but ONLY while a zone is selected - with nothing selected the
+    -- forms keep the whole column and the block hides entirely (refresh()
+    -- drives visibility; layout only reserves the space).
     local fy = y + PAD + lh * 2
+    local zone = LMEditView.selected and LMEditView.selected() or nil
+    if zone and ui.profList then
+        local btnH  = DFKit.metrics.btnH
+        local listH = 20 * 3 + 4                    -- three rows before scrolling
+        ui.profHead:setX(rx); ui.profHead:setY(fy)
+        local moonW = 120
+        ui.profMoon:setX(rx + rw - moonW - ui.applyBtn:getWidth() - ui.newBtn:getWidth() - m.gap * 2)
+        ui.profMoon:setY(fy)
+        ui.applyBtn:setX(rx + rw - ui.applyBtn:getWidth() - ui.newBtn:getWidth() - m.gap)
+        ui.applyBtn:setY(fy - 2)
+        ui.newBtn:setX(rx + rw - ui.newBtn:getWidth())
+        ui.newBtn:setY(fy - 2)
+        local ly = fy + math.max(lh, btnH)
+        DFKit.sizeList(ui.profList, rx, ly, rw, listH)
+        -- The picker drops over the top of the forms, under the Apply button.
+        ui.picker:setX(rx + rw - 240)
+        ui.picker:setY(ly)
+        DFKit.sizeList(ui.picker, rx + rw - 240, ly, 240, 20 * 6 + 4)
+        fy = ly + listH + PAD
+    end
+
     local fh = math.max(60, (y + h) - fy - lh - 4)
     for _, f in pairs(forms) do f:layout(rx, fy, rw, fh) end
 end

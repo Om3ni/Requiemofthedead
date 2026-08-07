@@ -224,6 +224,14 @@ a redundant baseline fires nothing. First boot on an empty store does report
 every zone as `"added"`; if you only care about teardown, watch `"disabled"` and
 `"deleted"`.
 
+**The moon fires these too** (since 2026-08-07). A profile can be phase-bound
+(`phases = "full"`), and when the in-game moon crosses a boundary each machine
+re-resolves and fires `"edited"` (or `"enabled"`/`"disabled"`) for exactly the
+zones whose resolved output changed — same events, same contract, no new API.
+If your standing effect unwinds on those events, it already handles the moon.
+`Limes.moonPhase()` returns the current phase (0–7, 4 = full) or nil when
+unknowable, if you want to read it directly.
+
 ---
 
 ## 4. Bridging an existing mod
