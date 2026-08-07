@@ -52,11 +52,24 @@ Now that 1.1.0 is published, the deployed build and the repo should finally agre
 flags plus `zeds`, and every one carries a help note saying no module reads it. That note
 is honest today and becomes a lie the moment anyone assumes otherwise.
 
-- [ ] `server/LMRestrictSv.lua` + `client/LMRestrictCl.lua`, per §7.2's three-tier honesty
-      model (server-authoritative / client-gated / post-hoc revert). The per-flag mechanism
-      and its tier are already researched in the §7.2 table — build from it, do not
-      re-derive.
-- [ ] Remove the `NOT_YET` help suffix from each flag as its enforcement lands.
+- [x] `server/LMRestrictSv.lua` + `client/LMRestrictCl.lua` — built 2026-08-06. **A
+      verification pass ran first and moved three flags up a tier**: `nopickup`,
+      `noplacing` and `noscrap` were filed C+R because the `OnProcessTransaction` events
+      are void, but the events are not the execution point — `Transactions.*` are global
+      Lua functions in the game's own `server/TransactionProcessor.lua` that perform the
+      mutation, so taking one over is a veto. Same for `Actions.build`. Final tiers: **S**
+      for nobuilding/nopickup/noplacing/noscrap/campfire, **R** for nosafehouse and other
+      fire, **C** for nodestruction and noplayers.
+- [x] Remove the `NOT_YET` help suffix from each flag — done; each flag's help now states
+      its tier, and the two weak ones say WEAK and say a modified client can ignore them.
+- [ ] **Not verified in game.** Same status M4a had: green on the gates, never driven.
+      The wraps are the risk — they install against globals the *game* owns, so a load
+      order where `Actions`/`Transactions` are not yet parsed falls back to the boot
+      retry, and nothing has proven that retry fires on a real dedi.
+- [ ] Client UI gates for the S flags (hide the build option in-zone, etc.) — deliberately
+      not built. The server refuses anyway, so a missing gate costs a click; a gate that
+      disagrees with the server because this client's store is a revision behind costs a
+      player who cannot build where they are allowed to.
 - [x] `zeds = remove` / `none` (`server/LMZeds.lua`, §7.3) — built 2026-08-06 and shipped
       in `b4009c3`. Suppress-at-birth on `OnZombieCreate`, sweep on zone added/edited/
       enabled. **Removal is silent**: `die()` runs `becomeCorpse()`, so a walled safe zone
@@ -143,6 +156,25 @@ is honest today and becomes a lie the moment anyone assumes otherwise.
   Staging is only a local mirror, so it is safe to re-run and re-check.
 - Order that works: gates (`check-lua`, `stamp-license.py --check`, `run-tests`) → version
   bump → `stage-upload.ps1 -DryRun` → real mirror → verify the staged tree → publish.
+
+## 6b. Schema divergence — decided 2026-08-06, not yet built
+
+The store's *format* is already ours (`RFTDLimes.ini`, LMIni's own grammar). What was
+inherited from PhunZones is the **vocabulary** — `tier`, `lewtkey`, `zeds`, `no*` — which
+the importer carried across verbatim so imported data would resolve. That is the part
+that reads as lineage, and the decision is to diverge.
+
+- [ ] **Translate on import, do not migrate the live store.** The importer emits our
+      vocabulary; the ~75 zones on Mosaic keep their current keys.
+- [ ] **Aliases, not a rename.** A straight rename would silently switch Mosaic's
+      enforcement off: the old key becomes unregistered, so it stops being coerced, stops
+      appearing in the panel, and is not what the consumer reads. Register the new name
+      and declare the old one as a read alias; resolution maps it. No file rewrite, no
+      migration, and both vocabularies work.
+- [ ] Numbered backups should land before anything ever *does* rewrite the ini (see §5).
+- [ ] `docs/limes-satellite-api.md` documents the registration contract for third-party
+      mods — written 2026-08-06. Its "what this API does not do" section is the honest
+      list of what a satellite author will hit.
 
 ## 7. Retirement — the point of all of this
 
