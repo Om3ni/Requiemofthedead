@@ -10,14 +10,17 @@
     "Sandbox_RD_DeathCaptureEnabled": "Capture player deaths",
     "Sandbox_RD_DeathCaptureEnabled_tooltip": "Records player deaths server-side. Kill switch: the capture hook fires for every character in the world (players, zombies, animals), so if a horde-night performance problem is ever traced here, turn this off and report it.",
 
+    "Sandbox_RD_ForensicSegmentHours": "Forensic log: hours per segment",
+    "Sandbox_RD_ForensicSegmentHours_tooltip": "How long each forensic log segment covers before a new one starts. The default 4 means a fresh log at 00:00, 04:00, 08:00 and so on - the boundaries are real clock times, not counted from when the server started, so they stay put across restarts and every stream rolls over together. This is the only thing that starts a new segment; the size settings below only cap one.",
+
     "Sandbox_RD_ForensicRingSegments": "Forensic log: ring segments",
-    "Sandbox_RD_ForensicRingSegments_tooltip": "How many segments each rotating forensic log stream keeps before the oldest is overwritten. Disk ceiling per stream is segments x size per segment - the default 8 x 4 MB is 32 MB. Lowering this reclaims the segments that fall outside the new ring on the next server start.",
+    "Sandbox_RD_ForensicRingSegments_tooltip": "How many segments each forensic stream keeps before the oldest is overwritten. This is how far back you can look: segments x hours per segment - the default 42 x 4h is one week. Disk ceiling per stream is segments x size per segment. Lowering this reclaims the segments that fall outside the new ring on the next server start.",
 
-    "Sandbox_RD_ForensicSegmentLines": "Forensic log: lines per segment",
-    "Sandbox_RD_ForensicSegmentLines_tooltip": "Secondary cap: roll to the next segment after this many lines even if the size limit has not been reached. Size is the main bound - see 'size per segment'. After an unclean restart the counter can be up to 500 lines stale, which is expected and harmless.",
+    "Sandbox_RD_ForensicSegmentLines": "Forensic log: line cap per segment",
+    "Sandbox_RD_ForensicSegmentLines_tooltip": "Flood guard, not a schedule: if one segment somehow reaches this many lines before its time is up, further records are dropped until the next segment starts, and the server log says so once. Reaching it at all means something is producing far more telemetry than expected. Raise it only after finding out what.",
 
-    "Sandbox_RD_ForensicSegmentKB": "Forensic log: size per segment (KB)",
-    "Sandbox_RD_ForensicSegmentKB_tooltip": "How large a forensic segment grows before rolling to the next one. This is the real disk bound, because record sizes differ hugely between streams - a traffic-report line can be ten times the size of a simple event line, so a line count alone tells you very little about disk use.",
+    "Sandbox_RD_ForensicSegmentKB": "Forensic log: size cap per segment (KB)",
+    "Sandbox_RD_ForensicSegmentKB_tooltip": "Flood guard on disk, and the real one, because record sizes differ hugely between streams - a traffic-report line can be ten times a simple event line. If one segment reaches this size before its time is up, further records are dropped until the next segment starts. Multiply by ring segments for the worst-case disk use per stream.",
 
     "Sandbox_RD_CmdRelayEnabled": "Live client-command feed",
     "Sandbox_RD_CmdRelayEnabled_tooltip": "Streams inbound client commands to staff consoles as they happen - the Console tab of the Dragonfly panel. A WATCH feature, not a block: the engine has already accepted a command by the time any mod is told about it, so nothing can be refused here. OFF by default because client commands are a firehose (every inventory move, every action sync, from every player). Armed, staff receive ONE batched packet per second, capped at 40 commands per window, and any overflow is reported in the feed rather than silently dropped. Command arguments are NOT sent - those stay in the rotating 'guardian' forensic log, which is the searchable record.",

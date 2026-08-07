@@ -180,14 +180,18 @@ function DFDeck:reflowContent()
 end
 
 function DFDeck:settleResize()
-    -- Font tier follows the width. Conservative on purpose: the default size
-    -- keeps the type it has always had, and only a deliberately enlarged deck
-    -- moves up a rung. A tier change re-bakes every label and button, so it can
-    -- only be applied by rebuilding.
-    local tier = 1
-    if     self.width >= 1900 then tier = 3
-    elseif self.width >= 1500 then tier = 2 end
-    local fontMoved = DFKit.setFontScale(tier)
+    -- Font tier follows the TEXT SIZE PREFERENCE (DFPrefs), never the width.
+    -- The width heuristic predates the preference and the two fought over
+    -- DFKit.font: dragging past 1500px silently overrode the size the user
+    -- chose in the settings wheel, and the next DFPrefs.apply() put it back -
+    -- WITHOUT the rebuild, because the kit's tier tracker had been bypassed -
+    -- leaving glyphs one size and layout another. That mismatch is what "text
+    -- distorts and falls out of place after a resize" was. The call here is a
+    -- resync (normally a no-op); a genuinely stale tracker still earns the
+    -- rebuild it needs, because a tier change re-bakes every label and button
+    -- and only a rebuild can apply that.
+    local pref = (DFPrefs and DFPrefs.get and DFPrefs.get("fontScale")) or 1
+    local fontMoved = DFKit.setFontScale(pref)
 
     if fontMoved or not self:reflowContent() then
         if self.activeId then self:showTab(self.activeId) end
@@ -197,6 +201,11 @@ end
 
 function DFDeck:showTab(id)
     self.activeId = id
+    -- The tier these widgets are about to BAKE. The prefs listener below
+    -- compares this stamp against DFKit.fontScale to know a rebuild is owed -
+    -- it cannot ask setFontScale, because DFPrefs.apply() syncs the tracker
+    -- before it notifies, so from a listener the answer is always "no move".
+    self.builtTier = DFKit.fontScale
     local spec = DFRegistry.tabs[id]
     if not spec then return end
 
@@ -553,12 +562,13 @@ function DFDeck.open()
     if w < MIN_W then w = math.min(MIN_W, sw - 80) end
     if h < MIN_H then h = math.min(MIN_H, sh - 80) end
 
-    -- The font tier belongs to the SIZE, so a remembered large deck comes back
-    -- with the type it had - set before the first build, or every widget bakes
-    -- the old font and only a resize would correct it.
-    if     w >= 1900 then DFKit.setFontScale(3)
-    elseif w >= 1500 then DFKit.setFontScale(2)
-    else                  DFKit.setFontScale(1) end
+    -- The font tier belongs to the TEXT SIZE PREFERENCE - set before the
+    -- first build, or every widget bakes the old font and only a later pref
+    -- change would correct it. (It used to follow the remembered width, which
+    -- fought the settings wheel; see settleResize.)
+    if DFPrefs and DFPrefs.get and DFKit.setFontScale then
+        DFKit.setFontScale(DFPrefs.get("fontScale"))
+    end
     local inst = DFDeck:new(math.floor((sw - w) / 2), math.floor((sh - h) / 2), w, h)
     inst:initialise()
     inst:addToUIManager()
@@ -603,6 +613,34 @@ if not DFDeckState.hooked then
         if key ~= deckKey then return end
         if not shiftDown() then return end
         DFDeck.toggle()
+    end)
+end
+
+-- A text-size change while the deck is OPEN re-bakes nothing on its own:
+-- ISLabel and ISButton capture their font at construction, so the settings
+-- wheel used to flip the drawn chrome to the new size while every widget kept
+-- the old one - the "text falls out of its boxes without touching the resize
+-- grip" report. Only a rebuild applies a tier change, so listen for the
+-- preference and rebuild the active tab when the tier moved past the one the
+-- widgets BAKED (the builtTier stamp in showTab). Not setFontScale's return:
+-- DFPrefs.apply() syncs the tracker before it notifies, so from here that
+-- always reports "no move" - gating on it is a listener that never fires.
+-- Registered ONCE across hot reloads via DFDeckState, dereferencing the
+-- globals at call time - the same discipline as the keybind. Opacity changes
+-- ride this listener harmlessly: the tier has not moved past the stamp, so
+-- nothing rebuilds. (With LMEditView keeping a dirty draft across attach,
+-- this rebuild no longer costs the Zones tab its unsaved work.)
+if DFPrefs and DFPrefs.onChange and not DFDeckState.prefsHooked then
+    DFDeckState.prefsHooked = true
+    DFPrefs.onChange(function()
+        local inst = DFDeckState.instance
+        if not inst then return end
+        local vis = false
+        pcall(function() vis = inst:getIsVisible() end)
+        if not vis then return end
+        if inst.activeId and inst.builtTier ~= DFKit.fontScale then
+            inst:showTab(inst.activeId)
+        end
     end)
 end
 

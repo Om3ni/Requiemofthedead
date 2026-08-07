@@ -103,7 +103,13 @@ if isServer() then
             reject(module, command, player, "unregistered-command")
             return
         end
-        if not RDRate.allow(player, cmd.rate, 1000) then
+        -- Scope the bucket to THIS command. By this line `module` matched a
+        -- registered token and `command` a registered command, so the key is
+        -- code-owned, not wire-controlled. Without the scope, every command a
+        -- user sends drains one shared bucket that each command then compares
+        -- against its own max - fatal to anything registered with a small
+        -- rate (see RDRate.allow).
+        if not RDRate.allow(player, cmd.rate, 1000, module .. "." .. command) then
             reject(module, command, player, "rate")
             return
         end

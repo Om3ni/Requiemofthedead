@@ -32,28 +32,50 @@ if not isServer() then return end
 
 RDRate = RDRate or {}
 
-local buckets = {}   -- username -> { count, windowStart }
+local buckets = {}   -- "username|scope" (or bare username) -> { count, windowStart }
 
 -- True if the player is under the limit (this hit is recorded); false once
 -- they exceed `max` hits inside the current `windowMs` window.
-function RDRate.allow(player, max, windowMs)
+--
+-- `scope` isolates the bucket - pass the command identity ("token.command")
+-- and each command gets its own window, its own count, and its own max.
+-- WITHOUT it, every caller shares one bucket per username while comparing the
+-- shared count against its own max, which means a `rate = 1` command is
+-- allowed only when the user sent NOTHING ELSE that second: any same-second
+-- family traffic - another mod's join handshake, a tab poll - makes the
+-- low-rate command the Nth hit in the bucket and it is dropped, silently to
+-- the client. That is not a theoretical burst-boundary quirk like the one in
+-- the header; it is cross-contamination between unrelated commands, and it
+-- was eating LMSync's join pulls and zone saves. Nil-scope callers keep the
+-- legacy shared bucket.
+function RDRate.allow(player, max, windowMs, scope)
     local name = player and player.getUsername and player:getUsername()
     if not name then return true end
     local now = RDShared.nowMs()
     if now == 0 then return true end
     max = max or 20
     windowMs = windowMs or 1000
-    local b = buckets[name]
+    local key = scope and (name .. "|" .. tostring(scope)) or name
+    local b = buckets[key]
     if not b or (now - b.windowStart) >= windowMs then
-        buckets[name] = { count = 1, windowStart = now }
+        buckets[key] = { count = 1, windowStart = now }
         return true
     end
     b.count = b.count + 1
     return b.count <= max
 end
 
+-- Forget every bucket the user owns, scoped or not. Clearing existing fields
+-- during a pairs() traversal is defined behavior in Lua; only additions are
+-- not.
 function RDRate.forget(name)
-    if name then buckets[name] = nil end
+    if not name then return end
+    buckets[name] = nil
+    local prefix = name .. "|"
+    local plen = #prefix
+    for k in pairs(buckets) do
+        if string.sub(k, 1, plen) == prefix then buckets[k] = nil end
+    end
 end
 
 -- Drop buckets on disconnect so the table doesn't accumulate one entry per

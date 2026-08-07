@@ -330,9 +330,10 @@ function DFKit.rowHeight()
 end
 
 -- Rebuilding the bars after sizing puts the widget in exactly the state vanilla
--- would have constructed it in. removeScrollBars() detaches the old ones first,
--- so this does not accumulate children, and layout runs rarely (open, resize,
--- view switch) rather than per frame.
+-- would have constructed it in. addScrollBars() itself detaches the old bars
+-- before building fresh ones (ISUIElement.lua:1390 calls removeScrollBars as
+-- its first line - verified in the b42 install 2026-08-05), so this does not
+-- accumulate children even when a live resize drag runs it per mouse-move.
 function DFKit.sizeList(box, x, y, w, h)
     if not box then return box end
     if x then box:setX(x) end
@@ -458,6 +459,33 @@ end
 -- ---------------------------------------------------------------------------
 -- Shared states
 -- ---------------------------------------------------------------------------
+
+-- Trim to width with a ".." tail. Core-local so tabs can clip label text
+-- without a DFTheme dependency (Core must not require Dragonfly). ISLabel does
+-- not clip, so any label whose text is a sentence - status lines especially -
+-- otherwise runs under whatever sits to its right and off the pane. UTF-8
+-- safe: each step strips trailing continuation bytes (0x80-0xBF) TOGETHER
+-- WITH the lead byte they belong to - one whole character - so the cut never
+-- leaves a mangled glyph before the tail. (Continuation bytes first, then the
+-- lead: the other order leaves the bare lead byte dangling.)
+function DFKit.fitText(str, font, maxW)
+    str = tostring(str or "")
+    if str == "" then return "" end
+    if not maxW or maxW <= 0 then return "" end
+    font = font or DFKit.font.small or UIFont.Small
+    local tm = getTextManager()
+    if tm:MeasureStringX(font, str) <= maxW then return str end
+    local s = str
+    while #s > 1 and tm:MeasureStringX(font, s .. "..") > maxW do
+        local n = #s
+        while n > 1 do
+            local b = string.byte(s, n)
+            if b >= 128 and b < 192 then n = n - 1 else break end
+        end
+        s = string.sub(s, 1, n - 1)
+    end
+    return s .. ".."
+end
 
 -- The quiet state. A triage surface should be silent when clean, not render a
 -- table proving it - "no further matches" in a column list reads as data, not

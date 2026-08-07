@@ -220,7 +220,23 @@ local function boot()
 end
 
 if Events and Events.OnServerStarted then
-    Events.OnServerStarted.Add(function() pcall(boot) end)
+    -- The pcall still guards the event loop, and it does not silence the
+    -- engine: a boot that throws still leaves a Kahlua stack trace in the
+    -- console (pcall does not suppress the mod error reporter). What the
+    -- trace never says is what it MEANT - that the store is empty for the
+    -- whole session while the ini on disk is fine, which otherwise reads as
+    -- "the save never happened", the most expensive misread this file can
+    -- cause. So name the consequence next to the error, and put it in the
+    -- forensic stream where it survives to be queried.
+    Events.OnServerStarted.Add(function()
+        local ok, err = pcall(boot)
+        if not ok then
+            print("[Limes] BOOT FAILED: " .. tostring(err)
+                .. " - the store is empty this session and " .. LMPersist.FILE
+                .. " was NOT loaded (the file itself is untouched)")
+            forensic("LM.BOOT_FAIL", { err = tostring(err) })
+        end
+    end)
 end
 
 return LMPersist

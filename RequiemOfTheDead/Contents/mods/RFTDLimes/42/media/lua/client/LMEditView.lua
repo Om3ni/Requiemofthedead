@@ -41,6 +41,13 @@ local editor   = nil    -- LMMapEditor
 local map      = nil    -- LSMap
 local selected = nil    -- zone name
 local statusMsg, statusGood = "", false
+local statusW = 0       -- px the status label may occupy; layout() measures it
+
+-- Client-side mirror of the census switch, for the button's label only. The
+-- server owns the real state; this is never read back as truth, so a rebuild
+-- showing "off" while the server is still on costs a wrong caption and nothing
+-- else. Not persisted, matching the server's own refusal to persist it.
+local censusAuto = false
 
 local LEFT_W  = 268
 -- No split any more: the tree owns the whole left column (2026-08-05). The
@@ -142,7 +149,15 @@ end
 local function setStatus(msg, good)
     statusMsg, statusGood = msg or "", good and true or false
     if ui and ui.status then
-        ui.status:setName(statusMsg)
+        -- CLIPPED to the room layout() measured. ISLabel does not clip, and
+        -- the messages on this line are sentences ("Created X in the middle of
+        -- the view - drag its handles..."): unclipped they ran under Save and
+        -- Revert and off the pane, which was most of "text falls out of its
+        -- box" on this view. statusMsg keeps the full text, so a wider
+        -- re-layout always re-fits it.
+        ui.status:setName(statusW > 0
+            and DFKit.fitText(statusMsg, DFKit.font.small, statusW)
+            or statusMsg)
         if statusGood then ui.status.r, ui.status.g, ui.status.b = 0.75, 0.95, 0.75
         else               ui.status.r, ui.status.g, ui.status.b = 0.95, 0.85, 0.65 end
     end
@@ -523,6 +538,34 @@ function LMEditView.attach(panel)
         "Paste a PhunZones layer, wipe the store, or teleport to a zone - in a window"
         .. " with its own log, so a long import reports somewhere you can scroll and copy.")
 
+    -- THE CENSUS PAIR. Global operations, so they sit with Import rather than
+    -- with the per-zone buttons - nothing here acts on the selection.
+    --
+    -- They exist because zeds enforcement is SILENT by design (a corpse in a
+    -- walled safe zone is worse than the spawn it replaces), which leaves no way
+    -- to watch it work from inside the game. The census is that way: it counts
+    -- what is actually standing in each zone, prints it next to the settings that
+    -- produced it, and reconciles its own totals so the report says whether to
+    -- trust it. Server log, not here - it is evidence to read beside the .ini.
+    local censusBtn = btn("Census", 62, function()
+            if LMSync and LMSync.printCensus then
+                LMSync.printCensus(false)
+                setStatus("Census requested - the report is in the server log.")
+            end
+        end, "action",
+        "Count the zombies actually standing in every zone right now and print them"
+        .. " to the SERVER log beside each zone's settings. Zones on unloaded ground"
+        .. " report 'unloaded' rather than a zero they have not earned.")
+
+    local censusAutoBtn = btn("Auto: off", 74, function()
+            censusAuto = not censusAuto
+            if LMSync and LMSync.setCensus then LMSync.setCensus(censusAuto) end
+            pcall(function() ui.censusAutoBtn:setTitle("Auto: " .. (censusAuto and "on" or "off")) end)
+        end, "action",
+        "Repeat the census every ten GAME minutes. Off by default and never"
+        .. " persisted: a diagnostic that survives a restart is one somebody"
+        .. " forgot to turn off.")
+
     local saveBtn   = btn("Save to server", 118, save, "primary",
         "Send this draft's changes - and only its changes - as one command. The"
         .. " server checks nobody else saved since you started, re-validates, writes"
@@ -538,10 +581,24 @@ function LMEditView.attach(panel)
         tree = tree, status = status, counts = counts,
         addBtn = addBtn, renameBtn = renameBtn, deleteBtn = deleteBtn, toggleBtn = toggleBtn,
         delRectBtn = delRectBtn, frameBtn = frameBtn, reparentBtn = reparentBtn,
-        importBtn = importBtn, saveBtn = saveBtn, revertBtn = revertBtn,
+        importBtn = importBtn, censusBtn = censusBtn, censusAutoBtn = censusAutoBtn,
+        saveBtn = saveBtn, revertBtn = revertBtn,
     }
 
-    newDraft()
+    -- A REBUILD IS NOT AN EXCUSE TO LOSE WORK. The deck tears this tab down
+    -- and calls attach() again on EVERY roster switch, on every close/reopen,
+    -- and on a font-tier change - and this line used to be an unconditional
+    -- newDraft(), which silently discarded every unsaved zone the moment the
+    -- admin glanced at Players and came back. That was the whole of "zones
+    -- don't survive tab switching". Same policy as onShow now: only replace a
+    -- draft with nothing in it to lose. The widgets are new either way; the
+    -- draft was never theirs to reset.
+    if not draft or not draft:isDirty() then
+        newDraft()
+    elseif editor then
+        editor:setDraft(draft)
+        editor:setSelected(selected)
+    end
     rebuildTree()
     refreshChrome()
     setStatus(statusMsg, statusGood)
@@ -560,26 +617,44 @@ function LMEditView.layout(panel, x, y, w, h)
     tx = tx + 8
     place(ui.toggleBtn); place(ui.delRectBtn); place(ui.frameBtn); place(ui.reparentBtn)
     tx = tx + 8
-    place(ui.importBtn)
+    place(ui.importBtn); place(ui.censusBtn); place(ui.censusAutoBtn)
 
     -- Save and Revert at the far right, away from Delete: one careless click
-    -- apart and opposite in meaning.
-    ui.saveBtn:setX(x + w - PAD - ui.saveBtn:getWidth())
-    ui.saveBtn:setY(ty)
-    ui.revertBtn:setX(x + w - PAD - ui.saveBtn:getWidth() - GAP - ui.revertBtn:getWidth())
-    ui.revertBtn:setY(ty)
+    -- apart and opposite in meaning. On a pane too narrow for both - the
+    -- deck's minimum leaves ~650px of content and this toolbar wants ~840 -
+    -- they take a SECOND row instead of landing on top of Import, which was
+    -- the other half of "the toolbar falls apart when the deck is small".
+    local saveX   = x + w - PAD - ui.saveBtn:getWidth()
+    local revertX = saveX - GAP - ui.revertBtn:getWidth()
+    local wrapped = revertX < tx + 8
+    local rowY    = wrapped and (ty + BTN + GAP) or ty
+    ui.saveBtn:setX(saveX);     ui.saveBtn:setY(rowY)
+    ui.revertBtn:setX(revertX); ui.revertBtn:setY(rowY)
 
-    -- The status line takes whatever the toolbar left between the buttons and
-    -- Revert, so it never overruns either.
-    ui.status:setX(tx + 8)
-    ui.status:setY(ty + 5)
+    -- The status line takes whatever its row leaves - beside the toolbar
+    -- normally, beside Save/Revert on the wrapped row - and layout() records
+    -- that budget so setStatus can clip every future message to it too.
+    local stX = wrapped and (x + PAD) or (tx + 8)
+    ui.status:setX(stX)
+    ui.status:setY(rowY + 5)
+    statusW = math.max(0, revertX - GAP - stX)
+    ui.status:setName(statusW > 0
+        and DFKit.fitText(statusMsg, DFKit.font.small, statusW)
+        or statusMsg)
 
-    local bodyY = ty + BTN + PAD
+    local bodyY = rowY + BTN + PAD
     local bodyH = math.max(120, (y + h) - bodyY - PAD)
 
-    -- Left column: the tree, full height, with one counts line under it.
-    local colX  = x + PAD
-    local treeH = math.max(80, bodyH - 18)
+    -- Left column: the tree, full height, with one counts line under it. The
+    -- strip under the tree is the counts glyph's height, MEASURED - the old
+    -- fixed 18 was only true at the font it was tuned against, and at a larger
+    -- text-size preference the counts line drew into the tree's border.
+    local colX   = x + PAD
+    local countH = FONT_HGT + 5
+    pcall(function()
+        countH = getTextManager():getFontHeight(DFKit.font.small or UIFont.Small) + 5
+    end)
+    local treeH = math.max(80, bodyH - countH)
     DFKit.sizeList(ui.tree, colX, bodyY, LEFT_W, treeH)
     ui.counts:setX(colX)
     ui.counts:setY(bodyY + treeH + 2)
@@ -604,9 +679,18 @@ function LMEditView.onShow()
     LMEditView.refresh()
 end
 
+-- The server's verdict, in the server's own words.
+--
+-- ONLY `ok` PAINTS IT GREEN. This handler used to pass good=true for every
+-- notice, so "save refused: you were editing revision 0" arrived in the same
+-- reassuring green as "saved: 3 zones changed" - a refusal dressed as a
+-- success, on the one line an admin reads to find out whether their work
+-- survived. Notices carry an explicit ok flag now; anything without one is
+-- treated as a warning, because the failure modes are what this line is for
+-- and an unmarked notice is far more likely to be one.
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= "RFTDLimes" or command ~= "notice" then return end
-    if args and args.msg and ui then setStatus(tostring(args.msg), true) end
+    if args and args.msg and ui then setStatus(tostring(args.msg), args.ok == true) end
 end)
 
 Limes.onChanged(onStoreChanged)
