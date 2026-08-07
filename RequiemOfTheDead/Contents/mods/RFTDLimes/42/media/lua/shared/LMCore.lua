@@ -371,19 +371,42 @@ Limes.fields.register("LMCore", "order",      { type = "number",  default = 0,  
 -- are filled, which is the server.
 -- ---------------------------------------------------------------------------
 
+-- ENFORCED since 2026-08-06 by LMRestrictSv / LMRestrictCl, each at the tier the
+-- ENGINE allows and not the tier we would prefer. The third column is the honest
+-- part: a flag that reads as absolute while being advisory is how an admin builds
+-- a policy on top of nothing, so each one says what it can actually promise.
+--
+--   S  the action is refused. It does not happen.
+--   R  it happens and is undone, so there is a visible instant.
+--   C  honest clients comply; a hacked client is logged, not stopped.
 local RESTRICTIONS = {
-    { "nobuilding",    "No building",        "Blocks the build menu inside this zone." },
-    { "nodestruction", "No destruction",     "Blocks sledging and structural damage." },
-    { "nopickup",      "No pickup",          "Movable furniture cannot be picked up." },
-    { "noplacing",     "No placing",         "Movable furniture cannot be put down." },
-    { "noscrap",       "No scrapping",       "Blocks dismantling for materials." },
-    { "nosafehouse",   "No safehouse claim", "The zone cannot be claimed as a safehouse." },
-    { "nofire",        "No fire",            "Suppresses ignition and fire spread." },
-    { "noplayers",     "No player entry",    "Players are turned back at the boundary." },
+    { "nobuilding",    "No building",        "Nothing can be built inside this zone.",
+      "  The server refuses the build itself, so this holds against any client." },
+    { "nodestruction", "No destruction",     "Blocks sledging and structural damage.",
+      "  WEAK: the engine offers no server veto for this, so it relies on the"
+      .. " player's own game honouring it. A modified client can ignore it; the"
+      .. " server records what gets through." },
+    { "nopickup",      "No pickup",          "Movable furniture cannot be picked up.",
+      "  The server refuses the pickup itself, so this holds against any client." },
+    { "noplacing",     "No placing",         "Movable furniture cannot be put down.",
+      "  The server refuses the placement itself, so this holds against any client." },
+    { "noscrap",       "No scrapping",       "Blocks dismantling for materials.",
+      "  The server refuses the dismantle itself, so this holds against any client." },
+    { "nosafehouse",   "No safehouse claim", "The zone cannot be claimed as a safehouse.",
+      "  The claim is undone the moment it is made rather than being refused, so"
+      .. " the player sees it succeed and then vanish." },
+    { "nofire",        "No fire",            "Suppresses ignition and fire spread.",
+      "  Lighting a campfire is refused outright. Every other fire - spread,"
+      .. " molotovs, cooking - is put out on the tick it appears, so a flame may"
+      .. " be visible for an instant." },
+    { "noplayers",     "No player entry",    "Players are turned back at the boundary.",
+      "  WEAK: movement is decided by the player's own game, so this relies on it"
+      .. " honouring the boundary. A modified client can walk through; the server"
+      .. " records it." },
 }
 for i, r in ipairs(RESTRICTIONS) do
     Limes.fields.register("LMCore", r[1], { type = "boolean", default = false, side = "both",
-        order = 10 + i, group = "Restrictions", label = r[2], help = r[3] .. NOT_YET })
+        order = 10 + i, group = "Restrictions", label = r[2], help = r[3] .. r[4] })
 end
 
 -- ENFORCED since 2026-08-06 by LMZeds, so no NOT_YET note here - it is the one
