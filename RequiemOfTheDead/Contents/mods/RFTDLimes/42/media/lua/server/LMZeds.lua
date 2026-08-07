@@ -363,7 +363,8 @@ local function decideObservable(row)
     return gridProbe(row.rects)
 end
 
--- Does any PLACED zone reach `name` through its inherits chain?
+-- Does any PLACED zone reach `name` through its inherits chain or through a
+-- profiles list anywhere on that chain?
 --
 -- Walks the real parent links rather than matching mode strings, which was the
 -- first attempt and is wrong in the case that matters: SunstarMotel sets
@@ -371,18 +372,45 @@ end
 -- silently vouched for an unrelated template carrying the same word. Reach is a
 -- property of the chain, so the chain is what gets walked.
 --
+-- Profiles joined the walk 2026-08-07: a mode on a template now also reaches
+-- the world when any record on a placed zone's chain APPLIES that template as
+-- a profile (including `_default` - a profile there reaches everything).
+-- Reach is deliberately PHASE-AGNOSTIC: it answers "is this configured to do
+-- anything", and a full-moon profile is configured even at new moon - the
+-- warning this feeds is about dead config, not sleeping config.
+--
 -- Depth-capped: LMCore already refuses cyclic inheritance at resolve, and a
 -- traversal that trusts that and is wrong once hangs the server rather than
 -- printing a bad line.
 function LMZeds.hasInheritor(name)
+    -- _default sits under every placed zone whether or not a chain names it,
+    -- so a profile applied THERE reaches everything - answered once, not per
+    -- zone. Guarded on any placed zone existing at all, because "reaches
+    -- everything" is vacuous over a store with nowhere to stand.
+    local root = Limes.getZone("_default")
+    if root and name ~= "_default" then
+        for i = 1, #(root.profiles or {}) do
+            if root.profiles[i] == name then
+                for _, other in ipairs(Limes.zoneNames()) do
+                    local z = Limes.getZone(other)
+                    if z and not z.template then return true end
+                end
+            end
+        end
+    end
+
     for _, other in ipairs(Limes.zoneNames()) do
         local z = Limes.getZone(other)
         if z and not z.template and other ~= name then
-            local cur, guard = z.inherits, 0
+            local cur, guard = other, 0
             while cur and guard < 32 do
-                if cur == name then return true end
+                if cur == name and cur ~= other then return true end
                 local p = Limes.getZone(cur)
-                cur = p and p.inherits or nil
+                if not p then break end
+                for i = 1, #(p.profiles or {}) do
+                    if p.profiles[i] == name then return true end
+                end
+                cur = p.inherits
                 guard = guard + 1
             end
         end

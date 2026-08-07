@@ -322,6 +322,7 @@ if isServer() then
     -- the store perfect".
     local MAX_SAVE_ZONES = 512    -- a rename can legitimately touch every child
     local MAX_RECTS      = 128    -- the live layer's worst zone has nine
+    local MAX_PROFILES   = 16     -- matches LMEdit.MAX_PROFILES; test pins them equal
 
     -- RATE 8, NOT 1. The shared-bucket bug that made rate=1 a coin flip is
     -- fixed at the source (RDRate now scopes buckets per command), but a
@@ -377,6 +378,24 @@ if isServer() then
                 RDNet.reply(player, TOKEN, "notice", { msg = "save refused: '" .. name
                     .. "' has " .. #rec.rects .. " rectangles, over the " .. MAX_RECTS .. " cap" })
                 return
+            end
+            -- Shape, not just size: profiles is admin-typed data arriving over
+            -- the wire, and a non-string entry would flow into flattenChain's
+            -- raw[pname] lookup as a table key. Refuse the save rather than
+            -- store a shape the resolver was never written for.
+            if rec.profiles ~= nil then
+                if type(rec.profiles) ~= "table" or #rec.profiles > MAX_PROFILES then
+                    RDNet.reply(player, TOKEN, "notice", { msg = "save refused: '" .. name
+                        .. "' has a bad profiles list (max " .. MAX_PROFILES .. " names)" })
+                    return
+                end
+                for i = 1, #rec.profiles do
+                    if type(rec.profiles[i]) ~= "string" then
+                        RDNet.reply(player, TOKEN, "notice", { msg = "save refused: '" .. name
+                            .. "' profiles entry " .. i .. " is not a name" })
+                        return
+                    end
+                end
             end
         end
         if nChanged + #removed > MAX_SAVE_ZONES then

@@ -51,6 +51,16 @@ local function copyRecord(rec)
         for i = 1, #rec.rects do rects[i] = copyRect(rec.rects[i]) end
         out.rects = rects
     end
+    -- Enumerated COPIES, all of them: this function is the moment a raw record
+    -- becomes a draft, and any key it does not name is silently gone from every
+    -- draft, every save, and (via applyChangeSet) eventually the store itself.
+    -- `profiles` earned its line here the same day it earned one in
+    -- stripServerOnly.
+    if rec.profiles then
+        local profiles = {}
+        for i = 1, #rec.profiles do profiles[i] = rec.profiles[i] end
+        out.profiles = profiles
+    end
     if rec.fields then
         local fields = {}
         for k, v in pairs(rec.fields) do fields[k] = v end
@@ -102,6 +112,23 @@ local function pruneRecord(rec)
         if #rects > 0 then out.rects = rects end
     end
 
+    -- Canonicalised like rects: junk entries dropped, duplicates collapse to
+    -- their FIRST occurrence (the position the admin put it in is the one that
+    -- means something), and an empty list is absent rather than present-empty -
+    -- rule 5 again, since `profiles =` re-read from the ini would otherwise
+    -- come back as a string field.
+    if rec.profiles and #rec.profiles > 0 then
+        local profiles, seen = {}, {}
+        for i = 1, #rec.profiles do
+            local p = rec.profiles[i]
+            if type(p) == "string" and p ~= "" and not seen[p] then
+                seen[p] = true
+                profiles[#profiles + 1] = p
+            end
+        end
+        if #profiles > 0 then out.profiles = profiles end
+    end
+
     if rec.fields then
         local fields, any = {}, false
         for k, v in pairs(rec.fields) do
@@ -136,11 +163,22 @@ local function sameFields(a, b)
     return true
 end
 
+local function sameProfiles(a, b)
+    if not a and not b then return true end
+    a, b = a or {}, b or {}
+    if #a ~= #b then return false end
+    -- Order matters: [Hard, BloodMoon] and [BloodMoon, Hard] resolve
+    -- differently (later wins), so reordering IS an edit.
+    for i = 1, #a do if a[i] ~= b[i] then return false end end
+    return true
+end
+
 local function sameRecord(a, b)
     if not a and not b then return true end
     if not a or not b then return false end
     return a.inherits == b.inherits
        and sameRects(a.rects, b.rects)
+       and sameProfiles(a.profiles, b.profiles)
        and sameFields(a.fields, b.fields)
 end
 
@@ -233,6 +271,13 @@ function LMEdit:rename(old, new)
     local n = 0
     for _, rec in pairs(self.work) do
         if rec.inherits == old then rec.inherits = new; n = n + 1 end
+        -- Profile references are the SECOND place a name lives, and they get
+        -- the same same-step guarantee: a rename that rewrote inherits but left
+        -- profiles lists pointing at the old name would silently strip those
+        -- zones of the profile at the next resolve.
+        for i = 1, #(rec.profiles or {}) do
+            if rec.profiles[i] == old then rec.profiles[i] = new; n = n + 1 end
+        end
     end
     return true, n
 end
@@ -245,6 +290,89 @@ function LMEdit:setInherits(name, parent)
     if parent == name then return false, "A zone cannot inherit from itself." end
     rec.inherits = parent
     return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Profiles - the ordered list of field-bags this record applies (flat bags;
+-- see LMCore's flattenChain for the merge contract). The mutators mirror the
+-- rects trio in shape: small, draft-only, no coercion, validate() reports.
+-- ---------------------------------------------------------------------------
+
+LMEdit.MAX_PROFILES = 16
+
+-- The list, by reference, never nil - callers iterate it. Do not mutate the
+-- returned table directly; the mutators below keep the invariants.
+function LMEdit:profilesOf(name)
+    local rec = self.work[name]
+    return (rec and rec.profiles) or {}
+end
+
+function LMEdit:addProfile(name, profile)
+    local rec = self.work[name]
+    if not rec then return false, "No such zone." end
+    profile = tostring(profile or "")
+    if profile == "" then return false, "A profile needs a name." end
+    if profile == name then return false, "A zone cannot apply itself as a profile." end
+    rec.profiles = rec.profiles or {}
+    for i = 1, #rec.profiles do
+        if rec.profiles[i] == profile then return false, "'" .. profile .. "' is already applied." end
+    end
+    if #rec.profiles >= LMEdit.MAX_PROFILES then
+        return false, "A zone can apply at most " .. LMEdit.MAX_PROFILES .. " profiles."
+    end
+    rec.profiles[#rec.profiles + 1] = profile
+    return true, #rec.profiles
+end
+
+function LMEdit:removeProfile(name, profile)
+    local rec = self.work[name]
+    if not rec or not rec.profiles then return false, "No such profile." end
+    for i = 1, #rec.profiles do
+        if rec.profiles[i] == profile then
+            table.remove(rec.profiles, i)
+            if #rec.profiles == 0 then rec.profiles = nil end
+            return true
+        end
+    end
+    return false, "No such profile."
+end
+
+-- delta is +1 (toward the end, stronger) or -1 (toward the front, weaker).
+-- Order IS precedence - later beats earlier - so this is the admin's tiebreak.
+function LMEdit:moveProfile(name, profile, delta)
+    local rec = self.work[name]
+    if not rec or not rec.profiles then return false, "No such profile." end
+    for i = 1, #rec.profiles do
+        if rec.profiles[i] == profile then
+            local j = i + (delta > 0 and 1 or -1)
+            if j < 1 or j > #rec.profiles then return false, "Already at the end." end
+            rec.profiles[i], rec.profiles[j] = rec.profiles[j], rec.profiles[i]
+            return true
+        end
+    end
+    return false, "No such profile."
+end
+
+-- The Add picker's contents, computed here so it is testable without a UI:
+-- template zones (no geometry) that are not the zone itself and not already
+-- applied, sorted. A placed zone is deliberately excluded - its fields would
+-- merge fine, but "apply Louisville to the gun store" is a category mistake
+-- the picker should not invite.
+function LMEdit:profileCandidates(name)
+    local rec = self.work[name]
+    local have = {}
+    if rec then
+        for i = 1, #(rec.profiles or {}) do have[rec.profiles[i]] = true end
+    end
+    local out = {}
+    for zname, z in pairs(self.work) do
+        if zname ~= name and zname ~= "_default" and not have[zname]
+            and (not z.rects or #z.rects == 0) then
+            out[#out + 1] = zname
+        end
+    end
+    table.sort(out)
+    return out
 end
 
 -- value nil (or "") clears the field. Nothing is coerced here: the draft holds
@@ -484,8 +612,36 @@ function LMEdit:isOverride(zone, key)
     return (rec and rec.fields and rec.fields[key] ~= nil) and true or false
 end
 
--- Returns value, source - where source is the zone name the value came from,
--- "_default", or nil when only the registry default is left.
+-- One record's answer for `key`, nearest-source-first: its own fields, then its
+-- applied profiles in REVERSE order (later in the list beats earlier, so the
+-- nearest-first walk checks the last one first). Mirrors flattenChain's
+-- own-beats-profiles, later-profile-beats-earlier order exactly - the two
+-- resolvers are independent implementations and this helper is half of keeping
+-- them honest; the other half is that both gate through Limes.profileActive,
+-- so "is this profile on right now" has exactly one answer per machine.
+--
+-- `phases` is never served FROM a profile (it is the activation condition, not
+-- cargo) - but a record's OWN phases value is served normally, which is how the
+-- Details form edits it on the profile itself.
+local function recordValue(self, cur, rec, key)
+    local v = rec.fields and rec.fields[key]
+    if v ~= nil and v ~= "" then return v, cur end
+    local profs = rec.profiles
+    if profs and key ~= "phases" then
+        local gate = Limes.profileActive
+        for i = #profs, 1, -1 do
+            local prof = self.work[profs[i]]
+            if prof and (not gate or gate(prof)) then
+                local pv = prof.fields and prof.fields[key]
+                if pv ~= nil and pv ~= "" then return pv, profs[i] end
+            end
+        end
+    end
+    return nil, nil
+end
+
+-- Returns value, source - where source is the zone or profile name the value
+-- came from, "_default", or nil when only the registry default is left.
 function LMEdit:effective(zone, key)
     local seen, cur = {}, zone
     while cur do
@@ -493,15 +649,17 @@ function LMEdit:effective(zone, key)
         seen[cur] = true
         local rec = self.work[cur]
         if not rec then break end
-        local v = rec.fields and rec.fields[key]
-        if v ~= nil and v ~= "" then return v, cur end
+        local v, src = recordValue(self, cur, rec, key)
+        if v ~= nil then return v, src end
         cur = rec.inherits
     end
 
     if not seen["_default"] then
         local root = self.work["_default"]
-        local v = root and root.fields and root.fields[key]
-        if v ~= nil and v ~= "" then return v, "_default" end
+        if root then
+            local v, src = recordValue(self, "_default", root, key)
+            if v ~= nil then return v, src end
+        end
     end
 
     -- NOT `spec and spec.default or nil`: that idiom cannot carry a default of
@@ -532,7 +690,7 @@ end
 function LMEdit.keyProblem(key)
     key = tostring(key or "")
     if key == "" then return "A field needs a name." end
-    if key == "rects" or key == "inherits" or key == "name" then
+    if key == "rects" or key == "inherits" or key == "name" or key == "profiles" then
         return "'" .. key .. "' is part of the record structure and cannot be a field."
     end
     if not key:match(LMEdit.KEY_PATTERN) then
@@ -606,6 +764,50 @@ function LMEdit:validate()
             end
         end
 
+        -- Profiles. Errors are the shapes that resolve wrongly; the rest are
+        -- warnings because they still resolve to SOMETHING defensible, and the
+        -- live store must stay saveable (the two-level rule above).
+        local profs = rec.profiles or {}
+        if #profs > LMEdit.MAX_PROFILES then
+            problem(out, "error", name, "applies " .. #profs .. " profiles; the limit is "
+                .. LMEdit.MAX_PROFILES .. ".")
+        end
+        local seenProf = {}
+        for j = 1, #profs do
+            local p = profs[j]
+            if p == name then
+                problem(out, "error", name, "applies itself as a profile.")
+            elseif seenProf[p] then
+                problem(out, "warning", name, "applies '" .. tostring(p)
+                    .. "' more than once; only the first copy counts.")
+            else
+                seenProf[p] = true
+                local prec = self.work[p]
+                if not prec then
+                    problem(out, "warning", name, "applies '" .. tostring(p)
+                        .. "', which is not in the store - it contributes nothing.")
+                else
+                    -- Flat bags: only the profile's own fields ever merge. A
+                    -- profile that carries structure of its own still works,
+                    -- but the parts that look like they should do something
+                    -- silently do not - say so.
+                    if prec.rects and #prec.rects > 0 then
+                        problem(out, "warning", name, "profile '" .. p
+                            .. "' is a placed zone; only its own fields apply, its ground does not follow.")
+                    end
+                    if prec.inherits then
+                        problem(out, "warning", name, "profile '" .. p
+                            .. "' inherits '" .. prec.inherits
+                            .. "', which is not followed - profiles contribute their own fields only.")
+                    end
+                    if prec.profiles and #prec.profiles > 0 then
+                        problem(out, "warning", name, "profile '" .. p
+                            .. "' applies profiles of its own, which are not followed.")
+                    end
+                end
+            end
+        end
+
         -- Fields
         for k, v in pairs(rec.fields or {}) do
             local kwhy = LMEdit.keyProblem(k)
@@ -651,6 +853,13 @@ function LMEdit:validate()
         if rec.inherits and not self.work[rec.inherits] and self.base[rec.inherits] then
             problem(out, "warning", names[i], "'" .. rec.inherits
                 .. "' is being deleted in this edit; this zone loses its inherited fields.")
+        end
+        for j = 1, #(rec.profiles or {}) do
+            local p = rec.profiles[j]
+            if not self.work[p] and self.base[p] then
+                problem(out, "warning", names[i], "profile '" .. p
+                    .. "' is being deleted in this edit; this zone loses its fields.")
+            end
         end
     end
 
