@@ -84,6 +84,14 @@ local function isTrue(name, cond, detail)
     else fail = fail + 1; print("FAIL " .. name .. ": " .. tostring(detail)) end
 end
 
+-- The birth certificate: arming must emit one RD.WIRE_ARMED into the wire
+-- stream immediately, so an armed probe over an idle server is distinguishable
+-- from a broken one - forensic/wire/ exists before any traffic does.
+isTrue("arming emits RD.WIRE_ARMED",
+    emitted[1] and emitted[1].stream == "wire" and emitted[1].event == "RD.WIRE_ARMED",
+    emitted[1] and (tostring(emitted[1].stream) .. "/" .. tostring(emitted[1].event)) or "nothing emitted")
+eq("the armed record carries the dump cadence", emitted[1] and emitted[1].payload.dumpSec, 30)
+
 local function dumpRows()
     emitted = {}
     RDMeter.dump(30000, 30)
