@@ -24,11 +24,12 @@
 --
 --   * `nopickup`/`noplacing`/`noscrap` were filed C+R on the grounds that the
 --     OnProcessTransaction events are void. They are - but the events are not
---     the execution point. `Transactions.pickUpMoveable`, `placeMoveable` and
---     `scrapMoveable` are GLOBAL LUA FUNCTIONS in the game's own
---     server/TransactionProcessor.lua, guarded by `if isClient() then return
---     end`, and they perform the mutation themselves. Taking one over refuses
---     the action outright. That is a veto, so these are S.
+--     the execution point. The server's handlers perform the mutation through
+--     ISMoveableSpriteProps (a global shared-Lua class), and wrapping ITS
+--     methods refuses the action outright. That is a veto, so these are S.
+--     (First attempt wrapped vanilla's `Transactions` dispatch table, which
+--     turned out to be a file-LOCAL - the install report caught it; see the
+--     moveables block below.)
 --   * `nobuilding` was already S, and its mechanism is simpler than described:
 --     `Actions.build` (shared/ActionManager.lua) is likewise a global Lua
 --     function that calls item:create(args.x, args.y, args.z, ...). We never
@@ -148,41 +149,50 @@ local function wrapBuild()
     return true
 end
 
--- nopickup / noplacing / noscrap. The moveables funnel. Each of these three
--- reads its square from a DIFFERENT place, which is why they are not one loop:
--- pickup and scrap act on the SOURCE object's square, placing acts on the
--- DESTINATION's. Getting that backwards would enforce the flag on the wrong
--- tile and only show up when someone drags furniture across a boundary.
-local function squareOfContainer(cont)
-    local sq = nil
-    pcall(function()
-        local obj = cont and cont:getObject()
-        sq = obj and obj:getSquare()
-    end)
-    return sq
-end
-
-local function coordsOf(sq)
-    if not sq then return nil, nil end
+-- nopickup / noplacing / noscrap - the moveables funnel, CORRECTED 2026-08-07.
+--
+-- The first build wrapped vanilla's `Transactions` dispatch table, and the
+-- boot line said what happened: "vetoes installed [build campfire]" - the
+-- table is a LOCAL in server/TransactionProcessor.lua, unreachable from any
+-- other file, so the wrap never installed and the three flags enforced
+-- nothing. (The loud install report exists precisely to catch this class of
+-- assumption; it did.)
+--
+-- The reachable seam is one level down: the handlers do their mutation
+-- through ISMoveableSpriteProps - a GLOBAL shared-Lua class - calling
+-- :pickUpMoveableViaCursor / :placeMoveableViaCursor / :scrapObjectViaCursor
+-- on an instance built via fromObject(). Wrapping the CLASS methods reaches
+-- every instance (colon methods live in the class table), and since this
+-- file is server-only the wrap exists only where the server executes
+-- transactions - client-side cursor previews are untouched.
+--
+-- The square: fromObject() stores the source object as self.object
+-- (ISMoveableSpriteProps.lua:29-35), which covers pickup and scrap - the
+-- server handler passes _square = nil for scrap, so the object IS the only
+-- source of truth there. Placement acts on the DESTINATION square, which
+-- arrives as the _square argument. No square means no opinion: a shape this
+-- file cannot locate is allowed through, because a restriction that fires on
+-- "I could not tell" blocks ordinary play wherever the engine's shapes
+-- drift.
+local function coordsOfMove(self, square)
     local x, y
-    local ok = pcall(function() x, y = sq:getX(), sq:getY() end)
-    if not ok then return nil, nil end
+    pcall(function()
+        local sq = square
+        if not sq and self and self.object then sq = self.object:getSquare() end
+        if sq then x, y = sq:getX(), sq:getY() end
+    end)
     return x, y
 end
 
-local function wrapTransaction(action, flag, pickSquare)
-    local key = "tx_" .. action
-    if installed[key] or type(Transactions) ~= "table"
-        or type(Transactions[action]) ~= "function" then
+local function wrapMoveable(method, flag, action)
+    local key = "mv_" .. action
+    if installed[key] or type(ISMoveableSpriteProps) ~= "table"
+        or type(ISMoveableSpriteProps[method]) ~= "function" then
         return false
     end
-    local original = Transactions[action]
-    Transactions[action] = function(character, item, source, destination, args)
-        local x, y = coordsOf(pickSquare(source, destination))
-        -- No square means no opinion. A transaction this file cannot locate is
-        -- allowed through rather than refused: a restriction that fires on
-        -- "I could not tell" would block ordinary play wherever the shape of a
-        -- transaction is not what we expected.
+    local original = ISMoveableSpriteProps[method]
+    ISMoveableSpriteProps[method] = function(self, character, square, ...)
+        local x, y = coordsOfMove(self, square)
         if x then
             local no, zone = denied(x, y, flag)
             if no then
@@ -190,7 +200,7 @@ local function wrapTransaction(action, flag, pickSquare)
                 return
             end
         end
-        return original(character, item, source, destination, args)
+        return original(self, character, square, ...)
     end
     installed[key] = true
     return true
@@ -300,9 +310,9 @@ end
 
 local function install()
     wrapBuild()
-    wrapTransaction("pickUpMoveable", "nopickup",  function(s, d) return squareOfContainer(s) end)
-    wrapTransaction("scrapMoveable",  "noscrap",   function(s, d) return squareOfContainer(s) end)
-    wrapTransaction("placeMoveable",  "noplacing", function(s, d) return squareOfContainer(d) end)
+    wrapMoveable("pickUpMoveableViaCursor", "nopickup",  "pickup")
+    wrapMoveable("scrapObjectViaCursor",    "noscrap",   "scrap")
+    wrapMoveable("placeMoveableViaCursor",  "noplacing", "place")
     wrapCampfire()
 end
 
