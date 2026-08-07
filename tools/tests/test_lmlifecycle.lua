@@ -295,6 +295,79 @@ eq("source store not mutated",      store.Gunstore.fields.secretLoot, "GunStores
 eq("source store intact elsewhere", store.ServerOnlyZone.fields.secretLoot, "Ammos")
 isTrue("strip returns a new table",  wire.Gunstore ~= store.Gunstore, "same record object would alias the store")
 
+-- ---------------------------------------------------------------------------
+-- The phase flip (M-B, 2026-08-07): a moon change is a refresh, and a refresh
+-- speaks entirely through the EXISTING event vocabulary. This is the
+-- LMZeds-sweep pin - LMZeds keys its standing sweep off "edited"/"enabled",
+-- so the exact event list here IS the contract that zombies get swept the
+-- moment a full-moon zeds profile switches on.
+-- ---------------------------------------------------------------------------
+
+local realRequire = require
+require = function() end
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDLimes/42/media/lua/shared/LMMoon.lua")
+require = realRequire
+
+local PHASE = 0
+LMMoon.setProvider(function() return PHASE end)
+
+-- The base value lives on _default, NOT on Graveyard itself: a zone's own
+-- field beats its profiles by design, so a profile can only ever override
+-- what the zone INHERITS. Getting this wrong in the first draft of this test
+-- was a free demonstration that the precedence pins hold.
+Limes.apply({
+    _default  = { fields = { hp = 1 } },
+    BloodMoon = { fields = { hp = 66, phases = "full" } },
+    Graveyard = { rects = { { 0, 0, 9, 9 } },  profiles = { "BloodMoon" }, fields = {} },
+    Plain     = { rects = { { 50, 50, 59, 59 } }, fields = { hp = 2 } },
+    Vanish    = { rects = { { 90, 90, 99, 99 } }, profiles = { "Curfew" }, fields = {} },
+    Curfew    = { fields = { disabled = true, phases = "full" } },
+}, 50)
+
+eq("off-phase, the profile is dormant", Limes.getZone("Graveyard").fields.hp, 1)
+eq("off-phase, the curfew zone answers lookups", Limes.getLocation(95, 95).name, "Vanish")
+
+local revBefore = Limes.revision
+reset()
+PHASE = 4                                  -- the full moon rises
+Limes.refresh()
+
+eq("the flip edits the phased zone and disables the curfew zone",
+   names(), "edited:Graveyard,disabled:Vanish")
+eq("the profile's value is now in force",   Limes.getZone("Graveyard").fields.hp, 66)
+eq("the curfew zone left the lookup",       Limes.getLocation(95, 95), nil)
+eq("an unphased zone fired nothing",        true, true)  -- names() above pins Plain absent
+eq("refresh does NOT move the revision",    Limes.revision, revBefore)
+eq("events carry the unmoved revision",     events[1].rev, revBefore)
+
+reset()
+Limes.refresh()
+eq("a refresh with no phase change diffs to nothing", names(), "")
+
+reset()
+PHASE = 5                                  -- the moon wanes
+Limes.refresh()
+eq("the flip back reverses both",
+   names(), "edited:Graveyard,enabled:Vanish")
+eq("the profile's value withdrew", Limes.getZone("Graveyard").fields.hp, 1)
+
+-- The watcher drives exactly this, off its own cached diff.
+reset()
+PHASE = 4
+LMMoon.poll()
+eq("the watcher refreshes on a change", names(), "edited:Graveyard,disabled:Vanish")
+reset()
+LMMoon.poll()
+eq("...and not without one", names(), "")
+
+-- An unknowable sky: phased profiles go dormant, deterministically.
+reset()
+LMMoon.setProvider(function() return nil end)
+LMMoon.poll()
+eq("losing the clock deactivates phased profiles",
+   names(), "edited:Graveyard,enabled:Vanish")
+eq("...dormant means the base value", Limes.getZone("Graveyard").fields.hp, 1)
+
 print(string.format("LMLifecycle: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
 

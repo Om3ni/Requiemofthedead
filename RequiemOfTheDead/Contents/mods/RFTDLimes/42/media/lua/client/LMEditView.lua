@@ -182,8 +182,19 @@ end
 -- store's). Edits pending: say so and keep them. The save will be refused by the
 -- revision gate with a message naming both revisions, so the admin is warned
 -- before spending more work - and nobody's typing is thrown away by an event.
+--
+-- SAME REVISION MEANS REPAINT, NOT CONFLICT (2026-08-07). Limes.refresh() -
+-- the moon moved, a phased profile switched on - fires onChanged WITHOUT
+-- bumping the revision, because nothing replicated and every open draft is
+-- still saveable. Before this guard, a phase flip under a dirty draft printed
+-- "Another admin saved" naming two IDENTICAL revisions - an accusation about
+-- an admin who does not exist, over an edit that would have saved fine.
 local function onStoreChanged()
     if not draft then return end
+    if Limes.revision == draft:revision() then
+        LMEditView.refresh()
+        return
+    end
     if draft:isDirty() then
         setStatus("Another admin saved (store is now revision " .. tostring(Limes.revision)
             .. "). Your edits are against revision " .. draft:revision()

@@ -880,6 +880,64 @@ for _, k in ipairs(KEYS) do
     eq("parity on '" .. k .. "'", tostring(eff), tostring(resolved))
 end
 
+-- ...and across MOON PHASES (M-B). Both resolvers gate through the one shared
+-- Limes.profileActive, and this is the proof: a phased profile under three
+-- skies, every key compared through both paths at each.
+require = function() end
+dofile(LM .. "shared/LMMoon.lua")
+require = realRequire
+local moonSky = 4
+LMMoon.setProvider(function() return moonSky end)
+local moonStore = {
+    _default  = { fields = { tier = 1, title = "calm" } },
+    BloodMoon = { fields = { tier = 8, title = "blood", phases = "full" } },
+    Waxer     = { fields = { title = "waxing", phases = "waxing" } },
+    Town      = { inherits = "_default", rects = { { 0, 0, 99, 99 } },
+                  profiles = { "BloodMoon", "Waxer" }, fields = {} },
+}
+for _, sky in ipairs({ 4, 2, 0 }) do
+    moonSky = sky
+    Limes.apply(moonStore, 50 + sky)
+    local d2 = LMEdit.new(moonStore, 50 + sky)
+    -- Compared through Limes.fields.get, not raw .fields: effective() applies
+    -- the registry default when nothing sets a key, and fields.get is the
+    -- store-side read with the same contract. Raw .fields holds only what is
+    -- SET - that asymmetry is by design (the blank-inherits contract), not a
+    -- parity break.
+    for _, k in ipairs({ "tier", "title", "phases" }) do
+        eq("moon parity, sky " .. sky .. ", '" .. k .. "'",
+           tostring(d2:effective("Town", k)),
+           tostring(Limes.fields.get(Limes.getZone("Town"), k)))
+    end
+end
+-- Spot the actual values so the parity above cannot be vacuously equal.
+moonSky = 4
+Limes.apply(moonStore, 60)
+eq("full moon reads blood",  Limes.getZone("Town").fields.title, "blood")
+moonSky = 2
+Limes.apply(moonStore, 61)
+eq("first quarter reads waxing", Limes.getZone("Town").fields.title, "waxing")
+moonSky = 0
+Limes.apply(moonStore, 62)
+eq("new moon reads calm",    Limes.getZone("Town").fields.title, "calm")
+
+-- Validate speaks the phases grammar (these rules need LMMoon, so they live
+-- after its load rather than with the other validate tests).
+local pv = LMEdit.new(moonStore, 62)
+pv:setField("BloodMoon", "phases", "full, bloodmoon")
+isTrue("a junk token warns and names itself",
+    findProblem(pv:validate(), "BloodMoon", "warning", "bloodmoon"))
+pv:setField("BloodMoon", "phases", "bloodmoon")
+isTrue("an all-junk phases is a never-active ERROR",
+    findProblem(pv:validate(), "BloodMoon", "error", "NEVER"))
+pv:setField("BloodMoon", "phases", "full")
+eq("clean phases raise nothing new",
+   findProblem(pv:validate(), "BloodMoon", "error", "NEVER"), nil)
+local dv = LMEdit.new(moonStore, 62)
+dv:setField("BloodMoon", "disabled", true)
+isTrue("phased disabled warns that the zone will follow the moon",
+    findProblem(dv:validate(), "Town", "warning", "follow the moon"))
+
 print(string.format("LMEdit: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)
 

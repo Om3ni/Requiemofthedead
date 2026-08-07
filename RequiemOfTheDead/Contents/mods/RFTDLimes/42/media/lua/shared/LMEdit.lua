@@ -804,6 +804,17 @@ function LMEdit:validate()
                         problem(out, "warning", name, "profile '" .. p
                             .. "' applies profiles of its own, which are not followed.")
                     end
+                    -- A zone that vanishes with the moon is probably a mistake:
+                    -- disabled/priority through a PHASED profile is legal (both
+                    -- are resolver-critical, so every machine agrees) but worth
+                    -- a second look before the map starts breathing.
+                    local pf = prec.fields or {}
+                    if pf.phases and pf.phases ~= ""
+                        and (pf.disabled ~= nil or pf.priority ~= nil) then
+                        problem(out, "warning", name, "profile '" .. p
+                            .. "' changes disabled/priority only during certain moon"
+                            .. " phases - the zone's existence will follow the moon.")
+                    end
                 end
             end
         end
@@ -839,6 +850,30 @@ function LMEdit:validate()
                     if not okv then
                         problem(out, "error", name, "field '" .. k .. "' = '" .. tostring(v)
                             .. "' is not true or false; it would be dropped and the value inherited instead.")
+                    end
+                end
+                -- phases has its own grammar on top of being a string. The
+                -- parser skips junk tokens silently (resolution must not die
+                -- on admin-typed data), so validate is where junk gets NAMED -
+                -- and a value that is ALL junk parses to the empty set, which
+                -- is never-active: a profile that looks configured and can
+                -- never merge. "" means always; garbage does not.
+                if k == "phases" and LMMoon and LMMoon.unknownTokens and v ~= "" then
+                    local bad = LMMoon.unknownTokens(v)
+                    if #bad > 0 then
+                        local set = LMMoon.parsePhases(v)
+                        local empty = true
+                        if set then for _ in pairs(set) do empty = false break end end
+                        if empty then
+                            problem(out, "error", name, "phases = '" .. tostring(v)
+                                .. "' names no real phase - this profile would NEVER be active."
+                                .. " The vocabulary is new, waxing_crescent, first_quarter,"
+                                .. " waxing_gibbous, full, waning_gibbous, last_quarter,"
+                                .. " waning_crescent, waxing, waning, or 0-7.")
+                        else
+                            problem(out, "warning", name, "phases contains unknown token(s) '"
+                                .. table.concat(bad, "', '") .. "' - they are ignored.")
+                        end
                     end
                 end
             end
