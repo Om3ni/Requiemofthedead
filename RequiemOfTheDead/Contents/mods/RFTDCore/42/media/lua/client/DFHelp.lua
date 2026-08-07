@@ -62,37 +62,13 @@ local function width()
 end
 
 -- ---------------------------------------------------------------------------
--- Word wrap. Measured against the ACTUAL font rather than assumed character
--- widths, because the font is a user preference now (DFPrefs) and a wrap
--- computed for Small overflows badly at Large.
+-- Word wrap. The implementation moved to DFKit.wrapText when DFEntry needed the
+-- same thing to lay out a validation rule - two copies of a wrapper is how the
+-- two surfaces end up disagreeing about what a paragraph break does. This shim
+-- stays so the call sites below read the same as they always did.
 -- ---------------------------------------------------------------------------
 local function wrap(text, font, maxW)
-    local out = {}
-    if type(text) ~= "string" or text == "" then return out end
-    local tm = getTextManager()
-
-    -- Honour explicit breaks first so a caller can shape paragraphs, then wrap
-    -- each resulting paragraph independently.
-    for paragraph in string.gmatch(text .. "\n", "([^\n]*)\n") do
-        if paragraph == "" then
-            out[#out + 1] = ""
-        else
-            local line = nil
-            for word in string.gmatch(paragraph, "%S+") do
-                local try = line and (line .. " " .. word) or word
-                if tm:MeasureStringX(font, try) <= maxW then
-                    line = try
-                else
-                    -- The word does not fit even alone: emit it anyway rather
-                    -- than looping forever trying to make room for it.
-                    if line then out[#out + 1] = line end
-                    line = word
-                end
-            end
-            if line then out[#out + 1] = line end
-        end
-    end
-    return out
+    return DFKit.wrapText(text, font, maxW)
 end
 
 -- ---------------------------------------------------------------------------

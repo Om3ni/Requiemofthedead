@@ -16,16 +16,35 @@
 --
 -- SCHEMA VOCABULARY (shared with RCTuning, which was already written this way):
 --   { group = "Name" }                                  a section header
---   { key=, kind="bool"|"int"|"enum", label=, ... }      a dial
---     bool                       -> ON/OFF pill
---     enum  numValues=, values={} -> pill, click cycles
---     int   min=, max=, step=     -> [-] [ number ] [+], plus mouse wheel
+--   { key=, kind="bool"|"int"|"enum"|"choice"|"text", label=, ... }   a dial
+--     bool                        -> ON/OFF pill
+--     enum   numValues=, values={} -> pill, click cycles. Stores an INDEX.
+--     choice values={}, labels={} -> pill, click cycles. Stores the STRING.
+--     int    min=, max=, step=    -> [-] [ number ] [+], plus mouse wheel
+--     text                        -> a box; click opens DFEntry to type in
 --   optional on any dial:
 --     help  = "paragraph"   the ? popout body. No help, no ? glyph.
 --     unit  = "tiles"       suffix on the number
 --     zero  = "off"         what 0 MEANS, when it does not mean zero
 --     live  = false         marks the dial as needing a restart
 --     note  = "..."         appended to the help body
+--   optional on a text dial:
+--     empty = "(not set)"   what an empty value reads as, dimmed
+--     rule  = "..."         one line in the popout saying what is valid
+--     validate(s) -> ok,msg refuses a commit and says why
+--     maxLen, placeholder   passed through to the popout
+--
+-- CHOICE EXISTS BECAUSE ENUM STORES AN INDEX. That is right for a sandbox dial
+-- whose options are positional, and wrong for a field whose VALUE is the word -
+-- Limes' `zeds` is stored, persisted and read as "none"/"remove", and a store
+-- holding 2 where the consumer looks for "remove" is a silent no-op. So the two
+-- coexist rather than one being reworked into the other: existing enum callers
+-- (RCTuning) are untouched, and a field that owns its strings says so.
+--
+-- AND A CLOSED SET IS NOT A TEXT BOX. `zeds` was going to be text on the
+-- grounds that its type is string, which would have let an admin type "Remove"
+-- and get silence - LMZeds honours exactly two words. Text is for prose nobody
+-- validates (a zone's title); choice is for a set somebody does.
 --
 -- NUMBERS ARE TYPED, NOT DRAGGED. The first version used slider tracks and
 -- they were unusable for fine values - a 116px track spanning 0-1000 puts nine
@@ -63,6 +82,7 @@ if isServer() then return end
 
 require "ISUI/ISPanel"
 require "DFScroll"
+require "DFEntry"
 
 DFForm = DFForm or {}
 
@@ -263,12 +283,40 @@ end
 -- ---------------------------------------------------------------------------
 -- Value formatting
 -- ---------------------------------------------------------------------------
+-- Where a choice's current value sits in its own list, or nil when the stored
+-- string is not one of them. Nil is a real answer and not an error: a store
+-- written by an older build, or by hand, can hold anything, and the row has to
+-- be able to show it rather than silently present it as the first option.
+local function choiceIndex(e, v)
+    local vals = e.values or {}
+    for i = 1, #vals do
+        if vals[i] == v then return i end
+    end
+    return nil
+end
+
 function DFForm:display(e)
     local v = self.get(e.key)
     if e.kind == "bool" then return (v == true) and "ON" or "OFF" end
     if e.kind == "enum" then
         local names = e.values or {}
         return names[tonumber(v) or 1] or tostring(v)
+    end
+    if e.kind == "choice" then
+        local s = (v == nil) and "" or tostring(v)
+        local i = choiceIndex(e, s)
+        if i then
+            local labels = e.labels or {}
+            return labels[i] or (s ~= "" and s or "-")
+        end
+        -- Off-list. Show it verbatim and mark it, because the alternative is a
+        -- pill that reads as a normal setting while nothing honours the value.
+        return s == "" and "-" or (s .. " (?)")
+    end
+    if e.kind == "text" then
+        local s = (v == nil) and "" or tostring(v)
+        if s == "" then return e.empty or "(not set)" end
+        return s
     end
     local n = tonumber(v) or 0
     -- "0 days" and "off" are different statements, and only one of them is
@@ -404,6 +452,33 @@ function DFForm:draw(el)
                 rect.stepW, rect.boxW = m.stepW, boxW
                 right = mx - 8
 
+            elseif e.kind == "text" then
+                local raw     = self.get(e.key)
+                local isEmpty = (raw == nil or tostring(raw) == "")
+                local txt     = self:display(e)
+
+                -- A FIXED SHARE OF THE ROW, not grown to its contents. The int
+                -- box grows because "250 real days" is still a value you must
+                -- read in full; a text field holds a sentence, and a box that
+                -- grew to fit one would push the label out of existence and
+                -- then overflow anyway. Clipped here, complete in the popout.
+                local boxW = math.max(m.pillW,
+                    math.min(math.floor((right - x) * 0.55), m.boxW * 2))
+                local boxX = right - boxW
+
+                el:drawRect(boxX, rowY + ctlDY, boxW, ctlH, 0.6, c.bg.r, c.bg.g, c.bg.b)
+                el:drawRectBorder(boxX, rowY + ctlDY, boxW, ctlH, 0.5,
+                    c.line.r, c.line.g, c.line.b)
+                -- Left-aligned, unlike every other control here: this is prose,
+                -- and prose centred in a box reads as a caption rather than as
+                -- a field you can type in.
+                local tcol = isEmpty and c.textDim or c.text
+                el:drawText(clip(txt, boxW - 10), boxX + 5, rowY + textDY,
+                    tcol.r, tcol.g, tcol.b, 1, fo)
+
+                rect.textX, rect.textW = boxX, boxW
+                right = boxX - 8
+
             else
                 local txt = self:display(e)
                 local pw  = math.max(m.pillW, tw(txt) + 18)
@@ -512,6 +587,38 @@ function DFForm:click(ax, ay)
         local n = (tonumber(self.get(e.key)) or 1) + 1
         if n > (e.numValues or 1) then n = 1 end
         self.set(e.key, n)
+
+    elseif e.kind == "choice" then
+        local vals = e.values or {}
+        if #vals > 0 then
+            local cur = self.get(e.key)
+            cur = (cur == nil) and "" or tostring(cur)
+            local i = choiceIndex(e, cur)
+            -- An off-list value cycles to the FIRST option rather than being
+            -- treated as position zero. The click is the admin correcting a
+            -- value nothing honours, so it should land somewhere valid.
+            self.set(e.key, i and vals[(i % #vals) + 1] or vals[1])
+        end
+
+    elseif e.kind == "text" then
+        if rc.textX and ax >= rc.textX and ax < rc.textX + rc.textW then
+            local cur = self.get(e.key)
+            -- `set` is captured rather than called through self inside the
+            -- callback: the popout outlives this click, and by the time it
+            -- commits the host may have rebuilt the form around a new object.
+            local setter = self.set
+            DFEntry.show{
+                title       = e.label or e.key,
+                value       = (cur == nil) and "" or tostring(cur),
+                rule        = e.rule,
+                validate    = e.validate,
+                maxLen      = e.maxLen,
+                placeholder = e.placeholder,
+                nearX       = getMouseX(),
+                nearY       = getMouseY(),
+                onCommit    = function(s) setter(e.key, s) end,
+            }
+        end
 
     elseif e.kind == "int" then
         local stepBy = e.step or 1

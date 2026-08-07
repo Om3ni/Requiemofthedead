@@ -487,6 +487,45 @@ function DFKit.fitText(str, font, maxW)
     return s .. ".."
 end
 
+-- Wrap prose to a column, measured against the ACTUAL font - the font is a user
+-- preference (DFPrefs), so a wrap computed for Small overflows badly at Large.
+-- Explicit newlines are honoured first so a caller can shape paragraphs, then
+-- each paragraph wraps independently. Returns an array of lines; an empty line
+-- in means an empty line out, which is what makes blank-line paragraph breaks
+-- survive.
+--
+-- Lives here rather than in DFHelp because it is not about help: DFEntry states
+-- a validation rule with it, and the next surface that has a sentence to lay
+-- out will too. DFHelp keeps a one-line shim so the two cannot drift.
+function DFKit.wrapText(text, font, maxW)
+    local out = {}
+    if type(text) ~= "string" or text == "" then return out end
+    if not maxW or maxW <= 0 then return out end
+    font = font or DFKit.font.small or UIFont.Small
+    local tm = getTextManager()
+
+    for paragraph in string.gmatch(text .. "\n", "([^\n]*)\n") do
+        if paragraph == "" then
+            out[#out + 1] = ""
+        else
+            local line = nil
+            for word in string.gmatch(paragraph, "%S+") do
+                local try = line and (line .. " " .. word) or word
+                if tm:MeasureStringX(font, try) <= maxW then
+                    line = try
+                else
+                    -- The word does not fit even alone: emit it anyway rather
+                    -- than looping forever trying to make room for it.
+                    if line then out[#out + 1] = line end
+                    line = word
+                end
+            end
+            if line then out[#out + 1] = line end
+        end
+    end
+    return out
+end
+
 -- The quiet state. A triage surface should be silent when clean, not render a
 -- table proving it - "no further matches" in a column list reads as data, not
 -- as calm. Call from a tab's prerender when it has nothing to report.

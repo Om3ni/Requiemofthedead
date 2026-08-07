@@ -4,10 +4,12 @@ Handoff written 2026-08-05, updated the same evening for the 1.1.0 upload. Compa
 `docs/limes-design.md`, which holds the *reasoning*; this file holds the *queue*. Where the
 two disagree, the design doc wins and this file is stale.
 
-**State of play:** M0 (store, sync, persistence, import) and M1 (Dirge + suppression
-bridges) are shipped and live on Mosaic. M4a (the editor: draft model, save wire, map
-overlay, Zone Selector | Details tabs) is built and **green on the gates but never verified
-in game**. M2, M3 and the enforcement half of M4 do not exist yet.
+**State of play** (updated 2026-08-06): M0 (store, sync, persistence, import) and M1
+(Dirge + suppression bridges) are shipped and live on Mosaic. M4a (the editor) has now
+been driven in game, and the batch of fixes that came out of that is in `b4009c3` along
+with the first enforcing restriction field, `zeds` (LMZeds). DFForm grew the `text` and
+`choice` kinds, so every registered string field is editable from the panel. **M2, M3 and
+the rest of M4b do not exist yet.**
 
 **Released as suite 1.1.0**, staged to the Workshop item `3772176444` on 2026-08-05
 (commit `d548d01`). Risk of shipping the unverified editor was raised and accepted: this is
@@ -55,9 +57,13 @@ is honest today and becomes a lie the moment anyone assumes otherwise.
       and its tier are already researched in the §7.2 table — build from it, do not
       re-derive.
 - [ ] Remove the `NOT_YET` help suffix from each flag as its enforcement lands.
-- [ ] `zeds = remove` / `none` (`server/LMZeds.lua`, §7.3) — standing sweep, and it must
-      unwind on `Limes.onZoneEvent` disable/delete or a disabled zone keeps clearing
-      zombies forever.
+- [x] `zeds = remove` / `none` (`server/LMZeds.lua`, §7.3) — built 2026-08-06 and shipped
+      in `b4009c3`. Suppress-at-birth on `OnZombieCreate`, sweep on zone added/edited/
+      enabled. **Removal is silent**: `die()` runs `becomeCorpse()`, so a walled safe zone
+      would slowly fill with bodies for zombies that should never have existed. The census
+      replaces the visual proof — it counts from the world, reports `unloaded` rather than
+      an unearned zero, and reconciles its own totals. Editable from the panel since the
+      `choice` kind landed (§4).
 
 ## 2. M2 — LMStats: sprinters and zone difficulty
 
@@ -81,14 +87,23 @@ is honest today and becomes a lie the moment anyone assumes otherwise.
 
 ## 4. Core work the editor is blocked on
 
-- [ ] **`text` kind in DFForm.** `title`, `subtitle`, `zeds` and `lewtkey` are strings;
-      DFForm draws bool/int/enum only, so `LMFieldForm` counts them and reports them as
-      "not editable here yet". A drawn form needs a real text widget overlaid — this is
-      Core work and every form in the family benefits.
-- [ ] **`colour` kind in DFForm** — asked for explicitly for the Details panel.
-- [ ] Both are already plumbed for: a field spec carries `ui`, `values`, `step`, `unit`,
-      `zero`, `group`; `LMFieldForm.kindOf` returns nil for kinds it cannot draw, so adding
-      them is additive.
+- [x] **`text` kind in DFForm** — done 2026-08-06. The typing happens in `DFEntry`, a
+      popout, not in a widget inside the form: DFForm rows are drawn chrome inside a
+      DFScroll stencil, and child widgets ignore that stencil, so an entry box scrolled
+      out of view would keep drawing and stay clickable. One widget exists at a time
+      however many text rows a schema has.
+- [x] **`choice` kind in DFForm** — done at the same time, and it is what `zeds` actually
+      needed. `enum` stores an INDEX, which would have written `2` where LMZeds looks for
+      `"remove"` — stored, replicated, displayed, and enforcing nothing. `choice` stores
+      the string and cycles a closed set, so "Remove" with a capital R is unreachable
+      rather than silently inert. Text is for prose nobody validates; choice is for a set
+      somebody does.
+- [ ] **`colour` kind in DFForm** — asked for explicitly for the Details panel. Still the
+      only kind `LMFieldForm.kindOf` refuses, and `skipped()` still exists to report it.
+- [x] The registry now carries `labels`, `rule`, `empty` and `maxLen` alongside `ui`,
+      `values`, `step`, `unit`, `zero`, `group`. `test_lmcore` pins the whole carry-through
+      because a key `register()` forgets to copy is invisible until a dial loses its
+      options in game.
 
 ## 5. Known gaps and warts
 
