@@ -2,13 +2,14 @@
 -- BMClient.lua - Bookmark: a short public-domain quote on login, purely for
 -- flavor. Client-only by design - there is nothing here for a server to know
 -- about, so there is no server file, no RDNet token, and no sandbox option.
--- The only switch is a "Welcome Message" tick-box on ESC -> Options -> Mods
--- (BMModOptions.lua, via the engine's native PZAPI.ModOptions). It LIVED on
--- the vanilla Client panel until 2026-08-08, when it collided with another
+-- The only switch is a "Welcome Message" toggle on the Dragonfly player
+-- panel (BMPlayerPanel.lua, via Dragonfly.registerPlayerSettings). It LIVED
+-- on the vanilla Client panel until 2026-08-08, when it collided with another
 -- mod's checkbox appended by the same borrow-Close's-row trick - hand-placed
 -- rows in a shared panel cannot be made collision-proof against mods we do
--- not control, and the native Mods screen gives every mod its own section
--- (see BMModOptions.lua's header for the full autopsy). This is still an
+-- not control - then briefly on PZAPI.ModOptions, an explicit stopgap retired
+-- when the player panel landed (see BMPlayerPanel.lua's header for the full
+-- lineage). This is still an
 -- intentional exception to O&E's usual "own sandbox kill switch" house rule
 -- (see OEShared.lua's header): the whole point is a toggle a player controls
 -- for themselves, not a server-wide dial.
@@ -36,7 +37,7 @@ Bookmark = Bookmark or {}
 local BM = Bookmark
 
 -- ---------------------------------------------------------------------------
--- The switch. BMUserPanel.lua owns the checkbox that drives these; this file
+-- The switch. BMPlayerPanel.lua owns the row that drives these; this file
 -- owns the state so the popup logic below never reaches into the UI.
 -- ---------------------------------------------------------------------------
 

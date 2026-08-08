@@ -70,18 +70,20 @@
 --                                       is the one deliberate exception to the
 --                                       "own sandbox kill switch" rule above -
 --                                       its switch is a "Welcome Message"
---                                       tick-box on the vanilla Client panel,
+--                                       toggle on the Dragonfly player panel,
 --                                       because the whole point is a toggle
 --                                       the player controls, not a server-wide
 --                                       dial.
 --
 -- OEPrefs.lua is mod-wide infrastructure (not a module of its own - no
 -- subfolder, prefix, or kill switch): a flat key=value client-prefs file for
--- player-facing cosmetic toggles, mirroring RFTDLastRites' LRPrefs. Toggles go
--- on the vanilla Client panel (ISUserPanelUI) the way Reclamation's "My
--- Vehicles" and Last Rites' hub buttons do - a module that needs one hooks
--- that panel itself (see Bookmark/BMUserPanel.lua) and persists through
--- OEPrefs.get/set. Never PZAPI.ModOptions; this family does not use it.
+-- player-facing cosmetic toggles, mirroring RFTDLastRites' LRPrefs. Toggles
+-- register on the family's player panel (Dragonfly.registerPlayerSettings -
+-- see Bookmark/BMPlayerPanel.lua) and persist through OEPrefs.get/set. The
+-- history of WHERE the toggle lives is its own cautionary tale: hand-placed
+-- rows on the vanilla Client panel died of checkbox collisions with other
+-- mods (2026-08-08), the PZAPI.ModOptions berth that replaced them was an
+-- explicit stopgap, and the player panel is the permanent home.
 --
 -- That second one is the reason this mod earns its id. A feature needing
 -- sandbox dials must pick its home by WHAT IT IS and pay for its own sandbox
