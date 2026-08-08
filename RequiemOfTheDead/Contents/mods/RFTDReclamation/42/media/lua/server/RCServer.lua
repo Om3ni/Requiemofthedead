@@ -119,6 +119,24 @@ local function sendSlice(player)
             rec.loaded  = true
             rec.allowed = RCClaim.getAllowedMap(v)   -- normalized map (legacy upgraded)
             rec.public  = RCClaim.getPublic(v)
+            -- Inspector fields for the player panel's My Vehicles tab - the
+            -- same facts a fleet row carries (RCFleet.buildRow), because the
+            -- tab draws the same diagram. vid keys the parts cache client-
+            -- side; overlay/kind drive the diagram family ladder; engine is
+            -- the one-glance summary. Loaded cars only: an unloaded car has
+            -- no object to read, which is exactly why the tab greys its
+            -- inspector pane on loaded=false.
+            pcall(function() rec.vid = v:getId() end)
+            pcall(function()
+                local eng = v:getPartById("Engine")
+                if eng then rec.engine = math.floor(eng:getCondition()) end
+            end)
+            rec.kind = RCShared.isWreck(v) and "wreck"
+                or (RCShared.isTrailer(v) and "trailer" or "car")
+            -- CALLED, never probed - indexing an exposed Java object for a
+            -- key Kahlua cannot resolve THROWS (see RCFleet.buildRow).
+            local okO, overlay = pcall(function() return v:getScript():getCarMechanicsOverlay() end)
+            if okO and overlay and overlay ~= "" then rec.overlay = tostring(overlay) end
         else
             rec.loaded = false
         end
@@ -604,6 +622,25 @@ local function hVehicleParts(player, args)
     end
 end
 
+-- One of MY cars' parts, for the player panel's My Vehicles tab. The gate is
+-- OWNERSHIP, not access level: the caller names a claim, the registry proves
+-- it is theirs, and the vid handed to RCFleet.parts comes from the resolved
+-- vehicle - never from the client - so this door opens onto exactly the cars
+-- the player already owns and nothing else. Unloaded resolves to nothing and
+-- stays silent: the client greys its inspector pane on loaded=false and does
+-- not ask; a hand-rolled request for an unloaded claim deserves no reply.
+local function hMyVehicleParts(player, args)
+    local claimId = args and args.claimId
+    if type(claimId) ~= "string" or claimId == "" then return end
+    if not RCRegistry.owns(player:getUsername(), claimId) then return end
+    local v = RCRegistry.findLoadedByClaimId(claimId)
+    if not v then return end
+    if RCShared.need("RCFleet", RCFleet,
+        "the parts diagram will stay on 'reading parts...'") then
+        RCFleet.parts(player, v:getId())
+    end
+end
+
 -- ---------------------------------------------------------------------------
 -- LIFECYCLE TAB (2026-08-03) - the tuning surface.
 --
@@ -768,6 +805,7 @@ local handlers = {
     fleet        = hFleet,
     fleetcancel  = hFleetCancel,
     vehicleparts = hVehicleParts,
+    myvehicleparts = hMyVehicleParts,
     claim       = hClaim,
     unclaim     = hUnclaim,
     allow       = hAllow,

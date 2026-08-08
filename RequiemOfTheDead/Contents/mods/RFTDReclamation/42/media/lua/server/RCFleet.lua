@@ -422,6 +422,21 @@ function RCFleet.parts(player, vid)
                     rec.capacity = p:getContainerCapacity()
                 end
             end)
+            -- The item types this part slot ACCEPTS, for the Workshop tab's
+            -- recipe filter. Read here because it is unreachable client-side
+            -- for a car that is not streamed to that client: the script-level
+            -- Part keeps itemType as a bare public FIELD (VehicleScript.java,
+            -- Part class) and Kahlua reads fields never, methods only - only
+            -- the LIVE VehiclePart carries a getItemType() getter, and for a
+            -- remote car the live object exists only here on the server.
+            pcall(function()
+                local it = p:getItemType()
+                if it and it:size() > 0 then
+                    local list = {}
+                    for j = 0, it:size() - 1 do list[#list + 1] = tostring(it:get(j)) end
+                    rec.items = list
+                end
+            end)
             out[#out + 1] = rec
         end)
     end

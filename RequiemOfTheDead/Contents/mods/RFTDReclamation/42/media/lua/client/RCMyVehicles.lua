@@ -34,6 +34,9 @@ local function prettyName(scriptName)
     s = s:gsub("(%l)(%u)", "%1 %2")
     return s
 end
+-- Shared with RCMyVehiclesTab (the player panel's merged inspector) so the
+-- same car can never print two different names on the two surfaces.
+RCMyVehicles.prettyName = prettyName
 
 -- ---------------------------------------------------------------------------
 -- Open / construct
@@ -283,6 +286,12 @@ local function onServerCommand(module, command, args)
     if inst then inst:setList(args and args.list or {}) end
 end
 Events.OnServerCommand.Add(onServerCommand)
+
+-- The player panel's My Vehicles tab (RCMyVehiclesTab) registers itself and
+-- is the MERGED surface - this window's list and actions plus the admin
+-- inspector's diagram and parts breakdown, minus every power that changes a
+-- car. This window keeps its Client-panel door for now; whether it retires is
+-- the owner's call, same as the other vanilla-panel entry points.
 
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.

@@ -104,5 +104,12 @@
     "IGUI_RC_EngineLocked": "Engine salvage is disabled on this server.",
 
     "IGUI_CheatPanel_EternalTorch": "Eternal Torch",
-    "IGUI_CheatPanel_EternalTorch_tooltip": "Reclaimation: blowtorches you are carrying never run dry - any use (dismantling, welding, anything) refills within moments. Like Unlimited Ammo, for torches."
+    "IGUI_CheatPanel_EternalTorch_tooltip": "Reclaimation: blowtorches you are carrying never run dry - any use (dismantling, welding, anything) refills within moments. Like Unlimited Ammo, for torches.",
+
+    "IGUI_RC_Workshop": "Workshop",
+    "IGUI_RC_WS_For": "Crafting for",
+    "IGUI_RC_WS_ShowAll": "Show all",
+    "IGUI_RC_WS_All": "All handcraft recipes - click a part on My Vehicles to narrow this to one part of one car.",
+    "IGUI_RC_WS_Recipes": "recipes",
+    "IGUI_RC_WS_Hint": "Click a part below to see what can be crafted for it."
 }

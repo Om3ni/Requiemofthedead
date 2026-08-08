@@ -89,6 +89,17 @@ local function readLocalParts(vid)
                     rec.capacity = p:getContainerCapacity()
                 end
             end)
+            -- Accepted item types, same field the server snapshot carries
+            -- (RCFleet.parts) - the Workshop tab's recipe filter reads it and
+            -- must not care which side answered.
+            pcall(function()
+                local it = p:getItemType()
+                if it and it:size() > 0 then
+                    local list = {}
+                    for j = 0, it:size() - 1 do list[#list + 1] = tostring(it:get(j)) end
+                    rec.items = list
+                end
+            end)
             out[#out + 1] = rec
         end)
     end
@@ -139,7 +150,18 @@ function RCPartsView.partsFor(row)
     if not requested[vid] then
         requested[vid] = true
         pcall(function()
-            sendClientCommand(getPlayer(), M, "vehicleparts", { vid = vid })
+            -- Two doors, one reply. The admin inspector asks by vid, behind
+            -- the admin gate. The player panel's My Vehicles tab marks its
+            -- rows `mine` and asks by CLAIM id - the server resolves that
+            -- through the registry, so ownership is the proof and the vid the
+            -- answer is keyed by never came from the client. Both replies
+            -- land on "VehicleParts" keyed by vid; the cache neither knows
+            -- nor cares which door was used.
+            if row.mine and row.claimId then
+                sendClientCommand(getPlayer(), M, "myvehicleparts", { claimId = row.claimId })
+            else
+                sendClientCommand(getPlayer(), M, "vehicleparts", { vid = vid })
+            end
         end)
     end
     return nil
@@ -281,8 +303,16 @@ local placed = nil
 -- upright at nearly 1:1 - about six times the area, through the same
 -- drawTextureScaledUniform that always worked. Layout, not trigonometry.
 
-function RCPartsView.draw(el, rect, row)
-    placed = nil
+-- `noHit` exists for the player panel's tab, which draws this diagram but has
+-- no right-click surface. `placed` is a single module-wide slot consumed by
+-- partAt (the admin cheat menu's hit test), and both panels can be open at
+-- once on a staff client - if the player tab also wrote the slot, whichever
+-- panel drew LAST each frame would own the transform, and an admin's
+-- right-click on their own diagram would resolve through the player tab's
+-- geometry: wrong part, cheat applied to it. A surface that never hit-tests
+-- must not write the hit-test state.
+function RCPartsView.draw(el, rect, row, noHit)
+    if not noHit then placed = nil end
     if not (el and rect and row) then return end
 
     if row.loaded == false then
@@ -344,7 +374,9 @@ function RCPartsView.draw(el, rect, row)
         end
     end
 
-    placed = { dx = dx, dy = dy, scale = scale, props = props, row = row }
+    if not noHit then
+        placed = { dx = dx, dy = dy, scale = scale, props = props, row = row }
+    end
 
     if inferred then
         -- Say so. An inferred silhouette is a guess about the BODY, not about
@@ -395,6 +427,231 @@ function RCPartsView.isOver(mx, my)
     local p = placed
     if not p then return false end
     return RCPartsView.partAt(mx, my) ~= nil
+end
+
+-- ---------------------------------------------------------------------------
+-- The per-part breakdown grid. MOVED HERE from RCVehicleTab (2026-08-13) the
+-- day the player panel's My Vehicles tab grew the same grid - the diagram
+-- answers "where is the damage", this answers "how bad, exactly", and two
+-- surfaces drawing it from two copies is how the two answers drift apart.
+-- The admin tab's drawParts is now a thin wrapper; its right-click cheat
+-- surface keeps working off the hit rows this returns.
+--
+-- Grouped rather than alphabetical: whoever is reading asks "can it drive"
+-- (drivetrain), "can it drive SAFELY" (running gear), then "is it worth
+-- keeping" (body) - and a flat A-Z list interleaves those three questions.
+-- ---------------------------------------------------------------------------
+local GROUPS = {
+    { title = "DRIVETRAIN",   match = function(id)
+        return id == "Engine" or id == "Battery" or id == "GasTank" or id == "Muffler"
+    end },
+    { title = "RUNNING GEAR", match = function(id)
+        return id:find("^Tire") or id:find("^Brake") or id:find("^Suspension")
+    end },
+    { title = "BODY",         match = function(id)
+        return id:find("Door") or id:find("Window") or id:find("Windshield")
+            or id == "TruckBed" or id:find("^Hood") or id:find("^Trunk")
+    end },
+}
+
+local function partLabel(rec)
+    if rec.missing then return "gone" end
+    -- Containers say how full, not how intact: "21 / 60" is the useful fact
+    -- about a gas tank, and its condition is the row's colour anyway.
+    if rec.capacity and rec.capacity > 0 then
+        return string.format("%d / %d", math.floor(rec.amount or 0), math.floor(rec.capacity))
+    end
+    return tostring(rec.cond or 0) .. "%"
+end
+
+local function partColour(rec)
+    local C = DFKit.col
+    if rec.missing then return C.danger end
+    local c = rec.cond or 0
+    if c < 30 then return C.danger end
+    if c < 65 then return C.warn end
+    return C.ok
+end
+
+-- Prettify a part id for a narrow column: "TireFrontLeft" -> "Tire Front Left".
+local function partName(id)
+    return (id:gsub("(%l)(%u)", "%1 %2"))
+end
+
+-- Draw the grid into `rect` (element space), scrolled by `scroll` (a DFScroll
+-- the CALLER owns, because the offset has to outlive the frame and this
+-- function is redrawn from scratch every one of them). Returns the hit rows -
+-- { x, y, w, h, rec } in element space, only for rows actually visible - or
+-- {} when there was nothing to draw; the admin tab feeds them to its
+-- right-click cheat surface, the player tab throws them away.
+function RCPartsView.drawBreakdown(el, rect, row, scroll)
+    local p = rect
+    local function clearScroll()
+        scroll:measure(0, 0)
+        scroll:reset()
+        return {}
+    end
+    if not p or p.h < 30 then return clearScroll() end
+    local C  = DFKit.col
+    local fL = DFKit.font.label or UIFont.Small
+    if not row then return clearScroll() end
+
+    if row.loaded == false then
+        DFKit.drawEmpty(el, p.x, p.y, p.w, p.h,
+            "unloaded - no part data until someone streams it in")
+        return clearScroll()
+    end
+
+    local hits = {}
+
+    local parts = RCPartsView.partsFor(row)
+    if not parts then
+        DFKit.drawEmpty(el, p.x, p.y, p.w, p.h, "reading parts...")
+        return clearScroll()
+    end
+
+    -- Bucket once. Anything unmatched lands in OTHER rather than vanishing -
+    -- modded vehicles carry parts vanilla never named, and silently dropping
+    -- them would make the panel lie about what is on the car.
+    local buckets, seen = {}, {}
+    for i = 1, #GROUPS do buckets[i] = {} end
+    local other = {}
+    for _, rec in ipairs(parts) do
+        if not seen[rec.id] then
+            seen[rec.id] = true
+            local placed_ = false
+            for i, g in ipairs(GROUPS) do
+                if g.match(rec.id) then buckets[i][#buckets[i] + 1] = rec; placed_ = true; break end
+            end
+            if not placed_ then other[#other + 1] = rec end
+        end
+    end
+
+    -- Grid rhythm from the label font, not fixed. A 15px part row around a
+    -- 20px glyph overlaps the row beneath it, and this grid is dense enough
+    -- that the overlap compounds down the whole column.
+    local gfh = 12
+    pcall(function() gfh = getTextManager():getFontHeight(fL) end)
+    local ROW_H2 = math.max(15, gfh + 3)
+    local HEAD_H = math.max(16, gfh + 4)
+    -- One column in a tall narrow pane; two if the caller hands this a wide
+    -- one. Derived from the width rather than assumed, so the grid cannot
+    -- spill off its own pane.
+    local nCols = (p.w >= 420) and 2 or 1
+
+    -- MEASURE FIRST, then flow. This used to fill columns against the visible
+    -- height and simply stop - drawGroup returned false and every remaining
+    -- group vanished, with nothing on screen to say so. Vanilla cars fit, so it
+    -- never showed; a KI5 car carries far more parts and most of them land in
+    -- OTHER, which is drawn last and so is exactly what disappeared.
+    --
+    -- The fix is a virtual canvas: measure what the content actually needs,
+    -- give the columns that height to flow into, and scroll the result. The
+    -- column model survives intact - content still fills column 1 before
+    -- column 2 - it is just no longer clipped to one screenful.
+    local function groupH(list)
+        if #list == 0 then return 0 end
+        return HEAD_H + #list * ROW_H2 + 6
+    end
+    local totalH = 0
+    for i = 1, #GROUPS do totalH = totalH + groupH(buckets[i]) end
+    totalH = totalH + groupH(other)
+
+    local virtualH = math.max(p.h, math.ceil(totalH / nCols))
+
+    -- The gutter is 0 when it all fits, so a vanilla car still uses the full
+    -- pane. Named sbW, not barW: the condition meter inside each row is already
+    -- a local `barW` further down, and one shadowing the other is a bug waiting.
+    local sc     = scroll
+    local sbW    = sc:measure(p.h, virtualH)
+    local availW = p.w - sbW
+    local colW  = math.floor((availW - (nCols - 1) * 12) / nCols)
+    local cols  = {}
+    for i = 1, nCols do cols[i] = { x = p.x + (i - 1) * (colW + 12), y = p.y } end
+    local ci = 1
+
+    -- Column cursors are VIRTUAL positions; sy() maps one to the screen.
+    local function sy(vy) return sc:screenY(vy) end
+    local function visible(vy, h) return sc:shows(vy, h, p) end
+
+    local function room(need)
+        return (cols[ci].y + need) <= (p.y + virtualH)
+    end
+    -- Fall to the next column when this one fills. With the virtual height
+    -- above, "all columns full" now means the content genuinely does not fit
+    -- the canvas we sized for it, which cannot happen - the canvas was sized
+    -- from the content. The guard stays as a backstop.
+    local function ensure(need)
+        if room(need) then return true end
+        while ci < nCols do
+            ci = ci + 1
+            if room(need) then return true end
+        end
+        return false
+    end
+
+    local function drawGroup(title, list)
+        if #list == 0 then return true end
+        if not ensure(HEAD_H + ROW_H2) then return false end
+        local c = cols[ci]
+        if visible(c.y, HEAD_H) then
+            el:drawText(title, c.x, sy(c.y), C.textDim.r, C.textDim.g, C.textDim.b, 0.8, fL)
+        end
+        c.y = c.y + HEAD_H
+        for _, rec in ipairs(list) do
+            if not ensure(ROW_H2) then return false end
+            c = cols[ci]
+            -- Scrolled off: no drawing and no hit rect. A part that cannot be
+            -- seen must not answer a right-click, or the cheat menu would act
+            -- on whichever row happened to share those coordinates.
+            if visible(c.y, ROW_H2) then
+                local ry    = sy(c.y)
+                local col   = partColour(rec)
+                local label = partLabel(rec)
+                local lw    = getTextManager():MeasureStringX(fL, label)
+                local nameW = colW - lw - 66
+                local nm    = partName(rec.id)
+                if DFTheme and DFTheme.fitText and nameW > 12 then
+                    nm = DFTheme.fitText(nm, fL, nameW)
+                end
+                el:drawText(nm, c.x, ry, C.text.r, C.text.g, C.text.b, rec.missing and 0.6 or 1, fL)
+                -- bar sits between the name column and the value
+                local barX = c.x + colW - lw - 58
+                local barW = 50
+                if barW > 8 then
+                    el:drawRect(barX, ry + 6, barW, 4, 0.45, C.bg.r, C.bg.g, C.bg.b)
+                    if not rec.missing then
+                        local pct = math.max(0, math.min(100, rec.cond or 0))
+                        el:drawRect(barX, ry + 6, math.floor(barW * pct / 100), 4, 1, col.r, col.g, col.b)
+                    end
+                end
+                el:drawText(label, c.x + colW - lw, ry, col.r, col.g, col.b, 1, fL)
+                -- Record the row's box for the caller's hotspot, in SCREEN
+                -- space and captured BEFORE the cursor advances, so the rect
+                -- is the one just drawn.
+                hits[#hits + 1] = { x = c.x, y = ry, w = colW, h = ROW_H2, rec = rec }
+            end
+            c.y = c.y + ROW_H2
+        end
+        cols[ci].y = cols[ci].y + 6
+        return true
+    end
+
+    -- Clip to the pane: with a scroll offset the first and last rows straddle
+    -- the edges, and unclipped they would paint over whatever the caller drew
+    -- above and below.
+    sc:clip(el, p)
+    for i, g in ipairs(GROUPS) do
+        if not drawGroup(g.title, buckets[i]) then break end
+    end
+    drawGroup("OTHER", other)
+    sc:unclip(el)
+
+    -- The bar, outside the stencil and last. Its presence is also the only
+    -- honest signal that the car has more parts than the pane shows.
+    sc:draw(el, p, C)
+
+    return hits
 end
 
 print("[RC] RCPartsView loaded (mechanic overlay diagram)")
