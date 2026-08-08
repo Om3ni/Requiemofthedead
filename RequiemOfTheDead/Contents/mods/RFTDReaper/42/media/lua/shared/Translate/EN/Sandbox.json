@@ -5,7 +5,7 @@
     "Sandbox_RP_CullEnabled": "Cull duplicates (auto)",
     "Sandbox_RP_CullEnabled_tooltip": "When ON, the automatic scans remove the duplicate zombies they detect. When OFF, Reaper runs in monitor-only mode: it still detects and shows candidates in the Necro tab, but removes nothing automatically (manual 'Cull selected' still works). Turn OFF if you'd rather not have Reaper culling, e.g. once the engine-side fixes are in place.",
     "Sandbox_RP_LogCulls": "Log culls to console",
-    "Sandbox_RP_LogCulls_tooltip": "Print every cull to the server console with the @x,y,z coordinate of the culled zombie (copy-paste-friendly for /teleportto). Off by default: writing to the console is synchronous main-thread I/O, and clearing a large bloom emits one line per zombie removed. Turn it on while tuning thresholds, then back off.",
+    "Sandbox_RP_LogCulls_tooltip": "Print every cull to the server console with the @x,y,z coordinate of the culled zombie (copy-paste-friendly for /teleportto). On by default - the family's logging is on unless you turn it off, so the cull record exists the day you need it. The cost to know about: writing to the console is synchronous main-thread I/O, and clearing a large bloom emits one line per zombie removed - turn this off if cull storms are hitching your server.",
     "Sandbox_RP_DebugContextMenu": "Enable debug right-click",
     "Sandbox_RP_DebugContextMenu_tooltip": "Adds a 'Reaper: Force full scan' option to the right-click menu on the ground. Triggers all bloom scans immediately on demand.",
     "Sandbox_RP_SequentialThreshold": "Sequential ID threshold",

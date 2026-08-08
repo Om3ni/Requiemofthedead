@@ -19,7 +19,7 @@ option RFTDReaper.CullEnabled
 option RFTDReaper.LogCulls
 {
     type = boolean,
-    default = false,
+    default = true,
     page = RFTDReaper,
     translation = RP_LogCulls,
 }

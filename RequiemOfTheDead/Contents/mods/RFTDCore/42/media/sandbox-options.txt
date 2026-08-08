@@ -84,7 +84,7 @@ option RFTDCore.CmdRelayScope
 option RFTDCore.WireProbeEnabled
 {
     type = boolean,
-    default = false,
+    default = true,
     page = RFTDCore,
     translation = RD_WireProbeEnabled,
 }

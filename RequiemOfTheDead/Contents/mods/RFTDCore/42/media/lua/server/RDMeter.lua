@@ -23,11 +23,13 @@
 -- one listener on the hottest event in the game is enough, and it makes every
 -- RD.CMD record carry its own weight. See RDGuardian's `est` field.
 --
--- DEFAULT OFF, and when off the wraps are NOT installed. OSN was a drop-in /
--- drop-out probe, so leaving hooks resident and no-oping the body was free. Core
--- is permanent, and these wraps reassign globals that every mod on the server
--- calls - owning `sendServerCommand` forever, for every mod, is not something
--- infrastructure should do unasked. Flip RFTDCore.WireProbeEnabled to arm it.
+-- DEFAULT ON since 2026-08-13 (owner: all of the family's logging defaults
+-- on - the record should already exist when a problem appears, and the wire3
+-- findings only happened because a probe was running). When DISABLED the
+-- wraps are NOT installed, not resident-and-no-oped: these wraps reassign
+-- globals that every mod on the server calls, so an operator who turns the
+-- probe off gets the engine's own functions back, not a sleeping shim. Flip
+-- RFTDCore.WireProbeEnabled to disarm.
 --
 -- The wraps themselves are the safe shape: measure inside a pcall, then ALWAYS
 -- `return orig(...)` with the exact varargs, so a probe fault can never block a

@@ -32,7 +32,7 @@
     "Sandbox_RD_CmdRelayScope_option3": "Everyone",
 
     "Sandbox_RD_WireProbeEnabled": "Network traffic probe",
-    "Sandbox_RD_WireProbeEnabled_tooltip": "Measures what the network actually costs: server-to-client sends, client-to-server commands, and global ModData broadcasts (weighted by player count, because one blob is sent to every connection). Writes a top-offenders report to the rotating 'wire' forensic log. OFF by default because arming it wraps engine send functions that every mod on the server uses - turn it on to hunt a bandwidth problem, then turn it back off. Sizes are estimates for ranking offenders, never exact byte counts.",
+    "Sandbox_RD_WireProbeEnabled_tooltip": "Measures what the network actually costs: server-to-client sends, client-to-server commands, and global ModData broadcasts (weighted by player count, because one blob is sent to every connection). Writes a top-offenders report to the rotating 'wire' forensic log. ON by default - the family's logging is on unless you turn it off, so the record already exists when a bandwidth problem appears. The cost is real but small: arming it wraps engine send functions that every mod on the server uses (bounded, fault-isolated measurement per send). Turn it off only if you suspect the probe itself. Sizes are estimates for ranking offenders, never exact byte counts.",
 
     "Sandbox_RD_WireProbeDumpSeconds": "Traffic probe: report interval",
     "Sandbox_RD_WireProbeDumpSeconds_tooltip": "Seconds between top-offender reports while the probe is armed. Shorter intervals catch brief spikes but write more log lines; the counters reset after each report.",
