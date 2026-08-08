@@ -11,28 +11,6 @@ VERSION = 1,
 */
 
 /* ============================================================
-   Reliquary - admin-placed, whitelist-gated stash that dissolves
-   once it has been emptied
-   ============================================================ */
-
-option RFTDOddsAndEnds.ReliquaryEnable
-{
-    type = boolean,
-    default = true,
-    page = OE_Reliquary,
-    translation = OE_ReliquaryEnable,
-}
-option RFTDOddsAndEnds.ReliquaryDefaultHours
-{
-    type = integer,
-    min = 0,
-    max = 8760,
-    default = 72,
-    page = OE_Reliquary,
-    translation = OE_ReliquaryDefaultHours,
-}
-
-/* ============================================================
    Action Speed - per-family timed-action scaling. A world rule,
    not an admin tool: moved out of Dragonfly 2026-07-30, where it
    had landed only because Dragonfly owned a sandbox page.
@@ -248,6 +226,25 @@ option RFTDOddsAndEnds.LumberjackSweepEnduranceFloor
     default = 0.15,
     page = OE_Lumberjack,
     translation = OE_LumberjackSweepEnduranceFloor,
+}
+
+/* ============================================================
+   Quiet Horn - the horn still sounds, it just stops herding.
+
+   A world rule rather than a taste one, which is why it defaults
+   ON here: leaning on the horn to drag a crowd off a street is
+   the exploit, and the noise is not. Turning it OFF restores
+   vanilla - the horn goes back to being a 150-radius world sound
+   that zombies walk toward - and takes effect immediately, with
+   no restart.
+   ============================================================ */
+
+option RFTDOddsAndEnds.QuietHornEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_QuietHorn,
+    translation = OE_QuietHornEnable,
 }
 
 /* ============================================================

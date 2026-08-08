@@ -1,11 +1,14 @@
 {
-  "Sandbox_OE_Reliquary": "Odds & Ends: Reliquary",
   "Sandbox_OE_RipIt": "Odds & Ends: RIPIT",
   "Sandbox_OE_Lumberjack": "Odds & Ends: Lumberjack",
   "Sandbox_OE_ContainerOrder": "Odds & Ends: Container Order",
   "Sandbox_OE_InventoryCollapse": "Odds & Ends: Inventory Collapse",
   "Sandbox_OE_StickyHeadwear": "Odds & Ends: Sticky Headwear",
   "Sandbox_OE_ActionSpeed": "Odds & Ends: Action Speed",
+  "Sandbox_OE_QuietHorn": "Odds & Ends: Quiet Horn",
+
+  "Sandbox_OE_QuietHornEnable": "Enable Quiet Horn",
+  "Sandbox_OE_QuietHornEnable_tooltip": "Stops the vehicle horn attracting zombies. The horn still sounds normally for everyone nearby, and each vehicle keeps its own horn; it simply no longer makes a noise the dead can walk toward, so it cannot be used to herd a crowd off a street. Affects the horn only - the engine, the alarm and the reversing beeper are untouched. Turn off to restore vanilla, immediately and without a restart.",
 
   "Sandbox_OE_RipItEnable": "Enable RIPIT",
   "Sandbox_OE_RipItEnable_tooltip": "Adds Rip All to the right-click menu, in both your inventory and the world. It works on the containers you currently have open - your own bags plus whatever is in the loot window - and never reaches further than that. Covers cloth, denim and leather clothing plus sheets; leather garments yield strips. Speed is set on the Action Speed page.",
@@ -34,11 +37,6 @@
 
   "Sandbox_OE_StickyHeadwearEnable": "Enable Sticky Headwear",
   "Sandbox_OE_StickyHeadwearEnable_tooltip": "Stops your worn headwear being knocked off when you take a hit. Applies to the items you are wearing, not to the item definitions, so zombies still spawn with the usual share of missing hats and the loot table is unchanged. Switching this off restores the original values without a restart.",
-
-  "Sandbox_OE_ReliquaryEnable": "Enable Reliquary",
-  "Sandbox_OE_ReliquaryEnable_tooltip": "Master toggle for Reliquary, the staff-placed stash that holds a handover for one named player and dissolves once it has been emptied. Turn off to hide its context-menu options; any Reliquary already in the world stops being tracked and stays put as an ordinary locker.",
-  "Sandbox_OE_ReliquaryDefaultHours": "Default wait (hours)",
-  "Sandbox_OE_ReliquaryDefaultHours_tooltip": "How long a newly placed Reliquary waits before it expires and takes its contents with it. 0 means it waits indefinitely. Staff can override it per Reliquary with \"Set timer...\". A Reliquary that is moved off the tile it was placed on is destroyed immediately regardless of this.",
 
   "Sandbox_OE_ActionSpeedEnable": "Enable action-speed scaling",
   "Sandbox_OE_ActionSpeedEnable_tooltip": "Master switch for timed-action speed scaling (default ON). Each family below picks a speed from Vanilla up to Instant. Inventory transfers are never scaled - in multiplayer the server completes them on vanilla timing, so speeding the client only makes the progress bar lie. Sandbox changes require a server restart.",
