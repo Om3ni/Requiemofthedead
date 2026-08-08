@@ -3,5 +3,8 @@
   "IGUI_OE_SweepStoppedAxe": "Sweep stopped: the axe is nearly worn out.",
   "IGUI_OE_SweepStoppedTired": "Sweep stopped: too tired to keep swinging.",
   "IGUI_OE_SweepStoppedHurt": "Sweep stopped: you took damage.",
-  "IGUI_OE_BookmarkEnable": "Welcome Message"
+  "IGUI_OE_BookmarkEnable": "Welcome Message",
+  "IGUI_OE_ModName": "Odds and Ends",
+  "IGUI_OE_BookmarkBlurb": "A short public-domain literature quote on login. Off by default; purely for flavor.",
+  "IGUI_OE_BookmarkTip": "Show a short book quote when you enter the world. Your choice is remembered on this computer."
 }

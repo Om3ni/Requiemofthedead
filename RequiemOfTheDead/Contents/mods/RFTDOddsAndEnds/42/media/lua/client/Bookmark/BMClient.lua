@@ -2,14 +2,16 @@
 -- BMClient.lua - Bookmark: a short public-domain quote on login, purely for
 -- flavor. Client-only by design - there is nothing here for a server to know
 -- about, so there is no server file, no RDNet token, and no sandbox option.
--- The only switch is a "Welcome Message" tick-box on the vanilla Client
--- panel, added by BMUserPanel.lua - the Client menu the family already uses
--- for player-facing toggles, NOT the vanilla ESC -> Options -> Mods screen
--- (this family does not use PZAPI.ModOptions at all). One checkbox does not
--- earn a settings window of its own. This is an intentional exception to O&E's
--- usual "own sandbox kill switch" house rule (see OEShared.lua's header): the
--- whole point is a toggle a player controls for themselves, not a server-wide
--- dial.
+-- The only switch is a "Welcome Message" tick-box on ESC -> Options -> Mods
+-- (BMModOptions.lua, via the engine's native PZAPI.ModOptions). It LIVED on
+-- the vanilla Client panel until 2026-08-08, when it collided with another
+-- mod's checkbox appended by the same borrow-Close's-row trick - hand-placed
+-- rows in a shared panel cannot be made collision-proof against mods we do
+-- not control, and the native Mods screen gives every mod its own section
+-- (see BMModOptions.lua's header for the full autopsy). This is still an
+-- intentional exception to O&E's usual "own sandbox kill switch" house rule
+-- (see OEShared.lua's header): the whole point is a toggle a player controls
+-- for themselves, not a server-wide dial.
 --
 -- State is persisted via OEPrefs (a flat key=value client-prefs file, see
 -- OEPrefs.lua) - the same mechanism Last Rites' LRPrefs uses for its own
