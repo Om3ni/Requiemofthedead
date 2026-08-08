@@ -43,6 +43,35 @@
 -- setScrollHeight(self.backpacks[#self.backpacks]:getBottom()) correct again,
 -- since after the sort the last element really is the bottom one.
 --
+-- BUT THE ARRAY MUST BE BACK IN ENGINE ORDER WHEN refreshBackpacks RUNS, and that
+-- is the price of sorting it. Fixed 2026-08-07 after a report that reordering was
+-- "only visual - clicking on the fanny pack brings up the hiking bag's inventory,
+-- and it depends solely on which was equipped first".
+--
+-- Vanilla dispatches a container-button click TWICE. onBackpackMouseUp calls
+-- ISButton.onMouseUp, whose onclick reaches selectContainer, and selectContainer
+-- ends by calling refreshBackpacks (:1119). Control comes back and
+-- onBackpackMouseUp calls onBackpackClick AGAIN (:1365) on the button object it
+-- captured before that refresh. Vanilla survives its own double dispatch because
+-- refreshBackpacks rebinds each pooled button to the container it already held:
+-- the pool is FILLED by walking self.backpacks (:1542) and DRAINED front-first
+-- (:1468) while containers are walked in engine order (:1562), so as long as
+-- self.backpacks is itself in engine order the rebinding is the identity map.
+--
+-- Leave the array sorted and that map becomes "visual slot k -> engine container
+-- k". The first dispatch opens the right bag, the refresh rebinds the button
+-- under the cursor to whatever equip order puts at that slot, and the second
+-- dispatch opens THAT. Dropping an item was unaffected and the asymmetry is the
+-- tell: a drop happens with pressed=false and allowMouseUpProcessing=false
+-- (:1473), so onclick never fires, no refresh happens, and dropItemsInContainer
+-- reads the binding while it is still good.
+--
+-- So restoreEngineOrder() runs BEFORE origRefresh and apply() runs after. Vanilla
+-- gets the invariant it silently depends on for the length of the rebuild; every
+-- consumer outside the rebuild still sees the player's order. Nothing else can
+-- observe the difference - origRefresh wipes the array (:1554) immediately after
+-- filling the pool from it.
+--
 -- DORMANT UNTIL USED, and this is a compatibility contract, not an optimisation.
 -- apply() returns immediately unless the player has actually dragged something,
 -- because the restack is an unconditional `setY` over EVERY button that forces
@@ -213,6 +242,26 @@ end
 -- Layout
 -- ---------------------------------------------------------------------------
 
+-- Put the array back the way vanilla left it, so refreshBackpacks fills its button
+-- pool in the same order it drains it. See the header: this is what keeps a pooled
+-- button bound to the container it already held, and therefore what keeps vanilla's
+-- double click dispatch honest.
+--
+-- Unconditional on purpose. When apply() has not sorted anything the array is
+-- already in engine order and this is a no-op, and running it anyway is what
+-- unwinds a stale sort left behind if the kill switch is turned off mid-session.
+--
+-- coEngineIndex is stamped by the addContainerButton wrapper. The `or i` fallback
+-- only matters for buttons that predate install() - it keeps the comparator a
+-- consistent ordering (every button has one fixed number) rather than being
+-- correct, and the next refresh stamps everything and heals it.
+function ContainerOrder.restoreEngineOrder(page)
+    if type(page.backpacks) ~= "table" or #page.backpacks < 2 then return end
+    local pos = {}
+    for i, b in ipairs(page.backpacks) do pos[b] = b.coEngineIndex or i end
+    table.sort(page.backpacks, function(a, b) return pos[a] < pos[b] end)
+end
+
 -- Sort the ARRAY (see header) and restack the buttons to match.
 function ContainerOrder.apply(page)
     if not ContainerOrder.isEnabled() then return end
@@ -337,6 +386,24 @@ local function onMouseMoveOutside(self, dx, dy)
     end
 end
 
+-- The release itself, when it lands outside the button's own rectangle.
+-- UIElement.onMouseUp hands a child onMouseUpOutside whenever the release point
+-- misses its rect (decompile zombie/ui/UIElement.java:1048), and for a drag that
+-- ends without any further cursor movement that is the ONLY event it will get:
+-- the isMouseButtonDown poll in onMouseMoveOutside needs a move event to run, and
+-- the engine only sends those when the cursor actually moved. Drag a button up
+-- past the top clamp or sideways off the 32px panel and let go without twitching,
+-- and before this the reorder was silently discarded while page.coDragButton
+-- stayed set and the drop indicator drew forever.
+--
+-- finishDrag clears coDragging as its first act, so this and the poll above can
+-- never both commit the same drag.
+local function onMouseUpOutside(self, x, y)
+    if self.coUpOutOrig then self.coUpOutOrig(self, x, y) end
+    if not self.coDragging then return end
+    ContainerOrder.finishDrag(self)
+end
+
 local function onMouseUp(self, x, y)
     if self.coDragging and ContainerOrder.finishDrag(self) then
         -- A real reorder consumes the click: refreshBackpacks has already rebuilt
@@ -397,12 +464,14 @@ local function attach(button)
     end
     if button.coDragReady then return end
     button.coDragReady = true
-    button.coDownOrig = button.onMouseDown
-    button.coMoveOrig = button.onMouseMove
-    button.coOutOrig  = button.onMouseMoveOutside
+    button.coDownOrig  = button.onMouseDown
+    button.coMoveOrig  = button.onMouseMove
+    button.coOutOrig   = button.onMouseMoveOutside
+    button.coUpOutOrig = button.onMouseUpOutside
     button.onMouseDown        = onMouseDown
     button.onMouseMove        = onMouseMove
     button.onMouseMoveOutside = onMouseMoveOutside
+    button.onMouseUpOutside   = onMouseUpOutside
 end
 
 -- ---------------------------------------------------------------------------
@@ -420,6 +489,10 @@ local function install()
     local origAdd = ISInventoryPage.addContainerButton
     function ISInventoryPage:addContainerButton(container, texture, name, tooltip)
         local button = origAdd(self, container, texture, name, tooltip)
+        -- origAdd has just appended this button (:1507), so the count IS its engine
+        -- enumeration index. Stamped on every page, not just ours: it costs one
+        -- field and it is the only record of the order vanilla handed us.
+        if button then button.coEngineIndex = #self.backpacks end
         if button and self.onCharacter and ContainerOrder.isEnabled() then
             pcall(attach, button)
         end
@@ -428,6 +501,9 @@ local function install()
 
     local origRefresh = ISInventoryPage.refreshBackpacks
     function ISInventoryPage:refreshBackpacks(...)
+        -- Engine order going in, player order coming out. Both halves matter - see
+        -- the header on vanilla's double dispatch.
+        pcall(ContainerOrder.restoreEngineOrder, self)
         local r = origRefresh(self, ...)
         pcall(ContainerOrder.apply, self)
         return r
@@ -446,8 +522,11 @@ local function install()
                 -- clearly against every container icon.
                 local size = page.buttonSize or 32
                 local y = page.coDropIndex * size - 1
+                -- drawRect is (x, y, w, h, A, R, G, B) - ISUIElement.lua:1191, and
+                -- the alpha leads. Passed as (r, g, b, a) this drew pale blue at
+                -- 0.9 alpha instead of solid pink.
                 pcall(function()
-                    self:drawRect(1, y, self:getWidth() - 2, 2, 0.9, 0.55, 0.75, 1.0)
+                    self:drawRect(1, y, self:getWidth() - 2, 2, 1.0, 0.9, 0.55, 0.75)
                 end)
             end
             return r

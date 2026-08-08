@@ -1,11 +1,14 @@
 {
-  "Sandbox_OE_Reliquary": "Odds & Ends: Reliquary",
   "Sandbox_OE_RipIt": "Odds & Ends: RIPIT",
   "Sandbox_OE_Lumberjack": "Odds & Ends: Lumberjack",
   "Sandbox_OE_ContainerOrder": "Odds & Ends: Container Order",
   "Sandbox_OE_InventoryCollapse": "Odds & Ends: Inventory Collapse",
   "Sandbox_OE_StickyHeadwear": "Odds & Ends: Sticky Headwear",
   "Sandbox_OE_ActionSpeed": "Odds & Ends: Action Speed",
+  "Sandbox_OE_QuietHorn": "Odds & Ends: Quiet Horn",
+
+  "Sandbox_OE_QuietHornEnable": "Activar Quiet Horn",
+  "Sandbox_OE_QuietHornEnable_tooltip": "Evita que la bocina del vehiculo atraiga a los zombies. La bocina sigue sonando con normalidad para todos los que esten cerca, y cada vehiculo conserva su propia bocina; simplemente deja de producir un ruido hacia el que los muertos puedan caminar, asi que no se puede usar para arrastrar a una multitud fuera de una calle. Afecta solo a la bocina: el motor, la alarma y el pitido de marcha atras no cambian. Desactivalo para restaurar el comportamiento original, al instante y sin reiniciar.",
 
   "Sandbox_OE_RipItEnable": "Activar RIPIT",
   "Sandbox_OE_RipItEnable_tooltip": "Anade Rasgar Todo al menu contextual, tanto en el inventario como en el mundo. Actua sobre los contenedores que tengas abiertos - tus bolsas mas lo que haya en la ventana de saqueo - y nunca llega mas lejos. Cubre ropa de algodon, tela vaquera y cuero, ademas de sabanas; las prendas de cuero dan tiras. La velocidad se ajusta en la pagina Action Speed.",
@@ -34,11 +37,6 @@
 
   "Sandbox_OE_StickyHeadwearEnable": "Activar Sticky Headwear",
   "Sandbox_OE_StickyHeadwearEnable_tooltip": "Evita que el sombrero que llevas puesto salga volando al recibir un golpe. Se aplica a las prendas que llevas, no a las definiciones de objeto, asi que los zombies siguen apareciendo con la proporcion habitual de sombreros perdidos y el botin no cambia. Desactivarlo restaura los valores originales sin reiniciar.",
-
-  "Sandbox_OE_ReliquaryEnable": "Activar Reliquary",
-  "Sandbox_OE_ReliquaryEnable_tooltip": "Interruptor principal de Reliquary, el cofre colocado por el staff que guarda una entrega para un jugador concreto y se disuelve una vez vaciado. Desactivalo para ocultar sus opciones del menu contextual; cualquier Reliquary ya presente en el mundo deja de seguirse y se queda como un armario normal.",
-  "Sandbox_OE_ReliquaryDefaultHours": "Espera por defecto (horas)",
-  "Sandbox_OE_ReliquaryDefaultHours_tooltip": "Cuanto espera un Reliquary recien colocado antes de caducar y llevarse su contenido. 0 significa que espera indefinidamente. El staff puede cambiarlo en cada Reliquary con \"Set timer...\". Un Reliquary movido de la casilla donde se coloco se destruye de inmediato, independientemente de esto.",
 
   "Sandbox_OE_ActionSpeedEnable": "Activar escalado de velocidad de acciones",
   "Sandbox_OE_ActionSpeedEnable_tooltip": "Interruptor principal del escalado de acciones temporizadas (por defecto activado). Cada familia de abajo elige una velocidad entre Vanilla e Instantaneo. Las transferencias de inventario nunca se escalan: en multijugador el servidor las completa con la duracion vanilla, asi que acelerar el cliente solo hace que la barra de progreso mienta. Los cambios de sandbox requieren reiniciar el servidor.",

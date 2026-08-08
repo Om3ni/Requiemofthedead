@@ -8,7 +8,7 @@
 -- of these modules but not another should be able to say so.
 --
 -- The house rules for a module in here:
---   * its own subfolder and file prefix (Reliquary/RL*)
+--   * its own subfolder and file prefix (Lumberjack/LJ*)
 --   * its own sandbox kill switch, default ON, read through OEShared.enabled
 --   * no dependency on any sibling module - each must survive the others
 --     being switched off, or deleted outright
@@ -16,8 +16,6 @@
 --     module registers its own OnClientCommand listener
 --
 -- Modules today:
---   Reliquary      (Reliquary/RL*)      staff-placed, whitelist-gated stash
---                                       that dissolves once it has been emptied.
 --   ActionSpeed    (ActionSpeed/AS*)    per-family timed-action speed scaling.
 --                                       Lived in Dragonfly until 2026-07-30,
 --                                       where it had landed because Dragonfly
@@ -28,6 +26,13 @@
 --                                       containers you have open.
 --   StickyHeadwear (StickyHeadwear/SH*) pins worn headwear so a hit does not
 --                                       knock it off.
+--   QuietHorn      (QuietHorn/QH*)      the vehicle horn still sounds but no
+--                                       longer emits a world sound, so it
+--                                       cannot be used to herd zombies. A full
+--                                       replacement rather than a tweak: the
+--                                       engine fuses the audible horn and the
+--                                       herding sound into one method and
+--                                       exposes no way to separate them.
 --   Lumberjack     (Lumberjack/LJ*)     forestry. LJWeight scales the weight
 --                                       of wooden items, reversibly, against
 --                                       their vanilla values; LJSweep fells a
