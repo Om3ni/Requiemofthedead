@@ -3,5 +3,8 @@
   "IGUI_OE_SweepStoppedAxe": "Tala detenida: el hacha esta casi gastada.",
   "IGUI_OE_SweepStoppedTired": "Tala detenida: demasiado cansado para seguir.",
   "IGUI_OE_SweepStoppedHurt": "Tala detenida: has recibido dano.",
-  "IGUI_OE_BookmarkEnable": "Mensaje de bienvenida"
+  "IGUI_OE_BookmarkEnable": "Mensaje de bienvenida",
+  "IGUI_OE_ModName": "Odds and Ends",
+  "IGUI_OE_BookmarkBlurb": "Una breve cita literaria de dominio publico al entrar. Desactivado por defecto; puro sabor.",
+  "IGUI_OE_BookmarkTip": "Muestra una breve cita de un libro al entrar al mundo. Tu eleccion se recuerda en este equipo."
 }
