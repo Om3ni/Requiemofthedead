@@ -47,6 +47,7 @@
 --                does not replace the whole store.
 
 require "RDNet"
+require "RDWire"     -- the chunker sizes itself with RDWire's model (Reaper's rule)
 require "LMCore"
 require "LMIni"
 require "LMEdit"
@@ -54,6 +55,80 @@ require "LMEdit"
 LMSync = LMSync or {}
 
 local TOKEN = "RFTDLimes"   -- wire token = mod id, per family conventions
+
+-- ---------------------------------------------------------------------------
+-- BASELINE CHUNKING (2026-08-08) - the store never leaves as one blob again.
+--
+-- The wire probe caught its own family: RFTDLimes:baseline, 20 KB, S2C,
+-- reason "unsplit". Not because anything was lost - sendServerCommand goes
+-- out RELIABLE_ORDERED (UdpConnection.endPacket, reliability 3), so RakNet
+-- fragments and retransmits and the data always arrives - but because one
+-- big blob on ordering channel 0 stalls EVERYTHING ordered behind it for a
+-- retransmit round-trip whenever a fragment drops, and it does so at join
+-- time, when the wire is at its busiest. It also grows with the store, and
+-- it makes our own telemetry cry wolf on every join, which is how a wire
+-- stream stops being read.
+--
+-- So baselines page exactly the way Reaper's snapshot does (RPServer is the
+-- reference implementation): slices sized against RDWire's OWN model - the
+-- same model the meter judges the result by - declared to RDWire so the
+-- meter reports "declared paged" instead of "unsplit", and PACED, a byte
+-- budget per tick, so a join never sees the whole store in one burst.
+--
+-- Frame: { gen, seq, total, rev, zones = {name -> raw} }. gen is a
+-- monotonic stream id - the client keys reassembly on it, so a re-pull
+-- mid-stream supersedes cleanly. rev rides every chunk; it is applied once,
+-- at assembly.
+--
+-- DELTAS STAY WHOLE while they are small - one zone per human edit is the
+-- steady state and one packet is the right cost for it. A delta too big for
+-- the budget (a rename touching hundreds of children) is sent as a chunked
+-- BASELINE instead: a full-store replace is idempotent and always correct,
+-- and the rare mass operation is precisely when re-syncing everything is
+-- worth it. §6.1 rule 4 holds - it is still ONE announcement per edit,
+-- just paged when the edit is huge.
+-- ---------------------------------------------------------------------------
+
+local CHUNK_BYTES    = 3072      -- per-chunk ceiling, envelope included
+local CHUNK_ENVELOPE = 160       -- gen/seq/total/rev + module/command framing
+local CHUNK_TICK_BYTES = 4096    -- send budget per tick, all pending streams
+
+-- Slice a zones map into chunk-sized maps. Pure and shared so the test suite
+-- can drive it without a wire: returns { {zones=..., est=...}, ... }, never
+-- empty - an empty store still yields one empty slice, because a client
+-- must receive total=1 to know the stream is complete (Reaper's lesson).
+--
+-- Names sorted so the slicing is deterministic across machines and reruns;
+-- a zone LARGER than the budget still ships (alone, oversized) rather than
+-- being dropped - the meter will name it, which is the correct outcome for
+-- a single record nothing can split.
+function LMSync.sliceZones(zones, budget)
+    budget = (budget or CHUNK_BYTES) - CHUNK_ENVELOPE
+    local names = {}
+    for name in pairs(zones or {}) do names[#names + 1] = name end
+    table.sort(names)
+
+    local slices = {}
+    local cur, curEst, curN = {}, 0, 0
+    local function flush()
+        if curN == 0 then return end
+        slices[#slices + 1] = { zones = cur, est = curEst + CHUNK_ENVELOPE }
+        cur, curEst, curN = {}, 0, 0
+    end
+    for i = 1, #names do
+        local name = names[i]
+        local est = RDWire.estimate(zones[name]) + #name + 8
+        if curN > 0 and curEst + est > budget then flush() end
+        cur[name] = zones[name]
+        curEst = curEst + est
+        curN = curN + 1
+    end
+    flush()
+    if #slices == 0 then
+        slices[1] = { zones = {}, est = CHUNK_ENVELOPE }
+    end
+    return slices
+end
 
 -- ---------------------------------------------------------------------------
 -- Server half
@@ -78,8 +153,58 @@ if isServer() then
         return Limes.fields.stripServerOnly(rawZones)
     end
 
-    local function baselinePayload()
-        return { rev = Limes.revision, zones = forClients(Limes.raw()) }
+    -- The paged baseline pipeline. Declared so the wire meter classifies the
+    -- stream as paged rather than flagging every chunk-adjacent size, and
+    -- paced so a join drains gently instead of in one burst.
+    RDWire.declareChunked(TOKEN .. ":baselineChunk", { budget = CHUNK_BYTES })
+
+    local chunkGen   = 0
+    local chunkSends = {}   -- { player|nil, chunks, sizes, nextIdx }; nil player = broadcast
+
+    -- Queue the full store for one connection (or everyone, player = nil).
+    local function queueBaseline(player)
+        local zones = forClients(Limes.raw())
+        local rev   = Limes.revision
+        chunkGen = chunkGen + 1
+
+        local slices = LMSync.sliceZones(zones, CHUNK_BYTES)
+        local total  = #slices
+        local chunks, sizes = {}, {}
+        for i = 1, total do
+            chunks[i] = { gen = chunkGen, seq = i, total = total,
+                          rev = rev, zones = slices[i].zones }
+            sizes[i]  = slices[i].est
+        end
+        chunkSends[#chunkSends + 1] =
+            { player = player, chunks = chunks, sizes = sizes, nextIdx = 1 }
+    end
+
+    -- Paced by BYTES, not by chunk count, for Reaper's reason: one command per
+    -- tick is a rate only if every command weighs the same. At 4 KB/tick a
+    -- 20 KB store drains in ~5 ticks - imperceptible to the admin, gentle on a
+    -- join that has every other mod's handshake in flight around it.
+    local function pumpChunkSends()
+        local spent = 0
+        while spent < CHUNK_TICK_BYTES do
+            local send = chunkSends[1]
+            if not send then return end
+            local chunk = send.chunks[send.nextIdx]
+            if not chunk then
+                table.remove(chunkSends, 1)
+            else
+                if send.player then
+                    RDNet.reply(send.player, TOKEN, "baselineChunk", chunk)
+                else
+                    RDNet.broadcast(TOKEN, "baselineChunk", chunk)
+                end
+                spent = spent + (send.sizes[send.nextIdx] or CHUNK_BYTES)
+                send.nextIdx = send.nextIdx + 1
+            end
+        end
+    end
+
+    if Events and Events.OnTick then
+        Events.OnTick.Add(function() pcall(pumpChunkSends) end)
     end
 
     -- Join baseline and gap recovery are the same request: "give me everything,
@@ -95,13 +220,13 @@ if isServer() then
     -- so this route gets headroom, not a razor's edge. The real gate is that
     -- it fires once per observed revision; the rate is only flood cover.
     RDNet.register(TOKEN, "pull", { rate = 10 }, function(player)
-        RDNet.reply(player, TOKEN, "baseline", baselinePayload())
+        queueBaseline(player)
     end)
 
     -- Full-store replacement announcement (import today, wholesale editor
     -- operations later).
     function LMSync.broadcastBaseline()
-        RDNet.broadcast(TOKEN, "baseline", baselinePayload())
+        queueBaseline(nil)
     end
 
     -- Surgical edit announcement for the M4 editor: changed maps name -> raw
@@ -113,9 +238,20 @@ if isServer() then
     -- that reflex, in one line, is the whole of PhunZones' 62.8% wire share
     -- (Appendix A.3: it broadcasts a correct delta and then transmits the entire
     -- ModData table on top of it, per connection).
+    --
+    -- A delta that outgrows the chunk budget goes out as a paged BASELINE
+    -- instead: a full replace is idempotent and always lands the client on
+    -- exactly the server's state, and an edit that big (a rename rewriting
+    -- hundreds of children) is precisely when a full re-sync earns its bytes.
+    -- Still one announcement.
     function LMSync.broadcastDelta(changed, removed)
-        RDNet.broadcast(TOKEN, "delta",
-            { rev = Limes.revision, changed = forClients(changed or {}), removed = removed or {} })
+        local payload = { rev = Limes.revision,
+                          changed = forClients(changed or {}), removed = removed or {} }
+        if RDWire.estimate(payload) > CHUNK_BYTES then
+            queueBaseline(nil)
+            return
+        end
+        RDNet.broadcast(TOKEN, "delta", payload)
     end
 
     -- Admin gate shared by both import routes. Returns the username, or nil
@@ -656,9 +792,50 @@ else
         end
     end)
 
+    -- Chunked-baseline reassembly, keyed by gen. A chunk from a NEWER gen
+    -- supersedes an in-flight older stream outright (a re-pull mid-stream, an
+    -- import landing during a join); a chunk from an older gen is dropped.
+    -- Chunks within a gen can arrive in any order - reliable-ordered delivery
+    -- means they will not, but the assembly does not lean on that.
+    local assembling = nil   -- { gen, rev, total, zones, got }
+
+    local function onBaselineChunk(args)
+        local gen   = tonumber(args and args.gen)
+        local seq   = tonumber(args and args.seq)
+        local total = tonumber(args and args.total)
+        if not (gen and seq and total) or type(args.zones) ~= "table" then return end
+
+        if not assembling or gen > assembling.gen then
+            assembling = { gen = gen, rev = tonumber(args.rev) or 0,
+                           total = total, zones = {}, got = {} }
+        elseif gen < assembling.gen then
+            return                                    -- a dead stream's straggler
+        end
+
+        local a = assembling
+        if a.got[seq] then return end                 -- duplicate
+        a.got[seq] = true
+        for name, rec in pairs(args.zones) do a.zones[name] = rec end
+
+        local n = 0
+        for _ in pairs(a.got) do n = n + 1 end
+        if n < a.total then return end
+
+        -- Complete: one apply, exactly like the old single-packet baseline.
+        local rev = a.rev > 0 and a.rev or (lastRev + 1)
+        assembling = nil
+        Limes.apply(a.zones, rev)
+        lastRev = rev
+    end
+
     Events.OnServerCommand.Add(function(module, command, args)
         if module ~= TOKEN then return end
-        if command == "baseline" and args and args.zones then
+        if command == "baselineChunk" and args then
+            onBaselineChunk(args)
+        elseif command == "baseline" and args and args.zones then
+            -- The pre-chunking shape, kept so a NEW client on an OLD server
+            -- (mid-rollout skew) still receives its store. The suite versions
+            -- in lockstep, so this is a one-release courtesy, not a contract.
             local rev = tonumber(args.rev) or (lastRev + 1)
             Limes.apply(args.zones, rev)
             lastRev = rev
