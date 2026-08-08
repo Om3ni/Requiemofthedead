@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""make-growl-sprites.py - generate the Growl sprite set for RFTDDragonfly.
+"""make-growl-sprites.py - generate the Growl sprite set for the Dragonfly deck.
 
 Six PNGs, and the design rule they encode: sprites carry SHAPE ONLY. Every
 pixel is pure white; the alpha channel is the geometry. Color arrives at draw
@@ -32,7 +32,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 OUT = Path(__file__).resolve().parent.parent / (
-    "RequiemOfTheDead/Contents/mods/RFTDDragonfly/42/media/ui/Growl"
+    "RequiemOfTheDead/Contents/mods/Dragonfly/42/media/ui/Growl"
 )
 
 WHITE = (255, 255, 255)

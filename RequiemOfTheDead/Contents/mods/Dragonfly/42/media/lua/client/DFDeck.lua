@@ -1,11 +1,14 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- DFDeck.lua - the deck: Growl-skinned admin shell (client only).
 --
--- INCUBATION CONTRACT. This is the successor chassis to Dragonfly's DFPanel,
--- running ALONGSIDE it while the skin matures: same registry (DFRegistry, in
+-- INCUBATION CONTRACT. This is the successor chassis to DFPanel, running
+-- ALONGSIDE it while the skin matures - same mod since 2026-08-13, when the
+-- planned RFTDDragonfly split was folded back in (the server runs ONE
+-- Dragonfly; the RFTDDragonfly name lives on only as the sandbox namespace
+-- and wire module this mod always used): same registry (DFRegistry, in
 -- Core), same tab build contract - spec.build(spec, contentPanel, 0, 0, w, h)
 -- - same access policy (RDAccess.meetsTier over RFTDDragonfly.PanelAccess,
--- the sandbox page old Dragonfly already ships under this mod's name). Every
+-- the sandbox page this mod ships). Every
 -- tab the family registers appears here, functional immediately; tabs keep
 -- their stock look inside the new chrome until their Phase 4 migration. The
 -- old panel opens on Shift+U as always; the deck opens from its own sidebar

@@ -50,6 +50,14 @@ DFTheme.col = {
     ash      = { r = 0.427, g = 0.463, b = 0.420 },  -- #6d766b muted
     sight    = { r = 0.561, g = 0.886, b = 0.196 },  -- #8fe232 ATTENTION ONLY
     sightDim = { r = 0.290, g = 0.455, b = 0.125 },  -- #4a7420
+    -- The PLAYER surface's attention pair: sight and sightDim rotated +105deg
+    -- in hue at identical S/V - the exact shift the player badge's Off master
+    -- got from the admin green (art/dragonfly, commit 0b3ac2d). Rule 1 applies
+    -- unchanged on the player deck with tide standing where sight stands on
+    -- the admin deck; the two accents exist so the two surfaces can never be
+    -- mistaken for one another at a glance.
+    tide     = { r = 0.196, g = 0.734, b = 0.886 },  -- #32bbe2
+    tideDim  = { r = 0.126, g = 0.373, b = 0.455 },  -- #205f74
     fen      = { r = 0.180, g = 0.490, b = 0.329 },  -- #2e7d54 live / ok
     oldblood = { r = 0.612, g = 0.227, b = 0.180 },  -- #9c3a2e danger, dried
     ochre    = { r = 0.659, g = 0.529, b = 0.235 },  -- #a8873c warnings

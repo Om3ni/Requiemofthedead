@@ -5,22 +5,25 @@
 -- THE INVERSION, on purpose and temporary: two identical marks in a column
 -- would be a coin flip every click, so during incubation the deck wears the
 -- old badge's states BACKWARD - the RED mark when the deck is CLOSED, the
--- GREEN mark when it is OPEN (old Dragonfly: green closed, red open). One
--- glance tells you which door is which and which panel is up. When the deck
--- graduates and DFPanel retires, the colors swap back to the family's normal
--- reading. Art is the old mod's own shipped set (media/ui/DFSidebar/<W>/...),
--- referenced cross-mod - legitimate exactly because both mods are enabled
--- together for the whole incubation; if the deck ever runs without old
--- Dragonfly the resolver misses and the text-badge fallback ("DECK") keeps
--- the button working until the art moves home.
+-- GREEN mark when it is OPEN (the classic badge: green closed, red open).
+-- One glance tells you which door is which and which panel is up. When the
+-- deck graduates and DFPanel retires, the colors swap back to the family's
+-- normal reading. Art is the classic badge's own set (media/ui/DFSidebar/
+-- <W>/...) - same mod since the deck came home (2026-08-13; the server runs
+-- one Dragonfly, not two) - and the text-badge fallback ("DECK") still
+-- covers a missing texture.
 --
 -- MECHANISM: the same two-wrap ISEquippedItem patch DFSideButton documents
 -- (initialise creates + shrinkWrap, prerender anchors + reflects state) -
--- read that header for the full why; the reasoning is not repeated here. Our
--- wraps run AFTER old Dragonfly's (mod load order: "Dragonfly" sorts before
--- "RFTDDragonfly"), so its badge exists by the time ours anchors beneath it.
--- When the old badge is absent (post-swap), we anchor on the bottom-most
--- visible of the vanilla trio exactly as it did.
+-- read that header for the full why; the reasoning is not repeated here.
+-- LOAD ORDER MOVED when the deck moved in: client files load alphabetically
+-- within a mod and "DFDeckButton" sorts before "DFSideButton", so our wraps
+-- are now INNER - each frame we anchor before the old badge re-anchors, and
+-- read dfPanelBtn where the PREVIOUS frame left it. Benign: the column only
+-- moves when the sidebar rebuilds, so the badge is off for at most the one
+-- frame after that, and self-corrects. When the old badge is absent
+-- (post-swap), we anchor on the bottom-most visible of the vanilla trio
+-- exactly as it did.
 --
 -- RELOAD-SAFE like the rest of the deck: the wraps install once behind a
 -- surviving sentinel - re-running this file must never stack a second wrap
