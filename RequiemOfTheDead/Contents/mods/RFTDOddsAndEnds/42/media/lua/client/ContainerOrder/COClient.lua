@@ -125,6 +125,34 @@
 -- buttons sit a full size apart, so no drop can change anything until the mouse
 -- has moved a whole button, and arming six times sooner only bought the flicker.
 --
+-- ARMING MUST NOT DEPEND ON THE CURSOR STAYING INSIDE THE BUTTON. Fixed
+-- 2026-08-08 after the owner reported it took "a good 10 tries" to make a bag
+-- move. The threshold above is the right SIZE; it was being measured in the wrong
+-- PLACE, and the two faults compounded into a gesture almost nobody could perform.
+--
+-- UIElement hands a child onMouseMove only while the cursor is within that child's
+-- rect, and onMouseMoveOutside to every child it is not over (decompile
+-- zombie/ui/UIElement.java:998-1003). A container button is a SQUARE of exactly
+-- buttonSize on a side (ISButton:new(x, y, self.buttonSize, self.buttonSize),
+-- ISInventoryPage.lua:1473). Arming lived only in onMouseMove while
+-- onMouseMoveOutside returned early on `not coDragging`, so the mouse had to
+-- travel more than half a button WITHOUT LEAVING a box one button high and one
+-- button wide. In practice that meant all three of:
+--
+--   * press in the top half and drag DOWN, or the bottom half and drag UP - the
+--     usable travel is size - py one way and py the other, so a press near the
+--     middle had at most size/2 available and could never clear a size/2 test;
+--   * hold the cursor inside the button's width, since leaving sideways cuts off
+--     the events just as effectively as leaving vertically;
+--   * and move SLOWLY, because the cursor is sampled once a frame and a flick
+--     jumps from inside the rect to well outside in a single event - which was
+--     delivered here, and dropped.
+--
+-- Forwarding unconditionally takes the rect out of the question: once the button
+-- is pressed, travel is measured wherever the cursor goes. The gate that matters
+-- is still `self.pressed and self.coCanDrag`, both set only by our own
+-- onMouseDown on this button, so a button nobody pressed does nothing.
+--
 -- Order lives in player modData keyed by the container's ITEM id ("i" .. getID()),
 -- with "main" for the character's own inventory. A bag destroyed and recreated
 -- gets a new id and therefore a default slot; that is correct - it is a different
@@ -354,6 +382,11 @@ local function onMouseMove(self, dx, dy, skipOriginal)
     -- size/6 armed the drag six times sooner than any reorder was reachable, so
     -- every click with a few pixels of drift lifted the icon off its slot and
     -- then put it straight back.
+    --
+    -- The size is only half the story: this test also has to be REACHED, which is
+    -- why onMouseMoveOutside forwards here unconditionally. A button is size x size,
+    -- so a threshold of size/2 is not clearable inside the button's own rect from an
+    -- arbitrary press point - see the header.
     if math.abs((self.coDragStartMouseY or 0) - getMouseY()) > size / 2 then
         self.coDragging = true
     end
@@ -374,10 +407,17 @@ local function onMouseMove(self, dx, dy, skipOriginal)
     page.coDropIndex = ContainerOrder.insertPosition(page, self)
 end
 
+-- Forwarded UNCONDITIONALLY, not just once a drag is already armed: this is where
+-- most real gestures cross the threshold, because the cursor leaves a 32px square
+-- long before it has travelled half a button. See ARMING MUST NOT DEPEND ON THE
+-- CURSOR STAYING INSIDE THE BUTTON in the header - that early return was the whole
+-- reason a reorder took ten attempts. onMouseMove's own `self.pressed and
+-- self.coCanDrag` gate is what keeps this cheap and safe for every other button,
+-- and UIElement really does call this on all of them (UIElement.java:1024-1028).
 local function onMouseMoveOutside(self, dx, dy)
     if self.coOutOrig then self.coOutOrig(self, dx, dy) end
-    if not self.coDragging then return end
     onMouseMove(self, dx, dy, true)
+    if not self.coDragging then return end
     -- Released off the panel: the button never gets a real onMouseUp, so finish
     -- here or it stays stuck to the cursor.
     if not isMouseButtonDown(0) then

@@ -5,6 +5,11 @@
   "IGUI_OE_SweepStoppedHurt": "Sweep stopped: you took damage.",
   "IGUI_OE_BookmarkEnable": "Welcome Message",
   "IGUI_OE_ModName": "Odds and Ends",
+  "IGUI_OE_Workshop": "Workshop",
+  "IGUI_OE_WS_For": "Crafting for",
+  "IGUI_OE_WS_ShowAll": "Show all",
+  "IGUI_OE_WS_All": "All handcraft recipes - other panels can narrow this list, like clicking a part on My Vehicles.",
+  "IGUI_OE_WS_Recipes": "recipes",
   "IGUI_OE_BookmarkBlurb": "A short public-domain literature quote on login. Off by default; purely for flavor.",
   "IGUI_OE_BookmarkTip": "Show a short book quote when you enter the world. Your choice is remembered on this computer."
 }

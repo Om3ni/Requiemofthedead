@@ -97,12 +97,22 @@ local function perkLevels(p)
     return out
 end
 
+-- FULL REGISTRY IDS ("base:organized"), never getName(). getName() returns the
+-- ResourceLocation PATH with the namespace stripped, so a mod trait that shadows a
+-- vanilla one logs identically to it - which is precisely how a memoir read that
+-- swapped base:organized for a mod placeholder produced a forensic record showing
+-- nothing had changed (Mox, 2026-08-09). A record that cannot tell two traits apart
+-- cannot answer the question it exists to answer. tostring() gives the id; the
+-- getName() fallback covers a stale registry object whose location has gone.
 local function traitsOf(p)
     local out = {}
     pcall(function()
         local known = p:getCharacterTraits():getKnownTraits()
         for i = 0, known:size() - 1 do
-            out[#out + 1] = known:get(i):getName()
+            local t = known:get(i)
+            local id
+            if not pcall(function() id = tostring(t) end) or type(id) ~= "string" then id = nil end
+            out[#out + 1] = id or ("?:" .. tostring(t:getName()))
         end
         table.sort(out)
     end)
@@ -113,7 +123,11 @@ local function professionOf(p)
     local name
     pcall(function()
         local prof = p:getDescriptor() and p:getDescriptor():getCharacterProfession()
-        if prof then name = prof:getName() end
+        if prof then
+            local id
+            if not pcall(function() id = tostring(prof) end) or type(id) ~= "string" then id = nil end
+            name = id or prof:getName()
+        end
     end)
     return name
 end

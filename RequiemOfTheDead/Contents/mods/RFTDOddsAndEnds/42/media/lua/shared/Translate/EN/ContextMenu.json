@@ -4,5 +4,5 @@
   "ContextMenu_OE_RipIt_More": " ...and %1 more",
   "ContextMenu_OE_ChopNearby": "Chop nearby trees (%1)",
   "ContextMenu_OE_ChopNearby_Tooltip": "Fell every tree within reach, nearest first",
-  "ContextMenu_OE_ChopNearby_Desc": "Searches %1 tiles. Stops on damage, on low endurance, or when the axe reaches %2%% condition."
+  "ContextMenu_OE_ChopNearby_Desc": "Searches %1 tiles. Stops on damage, on low endurance, or when the axe reaches %2% condition."
 }

@@ -20,13 +20,12 @@
 -- folders. If the art is missing the text badge ("PANEL") keeps the button
 -- working.
 --
--- MECHANISM: the same two-wrap ISEquippedItem patch the other badges use -
+-- MECHANISM: the same two-wrap ISEquippedItem patch the deck badge uses -
 -- initialise creates + shrinkWrap, prerender anchors + reflects state; see
--- DFSideButton's header for the full why. Alphabetical file order makes our
--- wraps run after DFDeckButton's but BEFORE DFSideButton's, so each frame we
--- anchor against the classic badge's position from the PREVIOUS frame -
--- benign for the same reason DFDeckButton's header gives: the column only
--- moves when the sidebar rebuilds.
+-- DFDeckButton's header for the full why (it inherited the canonical
+-- documentation when DFSideButton retired at graduation). Alphabetical file
+-- order makes our wraps run AFTER DFDeckButton's, so the deck badge is
+-- already anchored this frame by the time we sit beneath it.
 --
 -- VISIBLE TO EVERYONE - this is the ungated door to an ungated surface. The
 -- anchor chain still ends at the vanilla trio, which exists in MP; in solo
@@ -144,13 +143,12 @@ if not DFPlayerBtnState.wrapped then
         local btn = self.dfPlayerBtn
         if not btn then return end
 
-        -- Beneath the bottom-most badge standing: the deck's, then old
-        -- Dragonfly's, then the vanilla trio. Every one of those is
-        -- staff-gated or context-dependent, so for most players the anchor is
-        -- simply the trio.
+        -- Beneath the bottom-most badge standing: the deck's, then the
+        -- vanilla trio. All of those are staff-gated or context-dependent,
+        -- so for most players the anchor is simply the trio.
         local bottom = nil
         for _, ref in ipairs({ self.clientBtn, self.adminBtn, self.warManagerBtn,
-                               self.dfPanelBtn, self.dfDeckBtn }) do
+                               self.dfDeckBtn }) do
             if ref and ref:isVisible() then
                 local b = ref:getBottom()
                 if not bottom or b > bottom then bottom = b end

@@ -180,12 +180,50 @@ function RCPartsView.invalidate(vid)
     end
 end
 
+-- Reassembly. The server byte-splits a parts list that outgrew one message, so a
+-- reply can arrive as several - see RCFleet's note on why this was done before a
+-- capture caught it rather than after.
+--
+-- ACCUMULATE UNTIL THE LAST SLICE, then publish. The cache is what the diagram
+-- reads, so writing partial parts into it would render a vehicle as though it
+-- were missing the components that simply had not arrived yet - a wrong diagram
+-- rather than an incomplete one, and nothing on screen would say so.
+--
+-- `requested[vid]` is cleared only on completion for the same reason: it is the
+-- in-flight marker, and clearing it early would let a second request start while
+-- the first was still arriving.
+--
+-- A sender that predates this sends neither seq nor total; that reads as
+-- seq=1 total=1, a single complete slice, and behaves exactly as before.
+local assembling = {}
+
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= M or command ~= "VehicleParts" or not args then return end
     local vid = args.vid
     if not vid then return end
-    requested[vid] = nil
-    cache[vid] = { parts = args.parts or {} }
+
+    local seq   = tonumber(args.seq)   or 1
+    local total = tonumber(args.total) or 1
+
+    if total <= 1 then
+        assembling[vid] = nil
+        requested[vid]  = nil
+        cache[vid] = { parts = args.parts or {} }
+        return
+    end
+
+    -- A new stream for this vehicle supersedes a half-assembled older one.
+    local acc = assembling[vid]
+    if not acc or seq == 1 then acc = { parts = {}, got = 0 }; assembling[vid] = acc end
+
+    for _, p in ipairs(args.parts or {}) do acc.parts[#acc.parts + 1] = p end
+    acc.got = acc.got + 1
+
+    if acc.got >= total then
+        assembling[vid] = nil
+        requested[vid]  = nil
+        cache[vid] = { parts = acc.parts }
+    end
 end)
 
 -- ---------------------------------------------------------------------------

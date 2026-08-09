@@ -34,18 +34,41 @@ QuietHornSv = QuietHornSv or {}
 
 -- The vehicle is taken from the player, never from the wire - the same shape
 -- vanilla's own onHorn uses, and it means a forged id cannot make somebody
--- else's car sound. isDriver is checked for the same reason: a passenger
--- leaning on the horn is not a thing, and neither is a player who has already
--- left the seat by the time the packet lands.
-local function relay(command)
-    return function(player, _args)
-        if not OEShared.enabled("QuietHornEnable") then return end
-        local vehicle = player and player:getVehicle()
-        if not vehicle then return end
-        if not vehicle:isDriver(player) then return end
-        if not vehicle:hasHorn() then return end
-        RDNet.broadcast(OEShared.MODULE, command, { vehicle = vehicle:getId() })
-    end
+-- else's car sound. isDriver is checked on START for the same reason: a
+-- passenger leaning on the horn is not a thing.
+--
+-- STOPS ARE NEVER GATED ON THE SEAT (beta-crew bug, 2026-08-08): the player
+-- who exits mid-blast arrives here seatless, and the old shared guard dropped
+-- their stop - every other client's loop ran to its deadline, or forever if
+-- the vehicle also streamed out for them. The vehicle a stop refers to comes
+-- from OUR memory of that player's start, so the forgery protection holds:
+-- the wire still names no vehicle, and a player can only ever stop the horn
+-- they started.
+local lastHorn = {}   -- username -> vehicle id, remembered at start
+
+local function keyFor(player)
+    local ok, name = pcall(function() return player:getUsername() end)
+    return (ok and name) or tostring(player)
+end
+
+local function onStart(player, _args)
+    if not OEShared.enabled("QuietHornEnable") then return end
+    local vehicle = player and player:getVehicle()
+    if not vehicle then return end
+    if not vehicle:isDriver(player) then return end
+    if not vehicle:hasHorn() then return end
+    lastHorn[keyFor(player)] = vehicle:getId()
+    RDNet.broadcast(OEShared.MODULE, "hornStart", { vehicle = vehicle:getId() })
+end
+
+local function onStop(player, _args)
+    if not OEShared.enabled("QuietHornEnable") then return end
+    local key = keyFor(player)
+    local vehicle = player and player:getVehicle()
+    local id = (vehicle and vehicle:isDriver(player) and vehicle:getId()) or lastHorn[key]
+    lastHorn[key] = nil
+    if not id then return end
+    RDNet.broadcast(OEShared.MODULE, "hornStop", { vehicle = id })
 end
 
 -- Rate: one honk is a start and a stop, and the radial menu's ISHorn adds its
@@ -57,8 +80,8 @@ end
 --
 -- No capability: honking is not staff-gated, and default-deny already means an
 -- unregistered command never runs.
-RDNet.register(OEShared.MODULE, "hornStart", { rate = 6 }, relay("hornStart"))
-RDNet.register(OEShared.MODULE, "hornStop",  { rate = 6 }, relay("hornStop"))
+RDNet.register(OEShared.MODULE, "hornStart", { rate = 6 }, onStart)
+RDNet.register(OEShared.MODULE, "hornStop",  { rate = 6 }, onStop)
 
 return QuietHornSv
 

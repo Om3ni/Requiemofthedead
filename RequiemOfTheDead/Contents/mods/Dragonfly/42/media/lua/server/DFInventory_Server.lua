@@ -21,6 +21,18 @@
 
 if not isServer() then return end
 
+-- Paged inventory snapshot. `field = "items"` keeps the wire shape the client
+-- already reads, so a chunk is just a smaller version of the message that was
+-- being sent whole - no new vocabulary on the receiving side beyond seq/total.
+--
+-- Budget is deliberately below the probe's 8 KB alert ceiling rather than at it:
+-- a budget set AT the alert threshold guarantees an alert the first time a chunk
+-- is a byte over, which trains people to ignore the alert.
+if RDChunk then
+    RDChunk.declare(DFCore.MODULE, "PlayerInventory",
+        { budget = 3072, envelope = 240, maxRows = 80, field = "items" })
+end
+
 local function resolveTarget(username)
     if not username or username == "" then return nil, "missing username" end
     local target = getPlayerFromUsername(username)
@@ -298,8 +310,34 @@ Events.OnServerStarted.Add(function()
                 primary   and tostring(primary:getFullType())   or "-",
                 secondary and tostring(secondary:getFullType()) or "-"))
 
-            pcall(sendServerCommand, player, DFCore.MODULE, "PlayerInventory",
-                { username = args.username, items = out })
+            -- PAGED SINCE 2026-08-09. A wire capture caught this at 12.9 KB in a
+            -- single message with no paging at all - the worst of the four family
+            -- streams that capture looked at, and the only one flagged UNSPLIT
+            -- rather than merely over budget.
+            --
+            -- Volume was never the problem: three sends in nine and a half hours,
+            -- 29.7 KB total. The problem is that the payload is a player's entire
+            -- inventory, so its size is set by how much that player is carrying,
+            -- and a single message that big stalls the tick while it serialises.
+            -- A hoarder inspected at a bad moment is a visible freeze for every
+            -- other player on the server.
+            --
+            -- RDChunk's managed path fits here where it did not fit Reclamation's
+            -- fleet scan: this is a complete snapshot of current state, so its
+            -- supersede-by-key behaviour is exactly right - re-requesting while an
+            -- older stream is still draining should discard the older one, which
+            -- is what the client's OPEN.target check was already approximating.
+            --
+            -- `username` rides EVERY chunk (the client routes on it); the item
+            -- total rides the last, where it is meaningful.
+            if RDChunk then
+                RDChunk.send(player, DFCore.MODULE, "PlayerInventory", out,
+                    { total_items = #out },
+                    { username = args.username })
+            else
+                pcall(sendServerCommand, player, DFCore.MODULE, "PlayerInventory",
+                    { username = args.username, items = out })
+            end
             return { ok = true }
         end,
     }

@@ -1,0 +1,1689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpyMaster — Requiem forensic reader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --void:#0E141B;
+  --panel:#18212B;
+  --panel-hi:#1E2935;
+  --rule:#2B3846;
+  --rule-hi:#3C4E60;
+  --text:#CBD8E4;
+  --dim:#78899A;
+  --dimmer:#4E5F70;
+  --s2c:#4FB8D4;
+  --c2s:#E8974A;
+  /* MDATA is its own direction, not "other". ModData.transmit fans the whole
+     blob to every connection, so it is neither a reply nor a request - and
+     folding it into either side is how an uncapped fan-out draws as ordinary
+     chatter. See RDMeter's record(). */
+  --mdata:#B07CE8;
+  --alarm:#FF6B63;
+  --ok:#6FCF97;
+  --disp:'Barlow Condensed',ui-sans-serif,system-ui,'Segoe UI',sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,'SF Mono','Cascadia Mono','Roboto Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--void);
+  color:var(--text);
+  font-family:var(--mono);
+  font-size:13px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  padding:0 0 64px;
+}
+h1,h2,h3,.disp{font-family:var(--disp);font-weight:600;letter-spacing:.06em;text-transform:uppercase;margin:0}
+
+/* ---------- masthead ---------- */
+.mast{
+  border-bottom:1px solid var(--rule);
+  padding:22px 20px 0;
+  position:sticky;top:0;z-index:20;
+  background:linear-gradient(180deg,var(--void) 82%,rgba(14,20,27,.88));
+  backdrop-filter:blur(6px);
+}
+.mast-row{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.mast h1{font-size:26px;line-height:1;letter-spacing:.14em}
+.mast .sub{color:var(--dim);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-family:var(--disp);letter-spacing:.14em}
+.legend{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:10px;color:var(--dim);font-family:var(--disp);letter-spacing:.12em;text-transform:uppercase}
+.swatch{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:-1px}
+.sw-s2c{background:var(--s2c)}
+.sw-c2s{background:var(--c2s)}
+.sw-mdata{background:var(--mdata)}
+.sw-alarm{background:var(--alarm)}
+
+/* global trace under masthead */
+.global-wrap{margin:16px 0 0;padding-bottom:14px}
+.global-trace{display:block;width:100%;height:56px}
+.global-meta{display:flex;gap:22px;flex-wrap:wrap;margin-top:8px;font-size:10px;color:var(--dimmer);font-family:var(--disp);letter-spacing:.12em;text-transform:uppercase}
+.global-meta b{color:var(--text);font-family:var(--mono);font-weight:500;font-size:11px;letter-spacing:0;text-transform:none}
+
+/* ---------- intake ---------- */
+.intake{max-width:1400px;margin:56px auto;padding:0 20px}
+.drop{
+  border:1px dashed var(--rule-hi);
+  background:var(--panel);
+  padding:56px 28px;
+  text-align:center;
+  transition:border-color .15s,background .15s;
+}
+.drop.hot{border-color:var(--s2c);background:var(--panel-hi)}
+.drop h2{font-size:20px;letter-spacing:.12em;margin-bottom:10px}
+.drop p{color:var(--dim);max-width:52ch;margin:0 auto 22px;font-size:12px}
+.btn{
+  font-family:var(--disp);font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;
+  background:transparent;color:var(--text);border:1px solid var(--rule-hi);
+  padding:9px 20px;cursor:pointer;transition:border-color .15s,color .15s;
+}
+.btn:hover{border-color:var(--s2c);color:var(--s2c)}
+.btn:focus-visible{outline:2px solid var(--s2c);outline-offset:2px}
+.err{color:var(--alarm);margin-top:18px;font-size:12px}
+
+/* ---------- controls ---------- */
+.controls{
+  max-width:1400px;margin:0 auto;padding:16px 20px;
+  display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+  border-bottom:1px solid var(--rule);
+}
+.controls label{font-family:var(--disp);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dimmer)}
+select,input[type=search]{
+  font-family:var(--mono);font-size:12px;
+  background:var(--panel);color:var(--text);
+  border:1px solid var(--rule);padding:6px 9px;
+}
+select:focus,input[type=search]:focus{outline:none;border-color:var(--s2c)}
+input[type=search]{min-width:170px}
+.spacer{margin-left:auto}
+
+/* ---------- cards ---------- */
+.grid{
+  max-width:1400px;margin:0 auto;padding:22px 20px;
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px;
+}
+.card{
+  background:var(--panel);
+  border:1px solid var(--rule);
+  display:flex;flex-direction:column;
+}
+.card-head{display:flex;align-items:flex-start;gap:12px;padding:14px 16px 10px}
+.rank{
+  font-family:var(--disp);font-size:30px;font-weight:700;line-height:.8;
+  color:var(--dimmer);letter-spacing:.02em;min-width:38px;
+}
+.card-id{flex:1;min-width:0}
+.mod{font-size:14px;font-weight:700;color:var(--text);word-break:break-all;line-height:1.25}
+.mod .self{color:var(--s2c)}
+.share{font-family:var(--disp);font-size:11px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;margin-top:2px}
+.bytes-big{font-family:var(--disp);font-size:24px;font-weight:600;line-height:1;text-align:right;letter-spacing:.02em}
+.bytes-big span{display:block;font-size:10px;letter-spacing:.14em;color:var(--dimmer);margin-top:4px}
+
+.flags{display:flex;gap:5px;flex-wrap:wrap;padding:0 16px 12px}
+.flag{
+  font-family:var(--disp);font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  padding:2px 7px;border:1px solid currentColor;
+}
+.f-alarm{color:var(--alarm)}
+.f-warn{color:var(--c2s)}
+.f-info{color:var(--s2c)}
+.f-mute{color:var(--dimmer)}
+.f-ok{color:var(--ok)}
+
+.trace-wrap{padding:0 16px 6px;position:relative}
+.trace{display:block;width:100%;height:62px}
+.trace-peak{
+  position:absolute;right:18px;top:2px;
+  font-size:9px;color:var(--dimmer);letter-spacing:.04em;
+}
+
+.stats{
+  display:grid;grid-template-columns:repeat(3,1fr);
+  border-top:1px solid var(--rule);
+}
+.stat{padding:9px 12px;border-right:1px solid var(--rule)}
+.stat:nth-child(3n){border-right:0}
+.stat:nth-child(n+4){border-top:1px solid var(--rule)}
+.stat k{display:block;font-family:var(--disp);font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--dimmer)}
+.stat v{display:block;font-size:13px;color:var(--text);margin-top:1px}
+
+.splitbar{display:flex;height:4px;background:var(--rule)}
+.splitbar i{display:block;height:100%}
+
+.acts{
+  display:flex;gap:0;align-items:center;flex-wrap:wrap;
+  border-top:1px solid var(--rule);
+}
+.act{
+  background:transparent;border:0;border-right:1px solid var(--rule);
+  color:var(--dim);font-family:var(--disp);font-size:10px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;
+  padding:9px 13px;cursor:pointer;transition:color .15s,background .15s;
+}
+.act:hover{color:var(--s2c);background:var(--panel-hi)}
+.act:focus-visible{outline:2px solid var(--s2c);outline-offset:-2px}
+.act-msg{
+  font-family:var(--disp);font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--ok);padding:0 12px;
+}
+.rpt{
+  margin:0;padding:14px 16px;border-top:1px solid var(--rule);
+  background:var(--void);color:var(--dim);
+  font-family:var(--mono);font-size:10px;line-height:1.55;
+  white-space:pre;overflow-x:auto;max-height:420px;overflow-y:auto;
+  -webkit-user-select:text;user-select:text;
+}
+
+.keys-toggle{
+  width:100%;text-align:left;background:transparent;border:0;border-top:1px solid var(--rule);
+  color:var(--dim);font-family:var(--disp);font-size:10px;letter-spacing:.14em;text-transform:uppercase;
+  padding:9px 16px;cursor:pointer;
+}
+.keys-toggle:hover{color:var(--s2c)}
+.keys-toggle:focus-visible{outline:2px solid var(--s2c);outline-offset:-2px}
+.keys{display:none;border-top:1px solid var(--rule);overflow-x:auto}
+.card.open .keys{display:block}
+table{border-collapse:collapse;width:100%;font-size:11px}
+th{
+  font-family:var(--disp);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dimmer);
+  text-align:right;padding:7px 8px;font-weight:600;border-bottom:1px solid var(--rule);white-space:nowrap;
+}
+th:first-child{text-align:left}
+td{padding:5px 8px;text-align:right;color:var(--dim);border-bottom:1px solid rgba(43,56,70,.5);white-space:nowrap}
+td:first-child{text-align:left;color:var(--text);white-space:normal;word-break:break-all}
+tr:last-child td{border-bottom:0}
+.dirtag{font-size:9px;letter-spacing:.06em;padding:1px 4px;border:1px solid currentColor}
+.d-S2C{color:var(--s2c)}
+.d-C2S{color:var(--c2s)}
+.d-MDATA{color:var(--mdata)}
+.d-mix{color:var(--dim)}
+.hot-cell{color:var(--alarm)}
+
+/* ---------- oversized ---------- */
+.section{max-width:1400px;margin:0 auto;padding:10px 20px 0}
+.section h2{font-size:16px;letter-spacing:.14em;padding-bottom:8px;border-bottom:1px solid var(--rule);color:var(--dim)}
+.section h2 em{font-style:normal;color:var(--alarm)}
+.ovr{background:var(--panel);border:1px solid var(--rule);border-top:0;overflow-x:auto}
+.notes{
+  max-width:1400px;margin:26px auto 0;padding:0 20px;
+  color:var(--dimmer);font-size:11px;line-height:1.7;
+}
+.notes b{color:var(--dim);font-weight:500}
+
+@media (max-width:640px){
+  .grid{grid-template-columns:1fr;padding:14px 12px}
+  .mast{padding:16px 12px 0}
+  .controls{padding:12px}
+  .section{padding:10px 12px 0}
+  .mast h1{font-size:21px}
+  .legend{margin-left:0;width:100%;padding-bottom:6px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ---------- print / PDF ----------
+   One mod per sheet: the card's visual block, then its full narrative report
+   underneath it, then a hard page break. The key TABLE is suppressed on paper
+   because the report's KEYS section already carries every column it has plus
+   the prose - printing both doubles the page count to say the same thing.
+   Palette flips to ink: the screen's saturated cyan/amber are unreadable on
+   white, so the direction colors darken rather than disappear. */
+@page{size:auto;margin:14mm 12mm}
+@media print{
+  :root{
+    --void:#fff;--panel:#fff;--panel-hi:#fff;
+    --rule:#b9b9b9;--rule-hi:#9a9a9a;
+    --text:#111;--dim:#3d3d3d;--dimmer:#6a6a6a;
+    --s2c:#0E7C99;--c2s:#A85F12;--mdata:#6B3FA0;--alarm:#B5342B;--ok:#1E7A47;
+  }
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{background:#fff;color:#111;font-size:10px;padding:0}
+  .intake,.controls,.acts,.keys-toggle,.trace-peak,.keys{display:none!important}
+
+  /* cover sheet: masthead, global trace, coverage */
+  .mast{position:static;background:#fff;border-bottom:2px solid #333;padding:0 0 10px;break-after:page}
+  .mast h1{font-size:30px}
+  .global-trace{height:70px}
+
+  .grid{display:block;max-width:none;padding:0}
+  .card{
+    border:1px solid #8a8a8a;margin:0;
+    break-after:page;break-inside:auto;
+  }
+  .card:last-child{break-after:auto}
+  /* the visual block stays whole; only the long report is allowed to reflow */
+  .card-head,.flags,.trace-wrap,.splitbar,.stats{break-inside:avoid}
+  .mod{font-size:16px}
+  .mod .self{color:#0E7C99}
+
+  .rpt,.rpt[hidden]{
+    display:block!important;
+    background:#fff;color:#1b1b1b;border-top:1px solid #8a8a8a;
+    max-height:none;overflow:visible;white-space:pre-wrap;
+    font-size:8.5px;line-height:1.5;
+  }
+
+  #oversized{break-before:page}
+  .section{padding:0;max-width:none}
+  .ovr{overflow:visible}
+  table{font-size:8.5px}
+  .notes{break-before:page;max-width:none;padding:0;color:#333;font-size:9px}
+}
+</style>
+</head>
+<body>
+
+<div id="intake" class="intake">
+  <div class="drop" id="drop">
+    <h2>Load a capture</h2>
+    <p>Drop any log from the forensic ring — it works out what it is given. <b>RD.WIRE</b> traffic captures, the envelope streams (<b>guardian</b>, <b>tripwire</b>, <b>lifecycle</b>), or an RDTally <b>summary.json.txt</b>. One JSON object per line.</p>
+    <p>Concatenate several envelope logs and drop the lot: correlating a tripwire against the traffic around it is the job, so they are read together and ranked by player. Everything is parsed in this browser; nothing is uploaded.</p>
+    <button class="btn" id="pick">Choose file</button>
+    <input type="file" id="file" accept=".txt,.json,.ndjson,.log" hidden>
+    <div class="err" id="err"></div>
+  </div>
+</div>
+
+<div id="report" hidden>
+  <header class="mast">
+    <div class="mast-row">
+      <h1 id="mastTitle">RD.WIRE</h1>
+      <div class="sub" id="mastsub"></div>
+      <div class="legend" id="legend">
+        <span><i class="swatch sw-s2c"></i>S2C down</span>
+        <span><i class="swatch sw-mdata"></i>ModData fan-out</span>
+        <span><i class="swatch sw-c2s"></i>C2S up</span>
+      </div>
+    </div>
+    <div class="global-wrap">
+      <svg class="global-trace" id="globalTrace" preserveAspectRatio="none" aria-label="Total wire throughput over the capture"></svg>
+      <div class="global-meta" id="globalMeta"></div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <label for="sort" id="sortLabel">Rank by</label>
+    <select id="sort">
+      <option value="est">Bytes</option>
+      <option value="calls">Calls</option>
+      <option value="peak">Peak rate</option>
+      <option value="winPct">Persistence</option>
+      <option value="perCall">Bytes / call</option>
+      <option value="name">Name</option>
+    </select>
+    <label for="q" id="qLabel">Filter</label>
+    <input type="search" id="q" placeholder="mod or key…">
+    <button class="btn spacer" id="printBtn">Print / PDF</button>
+    <button class="btn" id="exportAll">Save all reports</button>
+    <button class="btn" id="expandAll">Expand all</button>
+    <button class="btn" id="reset">New file</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+  <div id="oversized"></div>
+
+  <div class="notes" id="notes"></div>
+</div>
+
+<script>
+/* ==CORE_START== */
+/* Pure analysis core — no DOM. Takes raw NDJSON text, returns a report object. */
+function analyzeWire(text){
+  const windows=[], oversized=[], arms=[];
+  let parsed=0, skipped=0, otherEvents={};
+
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line) continue;
+    let o;
+    try{ o=JSON.parse(line); }catch(e){ skipped++; continue; }
+    parsed++;
+    if(o.e==='RD.WIRE_TOP' && o.x && Array.isArray(o.x.rows)) windows.push(o);
+    else if(o.e==='RD.WIRE_OVERSIZED' && o.x) oversized.push(o);
+    else if(o.e==='RD.WIRE_ARMED' && o.x) arms.push(o);
+    else otherEvents[o.e||'(no e)']=(otherEvents[o.e||'(no e)']||0)+1;
+  }
+  // An armed-but-silent capture is a real and distinct state, not a bad file:
+  // the probe wrote its birth certificate and the server then had nothing to
+  // report. Say so instead of "not a wire capture".
+  if(!windows.length && !oversized.length)
+    return {empty:true,armedOnly:arms.length>0,arms:arms.length,parsed,skipped};
+
+  const modOf=k=>{const i=String(k).indexOf(':');return i<0?'(unprefixed)':k.slice(0,i);};
+  const leafOf=k=>{const i=String(k).indexOf(':');return i<0?String(k):k.slice(i+1);};
+
+  // ---- probe configuration, taken from the emitter rather than guessed -----
+  // RD.WIRE_ARMED is the ONLY record that states the ceiling a payload was
+  // judged against, the top-N the sampler kept, and the dump cadence. Inferring
+  // the cap from max(shown) is right only when some window happened to fill it,
+  // and a hardcoded 8000 B ceiling is simply a different number from the 8192
+  // the server actually used. Both were quietly wrong before this block existed.
+  const armCfg=arms.map(a=>({dumpSec:a.x.dumpSec,topN:a.x.topN,oversized:a.x.oversized,t:a.t}));
+  const last=armCfg.length?armCfg[armCfg.length-1]:null;
+  const CEIL   =(last&&last.oversized>0)?last.oversized:8192;
+  const cfgTopN=(last&&last.topN>0)?last.topN:null;
+  const cfgDump=(last&&last.dumpSec>0)?last.dumpSec:30;
+  const cfgChanged=new Set(armCfg.map(c=>c.oversized+'/'+c.topN+'/'+c.dumpSec)).size>1;
+
+  const times=windows.map(w=>w.t).filter(t=>typeof t==='number');
+  const tMin=times.length?Math.min(...times):0;
+  const tMax=times.length?Math.max(...times):0;
+  const span=Math.max(tMax-tMin,1);
+  const days=windows.map(w=>w.d).filter(d=>typeof d==='number');
+  const dayMin=days.length?Math.min(...days):null;
+  const dayMax=days.length?Math.max(...days):null;
+
+  const NB=140;
+  const bucketOf=t=>Math.min(NB-1,Math.floor((t-tMin)/span*NB));
+  const bucketSecs=new Array(NB).fill(0);
+  const newBins=()=>Array.from({length:NB},()=>({S2C:0,C2S:0,MDATA:0,other:0}));
+  const DIRS=['S2C','C2S','MDATA'];
+
+  const mods=new Map();
+  const getMod=n=>{
+    if(!mods.has(n)) mods.set(n,{
+      name:n,est:0,calls:0,maxSingle:0,peakRate:0,
+      dirCalls:{},dirEst:{},windows:new Set(),winSecs:0,keys:new Map(),
+      bins:newBins(),truncatedWindows:0
+    });
+    return mods.get(n);
+  };
+
+  let totalEst=0,totalCalls=0,truncWindows=0,maxKeysSeen=0,shownMax=0,coveredSec=0;
+  const globalBins=newBins();
+  const wsByT=new Map();
+
+  for(const w of windows){
+    const b=bucketOf(w.t);
+    // windowSec is authoritative and already on the wire; the nominal cadence
+    // is only the fallback. Every rate below divides by real elapsed time.
+    const ws=(w.x&&typeof w.x.windowSec==='number'&&w.x.windowSec>0)?w.x.windowSec:cfgDump;
+    bucketSecs[b]+=ws; coveredSec+=ws;
+    wsByT.set(w.t,ws);
+    const keysN=w.x.keys??w.x.rows.length, shownN=w.x.shown??w.x.rows.length;
+    maxKeysSeen=Math.max(maxKeysSeen,keysN);
+    shownMax=Math.max(shownMax,shownN);
+    const truncated=keysN>shownN;
+    if(truncated) truncWindows++;
+
+    const perModRate={};
+    for(const r of w.x.rows){
+      const mn=modOf(r.key), m=getMod(mn);
+      const est=r.est||0, calls=r.calls||0;
+      const dir=DIRS.indexOf(r.dir)>=0?r.dir:(r.dir||'other');
+      const rate=r.estPerSec||(ws?est/ws:0);
+      m.est+=est; m.calls+=calls; totalEst+=est; totalCalls+=calls;
+      m.maxSingle=Math.max(m.maxSingle,r.maxSingle||0);
+      m.dirCalls[dir]=(m.dirCalls[dir]||0)+calls;
+      m.dirEst[dir]=(m.dirEst[dir]||0)+est;
+      // Presence is per WINDOW, so the seconds a mod was actually observed for
+      // accumulate once even when it holds several keys in the same window.
+      if(!m.windows.has(w.t)){ m.windows.add(w.t); m.winSecs+=ws; }
+      const slot=DIRS.indexOf(dir)>=0?dir:'other';
+      m.bins[b][slot]+=est;
+      globalBins[b][slot]+=est;
+      perModRate[mn]=(perModRate[mn]||0)+rate;
+
+      let k=m.keys.get(r.key);
+      if(!k){k={key:r.key,leaf:leafOf(r.key),est:0,calls:0,maxSingle:0,peakRate:0,dirs:new Set(),
+                windows:new Set(),winSecs:0,chunked:null,chunkBudget:null,chunks:0,streams:0,over:0,
+                partialWins:0,highRateWins:0};m.keys.set(r.key,k);}
+      k.est+=est;k.calls+=calls;
+      k.maxSingle=Math.max(k.maxSingle,r.maxSingle||0);
+      k.peakRate=Math.max(k.peakRate,rate);
+      k.dirs.add(dir);
+      if(!k.windows.has(w.t)){ k.windows.add(w.t); k.winSecs+=ws; }
+      if(r.chunked&&r.chunked!=='no') k.chunked=r.chunked;
+      if(r.chunkBudget) k.chunkBudget=r.chunkBudget;
+      k.chunks+=r.chunks||0; k.streams+=r.streams||0; k.over+=r.over||0;
+      // Row-level signals the emitter computes and used to have nowhere to land.
+      // `partial` here is the size walk running out of node budget on an ordinary
+      // window - the same news as an UNMEASURABLE alert, but it fires even when
+      // the per-key alert cap has already been spent.
+      if(r.partial)  k.partialWins++;
+      if(r.highRate) k.highRateWins++;
+    }
+    for(const mn in perModRate){
+      const m=mods.get(mn);
+      m.peakRate=Math.max(m.peakRate,perModRate[mn]);
+      if(truncated) m.truncatedWindows++;
+    }
+  }
+
+  // ---- coverage: sampled time is not wall time ----------------------------
+  // A capture that spans three hours but re-armed a dozen times has holes in
+  // it, and dividing total bytes by the wall span reports a mean for a server
+  // that was never being watched. Sum the windows instead and name the gap.
+  const sortedT=[...times].sort((a,b)=>a-b);
+  const firstWs=wsByT.get(sortedT[0])||cfgDump;
+  const wallSec=span+firstWs;
+  const gaps=[];
+  for(let i=1;i<sortedT.length;i++){
+    const g=sortedT[i]-sortedT[i-1]-(wsByT.get(sortedT[i])||cfgDump);
+    if(g>cfgDump) gaps.push({at:sortedT[i-1],sec:g});
+  }
+  const deadSec=Math.max(0,wallSec-coveredSec);
+  gaps.sort((a,b)=>b.sec-a.sec);
+
+  // oversized events fold into their mod's flag set
+  const ovrByKey=new Map();
+  for(const o of oversized){
+    const key=o.x.key||'(unknown)';
+    let e=ovrByKey.get(key);
+    if(!e){e={key,mod:modOf(key),leaf:leafOf(key),count:0,minEst:Infinity,maxEst:0,dirs:new Set(),
+              partial:0,reasons:{},classified:0,chunked:null,budget:null,ceiling:null,
+              seqMin:null,seqMax:null,totalMax:null,first:o.t,last:o.t};ovrByKey.set(key,e);}
+    e.count++;
+    e.minEst=Math.min(e.minEst,o.x.est||0);
+    e.maxEst=Math.max(e.maxEst,o.x.est||0);
+    e.dirs.add(o.x.dir||'?');
+    if(o.x.partial) e.partial++;
+    // reason is the emitter's own classification (RDWire.classify). Its absence
+    // means a capture from before chunk-awareness, NOT a healthy key - see the
+    // UNCLASSIFIED finding.
+    if(o.x.reason){ e.classified++; e.reasons[o.x.reason]=(e.reasons[o.x.reason]||0)+1; }
+    if(o.x.chunked&&o.x.chunked!=='no') e.chunked=o.x.chunked;
+    if(o.x.budget) e.budget=o.x.budget;
+    // `ceiling` is what the payload was ACTUALLY judged against - the declared
+    // budget where one exists, otherwise the probe's general limit. Without it
+    // an undeclared breach shows a blank budget and the reader has to guess.
+    if(o.x.ceiling) e.ceiling=Math.max(e.ceiling||0,o.x.ceiling);
+    if(typeof o.x.seq==='number'){
+      e.seqMin=e.seqMin==null?o.x.seq:Math.min(e.seqMin,o.x.seq);
+      e.seqMax=e.seqMax==null?o.x.seq:Math.max(e.seqMax,o.x.seq);
+    }
+    if(typeof o.x.total==='number') e.totalMax=Math.max(e.totalMax||0,o.x.total);
+    e.first=Math.min(e.first,o.t);e.last=Math.max(e.last,o.t);
+  }
+
+  const nWin=windows.length;
+  const out=[];
+  for(const m of mods.values()){
+    const s2cC=m.dirCalls.S2C||0, c2sC=m.dirCalls.C2S||0, mdC=m.dirCalls.MDATA||0;
+    const mdE=m.dirEst.MDATA||0;
+    const winCount=m.windows.size;
+    const winPct=nWin?winCount/nWin*100:0;
+    const perCall=m.calls?m.est/m.calls:0;
+    const meanRate=m.winSecs?m.est/m.winSecs:0;
+    const flags=[];
+
+    // Judge each key against ITS OWN ceiling. A stream that deliberately pages
+    // at 16 KB is not broken, and a stream that pages at 3 KB is broken at 4.
+    let worstOver=0,breaches=0,anyChunked=false,declBudget=null,chunkTotal=0,streamTotal=0,
+        partialWins=0,partialKeys=0,highRateWins=0,highRateKeys=0;
+    for(const k of m.keys.values()){
+      const ceil=k.chunkBudget||CEIL;
+      if(k.chunked){anyChunked=true;chunkTotal+=k.chunks;streamTotal+=k.streams;}
+      if(k.chunkBudget) declBudget=k.chunkBudget;
+      breaches+=k.over||0;
+      if(k.maxSingle>ceil) worstOver=Math.max(worstOver,k.maxSingle);
+      if(k.partialWins){ partialWins+=k.partialWins; partialKeys++; }
+      if(k.highRateWins){ highRateWins+=k.highRateWins; highRateKeys++; }
+    }
+    // Merge the emitter's classifications. These come from alert records, which
+    // are capped per key per window, so they say WHICH kind of breach happened;
+    // `breaches` above says how many actually did.
+    const reasons={};let unclassified=0;
+    for(const e of ovrByKey.values()){
+      if(e.mod!==m.name) continue;
+      for(const rs in e.reasons) reasons[rs]=(reasons[rs]||0)+e.reasons[rs];
+      if(!e.classified) unclassified+=e.count;
+      if(e.chunked) anyChunked=true;
+      if(e.budget) declBudget=declBudget||e.budget;
+    }
+    const nChunkOver=reasons['chunk-oversize']||0,nUnsplit=reasons['unsplit']||0,
+          nUnmeas=reasons['unmeasurable']||0;
+    const single=([nChunkOver,nUnsplit].filter(x=>x>0).length===1)&&breaches?breaches:null;
+
+    m._chunk={breaches,anyChunked,declBudget,chunkTotal,streamTotal,
+              nChunkOver,nUnsplit,nUnmeas,unclassified,worstOver,
+              partialWins,partialKeys,highRateWins,highRateKeys,
+              generalCeiling:CEIL,mdCalls:mdC,mdEst:mdE};
+
+    if(worstOver>0) flags.push({t:'OVERSIZE '+fmtBytes(worstOver),c:'f-alarm'});
+    if(nChunkOver)  flags.push({t:'CHUNK OVER BUDGET \u00d7'+(single||nChunkOver),c:'f-alarm'});
+    if(nUnsplit)    flags.push({t:'UNSPLIT \u00d7'+(single||nUnsplit),c:'f-alarm'});
+    if(nUnmeas)     flags.push({t:'UNMEASURABLE \u00d7'+nUnmeas,c:'f-alarm'});
+    if(unclassified)flags.push({t:'UNCLASSIFIED \u00d7'+unclassified,c:'f-alarm'});
+    // A partial walk in an ordinary window is the same news an UNMEASURABLE
+    // alert carries, and it survives the two-alerts-per-key-per-window cap that
+    // silences the alert path on a key which blows the node budget every time.
+    if(partialWins) flags.push({t:'PARTIAL WALK \u00d7'+fmtNum(partialWins),c:'f-alarm'});
+    // MDATA cost is already blob x recipients at the emitter, so this is the
+    // true wire weight of the fan-out, not the size of the table.
+    if(mdC) flags.push({t:'MODDATA \u00d7'+fmtNum(mdC),c:(totalEst&&mdE/totalEst>=0.1)?'f-alarm':'f-warn'});
+    if(anyChunked&&!worstOver&&!nChunkOver&&!nUnsplit) flags.push({t:'PAGED',c:'f-ok'});
+    if(highRateWins) flags.push({t:'HIGH RATE \u00d7'+fmtNum(highRateWins),c:'f-warn'});
+    if(c2sC>=25&&s2cC>=100&&s2cC/c2sC>=4) flags.push({t:'FANOUT ×'+(s2cC/c2sC).toFixed(1),c:'f-warn'});
+    if(c2sC===0&&s2cC>=50&&winPct>=20) flags.push({t:'PUSH ONLY',c:'f-warn'});
+    if(c2sC>=100&&s2cC>=100){
+      const r=s2cC/c2sC;
+      if(r>=0.9&&r<=1.1&&winPct>=50&&perCall<80) flags.push({t:'POLLING',c:'f-warn'});
+    }
+    if(m.calls>=5000&&perCall<120) flags.push({t:'CHATTY',c:'f-info'});
+    // A declared paged stream inside its budget has a large per-call size BY
+    // DESIGN - that number is the chunk budget, not state riding along on every
+    // send. Flagging it tells the author to go fix the thing they just fixed.
+    const pagedHealthy=anyChunked&&!worstOver&&!breaches;
+    if(m.calls>=25&&perCall>800&&!pagedHealthy) flags.push({t:'FAT '+fmtNum(perCall)+' B/CALL',c:'f-info'});
+    if(winCount>=10&&meanRate>0&&m.peakRate/meanRate>=20) flags.push({t:'BURSTY ×'+Math.round(m.peakRate/meanRate),c:'f-info'});
+    if(winCount>=20&&winPct>=65) flags.push({t:'ALWAYS ON',c:'f-mute'});
+    if(m.truncatedWindows/Math.max(winCount,1)>0.5&&m.est/totalEst<0.02) flags.push({t:'UNDERCOUNTED',c:'f-mute'});
+    if(!flags.length) flags.push({t:'no pattern flagged',c:'f-mute'});
+
+    out.push({
+      name:m.name,est:m.est,calls:m.calls,pct:totalEst?m.est/totalEst*100:0,
+      perCall,maxSingle:m.maxSingle,peakRate:m.peakRate,meanRate,
+      winCount,winPct,winSecs:m.winSecs,dirCalls:m.dirCalls,dirEst:m.dirEst,flags,bins:m.bins,
+      chunk:m._chunk,
+      keys:[...m.keys.values()].map(k=>({
+        key:k.key,leaf:k.leaf,est:k.est,calls:k.calls,maxSingle:k.maxSingle,
+        peakRate:k.peakRate,perCall:k.calls?k.est/k.calls:0,
+        dir:k.dirs.size===1?[...k.dirs][0]:'mixed',winCount:k.windows.size,winSecs:k.winSecs,
+        chunked:k.chunked,chunkBudget:k.chunkBudget,chunks:k.chunks,streams:k.streams,over:k.over,
+        partialWins:k.partialWins,highRateWins:k.highRateWins
+      })).sort((a,b)=>b.est-a.est)
+    });
+  }
+  out.sort((a,b)=>b.est-a.est);
+  out.forEach((m,i)=>{m.byteRank=i+1;});
+
+  return {
+    mods:out,
+    // Probe configuration, as stated by the emitter. `ceiling` is what every
+    // undeclared key was judged against and is the only honest threshold for
+    // the report's own "is this oversized" tests.
+    ceiling:CEIL, topN:cfgTopN, dumpSec:cfgDump, cfgChanged,
+    chunkAware:[...ovrByKey.values()].some(e=>e.classified>0)
+             || out.some(m=>m.chunk&&m.chunk.anyChunked),
+    totals:{est:totalEst,calls:totalCalls,windows:nWin,parsed,skipped,otherEvents,
+            tMin,tMax,span,truncWindows,maxKeysSeen,
+            // The sampler's cap, from the ARMED record where there is one. The
+            // observed max(shown) is only a floor on it: a cap of 25 that never
+            // saw more than 12 keys in a window reads back as 12.
+            shownCap:cfgTopN||shownMax, shownMax,
+            coveredSec,wallSec,deadSec,gaps,arms:arms.length,
+            dayMin,dayMax,
+            // `s` is RDLog's envelope season (RDSeasonServer.current()), not a
+            // session id. It was labelled "session" here for a while; it isn't.
+            seasons:[...new Set(windows.map(w=>w.s).filter(Boolean))],
+            emitters:[...new Set(windows.map(w=>w.m).filter(Boolean))],
+            versions:[...new Set(windows.map(w=>w.v).filter(v=>v!=null))]},
+    globalBins,bucketSecs,NB,
+    oversized:[...ovrByKey.values()].sort((a,b)=>b.count-a.count),
+    oversizedRaw:oversized
+  };
+}
+
+function fmtBytes(n){
+  if(n==null||isNaN(n)) return '—';
+  if(n<1024) return Math.round(n)+' B';
+  if(n<1048576) return (n/1024).toFixed(n<10240?2:1)+' KB';
+  return (n/1048576).toFixed(n<10485760?2:1)+' MB';
+}
+function fmtNum(n){
+  if(n==null||isNaN(n)||!isFinite(n)) return '—';
+  return Math.round(n).toLocaleString('en-US');
+}
+function fmtDur(s){
+  const h=Math.floor(s/3600),m=Math.round(s%3600/60);
+  return h?h+'h '+String(m).padStart(2,'0')+'m':m+'m';
+}
+
+/* ---- plain-text narrative report ---- */
+const RULE='-'.repeat(80), HRULE='='.repeat(80);
+function wrap(s,w,indent){
+  const pad=' '.repeat(indent||0),out=[];let line='';
+  for(const word of s.split(/\s+/)){
+    if(!line) line=word;
+    else if((line+' '+word).length<=w-(indent||0)) line+=' '+word;
+    else {out.push(pad+line);line=word;}
+  }
+  if(line) out.push(pad+line);
+  return out.join('\n');
+}
+function stamp(t){return new Date(t*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+
+function describeKey(k,m,R){
+  const bits=[],share=m.est?k.est/m.est*100:0,nWin=R.totals.windows;
+  bits.push(share.toFixed(share<1?2:1)+'% of this mod\u2019s traffic.');
+  if(k.dir==='S2C') bits.push('Server push.');
+  else if(k.dir==='C2S') bits.push('Client send.');
+  else if(k.dir==='MDATA') bits.push('Global ModData fan-out \u2014 the whole blob to every connection, already costed as blob \u00d7 recipients.');
+  else bits.push('Travels both directions.');
+  if(k.maxSingle>=R.ceiling) bits.push('Single messages reach '+fmtBytes(k.maxSingle)+', past the probe\u2019s '+fmtBytes(R.ceiling)+' ceiling.');
+  else if(k.perCall>800) bits.push('Heavy payload at '+fmtNum(k.perCall)+' B per message.');
+  else if(k.calls>=3000&&k.perCall<120) bits.push('High frequency, small payload \u2014 '+fmtNum(k.calls)+' messages at '+fmtNum(k.perCall)+' B.');
+  if(k.partialWins) bits.push('The size walk ran out of budget in '+fmtNum(k.partialWins)+' window'+(k.partialWins===1?'':'s')+', so these bytes are a floor.');
+  if(k.highRateWins) bits.push('Emitter flagged it above 20 calls/sec in '+fmtNum(k.highRateWins)+' window'+(k.highRateWins===1?'':'s')+'.');
+  if(nWin&&k.winCount/nWin>=0.6) bits.push('Runs continuously across the capture.');
+  else if(nWin&&k.winCount/nWin<=0.05&&k.est>0) bits.push('Only appears in '+fmtNum(k.winCount)+' window'+(k.winCount===1?'':'s')+' \u2014 event-driven, not ambient.');
+  // Against seconds actually sampled, not window count x a nominal cadence.
+  const meanRate=k.winSecs?k.est/k.winSecs:0;
+  if(meanRate>0&&k.peakRate/meanRate>=10) bits.push('Arrives in bursts; peak is '+Math.round(k.peakRate/meanRate)+'\u00d7 its own average.');
+  return bits.join(' ');
+}
+
+const FINDING_TEXT={
+  'OVERSIZE':m=>'A single message reached '+fmtBytes(m.chunk.worstOver||m.maxSingle)+', past the ceiling that applies to its key'+(m.chunk.declBudget?' (a declared chunk budget of '+fmtBytes(m.chunk.declBudget)+')':' (the probe’s general limit of '+fmtBytes(m.chunk.generalCeiling)+')')+'. Payloads this large stall the tick when they serialize and are the usual source of lag spikes that look like server-side freezes.',
+  'CHUNK OVER BUDGET':m=>'This key IS paged \u2014 '+(m.chunk.chunkTotal?fmtNum(m.chunk.chunkTotal)+' chunks'+(m.chunk.streamTotal?' across '+fmtNum(m.chunk.streamTotal)+' streams':''):'the emitter declares it chunked')+' \u2014 and its chunks are individually too big'+(m.chunk.declBudget?', against a declared budget of '+fmtBytes(m.chunk.declBudget):'')+'. The chunker is running; its budget is wrong. This is usually one constant, and the common cause is a budget counted in ROWS rather than bytes \u2014 fixed row counts drift into oversized payloads the moment a row grows.',
+  'UNSPLIT':m=>'Large payloads going out whole, with no paging declared and no seq/total on the wire. Unlike a budget breach this needs a chunker written, not retuned: split the payload at the emitter and carry seq/total so the receiver can reassemble and so this report can tell the two cases apart.',
+  'UNMEASURABLE':m=>'The size estimator ran out of walk budget before finishing these payloads, so every byte figure for them is a floor rather than an estimate. A payload too big to measure is its own finding \u2014 treat the numbers as lower bounds and look at what is being serialized.',
+  'UNCLASSIFIED':m=>'Oversized payloads were logged, but this capture predates chunk classification so there is no way to tell a correctly-paged chunk from an unsplit blob. Do NOT read the partial flag as an answer: partial means the size walk ran out of budget, never that a payload was split, and it reads false for healthy and broken keys alike. Re-capture with a chunk-aware emitter to classify these.',
+  'PARTIAL WALK':m=>'The size estimator hit its node budget on '+fmtNum(m.chunk.partialWins)+' sampled window'+(m.chunk.partialWins===1?'':'s')+' across '+fmtNum(m.chunk.partialKeys)+' key'+(m.chunk.partialKeys===1?'':'s')+', so every byte figure for those keys is a floor rather than an estimate. This comes from the top-N rows, not the alert stream, so it is visible even after the two-alerts-per-key-per-window cap has gone quiet — a key that blows the walk budget on every single send alerts twice and then falls silent, while this count keeps rising. A payload too big to finish measuring is its own finding.',
+  'MODDATA':m=>'Global ModData fan-out: '+fmtNum(m.chunk.mdCalls)+' transmit'+(m.chunk.mdCalls===1?'':'s')+' worth '+fmtBytes(m.chunk.mdEst)+' on the wire. This is not a normal send. ModData.transmit pushes the ENTIRE table to EVERY connection with no cap and no relevance filter, so the figure here is already blob × recipients — the table itself is that number divided by the player count. Nothing else in the stack can see this path. Shrink the blob, split it per-player, or stop transmitting on a timer.',
+  'HIGH RATE':m=>'The emitter flagged this mod above 20 calls per second in '+fmtNum(m.chunk.highRateWins)+' key-window'+(m.chunk.highRateWins===1?'':'s')+' across '+fmtNum(m.chunk.highRateKeys)+' key'+(m.chunk.highRateKeys===1?'':'s')+'. That is the emitter’s own judgement, not this report’s heuristic, and it fires on short captures where a total-call threshold never would. Rate that high is dispatch cost regardless of payload size.',
+  'PAGED':m=>'Declared as a paged stream and every chunk landed inside its budget'+(m.chunk.declBudget?' of '+fmtBytes(m.chunk.declBudget):'')+(m.chunk.chunkTotal?' \u2014 '+fmtNum(m.chunk.chunkTotal)+' chunks'+(m.chunk.streamTotal?' across '+fmtNum(m.chunk.streamTotal)+' streams':''):'')+'. Volume may still be worth attention, but the transport shape is correct.',
+  'FANOUT':m=>'The server sends '+ (( (m.dirCalls.C2S||0) ? ((m.dirCalls.S2C||0)/(m.dirCalls.C2S||1)).toFixed(1) : '?') )+' messages for every one a client sends. That is broadcast amplification: one player\u2019s action is being relayed to everyone regardless of whether they can see it. Add a proximity or relevance filter before the send loop.',
+  'PUSH ONLY':m=>'The server sends with no matching client request path in this capture. Traffic is on a timer rather than driven by demand. Confirm the interval is necessary and that it stops when nobody is listening.',
+  'POLLING':m=>'Requests and responses run one-to-one at a steady beat with small payloads. Clients are asking \u201canything new?\u201d on a loop. Converting to push-on-change removes the traffic entirely and frees a slot in the sampler\u2019s top-N window.',
+  'CHATTY':m=>'High message count at small size \u2014 '+fmtNum(m.calls)+' calls averaging '+fmtNum(m.perCall)+' B. Bandwidth cost is low but per-message overhead and handler dispatch are not. Batching adjacent sends is the win here.',
+  'FAT':m=>'Averaging '+fmtNum(m.perCall)+' B per message. Something large is riding along on every send. Check whether full state is being transmitted where an identifier plus a client-side cache would do.',
+  'BURSTY':m=>'Peak throughput is '+Math.round(m.peakRate/Math.max(m.meanRate,1))+'\u00d7 this mod\u2019s own average. Sustained load is fine; the spikes are what players feel.',
+  'ALWAYS ON':m=>'Present in '+Math.round(m.winPct)+'% of sampled windows. Never idles. Low priority to fix on bandwidth grounds, but it permanently occupies a slot in the capture\u2019s top-N list, which hides quieter mods.',
+  'UNDERCOUNTED':m=>'This mod sat below the sampler\u2019s cutoff in most windows where it appeared. The figures above are floors, not totals. Raise the sampler\u2019s top-N limit before drawing conclusions about it.',
+  'no pattern':m=>'No traffic pattern crossed a heuristic threshold. Volume alone may still warrant attention \u2014 review the key table above on its merits.'
+};
+
+function buildModReport(m,R){
+  const T=R.totals,L=[];
+  const s2cC=m.dirCalls.S2C||0,c2sC=m.dirCalls.C2S||0,mdC=m.dirCalls.MDATA||0;
+  const s2cE=m.dirEst.S2C||0,c2sE=m.dirEst.C2S||0,mdE=m.dirEst.MDATA||0;
+  const other=m.calls-s2cC-c2sC-mdC;
+
+  L.push(HRULE);
+  L.push(' RD.WIRE MOD REPORT \u2014 '+m.name);
+  L.push(' '+[T.seasons.length?'season '+T.seasons.join(', '):'',T.emitters.join(', '),T.versions.length?'schema v'+T.versions.join('/'):''].filter(Boolean).join(' \u00b7 '));
+  L.push(' '+stamp(T.tMin)+' \u2192 '+stamp(T.tMax)+'  ('+fmtDur(T.wallSec)+' wall, '+fmtDur(T.coveredSec)+' sampled, '+fmtNum(T.windows)+' windows)');
+  if(T.dayMin!=null) L.push(' game day '+T.dayMin.toFixed(2)+' \u2192 '+T.dayMax.toFixed(2));
+  L.push(' probe: '+fmtNum(R.dumpSec)+'s windows, top '+(R.topN?fmtNum(R.topN):'unknown')
+    +', oversize ceiling '+fmtBytes(R.ceiling)+(T.arms?', armed '+fmtNum(T.arms)+'\u00d7':'')
+    +(R.cfgChanged?' (CONFIG CHANGED MID-CAPTURE)':''));
+  L.push(HRULE);
+  L.push('');
+  const row=(k,v)=>L.push('  '+k.padEnd(14)+v);
+  row('RANK',m.byteRank+' of '+R.mods.length+' by bytes');
+  row('VOLUME',fmtBytes(m.est)+'   ('+m.pct.toFixed(m.pct<0.1?3:1)+'% of all captured traffic)');
+  row('CALLS',fmtNum(m.calls)+' messages, '+fmtNum(m.perCall)+' B per call average');
+  row('DIRECTION',fmtNum(s2cC)+' S2C / '+fmtNum(c2sC)+' C2S'
+      +(mdC?' / '+fmtNum(mdC)+' MDATA':'')+(other?' / '+fmtNum(other)+' other':'')
+      +(c2sC&&s2cC?'   ('+(s2cC/c2sC).toFixed(1)+' server sends per client send)':''));
+  row('',fmtBytes(s2cE)+' down / '+fmtBytes(c2sE)+' up'+(mdE?' / '+fmtBytes(mdE)+' ModData fan-out':''));
+  row('PRESENCE',fmtNum(m.winCount)+' of '+fmtNum(T.windows)+' windows ('+Math.round(m.winPct)+'%), '+fmtDur(m.winSecs||0)+' sampled');
+  row('RATE','mean '+fmtNum(m.meanRate)+' B/s while active, peak '+fmtNum(m.peakRate)+' B/s');
+  row('LARGEST MSG',fmtBytes(m.maxSingle)+'   (ceiling '+fmtBytes(R.ceiling)+')');
+  L.push('');
+  L.push('KEYS  ('+m.keys.length+')');
+  L.push(RULE);
+  for(const k of m.keys){
+    L.push('  '+k.leaf);
+    L.push('    '+[k.dir,fmtBytes(k.est),fmtNum(k.calls)+' calls',fmtNum(k.perCall)+' B/call',
+                   'max '+fmtNum(k.maxSingle),'peak '+fmtNum(k.peakRate)+' B/s'].join(' \u00b7 '));
+    if(k.chunked){
+      L.push('    paging: '+k.chunked+(k.chunkBudget?', budget '+fmtBytes(k.chunkBudget):', no declared budget')
+             +(k.chunks?' \u00b7 '+fmtNum(k.chunks)+' chunks':'')
+             +(k.streams?' \u00b7 '+fmtNum(k.streams)+' streams':'')
+             +' \u00b7 '+(k.over?fmtNum(k.over)+' over budget':'none over budget'));
+    } else if(k.over){
+      L.push('    not paged \u00b7 '+fmtNum(k.over)+' over the '+fmtBytes(R.ceiling)+' ceiling');
+    }
+    if(k.partialWins||k.highRateWins){
+      L.push('    emitter flags: '+[k.partialWins?'partial size walk in '+fmtNum(k.partialWins)+' window'+(k.partialWins===1?'':'s')+' (bytes are floors)':'',
+                                    k.highRateWins?'>20 calls/sec in '+fmtNum(k.highRateWins)+' window'+(k.highRateWins===1?'':'s'):''].filter(Boolean).join(' \u00b7 '));
+    }
+    L.push(wrap(describeKey(k,m,R),80,4));
+    L.push('');
+  }
+  L.push('FINDINGS');
+  L.push(RULE);
+  for(const f of m.flags){
+    const base=Object.keys(FINDING_TEXT).find(p=>f.t.toUpperCase().startsWith(p)||f.t.startsWith(p));
+    L.push('  ['+f.t.toUpperCase()+']');
+    L.push(wrap(base?FINDING_TEXT[base](m):'No description available.',80,4));
+    L.push('');
+  }
+  if(T.truncWindows){
+    L.push('SAMPLING NOTE');
+    L.push(RULE);
+    L.push(wrap('The sampler kept at most '+fmtNum(T.shownCap)+' keys per window'
+      +(R.topN?' (WireProbeTopN='+fmtNum(R.topN)+')':'')+' while observing up to '
+      +fmtNum(T.maxKeysSeen)+'. '+fmtNum(T.truncWindows)+' of '+fmtNum(T.windows)
+      +' windows lost their tail, so any key that ranked below the cutoff is under-reported here.',80,2));
+    L.push('');
+  }
+  // Coverage is a finding in its own right: a re-arming probe leaves holes, and
+  // every "per second" number in this file is against sampled time, not wall
+  // time, precisely so those holes cannot quietly halve the reported rate.
+  if(T.deadSec>1&&T.wallSec>0){
+    L.push('COVERAGE NOTE');
+    L.push(RULE);
+    L.push(wrap('The probe armed '+fmtNum(T.arms)+' time'+(T.arms===1?'':'s')+' and sampled '
+      +fmtDur(T.coveredSec)+' of a '+fmtDur(T.wallSec)+' wall span \u2014 '
+      +Math.round(T.coveredSec/T.wallSec*100)+'% coverage, with '+fmtDur(T.deadSec)+' unobserved across '
+      +fmtNum(T.gaps.length)+' gap'+(T.gaps.length===1?'':'s')
+      +(T.gaps.length?' (largest '+fmtDur(T.gaps[0].sec)+')':'')
+      +'. Rates here are per sampled second. Anything that happened in the gaps is not in this report at all.',80,2));
+    L.push('');
+  }
+  L.push(HRULE);
+  L.push(' From '+fmtNum(T.parsed)+' captured lines. Byte counts are the emitter\u2019s estimates.');
+  L.push(HRULE);
+  return L.join('\n');
+}
+
+function buildAllReports(R){
+  return R.mods.map(m=>buildModReport(m,R)).join('\n\n\n');
+}
+/* ==CORE_END== */
+
+/* ---------- rendering ---------- */
+let REPORT=null;
+const $=id=>document.getElementById(id);
+
+// Bipolar throughput trace. Outbound sits below the rail, inbound above, and
+// each side STACKS its directions rather than summing them into one bar - the
+// old version folded everything that was not S2C or C2S into the C2S total, so
+// a ModData fan-out (server -> every client) drew as client upload.
+const TRACE_DOWN=[['S2C','var(--s2c)'],['MDATA','var(--mdata)']];
+const TRACE_UP  =[['C2S','var(--c2s)'],['other','var(--dimmer)']];
+function traceSVG(svg,bins,bucketSecs,height){
+  const NB=bins.length,H=height,mid=H/2,W=1000;
+  const rates=[];let peak=0;
+  for(let b=0;b<NB;b++){
+    const s=bucketSecs[b]||0;
+    const d=TRACE_DOWN.map(([k])=>s?(bins[b][k]||0)/s:0);
+    const u=TRACE_UP.map(([k])=>s?(bins[b][k]||0)/s:0);
+    rates.push({d,u});
+    peak=Math.max(peak,d.reduce((a,x)=>a+x,0),u.reduce((a,x)=>a+x,0));
+  }
+  const bw=W/NB;
+  let html='<line x1="0" y1="'+mid+'" x2="'+W+'" y2="'+mid+'" stroke="var(--rule)" stroke-width="1" vector-effect="non-scaling-stroke"/>';
+  if(peak>0){
+    for(let b=0;b<NB;b++){
+      const x=(b*bw).toFixed(2),w=Math.max(bw-0.6,0.4).toFixed(2);
+      let yd=mid;
+      rates[b].d.forEach((v,i)=>{
+        const h=v/peak*(mid-2);
+        if(h>0.15){html+='<rect x="'+x+'" y="'+yd.toFixed(2)+'" width="'+w+'" height="'+h.toFixed(2)+'" fill="'+TRACE_DOWN[i][1]+'"/>';yd+=h;}
+      });
+      let yu=mid;
+      rates[b].u.forEach((v,i)=>{
+        const h=v/peak*(mid-2);
+        if(h>0.15){yu-=h;html+='<rect x="'+x+'" y="'+yu.toFixed(2)+'" width="'+w+'" height="'+h.toFixed(2)+'" fill="'+TRACE_UP[i][1]+'"/>';}
+      });
+    }
+  }
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);
+  svg.innerHTML=html;
+  return peak;
+}
+
+function modCard(m,i){
+  const el=document.createElement('article');
+  el.className='card';
+  el.dataset.name=m.name.toLowerCase();
+  el.dataset.keys=m.keys.map(k=>k.key.toLowerCase()).join(' ');
+  el._mod=m;   // print pass needs the model back off the DOM node
+
+  const s2cE=m.dirEst.S2C||0,c2sE=m.dirEst.C2S||0,mdE=m.dirEst.MDATA||0;
+  const othE=m.est-s2cE-c2sE-mdE;
+  const pc=v=>m.est?(v/m.est*100).toFixed(3)+'%':'0%';
+  const isRFTD=/^RFTD/i.test(m.name);
+  const CEIL=REPORT.ceiling;
+
+  el.innerHTML=`
+    <div class="card-head">
+      <div class="rank">${String(i+1).padStart(2,'0')}</div>
+      <div class="card-id">
+        <div class="mod ${isRFTD?'self':''}">${esc(m.name)}</div>
+        <div class="share">${m.keys.length} key${m.keys.length===1?'':'s'} · ${m.pct.toFixed(m.pct<0.1?2:1)}% of wire</div>
+      </div>
+      <div class="bytes-big">${fmtBytes(m.est)}<span>estimated</span></div>
+    </div>
+    <div class="flags">${m.flags.map(f=>`<span class="flag ${f.c}">${esc(f.t)}</span>`).join('')}</div>
+    <div class="trace-wrap">
+      <svg class="trace" preserveAspectRatio="none" role="img" aria-label="Throughput trace for ${esc(m.name)}"></svg>
+      <div class="trace-peak"></div>
+    </div>
+    <div class="splitbar">
+      <i style="width:${pc(s2cE)};background:var(--s2c)"></i>
+      <i style="width:${pc(mdE)};background:var(--mdata)"></i>
+      <i style="width:${pc(c2sE)};background:var(--c2s)"></i>
+      <i style="width:${pc(othE)};background:var(--dimmer)"></i>
+    </div>
+    <div class="stats">
+      <div class="stat"><k>Calls</k><v>${fmtNum(m.calls)}</v></div>
+      <div class="stat"><k>Bytes / call</k><v>${fmtNum(m.perCall)}</v></div>
+      <div class="stat"><k>Max single</k><v class="${m.maxSingle>=CEIL?'hot-cell':''}">${fmtBytes(m.maxSingle)}</v></div>
+      <div class="stat"><k>Peak rate</k><v>${fmtNum(m.peakRate)} B/s</v></div>
+      <div class="stat"><k>Windows</k><v>${fmtNum(m.winCount)} · ${Math.round(m.winPct)}%</v></div>
+      <div class="stat"><k>${(m.dirCalls.MDATA||0)?'S2C / C2S / MD':'S2C / C2S'}</k><v>${fmtNum(m.dirCalls.S2C||0)} / ${fmtNum(m.dirCalls.C2S||0)}${(m.dirCalls.MDATA||0)?' / '+fmtNum(m.dirCalls.MDATA):''}</v></div>
+    </div>
+    <button class="keys-toggle" aria-expanded="false">▸ ${m.keys.length} key${m.keys.length===1?'':'s'}</button>
+    <div class="keys">
+      <table>
+        <thead><tr><th>Key</th><th>Dir</th><th>Bytes</th><th>Calls</th><th>B/call</th><th>Max</th><th>Peak B/s</th><th>Wins</th></tr></thead>
+        <tbody>${m.keys.map(k=>`<tr>
+          <td>${esc(k.leaf)}</td>
+          <td><span class="dirtag d-${['S2C','C2S','MDATA'].indexOf(k.dir)>=0?esc(k.dir):'mix'}">${esc(k.dir)}</span></td>
+          <td>${fmtBytes(k.est)}</td>
+          <td>${fmtNum(k.calls)}</td>
+          <td>${fmtNum(k.perCall)}</td>
+          <td class="${k.maxSingle>=CEIL?'hot-cell':''}">${fmtNum(k.maxSingle)}</td>
+          <td>${fmtNum(k.peakRate)}</td>
+          <td>${fmtNum(k.winCount)}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div class="acts">
+      <button class="act" data-act="view">Read report</button>
+      <button class="act" data-act="copy">Copy</button>
+      <button class="act" data-act="save">Save .txt</button>
+      <span class="act-msg" role="status" aria-live="polite"></span>
+    </div>
+    <pre class="rpt" hidden></pre>`;
+
+  const svg=el.querySelector('.trace');
+  const peak=traceSVG(svg,m.bins,REPORT.bucketSecs,62);
+  el.querySelector('.trace-peak').textContent='full scale '+fmtNum(peak)+' B/s';
+
+  const btn=el.querySelector('.keys-toggle');
+  btn.addEventListener('click',()=>{
+    const open=el.classList.toggle('open');
+    btn.setAttribute('aria-expanded',String(open));
+    btn.textContent=(open?'▾ ':'▸ ')+m.keys.length+' key'+(m.keys.length===1?'':'s');
+  });
+
+  const pre=el.querySelector('.rpt'), msg=el.querySelector('.act-msg');
+  el.querySelector('.acts').addEventListener('click',async e=>{
+    const act=e.target.dataset.act;
+    if(!act) return;
+    const txt=buildModReport(m,REPORT);
+    if(act==='view'){
+      pre.textContent=txt;
+      const open=pre.hidden;
+      pre.hidden=!open;
+      e.target.textContent=open?'Hide report':'Read report';
+      return;
+    }
+    if(act==='save'){ saveText(txt,'wire-'+safeName(m.name)+'.txt'); flash(msg,'Saved'); return; }
+    if(act==='copy'){
+      const ok=await copyText(txt);
+      if(ok) flash(msg,'Copied');
+      else { pre.textContent=txt; pre.hidden=false; flash(msg,'Clipboard blocked — select the text below'); }
+    }
+  });
+  return el;
+}
+
+function safeName(s){return String(s).replace(/[^A-Za-z0-9._-]+/g,'_');}
+function flash(node,text){
+  node.textContent=text;
+  clearTimeout(node._t);
+  node._t=setTimeout(()=>{node.textContent='';},2600);
+}
+async function copyText(txt){
+  try{
+    if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(txt);return true;}
+  }catch(e){}
+  try{
+    const ta=document.createElement('textarea');
+    ta.value=txt; ta.setAttribute('readonly','');
+    ta.style.cssText='position:fixed;top:0;left:-9999px';
+    document.body.appendChild(ta); ta.select();
+    const ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  }catch(e){ return false; }
+}
+function saveText(txt,name){
+  const blob=new Blob([txt],{type:'text/plain;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=name;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+/* ===========================================================================
+   MULTI-STREAM INTAKE
+
+   SpyMaster started as a reader for one thing: RD.WIRE traffic captures. The
+   forensic ring now writes several streams in the SAME envelope form - one JSON
+   object per line, `e` naming the event - so rather than a page per stream this
+   sniffs what it was given and picks a reader.
+
+   Three families, and they want genuinely different views:
+
+     wire      RD.WIRE_*   throughput per mod. Bytes over time. The original.
+     envelope  RD.CMD      every inbound client command, with cost   (guardian)
+               RD.TRIP     tripwires, carrying their own severity    (tripwire)
+               RD.LIFE     faction/safehouse acts                    (lifecycle)
+     tally     RDTally's summary doc - already aggregated, not a stream at all
+
+   The envelope streams are read TOGETHER on purpose. Correlating a tripwire
+   against the traffic around it is the actual job, and a page that made you open
+   two files to do it would be the wrong tool. Concatenate the logs and drop the
+   lot; the subject of a card is the PLAYER, because on these streams "who" is
+   the question and "what" is the detail.
+   =========================================================================== */
+
+const EV_ENVELOPE={'RD.CMD':1,'RD.TRIP':1,'RD.LIFE':1};
+
+/* Decide by counting what is actually in the file rather than by filename: these
+   logs get renamed, concatenated and pasted, and the extension is the least
+   reliable thing about them. A file that is mostly one family is read as that
+   family; ties go to wire, which is the stricter parser. */
+function sniff(text){
+  let wire=0, env=0, tally=0, lines=0;
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line) continue;
+    if(++lines>4000) break;          // a sample is enough to classify
+    let o; try{ o=JSON.parse(line); }catch(e){ continue; }
+    if(o && typeof o.e==='string'){
+      if(o.e.indexOf('RD.WIRE')===0) wire++;
+      else if(EV_ENVELOPE[o.e]) env++;
+    }
+    // A tally doc has no `e`; it is the summary object itself.
+    else if(o && Array.isArray(o.rows) && typeof o.stream==='string') tally++;
+  }
+  if(!wire && !env && !tally) return null;
+  if(tally>=wire && tally>=env) return 'tally';
+  if(wire>=env) return 'wire';
+  return 'envelope';
+}
+
+/* ---------------------------------------------------------------------------
+   Envelope reader
+   --------------------------------------------------------------------------- */
+
+const EV_COLOR={'RD.CMD':'var(--s2c)','RD.LIFE':'var(--mdata)','RD.TRIP':'var(--c2s)'};
+const EV_LABEL={'RD.CMD':'commands','RD.TRIP':'tripwires','RD.LIFE':'lifecycle'};
+
+/* What makes two records "the same thing happening again". Mirrors RDTally's
+   fingerprint deliberately, so a card here and a row in a summary doc agree
+   about what they are counting. */
+function envKey(o){
+  const x=o.x||{};
+  if(o.e==='RD.CMD')  return (x.module!=null&&x.command!=null)?(x.module+':'+x.command):'(unkeyed)';
+  if(o.e==='RD.TRIP') return x.code||'(uncoded)';
+  if(o.e==='RD.LIFE') return x.act||'(unacted)';
+  return o.e||'(no e)';
+}
+
+function analyzeEnvelopes(text){
+  const NB=140;
+  const recs=[];
+  let parsed=0,skipped=0,other={};
+  const seasons=new Set(),versions=new Set(),emitters=new Set();
+  let dayMin=null,dayMax=null;
+
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line) continue;
+    let o; try{ o=JSON.parse(line); }catch(e){ skipped++; continue; }
+    if(!o||!EV_ENVELOPE[o.e]){ if(o&&o.e) other[o.e]=(other[o.e]||0)+1; continue; }
+    parsed++;
+    recs.push(o);
+    if(o.s!=null) seasons.add(o.s);
+    if(o.v!=null) versions.add(o.v);
+    if(o.m) emitters.add(o.m);
+    if(typeof o.d==='number'){ dayMin=(dayMin==null)?o.d:Math.min(dayMin,o.d); dayMax=(dayMax==null)?o.d:Math.max(dayMax,o.d); }
+  }
+  if(!recs.length) return {empty:true,parsed,skipped,other};
+
+  const times=recs.map(r=>r.t).filter(t=>typeof t==='number');
+  const tMin=times.length?Math.min(...times):0;
+  const tMax=times.length?Math.max(...times):0;
+  const span=Math.max(tMax-tMin,1);
+  const bucketOf=t=>Math.min(NB-1,Math.max(0,Math.floor((t-tMin)/span*NB)));
+  const newBins=()=>Array.from({length:NB},()=>({'RD.CMD':0,'RD.TRIP':0,'RD.LIFE':0,imp:0}));
+
+  const globalBins=newBins();
+  const subs=new Map();
+  const evCount={}; let impTotal=0, repTotal=0, estTotal=0;
+
+  const getSub=n=>{
+    if(!subs.has(n)) subs.set(n,{
+      name:n,total:0,est:0,byEvent:{},keys:new Map(),bins:newBins(),
+      first:null,last:null,access:new Set(),sids:new Set(),
+      impossible:0,reported:0,samples:[],partial:0
+    });
+    return subs.get(n);
+  };
+
+  for(const o of recs){
+    const x=o.x||{};
+    const who=o.u||'(no player)';
+    const s=getSub(who);
+    const b=bucketOf(o.t||tMin);
+
+    s.total++; evCount[o.e]=(evCount[o.e]||0)+1;
+    s.byEvent[o.e]=(s.byEvent[o.e]||0)+1;
+    s.bins[b][o.e]++; globalBins[b][o.e]++;
+    if(o.t!=null){ s.first=(s.first==null)?o.t:Math.min(s.first,o.t); s.last=(s.last==null)?o.t:Math.max(s.last,o.t); }
+    if(x.access) s.access.add(String(x.access));
+    if(x.sid) s.sids.add(String(x.sid));
+
+    const est=Number(x.est)||0;
+    s.est+=est; estTotal+=est;
+    if(x.partial) s.partial++;
+
+    if(o.e==='RD.TRIP'){
+      if(x.severity==='impossible'){ s.impossible++; impTotal++; s.bins[b].imp++; globalBins[b].imp++; }
+      else { s.reported++; repTotal++; }
+      // Tripwire text is the finding. Keep a few verbatim rather than a count.
+      if(s.samples.length<12 && x.text) s.samples.push({t:o.t,sev:x.severity,code:x.code,text:String(x.text)});
+    }
+
+    const k=envKey(o);
+    let row=s.keys.get(k);
+    if(!row){ row={key:k,n:0,est:0,ev:o.e,first:o.t,last:o.t,imp:0}; s.keys.set(k,row); }
+    row.n++; row.est+=est;
+    if(o.t!=null){ row.first=Math.min(row.first??o.t,o.t); row.last=Math.max(row.last??o.t,o.t); }
+    if(o.e==='RD.TRIP'&&x.severity==='impossible') row.imp++;
+  }
+
+  const subjects=[...subs.values()].map(s=>{
+    s.keys=[...s.keys.values()].sort((a,b)=>b.n-a.n);
+    s.pct=recs.length?s.total/recs.length*100:0;
+    s.perMin=(s.first!=null&&s.last!=null&&s.last>s.first)?s.total/((s.last-s.first)/60):null;
+    s.accessLabel=[...s.access].filter(a=>a&&a!=='').join('/')||'none';
+
+    const F=[];
+    if(s.impossible) F.push({t:'impossible ×'+fmtNum(s.impossible),c:'f-alarm'});
+    if(s.reported)   F.push({t:'reported ×'+fmtNum(s.reported),c:'f-warn'});
+    if(s.accessLabel!=='none') F.push({t:'access '+s.accessLabel,c:'f-info'});
+    if(s.byEvent['RD.LIFE']) F.push({t:'lifecycle ×'+fmtNum(s.byEvent['RD.LIFE']),c:'f-info'});
+    if(s.sids.size>1) F.push({t:'multiple steam ids',c:'f-alarm'});
+    if(s.partial) F.push({t:'partial size walk ×'+fmtNum(s.partial),c:'f-mute'});
+    if(!F.length) F.push({t:'nominal',c:'f-ok'});
+    s.flags=F;
+    return s;
+  });
+
+  return {
+    kind:'envelope',
+    subjects, globalBins, NB,
+    events:evCount, impTotal, repTotal, estTotal,
+    totals:{
+      parsed,skipped,other,tMin,tMax,
+      wallSec:Math.max(tMax-tMin,0),
+      records:recs.length,
+      seasons:[...seasons],versions:[...versions],emitters:[...emitters],
+      dayMin,dayMax,
+      players:subjects.length
+    }
+  };
+}
+
+/* ---------------------------------------------------------------------------
+   Tally reader - RDTally's summary doc. Already aggregated; the page's job is
+   to rank and show share, not to recompute anything.
+   --------------------------------------------------------------------------- */
+function analyzeTally(text){
+  const docs=[];
+  let skipped=0;
+  for(const raw of text.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line) continue;
+    let o; try{ o=JSON.parse(line); }catch(e){ skipped++; continue; }
+    if(o&&Array.isArray(o.rows)&&typeof o.stream==='string') docs.push(o);
+  }
+  if(!docs.length) return {empty:true,skipped};
+  // Concatenated summaries: the newest doc per stream wins - each is a whole
+  // rewrite, so an older one is superseded rather than additive.
+  const byStream=new Map();
+  for(const d of docs){
+    const prev=byStream.get(d.stream);
+    if(!prev||(d.since||0)>=(prev.since||0)) byStream.set(d.stream,d);
+  }
+  return {kind:'tally',docs:[...byStream.values()].sort((a,b)=>(b.total||0)-(a.total||0)),skipped};
+}
+
+/* ---------------------------------------------------------------------------
+   Event trace - counts, not rates.
+   Tripwires sit ABOVE the rail and everything else below, so a page of ordinary
+   traffic with one red mark on it reads at a glance. Scaled per card to its own
+   peak, like the wire trace, and the full-scale figure is printed beside it so
+   shapes stay comparable when heights are not.
+   --------------------------------------------------------------------------- */
+function eventTraceSVG(svg,bins,height){
+  const NB=bins.length,H=height,mid=H/2,W=1000;
+  const DOWN=[['RD.CMD',EV_COLOR['RD.CMD']],['RD.LIFE',EV_COLOR['RD.LIFE']]];
+  let peak=0;
+  for(let b=0;b<NB;b++){
+    peak=Math.max(peak,DOWN.reduce((a,[k])=>a+(bins[b][k]||0),0),bins[b]['RD.TRIP']||0);
+  }
+  const bw=W/NB;
+  let html='<line x1="0" y1="'+mid+'" x2="'+W+'" y2="'+mid+'" stroke="var(--rule)" stroke-width="1" vector-effect="non-scaling-stroke"/>';
+  if(peak>0){
+    for(let b=0;b<NB;b++){
+      const x=(b*bw).toFixed(2),w=Math.max(bw-0.6,0.4).toFixed(2);
+      let yd=mid;
+      for(const [k,col] of DOWN){
+        const h=(bins[b][k]||0)/peak*(mid-2);
+        if(h>0.15){html+='<rect x="'+x+'" y="'+yd.toFixed(2)+'" width="'+w+'" height="'+h.toFixed(2)+'" fill="'+col+'"/>';yd+=h;}
+      }
+      const trip=bins[b]['RD.TRIP']||0;
+      if(trip>0){
+        const h=Math.max(trip/peak*(mid-2),1.2);
+        // An impossibility is drawn in alarm even when it shares a bucket with
+        // ordinary reported tripwires: the worst thing in the bucket sets its
+        // colour, because that is the one you must not miss.
+        const col=(bins[b].imp>0)?'var(--alarm)':EV_COLOR['RD.TRIP'];
+        html+='<rect x="'+x+'" y="'+(mid-h).toFixed(2)+'" width="'+w+'" height="'+h.toFixed(2)+'" fill="'+col+'"/>';
+      }
+    }
+  }
+  svg.setAttribute('viewBox','0 0 '+W+' '+H);
+  svg.innerHTML=html;
+  return peak;
+}
+
+/* ---------------------------------------------------------------------------
+   Envelope narrative report - the text a card copies or saves.
+   --------------------------------------------------------------------------- */
+function buildSubjectReport(s,R){
+  const L=[];
+  const t=n=>n==null?'—':new Date(n*1000).toLocaleString();
+  L.push('PLAYER  '+s.name);
+  L.push('='.repeat(Math.max(20,s.name.length+8)));
+  L.push('');
+  L.push('Records      '+fmtNum(s.total)+'  ('+s.pct.toFixed(s.pct<0.1?2:1)+'% of capture)');
+  L.push('Access       '+s.accessLabel);
+  if(s.sids.size) L.push('Steam (approx) '+[...s.sids].join(', ')+(s.sids.size>1?'   <-- MORE THAN ONE, investigate':''));
+  L.push('First seen   '+t(s.first));
+  L.push('Last seen    '+t(s.last));
+  if(s.perMin!=null) L.push('Rate         '+s.perMin.toFixed(2)+' records/min over that span');
+  if(s.est) L.push('Est. inbound '+fmtBytes(s.est)+(s.partial?'  ('+fmtNum(s.partial)+' partial size walks - floor, not total)':''));
+  L.push('');
+  L.push('BY EVENT');
+  for(const [e,n] of Object.entries(s.byEvent).sort((a,b)=>b[1]-a[1]))
+    L.push('  '+(EV_LABEL[e]||e).padEnd(12)+fmtNum(n));
+  if(s.impossible||s.reported){
+    L.push('');
+    L.push('TRIPWIRES');
+    L.push('  server-observed (impossible)  '+fmtNum(s.impossible));
+    L.push('  client-reported               '+fmtNum(s.reported));
+    if(s.impossible) L.push('  NOTE: server-observed tripwires are read from the connection\'s own');
+    if(s.impossible) L.push('        access level. A client cannot suppress or forge these.');
+    if(s.reported)   L.push('  NOTE: client-reported tripwires come from the player\'s own game.');
+    if(s.reported)   L.push('        Useful for disputes; not evidence against a tampered client.');
+    if(s.samples.length){
+      L.push('');
+      for(const smp of s.samples)
+        L.push('  ['+(smp.sev==='impossible'?'!!':'  ')+'] '+new Date((smp.t||0)*1000).toLocaleTimeString()+'  '+(smp.code||'')+'  '+smp.text);
+    }
+  }
+  L.push('');
+  L.push('KEYS  ('+s.keys.length+')');
+  const w=Math.min(52,Math.max(12,...s.keys.map(k=>k.key.length)));
+  for(const k of s.keys){
+    L.push('  '+k.key.padEnd(w).slice(0,w)+'  '+String(fmtNum(k.n)).padStart(7)
+      +(k.est?('  '+String(fmtBytes(k.est)).padStart(10)):'')
+      +(k.imp?('   impossible ×'+k.imp):''));
+  }
+  L.push('');
+  L.push('Capture '+t(R.totals.tMin)+' → '+t(R.totals.tMax));
+  return L.join('\n');
+}
+
+function subjectCard(s,i){
+  const el=document.createElement('article');
+  el.className='card';
+  el.dataset.name=s.name.toLowerCase();
+  el._subject=s;
+
+  const worst=s.impossible?'f-alarm':(s.reported?'f-warn':'');
+  const total=REPORT.totals.records||1;
+  const pc=v=>((v/Math.max(s.total,1))*100).toFixed(3)+'%';
+
+  el.innerHTML=`
+    <div class="card-head">
+      <div class="rank ${worst}">${String(i+1).padStart(2,'0')}</div>
+      <div class="card-id">
+        <div class="mod ${s.impossible?'self':''}">${esc(s.name)}</div>
+        <div class="share">${s.keys.length} key${s.keys.length===1?'':'s'} · ${s.pct.toFixed(s.pct<0.1?2:1)}% of capture · access ${esc(s.accessLabel)}</div>
+      </div>
+      <div class="bytes-big">${fmtNum(s.total)}<span>records</span></div>
+    </div>
+    <div class="flags">${s.flags.map(f=>`<span class="flag ${f.c}">${esc(f.t)}</span>`).join('')}</div>
+    <div class="trace-wrap">
+      <svg class="trace" preserveAspectRatio="none" role="img" aria-label="Event trace for ${esc(s.name)}"></svg>
+      <div class="trace-peak"></div>
+    </div>
+    <div class="splitbar">
+      <i style="width:${pc(s.byEvent['RD.CMD']||0)};background:var(--s2c)"></i>
+      <i style="width:${pc(s.byEvent['RD.LIFE']||0)};background:var(--mdata)"></i>
+      <i style="width:${pc(s.reported)};background:var(--c2s)"></i>
+      <i style="width:${pc(s.impossible)};background:var(--alarm)"></i>
+    </div>
+    <div class="stats">
+      <div class="stat"><k>Commands</k><v>${fmtNum(s.byEvent['RD.CMD']||0)}</v></div>
+      <div class="stat"><k>Tripwires</k><v class="${s.impossible?'hot-cell':''}">${fmtNum(s.impossible+s.reported)}${s.impossible?' · '+fmtNum(s.impossible)+' impossible':''}</v></div>
+      <div class="stat"><k>Lifecycle</k><v>${fmtNum(s.byEvent['RD.LIFE']||0)}</v></div>
+      <div class="stat"><k>Est. inbound</k><v>${s.est?fmtBytes(s.est):'—'}</v></div>
+      <div class="stat"><k>Rate</k><v>${s.perMin!=null?s.perMin.toFixed(1)+' /min':'—'}</v></div>
+      <div class="stat"><k>Seen</k><v>${s.first!=null?new Date(s.first*1000).toLocaleTimeString():'—'}</v></div>
+    </div>
+    <button class="keys-toggle" aria-expanded="false">▸ ${s.keys.length} key${s.keys.length===1?'':'s'}</button>
+    <div class="keys">
+      <table>
+        <thead><tr><th>Key</th><th>Kind</th><th>Count</th><th>Est.</th><th>First → last</th></tr></thead>
+        <tbody>${s.keys.map(k=>`<tr>
+          <td class="${k.imp?'hot-cell':''}">${esc(k.key)}${k.imp?' ⚠':''}</td>
+          <td><span class="dirtag ${k.ev==='RD.CMD'?'d-S2C':(k.ev==='RD.LIFE'?'d-MDATA':'d-C2S')}">${esc((EV_LABEL[k.ev]||k.ev).toUpperCase())}</span></td>
+          <td>${fmtNum(k.n)}</td>
+          <td>${k.est?fmtBytes(k.est):'—'}</td>
+          <td>${k.first!=null?new Date(k.first*1000).toLocaleTimeString():'—'} → ${k.last!=null?new Date(k.last*1000).toLocaleTimeString():'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
+    <div class="acts">
+      <button class="act" data-act="view">Read report</button>
+      <button class="act" data-act="copy">Copy</button>
+      <button class="act" data-act="save">Save .txt</button>
+      <span class="act-msg" role="status" aria-live="polite"></span>
+    </div>
+    <pre class="rpt" hidden></pre>`;
+
+  const peak=eventTraceSVG(el.querySelector('.trace'),s.bins,62);
+  el.querySelector('.trace-peak').textContent='full scale '+fmtNum(peak)+' / bucket · tripwires above';
+
+  const btn=el.querySelector('.keys-toggle');
+  btn.addEventListener('click',()=>{
+    const open=el.classList.toggle('open');
+    btn.setAttribute('aria-expanded',String(open));
+    btn.textContent=(open?'▾ ':'▸ ')+s.keys.length+' key'+(s.keys.length===1?'':'s');
+  });
+
+  const pre=el.querySelector('.rpt'), msg=el.querySelector('.act-msg');
+  el.querySelector('.acts').addEventListener('click',async e=>{
+    const act=e.target.dataset.act;
+    if(!act) return;
+    const txt=buildSubjectReport(s,REPORT);
+    if(act==='view'){
+      pre.textContent=txt;
+      const open=pre.hidden; pre.hidden=!open;
+      e.target.textContent=open?'Hide report':'Read report';
+      return;
+    }
+    if(act==='save'){ saveText(txt,'forensic-'+safeName(s.name)+'.txt'); flash(msg,'Saved'); return; }
+    if(act==='copy'){
+      const ok=await copyText(txt);
+      if(ok) flash(msg,'Copied');
+      else { pre.textContent=txt; pre.hidden=false; flash(msg,'Clipboard blocked — select the text below'); }
+    }
+  });
+  return el;
+}
+
+function renderEnvelope(){
+  const T=REPORT.totals;
+  const fmtT=d=>d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+
+  $('mastsub').textContent=[
+    'forensic ring',
+    T.seasons.length?'season '+T.seasons.join(', '):null,
+    T.emitters.length?T.emitters.join(', '):null,
+    T.versions.length?'schema v'+T.versions.join('/'):null,
+    T.dayMin!=null?'game day '+T.dayMin.toFixed(1)+'–'+T.dayMax.toFixed(1):null
+  ].filter(Boolean).join(' · ');
+
+  const peak=eventTraceSVG($('globalTrace'),REPORT.globalBins,56);
+  $('globalMeta').innerHTML=[
+    ['Capture',fmtT(new Date(T.tMin*1000))+' → '+fmtT(new Date(T.tMax*1000))],
+    ['Wall',fmtDur(T.wallSec)],
+    ['Records',fmtNum(T.records)],
+    ['Players',fmtNum(T.players)],
+    ['Commands',fmtNum(REPORT.events['RD.CMD']||0)],
+    ['Tripwires',fmtNum((REPORT.impTotal||0)+(REPORT.repTotal||0))+(REPORT.impTotal?' · '+fmtNum(REPORT.impTotal)+' impossible':'')],
+    ['Lifecycle',fmtNum(REPORT.events['RD.LIFE']||0)],
+    ['Est. inbound',REPORT.estTotal?fmtBytes(REPORT.estTotal):'—'],
+    ['Peak',fmtNum(peak)+' / bucket']
+  ].map(([k,v])=>`${k} <b>${v}</b>`).join('');
+
+  sortAndFill();
+  $('oversized').innerHTML='';
+
+  const other=Object.entries(T.other||{});
+  $('notes').innerHTML=`
+    <b>How to read this.</b> One card per player. The trace plots records over the capture — client commands in cyan and lifecycle acts in violet below the rail, tripwires above it in amber, or in <span style="color:var(--alarm)">red</span> where that bucket contains a server-observed impossibility. Each card is scaled to its own peak, printed at the trace's top right, so shapes are comparable but heights are not.<br>
+    <b>Two tiers of tripwire, and they are not equally trustworthy.</b> <span class="flag f-alarm">IMPOSSIBLE</span> is server-observed: a command declared staff-only arriving from an account with no staff capability, judged against the access level the server reads from the connection. A client can neither suppress nor forge it. <span class="flag f-warn">REPORTED</span> comes from the player's own game telling on itself — it closes real blind spots (42.20 moved faction acts onto a packet channel with no server-side hook at all) but a client that does not want to report simply does not. Treat reported as telemetry for honest players, never as evidence against a determined one.<br>
+    <b>Nothing here was blocked.</b> By the time Lua is told about a client command the server has already accepted it, so every record on this page is an observation after the fact. A tripwire means somebody did it, not that somebody was stopped.<br>
+    <b>Steam ids are approximate.</b> getSteamID() exceeds Lua's exact-integer range, so the recorded value is a lossy but stable fingerprint — good for spotting a rename, never a ban key. More than one against a single username is worth a look and is flagged as such.<br>
+    <b>Coverage.</b> ${fmtNum(T.parsed)} envelope records parsed${T.skipped?', '+fmtNum(T.skipped)+' unparseable lines':''}. ${other.length?'Other events present: '+other.map(([k,v])=>esc(k)+' ×'+fmtNum(v)).join(', ')+'. ':''}The ring is bounded and rotating, so an old enough event is simply gone — a quiet card can mean a quiet player or a rolled segment. For "what dominated" across the whole run rather than what survives in the ring, drop a <b>summary.json.txt</b> instead.`;
+}
+
+/* ---------------------------------------------------------------------------
+   Tally view
+   --------------------------------------------------------------------------- */
+function renderTally(){
+  $('mastsub').textContent='forensic tally · '+REPORT.docs.length+' stream'+(REPORT.docs.length===1?'':'s');
+  $('globalTrace').innerHTML='';
+  $('globalTrace').removeAttribute('viewBox');
+
+  const grand=REPORT.docs.reduce((a,d)=>a+(d.total||0),0);
+  $('globalMeta').innerHTML=[
+    ['Streams',fmtNum(REPORT.docs.length)],
+    ['Records counted',fmtNum(grand)],
+    ['Distinct fingerprints',fmtNum(REPORT.docs.reduce((a,d)=>a+(d.unique||0),0))],
+    ['Newest',REPORT.docs.length?new Date(Math.max(...REPORT.docs.map(d=>d.since||0))*1000).toLocaleString():'—']
+  ].map(([k,v])=>`${k} <b>${v}</b>`).join('');
+
+  $('grid').innerHTML='';
+  $('oversized').innerHTML=REPORT.docs.map(d=>{
+    const total=d.total||1;
+    const rows=(d.rows||[]).map(r=>{
+      const share=(r.n/total*100);
+      return `<tr>
+        <td>${esc(r.fp)}</td>
+        <td>${fmtNum(r.n)}</td>
+        <td style="min-width:120px"><span style="display:inline-block;height:7px;width:${Math.max(share,0.4).toFixed(2)}%;background:${r.fp==='(other)'?'var(--dimmer)':'var(--s2c)'};vertical-align:middle"></span> ${share.toFixed(share<1?2:1)}%</td>
+        <td>${r.first?new Date(r.first*1000).toLocaleString():'—'}</td>
+        <td>${r.last?new Date(r.last*1000).toLocaleTimeString():'—'}</td>
+        <td style="text-align:left;color:var(--dimmer)">${esc(r.sample||'')}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="section"><h2>${esc(d.stream)} — <em>${fmtNum(d.unique||0)}</em> distinct of ${fmtNum(d.total||0)} records${d.capped?' <span class="flag f-alarm">fingerprint cap reached</span>':''}</h2></div>
+      <div class="section" style="padding-top:0"><div class="ovr"><table>
+        <thead><tr><th>Fingerprint</th><th>Count</th><th>Share</th><th>First seen</th><th>Last</th><th>Sample</th></tr></thead>
+        <tbody>${rows}</tbody></table></div></div>`;
+  }).join('');
+
+  $('notes').innerHTML=`
+    <b>What this is.</b> RDTally's summary, not a log. The forensic streams record every event in order, which is right for reconstructing an incident and useless for noticing one — to learn that three faults produced fourteen thousand records you would have to read fourteen thousand records, and by then the ring has rotated. This file answers "what dominated" in a few hundred rows regardless of how much traffic passed through.<br>
+    <b>It is a monitoring aid, not evidence.</b> Counts reset when the server restarts, and <b>last seen</b> is accurate only to the write interval — the tally caches its clock rather than making an engine call per record, because it sits on the same path as every inbound client command. <b>First seen</b> is exact.<br>
+    <b>The cap is reported, never silent.</b> Past ${fmtNum(200)} distinct fingerprints per stream, further new ones accumulate into a single <b>(other)</b> row rather than growing the table. A stream showing <span class="flag f-alarm">fingerprint cap reached</span> has more variety than the tally can name individually — the ring still holds every record.<br>
+    <b>Want the detail behind a row?</b> Drop the matching stream log (guardian, tripwire, lifecycle) instead and this page will read it per player.`;
+}
+
+function render(){
+  if(REPORT.kind==='envelope') return renderEnvelope();
+  if(REPORT.kind==='tally')    return renderTally();
+  return renderWire();
+}
+
+function renderWire(){
+  const T=REPORT.totals;
+  const d0=new Date(T.tMin*1000),d1=new Date(T.tMax*1000);
+  const fmtT=d=>d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+
+  $('mastsub').textContent=[
+    T.seasons.length?'season '+T.seasons.join(', '):null,
+    T.emitters.length?T.emitters.join(', '):null,
+    T.versions.length?'schema v'+T.versions.join('/'):null,
+    T.dayMin!=null?'game day '+T.dayMin.toFixed(1)+'–'+T.dayMax.toFixed(1):null
+  ].filter(Boolean).join(' · ');
+
+  const peak=traceSVG($('globalTrace'),REPORT.globalBins,REPORT.bucketSecs,56);
+  const cov=T.wallSec?T.coveredSec/T.wallSec*100:100;
+  // Mean is over SAMPLED seconds. Dividing by the wall span instead counts the
+  // dead air between arms as quiet traffic and understates the real rate.
+  $('globalMeta').innerHTML=[
+    ['Capture',fmtT(d0)+' → '+fmtT(d1)],
+    ['Wall',fmtDur(T.wallSec)],
+    ['Sampled',fmtDur(T.coveredSec)+(cov<99.5?' · '+Math.round(cov)+'%':'')],
+    ['Windows',fmtNum(T.windows)+(T.arms?' · '+fmtNum(T.arms)+' arms':'')],
+    ['Total',fmtBytes(T.est)],
+    ['Mean',fmtNum(T.coveredSec?T.est/T.coveredSec:0)+' B/s sampled'],
+    ['Peak',fmtNum(peak)+' B/s'],
+    ['Ceiling',fmtBytes(REPORT.ceiling)+(REPORT.topN?' · top '+fmtNum(REPORT.topN):'')],
+    ['Mods',fmtNum(REPORT.mods.length)]
+  ].map(([k,v])=>`${k} <b>${v}</b>`).join('');
+
+  sortAndFill();
+
+  // oversized
+  const ov=$('oversized');
+  if(REPORT.oversized.length){
+    ov.innerHTML=`<div class="section"><h2>Oversized events \u2014 <em>${fmtNum(REPORT.oversizedRaw.length)}</em> alert${REPORT.oversizedRaw.length===1?'':'s'}${REPORT.chunkAware?'':' (unclassified capture)'}</h2></div>
+    <div class="section" style="padding-top:0"><div class="ovr"><table>
+      <thead><tr><th>Key</th><th>Mod</th><th>Dir</th><th>Alerts</th><th>Smallest</th><th>Largest</th><th>Paging</th><th>Judged vs</th><th>Stream</th><th>Reason</th><th>First \u2192 last</th></tr></thead>
+      <tbody>${REPORT.oversized.map(e=>{
+        const rs=Object.entries(e.reasons||{}).sort((a,b)=>b[1]-a[1]);
+        const reasonCell=e.classified
+          ? rs.map(([r,n])=>esc(r)+(rs.length>1?' \u00d7'+fmtNum(n):'')).join(', ')
+          : '<span title="capture predates chunk classification">unclassified</span>';
+        // `ceiling` is the emitter's own answer to "what was this measured
+        // against". Showing only `budget` left every undeclared key blank.
+        const ceil=e.budget||e.ceiling;
+        const ceilCell=ceil
+          ? `<span title="${e.budget?'declared chunk budget':'probe general limit'}">${fmtBytes(ceil)}${e.budget?'':' <span style="color:var(--dimmer)">gen</span>'}</span>`
+          : '\u2014';
+        const streamCell=e.seqMax!=null
+          ? esc('seq '+(e.seqMin===e.seqMax?e.seqMin:e.seqMin+'\u2013'+e.seqMax)+(e.totalMax?' / '+e.totalMax:''))
+          : '\u2014';
+        return `<tr>
+        <td>${esc(e.leaf)}</td><td>${esc(e.mod)}</td>
+        <td><span class="dirtag d-${(e.dirs.size===1&&['S2C','C2S','MDATA'].indexOf([...e.dirs][0])>=0)?esc([...e.dirs][0]):'mix'}">${esc([...e.dirs].join('/'))}</span></td>
+        <td>${fmtNum(e.count)}</td>
+        <td>${fmtBytes(e.minEst)}</td>
+        <td class="hot-cell">${fmtBytes(e.maxEst)}</td>
+        <td>${e.chunked?esc(e.chunked):'\u2014'}</td>
+        <td>${ceilCell}</td>
+        <td>${streamCell}</td>
+        <td class="${e.classified?'':'hot-cell'}">${reasonCell}</td>
+        <td>${new Date(e.first*1000).toLocaleTimeString()} \u2192 ${new Date(e.last*1000).toLocaleTimeString()}</td>
+      </tr>`;}).join('')}</tbody></table></div></div>`;
+  } else ov.innerHTML='';
+
+  const other=Object.entries(T.otherEvents);
+  const cov2=T.wallSec?Math.round(T.coveredSec/T.wallSec*100):100;
+  $('notes').innerHTML=`
+    <b>How to read this.</b> Each trace is a bipolar throughput plot across the capture: outbound below the rail — server-to-client in cyan, ModData fan-out stacked beneath it in violet — and client-to-server above it in amber. Every card is scaled to its own peak, printed at the trace's top right, so shapes are comparable but heights are not.<br>
+    <b>Probe settings.</b> Taken from the <b>RD.WIRE_ARMED</b> record${T.arms?' ('+fmtNum(T.arms)+' in this capture)':', which this capture does not contain — defaults assumed'}: ${fmtNum(REPORT.dumpSec)} s windows, top ${REPORT.topN?fmtNum(REPORT.topN):'unknown'}, oversize ceiling ${fmtBytes(REPORT.ceiling)}. Every "is this too big" test on this page uses that ceiling rather than a number baked into the viewer.${REPORT.cfgChanged?' <span class="flag f-alarm">settings changed mid-capture</span> — figures either side of the change are not directly comparable.':''}<br>
+    <b>Coverage.</b> ${fmtNum(T.parsed)} lines parsed${T.skipped?', '+fmtNum(T.skipped)+' unparseable':''}. The probe sampled ${fmtDur(T.coveredSec)} of a ${fmtDur(T.wallSec)} wall span (<b>${cov2}%</b>)${T.gaps.length?', leaving '+fmtDur(T.deadSec)+' unobserved across '+fmtNum(T.gaps.length)+' gap'+(T.gaps.length===1?'':'s')+' — largest '+fmtDur(T.gaps[0].sec):''}. Every per-second figure here is against sampled time, not wall time. The sampler kept at most ${fmtNum(T.shownCap)} keys per window while seeing up to ${fmtNum(T.maxKeysSeen)}; ${fmtNum(T.truncWindows)} of ${fmtNum(T.windows)} windows lost their tail. Totals for low-volume mods are floors, not sums — cards marked <span class="flag f-mute">UNDERCOUNTED</span> are the ones most affected.${other.length?'<br><b>Other events.</b> '+other.map(([k,v])=>esc(k)+' ×'+fmtNum(v)).join(', '):''}<br>
+    <b>Alert counts are capped.</b> The emitter logs at most two oversized alerts per key per window, so the Alerts column is a floor, not a breach count \u2014 a key alerting 22 times across 11 windows has simply hit the cap. The true count is the per-key <b>over budget</b> figure in each mod's text report.<br>
+    <b>Flags.</b> OVERSIZE \u2014 a single message past its key's own ceiling (a declared chunk budget where one exists, otherwise ${fmtBytes(REPORT.ceiling)}). CHUNK OVER BUDGET \u2014 the key is paged and the chunker works, but its chunks are too big; retune the budget. UNSPLIT \u2014 large payloads with no paging at all; write a chunker. UNMEASURABLE \u2014 the size walk ran out of budget on an alerted payload. PARTIAL WALK — the same news from ordinary sampled windows, so it survives the alert cap. UNCLASSIFIED \u2014 oversized payloads from a capture predating chunk classification; unknowable, not healthy. MODDATA — global ModData fan-out, already costed as blob × recipients; nothing else in the stack can see this path. HIGH RATE — the emitter's own >20 calls/sec mark. PAGED \u2014 declared paged and every chunk inside budget. FANOUT — four or more server sends per client request. PUSH ONLY — server sends with no client request path. POLLING — matched request/response at a steady beat with tiny payloads. CHATTY — high call count, small messages. FAT — over 800 bytes per call. BURSTY — peak at least 20× the mod's own average.`;
+}
+
+/* Sorting is per-family: "bytes" is meaningless on a tripwire stream and
+   "impossible" is meaningless on a wire capture, so the picker is rebuilt when a
+   file loads rather than showing options that silently do nothing. */
+const SORTS={
+  wire:[['est','Bytes'],['calls','Calls'],['peak','Peak rate'],['winPct','Presence'],['perCall','Bytes / call'],['name','Name']],
+  envelope:[['total','Records'],['impossible','Impossible tripwires'],['trip','All tripwires'],['est','Est. inbound'],['rate','Rate'],['recent','Most recent'],['name','Name']]
+};
+
+function fillSortOptions(kind){
+  const sel=$('sort');
+  const opts=SORTS[kind]||SORTS.wire;
+  sel.innerHTML=opts.map(([v,l])=>`<option value="${v}">${l}</option>`).join('');
+  sel.value=opts[0][0];
+}
+
+function sortAndFill(){
+  if(REPORT.kind==='envelope') return sortAndFillEnvelope();
+  if(REPORT.kind==='tally') return;
+  const key=$('sort').value;
+  const q=$('q').value.trim().toLowerCase();
+  const arr=[...REPORT.mods];
+  const cmp={
+    est:(a,b)=>b.est-a.est, calls:(a,b)=>b.calls-a.calls,
+    peak:(a,b)=>b.peakRate-a.peakRate, winPct:(a,b)=>b.winPct-a.winPct,
+    perCall:(a,b)=>b.perCall-a.perCall, name:(a,b)=>a.name.localeCompare(b.name)
+  }[key];
+  arr.sort(cmp);
+  const grid=$('grid');
+  grid.innerHTML='';
+  let shown=0;
+  arr.forEach((m,i)=>{
+    if(q && !m.name.toLowerCase().includes(q) && !m.keys.some(k=>k.key.toLowerCase().includes(q))) return;
+    grid.appendChild(modCard(m,i));
+    shown++;
+  });
+  if(!shown) grid.innerHTML='<p style="color:var(--dimmer);padding:30px 0">No mod or key matches that filter.</p>';
+}
+
+function sortAndFillEnvelope(){
+  const key=$('sort').value;
+  const q=$('q').value.trim().toLowerCase();
+  const arr=[...REPORT.subjects];
+  const cmp={
+    total:(a,b)=>b.total-a.total,
+    // Ties broken by ALL tripwires then by volume, so two players with one
+    // impossibility each do not order arbitrarily.
+    impossible:(a,b)=>(b.impossible-a.impossible)||((b.impossible+b.reported)-(a.impossible+a.reported))||(b.total-a.total),
+    trip:(a,b)=>((b.impossible+b.reported)-(a.impossible+a.reported))||(b.total-a.total),
+    est:(a,b)=>b.est-a.est,
+    rate:(a,b)=>(b.perMin||0)-(a.perMin||0),
+    recent:(a,b)=>(b.last||0)-(a.last||0),
+    name:(a,b)=>a.name.localeCompare(b.name)
+  }[key]||((a,b)=>b.total-a.total);
+  arr.sort(cmp);
+
+  const grid=$('grid');
+  grid.innerHTML='';
+  let shown=0;
+  arr.forEach((s,i)=>{
+    if(q && !s.name.toLowerCase().includes(q) && !s.keys.some(k=>k.key.toLowerCase().includes(q))) return;
+    grid.appendChild(subjectCard(s,i));
+    shown++;
+  });
+  if(!shown) grid.innerHTML='<p style="color:var(--dimmer);padding:30px 0">No player or key matches that filter.</p>';
+}
+
+/* ---------- print / PDF ----------
+   One mod per page: the card, then its full narrative report underneath it.
+   The report text is built lazily per card on screen, so before printing every
+   card has to be given its own - a browser print of the live DOM can only show
+   what is already in it. State is snapshotted and put back afterwards so the
+   page a user returns to is the page they left.
+   beforeprint covers Ctrl+P and the browser's own "Save as PDF" as well as the
+   toolbar button. */
+let _printState=null;
+function preparePrint(){
+  if(!REPORT || _printState) return;
+  const cards=[...document.querySelectorAll('.card')];
+  _printState=cards.map(c=>{
+    const pre=c.querySelector('.rpt');
+    return {c,pre,open:c.classList.contains('open'),hidden:pre?pre.hidden:true};
+  });
+  for(const s of _printState){
+    if(!s.pre) continue;
+    // A card carries its own model and knows which report builder made it, so
+    // the print pass does not need to ask what kind of capture is loaded.
+    if(!s.pre.textContent){
+      if(s.c._mod)          s.pre.textContent=buildModReport(s.c._mod,REPORT);
+      else if(s.c._subject) s.pre.textContent=buildSubjectReport(s.c._subject,REPORT);
+      else continue;
+    }
+    s.pre.hidden=false;
+  }
+}
+function restorePrint(){
+  if(!_printState) return;
+  for(const s of _printState){
+    s.c.classList.toggle('open',s.open);
+    if(s.pre) s.pre.hidden=s.hidden;
+  }
+  _printState=null;
+}
+window.addEventListener('beforeprint',preparePrint);
+window.addEventListener('afterprint',restorePrint);
+
+/* ---------- intake wiring ---------- */
+function load(text){
+  const kind=sniff(text);
+  if(!kind){
+    $('err').textContent='Nothing recognisable in that file. Expected NDJSON from the forensic ring — RD.WIRE_* (wire capture), RD.CMD / RD.TRIP / RD.LIFE (guardian, tripwire, lifecycle), or an RDTally summary.json.txt.';
+    return;
+  }
+
+  const r=(kind==='wire')?analyzeWire(text)
+         :(kind==='tally')?analyzeTally(text)
+         :analyzeEnvelopes(text);
+
+  if(!r||r.empty){
+    $('err').textContent=(r&&r.armedOnly)
+      ? 'The probe armed '+r.arms+'× in this capture but logged no traffic windows. That is a working probe over a quiet server, not a bad file — nothing to report yet.'
+      : (kind==='wire')
+        ? 'No RD.WIRE_TOP or RD.WIRE_OVERSIZED events found. Check that this is an RDNet wire capture in NDJSON form.'
+        : 'That looked like a '+kind+' file but held no usable records.';
+    return;
+  }
+
+  if(!r.kind) r.kind='wire';
+  REPORT=r;
+  $('err').textContent='';
+  $('intake').hidden=true;
+  $('report').hidden=false;
+
+  // Controls that only mean something for one family are hidden rather than left
+  // inert - a sort picker on a tally is a question the page cannot answer, and an
+  // option that silently does nothing is worse than an absent one.
+  const isTally=(r.kind==='tally');
+  fillSortOptions(r.kind);
+  const show=(id,on)=>{const el=$(id); if(el) el.style.display=on?'':'none';};
+  ['sortLabel','sort','qLabel','q','expandAll'].forEach(id=>show(id,!isTally));
+  show('exportAll',r.kind==='wire');   // wire is the only family with a per-mod bundle
+
+  // The masthead names what was actually loaded. Leaving it reading RD.WIRE over
+  // a tripwire log is the kind of small lie that costs someone an hour.
+  $('mastTitle').textContent=(r.kind==='wire')?'RD.WIRE':(r.kind==='tally'?'RD.TALLY':'RD.RING');
+  $('legend').innerHTML=(r.kind==='wire')
+    ? '<span><i class="swatch sw-s2c"></i>S2C down</span><span><i class="swatch sw-mdata"></i>ModData fan-out</span><span><i class="swatch sw-c2s"></i>C2S up</span>'
+    : (r.kind==='envelope')
+      ? '<span><i class="swatch sw-s2c"></i>commands</span><span><i class="swatch sw-mdata"></i>lifecycle</span><span><i class="swatch sw-c2s"></i>tripwires</span><span><i class="swatch sw-alarm"></i>impossible</span>'
+      : '';
+
+  render();
+  window.scrollTo(0,0);
+}
+function readFile(f){
+  if(!f) return;
+  const rd=new FileReader();
+  rd.onload=()=>load(rd.result);
+  rd.onerror=()=>{$('err').textContent='Could not read that file.';};
+  rd.readAsText(f);
+}
+$('pick').addEventListener('click',()=>$('file').click());
+$('file').addEventListener('change',e=>readFile(e.target.files[0]));
+const drop=$('drop');
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+drop.addEventListener('drop',e=>readFile(e.dataTransfer.files[0]));
+$('sort').addEventListener('change',sortAndFill);
+$('q').addEventListener('input',sortAndFill);
+$('expandAll').addEventListener('click',e=>{
+  const cards=[...document.querySelectorAll('.card')];
+  const open=!cards.every(c=>c.classList.contains('open'));
+  cards.forEach(c=>{
+    c.classList.toggle('open',open);
+    const b=c.querySelector('.keys-toggle');
+    if(b){b.setAttribute('aria-expanded',String(open));b.textContent=(open?'▾ ':'▸ ')+b.textContent.slice(2);}
+  });
+  e.target.textContent=open?'Collapse all':'Expand all';
+});
+$('printBtn').addEventListener('click',()=>{
+  if(!REPORT) return;
+  preparePrint();
+  // Let layout settle with every report expanded before the print dialog
+  // measures the document, or the first page break lands mid-card.
+  requestAnimationFrame(()=>requestAnimationFrame(()=>window.print()));
+});
+$('exportAll').addEventListener('click',()=>{
+  // Wire only: buildAllReports walks REPORT.mods, which the other families do
+  // not have. The button is hidden for them, but a hidden button is a UI fact
+  // and this is a correctness one.
+  if(!REPORT || REPORT.kind!=='wire') return;
+  const d=new Date(REPORT.totals.tMin*1000).toISOString().slice(0,10);
+  saveText(buildAllReports(REPORT),'wire-report-'+safeName(REPORT.totals.seasons.join('-')||'all')+'-'+d+'.txt');
+});
+$('reset').addEventListener('click',()=>{
+  REPORT=null;$('report').hidden=true;$('intake').hidden=false;$('file').value='';
+});
+</script>
+</body>
+</html>

@@ -70,6 +70,14 @@ local GRIP  = 18
 -- clear, and the sheet is a single column that stays usable narrow.
 local MIN_W = 520
 local MIN_H = 380
+-- The settings sheet's own footprint - also the panel's opening size, since
+-- SETTINGS is where a fresh panel lands.
+local DEF_W = 700
+local DEF_H = 540
+-- One line PER TAB now ("<key> w=%d h=%d") - a single remembered size was
+-- the first smoke test's headline flaw: the sheet's modest window and the My
+-- Vehicles inspector's wide one are different rooms, and one number forced
+-- every visit to open in the wrong one.
 local LAYOUT_FILE = "DFPlayerDeck_layout.txt"
 
 -- The built-in first tab's id. The \1 prefix keeps it out of any namespace a
@@ -182,10 +190,52 @@ function DFPlayerDeck:settleResize()
     if fontMoved or not self:reflowContent() then
         self:rebuild()
     end
-    DFPlayerDeck.saveLayout(self.width, self.height)
+    -- Remembered PER TAB: a drag while My Vehicles is up is a statement about
+    -- My Vehicles, and must not shrink the sheet or stretch the Workshop.
+    self.sizes = self.sizes or {}
+    self.sizes[DFPlayerDeck.sizeKey(self.activeId or SETTINGS_ID)] =
+        { w = self.width, h = self.height }
+    DFPlayerDeck.saveSizes(self.sizes)
+end
+
+-- ---------------------------------------------------------------------------
+-- Per-tab sizing. Priority: the size the player last dragged THIS tab to,
+-- else the spec's declared preference (prefW/prefH), else - for the built-in
+-- sheet - the panel default; a tab declaring nothing keeps whatever size the
+-- panel already has. Always clamped to the screen and the floor, and shifted
+-- back on-screen when growth would push the grip off an edge.
+-- ---------------------------------------------------------------------------
+
+-- File keys must survive a "%S+" parse: the sheet's \1 sentinel and any
+-- whitespace a mod put in a tab id are stripped, not written.
+function DFPlayerDeck.sizeKey(id)
+    return (tostring(id):gsub("[%c%s]", ""))
+end
+
+function DFPlayerDeck:applyTabSize(id)
+    local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
+    local rec  = self.sizes and self.sizes[DFPlayerDeck.sizeKey(id)]
+    local spec = DFPlayerRegistry.tabs[id]
+    local w = (rec and rec.w) or (spec and spec.prefW)
+    local h = (rec and rec.h) or (spec and spec.prefH)
+    if id == SETTINGS_ID and not rec then w, h = DEF_W, DEF_H end
+    if not w and not h then return end
+
+    w = math.floor(math.min(w or self.width, sw - 40))
+    h = math.floor(math.min(h or self.height, sh - 40))
+    if w < MIN_W then w = MIN_W end
+    if h < MIN_H then h = MIN_H end
+    if w == self.width and h == self.height then return end
+
+    self:setWidth(w)
+    self:setHeight(h)
+    if self:getX() + w > sw then self:setX(math.max(0, sw - w)) end
+    if self:getY() + h > sh then self:setY(math.max(0, sh - h)) end
 end
 
 function DFPlayerDeck:showTab(id)
+    self:applyTabSize(id)   -- BEFORE contentRect is read: the size is the
+                            -- tab's, not whatever the last tab left behind
     self.activeId = id
     self.builtTier = DFKit.fontScale   -- the tier these widgets BAKE; see the
                                        -- prefs listener at the bottom
@@ -310,12 +360,13 @@ function DFPlayerDeck:prerender()
                 self:drawRect(t.x, ty + 1, t.w, TAB_H - 1, 0.3 * t.hoverT, C.hideHi.r, C.hideHi.g, C.hideHi.b)
                 self:drawRect(t.x, ty + TAB_H - 2, t.w, 2, t.hoverT, C.tideDim.r, C.tideDim.g, C.tideDim.b)
             end
-            local base, lift = C.ash, t.hoverT
+            -- Enabled-at-rest is BONE, not ash. Ash labels read as "disabled"
+            -- even to the owner (2026-08-08, twice) - and disabled already has
+            -- scar. Rest slightly translucent so the active tab still owns the
+            -- strip; hover lifts to full.
             self:drawTextCentre(t.label, t.x + t.w / 2, ty + 8,
-                base.r + (C.bone.r - base.r) * lift,
-                base.g + (C.bone.g - base.g) * lift,
-                base.b + (C.bone.b - base.b) * lift,
-                1, DFTheme.font.label)
+                C.bone.r, C.bone.g, C.bone.b,
+                0.7 + 0.3 * t.hoverT, DFTheme.font.label)
         end
     end
 
@@ -423,31 +474,37 @@ function DFPlayerDeck:onMouseUp(x, y)        endDrag(self) end
 function DFPlayerDeck:onMouseUpOutside(x, y) endDrag(self) end
 
 -- ---------------------------------------------------------------------------
--- Remembered size - client-local, one line, failures non-fatal; position is
--- not saved (the panel centres on whatever screen it opens on).
+-- Remembered sizes - client-local, one line per tab, failures non-fatal;
+-- position is not saved (the panel centres on whatever screen it opens on).
+-- The old single-line "w= h=" format simply fails the per-tab parse and is
+-- forgotten - one default-sized open, then the file is rewritten new-style.
 -- ---------------------------------------------------------------------------
 
-function DFPlayerDeck.saveLayout(w, h)
+function DFPlayerDeck.saveSizes(sizes)
     pcall(function()
         local f = getFileWriter(LAYOUT_FILE, true, false)
         if not f then return end
-        f:write(string.format("w=%d h=%d\n", math.floor(w), math.floor(h)))
+        for k, r in pairs(sizes or {}) do
+            f:write(string.format("%s w=%d h=%d\n", k, math.floor(r.w), math.floor(r.h)))
+        end
         f:close()
     end)
 end
 
-function DFPlayerDeck.loadLayout()
-    local w, h
+function DFPlayerDeck.loadSizes()
+    local out = {}
     pcall(function()
         local r = getFileReader(LAYOUT_FILE, false)
         if not r then return end
-        local line = r:readLine()
+        while true do
+            local line = r:readLine()
+            if not line then break end
+            local k, w, h = line:match("^(%S+) w=(%d+) h=(%d+)")
+            if k then out[k] = { w = tonumber(w), h = tonumber(h) } end
+        end
         r:close()
-        if not line then return end
-        w = tonumber(line:match("w=(%d+)"))
-        h = tonumber(line:match("h=(%d+)"))
     end)
-    return w, h
+    return out
 end
 
 -- ---------------------------------------------------------------------------
@@ -463,12 +520,12 @@ function DFPlayerDeck.open()
         return
     end
     local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
-    -- 700x540 default: the sheet plus breathing room, well under the admin
-    -- deck's footprint - this panel is a visitor, not a workstation. Clamped
-    -- so it can never open with its titlebar off-screen.
-    local rw, rh = DFPlayerDeck.loadLayout()
-    local w = math.min(rw or 700, sw - 80)
-    local h = math.min(rh or 540, sh - 80)
+    -- Opens at the sheet's default; the landing tab's applyTabSize (inside
+    -- the first showTab, before anything renders) immediately takes it to
+    -- that tab's remembered or preferred size. Clamped so it can never open
+    -- with its titlebar off-screen.
+    local w = math.min(DEF_W, sw - 80)
+    local h = math.min(DEF_H, sh - 80)
     if w < MIN_W then w = math.min(MIN_W, sw - 80) end
     if h < MIN_H then h = math.min(MIN_H, sh - 80) end
 
@@ -478,6 +535,7 @@ function DFPlayerDeck.open()
         DFKit.setFontScale(DFPrefs.get("fontScale"))
     end
     local inst = DFPlayerDeck:new(math.floor((sw - w) / 2), math.floor((sh - h) / 2), w, h)
+    inst.sizes = DFPlayerDeck.loadSizes()
     inst:initialise()
     inst:addToUIManager()
     inst:setVisible(true)

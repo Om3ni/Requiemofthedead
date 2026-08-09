@@ -456,8 +456,41 @@ end
 local function onServerCommand(module, command, args)
     if module ~= MODULE then return end
     if command == "PlayerInventory" and args then
+        -- REASSEMBLY. The server pages this snapshot (see DFInventory_Server's
+        -- note on the 12.9 KB unsplit message that prompted it), so it arrives as
+        -- one message or several. Each carries gen/seq/total and the username.
+        --
+        -- Rows are published only when the last chunk lands. A partially filled
+        -- list is worse than an empty one here: an admin looking at half an
+        -- inventory has no way to tell it from a player who owns half that much,
+        -- and the decisions this panel exists to support are made on what is or
+        -- is not present.
+        --
+        -- `gen` is what makes a re-request safe. The server supersedes an older
+        -- stream by key, but chunks already on the wire still arrive; keying the
+        -- accumulator on gen discards those instead of splicing two snapshots.
+        --
+        -- A single unpaged message carries no seq/total, which reads as
+        -- seq=1 total=1 and takes the fast path unchanged.
         if OPEN and OPEN.target == args.username then
-            OPEN:setRows(args.items or {})
+            local total = tonumber(args.total) or 1
+            if total <= 1 then
+                OPEN._asm = nil
+                OPEN:setRows(args.items or {})
+            else
+                local gen = args.gen
+                local asm = OPEN._asm
+                if not asm or asm.gen ~= gen then
+                    asm = { gen = gen, rows = {}, got = 0 }
+                    OPEN._asm = asm
+                end
+                for _, r in ipairs(args.items or {}) do asm.rows[#asm.rows + 1] = r end
+                asm.got = asm.got + 1
+                if asm.got >= total then
+                    OPEN._asm = nil
+                    OPEN:setRows(asm.rows)
+                end
+            end
         end
     elseif (command == "Result") and args and args.action and OPEN then
         -- After any inventory-mutating action, re-request the snapshot so the

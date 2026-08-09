@@ -906,12 +906,15 @@ function HBDebugPanel:close()
 end
 
 function HBDebugPanel.open()
-    -- When Dragonfly admin panel is installed, the canonical surface is its
+    -- When Dragonfly is installed, the canonical surface is the deck's
     -- Animals tab. Defer to it so admins don't have two competing windows
-    -- showing the same data with different idioms.
-    if DFPanel and DFRegistry and DFRegistry.tabs and DFRegistry.tabs["animals"] then
-        DFPanel.open()
-        if DFPanel.instance then DFPanel.instance:showTab("animals") end
+    -- showing the same data with different idioms. (Was DFPanel until the
+    -- deck graduated, 2026-08-13; the instance lives in DFDeckState because
+    -- the class global is replaced on hot reload.)
+    if DFDeck and DFRegistry and DFRegistry.tabs and DFRegistry.tabs["animals"] then
+        DFDeck.open()
+        local inst = DFDeckState and DFDeckState.instance
+        if inst then inst:showTab("animals") end
         return
     end
     if HBDebugPanel._instance and HBDebugPanel._instance:isVisible() then

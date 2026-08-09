@@ -10,6 +10,14 @@
 -- is the permanent answer: one surface, owned by the family, that every mod
 -- rents space in.
 --
+-- AND EVERY MOD MEANS EVERY MOD. DFModOptionsBridge registers itself here as
+-- one more settings tenant and fills that tenancy by walking
+-- PZAPI.ModOptions.Data - the engine's own parking lot, which MainOptions
+-- reads and nothing else owns - so a mod that has never heard of this registry
+-- still lands on the sheet. One handshake with the engine instead of forty
+-- with mod authors. Nothing in this file knows that happened: the adopted mods
+-- arrive through the same front door a family mod uses.
+--
 -- TWO TENANT CLASSES, deliberately unequal:
 --
 --   SETTINGS SHEET  registerPlayerSettings{} - for a mod whose whole
@@ -25,7 +33,12 @@
 --     deck's DFRegistry: spec.build(spec, panel, x, y, w, h) into a host
 --     panel, optional spec.resize(spec, panel, w, h) for live reflow,
 --     optional spec.disabled = true to reserve a greyed slot in the strip
---     before the content exists.
+--     before the content exists. Optional spec.prefW / spec.prefH declare
+--     the size the tab wants: the shell resizes itself to that as the tab
+--     is shown (clamped to the screen), so a wide inspector and a modest
+--     sheet can share one panel without either opening in the wrong room.
+--     A size the player drags a tab to is remembered per tab and outranks
+--     the preference.
 --
 -- WHY A SEPARATE REGISTRY AND NOT A FLAG ON DFRegistry. The admin deck's
 -- roster is capability-gated staff tooling; the player panel is ungated by

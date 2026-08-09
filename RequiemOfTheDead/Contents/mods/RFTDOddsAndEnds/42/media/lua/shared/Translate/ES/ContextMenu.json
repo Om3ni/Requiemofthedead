@@ -4,5 +4,5 @@
   "ContextMenu_OE_RipIt_More": " ...y %1 mas",
   "ContextMenu_OE_ChopNearby": "Talar arboles cercanos (%1)",
   "ContextMenu_OE_ChopNearby_Tooltip": "Tala todos los arboles al alcance, empezando por los mas cercanos",
-  "ContextMenu_OE_ChopNearby_Desc": "Busca en %1 casillas. Se detiene al recibir dano, con poca resistencia, o cuando al hacha le queda un %2%% de estado."
+  "ContextMenu_OE_ChopNearby_Desc": "Busca en %1 casillas. Se detiene al recibir dano, con poca resistencia, o cuando al hacha le queda un %2% de estado."
 }

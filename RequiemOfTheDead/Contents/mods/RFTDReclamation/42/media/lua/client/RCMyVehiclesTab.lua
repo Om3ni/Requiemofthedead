@@ -11,10 +11,7 @@
 -- none of its HANDS. So this tab is both halves' viewer glued together:
 --
 --   FROM RCMyVehicles   the claims list (registry slice, own cars only),
---                       the 3D catalogue portrait ("which car is this" -
---                       it renders showroom-fresh from the script name, so
---                       it works even for an UNLOADED car), location, live
---                       distance, Manage Access, Release.
+--                       location, live distance, Manage Access, Release.
 --   FROM RCVehicleTab   the mechanic-overlay diagram and the grouped parts
 --                       breakdown (both via RCPartsView, the shared
 --                       implementation - drawBreakdown moved there so the
@@ -27,6 +24,16 @@
 --                       mutating command except releaseclaim and the access
 --                       manager, both of which were always player verbs.
 --
+-- THE 3D PORTRAIT WAS IN THE FIRST CUT AND WAS CUT (owner, 2026-08-13). It
+-- rendered showroom-fresh from the script name - a picture that lies about
+-- condition, which RCPartsView's header had already said plainly - and it
+-- squatted on the top of the middle column, crushing the info and the
+-- breakdown under it while the diagram starved in a sliver. The diagram IS
+-- the appearance surface now, in the admin tab's own proven shape: a tall
+-- full-height column, portrait art in a portrait pane. (Rotating the art 90
+-- degrees to lie flat was considered and is a recorded engine dead end - see
+-- the atlas/UV autopsy in RCPartsView.)
+--
 -- AUTHORITY. The list is the server's registry slice ("myvehicles"), parts
 -- come back through "myvehicleparts" - a claimId-keyed request the server
 -- resolves through RCRegistry.owns, so ownership is the gate and the vid
@@ -34,12 +41,12 @@
 -- object to read anywhere, so its diagram pane says so and the portrait
 -- carries the "what does it look like" question alone.
 --
--- LAYOUT. List left; middle column is portrait over info over the parts
--- breakdown, with the player verbs at the bottom; the diagram takes a tall
--- right column - portrait art in a portrait pane (see the dead-end note in
--- RCPartsView about rotating it). Below MIN_FOR_DIAG width the diagram
--- column folds away rather than shrinking into an unreadable sliver; the
--- breakdown still tells the whole truth in numbers.
+-- LAYOUT. List left; middle column is the info block over the parts
+-- breakdown, player verbs in compact buttons at the bottom (full-width bars
+-- were the first smoke test's other complaint); the diagram takes the tall
+-- right column at full height. Below MIN_FOR_DIAG width the diagram column
+-- folds away rather than shrinking into an unreadable sliver; the breakdown
+-- still tells the whole truth in numbers.
 --
 -- Fonts read through DFKit at draw time, so the text-size preference applies
 -- on the next rebuild (the player deck rebuilds its active tab on a tier
@@ -63,10 +70,10 @@ local M = RCShared.MODULE
 
 local PAD          = 8
 local BTN_H        = 24
+local BTN_W        = 110   -- compact verbs, not column-spanning bars
 local LIST_W       = 185
-local PREVIEW_H    = 180
-local DIAG_W       = 210
-local MIN_FOR_DIAG = 640   -- below this the diagram column folds away
+local DIAG_W       = 280   -- full-height column; 263x600 art reads near 1:1
+local MIN_FOR_DIAG = 700   -- below this the diagram column folds away
 
 -- Scroll state for the breakdown grid; module-level because the grid redraws
 -- from scratch every frame and the offset must outlive both the frame and a
@@ -129,8 +136,9 @@ function Inspector:onMouseUp(x, y)
         if T.partsScroll:release() then return end
     end
     -- A click on a part row opens the Workshop, narrowed to that part. Rows
-    -- whose slot accepts no item (structural parts) do nothing rather than
-    -- opening an empty crafting list.
+    -- whose slot accepts no item do nothing rather than opening an empty
+    -- crafting list - except the Engine, which the door special-cases onto
+    -- the engine-repair consumable (see openWorkshop).
     local hits = T.partHits
     if hits then
         for i = 1, #hits do
@@ -161,7 +169,7 @@ local function layout(panel, w, h)
 
     T.listBox:setX(PAD); T.listBox:setY(PAD)
     T.listBox:setWidth(LIST_W); T.listBox:setHeight(listH)
-    T.btnRefresh:setX(PAD); T.btnRefresh:setY(by); T.btnRefresh:setWidth(LIST_W)
+    T.btnRefresh:setX(PAD); T.btnRefresh:setY(by); T.btnRefresh:setWidth(BTN_W)
 
     local midX  = PAD * 2 + LIST_W
     local insW  = w - midX - PAD
@@ -171,35 +179,26 @@ local function layout(panel, w, h)
     T.inspector:setX(midX); T.inspector:setY(PAD)
     T.inspector:setWidth(insW); T.inspector:setHeight(listH)
 
-    -- The portrait gives ground before anything else does: at the deck's
-    -- minimum height a fixed 180px picture would push the info block into the
-    -- buttons, and the picture is the one element that degrades gracefully.
-    local prevH = math.min(PREVIEW_H, math.max(100, math.floor(listH * 0.4)))
-
-    -- The portrait is a sibling widget, not drawn chrome; it occupies the top
-    -- of the middle column and the inspector simply does not paint there.
-    if T.preview then
-        T.preview:setX(midX); T.preview:setY(PAD)
-        T.preview:setWidth(midW); T.preview:setHeight(prevH)
-    end
-
-    -- Inspector-local rects. Info height is measured from the fonts it will
-    -- be drawn with: a title line plus six body lines (location, distance,
-    -- status, engine, claim, the workshop hint) plus breathing room.
+    -- Inspector-local rects. Info sits at the TOP of the middle column (the
+    -- portrait that used to squat on it is gone); its height is measured
+    -- from the fonts it will be drawn with: a title line plus six body lines
+    -- (location, distance, status, engine, claim, the workshop hint) plus
+    -- breathing room. The breakdown takes everything below; the diagram
+    -- takes the full-height right column.
     local fhS = getTextManager():getFontHeight(fS())
     local fhT = getTextManager():getFontHeight(fT())
     local infoH = fhT + 4 + 6 * (fhS + 3) + 8
 
-    T.infoRect  = { x = 0, y = prevH + 8, w = midW, h = infoH }
-    T.partsRect = { x = 0, y = prevH + 8 + infoH, w = midW,
-                    h = listH - prevH - 8 - infoH }
+    T.infoRect  = { x = 0, y = 0, w = midW, h = infoH }
+    T.partsRect = { x = 0, y = infoH, w = midW, h = listH - infoH }
     T.diagRect  = (diagW > 0)
         and { x = insW - diagW, y = 0, w = diagW, h = listH }
         or nil
 
-    local halfW = math.floor((midW - PAD) / 2)
-    T.btnManage:setX(midX); T.btnManage:setY(by); T.btnManage:setWidth(halfW)
-    T.btnRelease:setX(midX + halfW + PAD); T.btnRelease:setY(by); T.btnRelease:setWidth(halfW)
+    -- Compact verbs. "Manage Access..." carries the longest label, so it
+    -- gets the wider box; nothing spans a column any more.
+    T.btnManage:setX(midX); T.btnManage:setY(by); T.btnManage:setWidth(BTN_W + 40)
+    T.btnRelease:setX(midX + BTN_W + 40 + PAD); T.btnRelease:setY(by); T.btnRelease:setWidth(BTN_W)
 end
 
 -- ---------------------------------------------------------------------------
@@ -243,10 +242,6 @@ local function updateSelection()
     local item = sel and T.listBox.items[sel]
     T.selRec = item and item.item or nil
 
-    if T.preview then
-        local script = T.selRec and T.selRec.name or ""
-        pcall(function() T.preview.javaObject:fromLua2("setVehicleScript", "rcPreview", script or "") end)
-    end
     T.partsScroll:reset()
     if T.btnRelease then T.btnRelease:setEnable(T.selRec ~= nil) end
     if T.btnManage then T.btnManage:setEnable(T.selRec ~= nil and T.selRec.loaded == true) end
@@ -266,8 +261,6 @@ function T.drawInspector(el)
     if not i then return end
 
     if not T.rows or #T.rows == 0 then
-        -- Below the portrait widget, which is a sibling drawn over this pane -
-        -- text under it would simply not be seen.
         el:drawText(getText("IGUI_RC_MV_None"), i.x, i.y, C.textDim.r, C.textDim.g, C.textDim.b, 1, fS())
         return
     end
@@ -335,19 +328,31 @@ function T.drawInspector(el)
 end
 
 -- ---------------------------------------------------------------------------
--- The Workshop door. Hands the clicked part to RCWorkshopTab and asks the
--- registry - never the shell directly - to land the panel there. Silently a
--- no-op for a part whose slot accepts no item, and when the Workshop tab is
--- not installed.
+-- The Workshop door. The Workshop lives in Odds & Ends (moved 2026-08-08 -
+-- Reclamation owns ITS panel, general surfaces live in a general home);
+-- this hands over the part's accepted item types and a label, and WSTab
+-- routes and navigates itself. Silently a no-op for a part whose slot
+-- accepts no item, and when the Workshop is absent or killed by sandbox.
+--
+-- The Engine is the one exception to "no accepted item, no door". Its slot
+-- takes nothing (vanilla `part Engine` declares no itemType - the engine is
+-- never swapped as an item), but engine REPAIR consumes Base.EngineParts
+-- (ISVehicleMechanics gates the repair option on holding them), so the row
+-- opens the Workshop filtered to recipes that OUTPUT engine parts instead.
+-- Keyed on the item, not any recipe name, so every source that crafts them
+-- qualifies the day it loads.
 -- ---------------------------------------------------------------------------
+local ENGINE_REPAIR_ITEMS = { "Base.EngineParts" }
+
 function T.openWorkshop(partRec)
-    if not (partRec and partRec.items and #partRec.items > 0) then return end
-    if not (RCWorkshopTab and RCWorkshopTab.setTarget) then return end
-    local veh = T.selRec and pretty(T.selRec.name) or "?"
-    RCWorkshopTab.setTarget(veh, partRec)
-    if DFPlayerRegistry and DFPlayerRegistry.requestShow then
-        DFPlayerRegistry.requestShow("rc_workshop")
+    if partRec and partRec.id == "Engine" and not (partRec.items and #partRec.items > 0) then
+        partRec = { id = partRec.id, items = ENGINE_REPAIR_ITEMS }
     end
+    if not (partRec and partRec.items and #partRec.items > 0) then return end
+    if not (WSTab and WSTab.openFor) then return end
+    local veh = T.selRec and pretty(T.selRec.name) or "?"
+    local part = tostring(partRec.id or "?"):gsub("(%l)(%u)", "%1 %2")
+    WSTab.openFor(partRec.items, part .. " - " .. veh)
 end
 
 -- ---------------------------------------------------------------------------
@@ -389,8 +394,9 @@ end
 -- Build / resize - the player deck's tab contract
 -- ---------------------------------------------------------------------------
 function T.build(spec, panel, x, y, w, h)
-    -- A previous build's scene may outlive its parent's removal (belt and
-    -- braces, same as RCMyVehicles:close).
+    -- Migration cleanup: an earlier cut of this tab carried an ISUI3DScene
+    -- portrait, and a hot reload from that build can leave its scene alive.
+    -- The portrait itself is retired (see header).
     if T.preview then
         pcall(function() T.preview:removeFromUIManager() end)
         T.preview = nil
@@ -413,21 +419,6 @@ function T.build(spec, panel, x, y, w, h)
     T.inspector:initialise()
     T.inspector:instantiate()
     panel:addChild(T.inspector)
-
-    -- 3D portrait, guarded exactly as RCMyVehicles guards it: if the scene
-    -- element is unavailable the tab still works, minus the picture.
-    local ok = pcall(function()
-        T.preview = ISUI3DScene:new(0, 0, 10, PREVIEW_H)
-        T.preview:initialise()
-        T.preview:instantiate()
-        T.preview:setView("Right")
-        -- Frame low to fit the biggest vehicles; mouse-wheel zooms in.
-        T.preview.javaObject:fromLua1("setZoom", 2)
-        T.preview.javaObject:fromLua1("setDrawGrid", false)
-        T.preview.javaObject:fromLua1("createVehicle", "rcPreview")
-        panel:addChild(T.preview)
-    end)
-    if not ok then T.preview = nil end
 
     T.btnRefresh = ISButton:new(0, 0, 10, BTN_H, getText("IGUI_RC_MV_Refresh"), T, T.request)
     T.btnRefresh:initialise(); panel:addChild(T.btnRefresh)
@@ -472,6 +463,11 @@ Events.OnGameBoot.Add(function()
         order  = 20,
         build  = T.build,
         resize = T.resize,
+        -- Room for all three columns at once: list, portrait+breakdown, and
+        -- the diagram at a size where parts are readable. The shell clamps
+        -- to the screen on smaller displays.
+        prefW  = 1180,
+        prefH  = 680,
     }
 end)
 

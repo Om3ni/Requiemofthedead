@@ -52,24 +52,34 @@ local function countSet(t)
 end
 MMSnapshotCodec.countSet = countSet
 
+-- IDENTITY KEYS: every trait/profession in a snapshot is a FULLY-QUALIFIED registry
+-- id ("base:organized"), never getName(). getName() drops the namespace, so a mod
+-- trait sharing a vanilla path is indistinguishable from it - which is exactly how a
+-- memoir read used to hand back an inert placeholder. See the MMSvShared header for
+-- the full account. Legacy (pre-v5) snapshots hold bare names; MMShared.findTrait /
+-- canonTraitKey resolve those vanilla-first, so old books keep working.
+local traitKey = MMShared.fqid
+
 -- The 5 weight traits (Underweight/Very Underweight/Emaciated/Overweight/Obese) are
 -- DYNAMIC labels the engine adds/removes from body weight, not identity: Nutrition
 -- .applyTraitFromWeight() wipes all 5 each tick and re-adds whichever matches the current
 -- weight bracket. So we never snapshot them as traits - on restore they re-derive from the
--- restored weight (see capture / identityMatches / applyBodyState). Names are resolved from
--- the engine constants, so they always match getKnownTraits():get(i):getName().
-local weightTraitNames
-local function isWeightTrait(name)
-    if not weightTraitNames then
-        weightTraitNames = {}
+-- restored weight (see capture / identityMatches / applyBodyState). Keyed by id, with the
+-- bare getName() registered too so a legacy snapshot's "underweight" is still recognised.
+local weightTraitKeys
+local function isWeightTrait(key)
+    if not weightTraitKeys then
+        weightTraitKeys = {}
         local consts = { CharacterTrait.UNDERWEIGHT, CharacterTrait.VERY_UNDERWEIGHT,
                          CharacterTrait.EMACIATED, CharacterTrait.OVERWEIGHT, CharacterTrait.OBESE }
         for _, c in ipairs(consts) do
+            local id = traitKey(c)
+            if id then weightTraitKeys[id] = true end
             local ok, nm = pcall(function() return c and c:getName() end)
-            if ok and nm then weightTraitNames[nm] = true end
+            if ok and nm then weightTraitKeys[nm:lower()] = true end -- legacy bare name
         end
     end
-    return weightTraitNames[name] == true
+    return type(key) == "string" and weightTraitKeys[key:lower()] == true
 end
 MMSnapshotCodec.isWeightTrait = isWeightTrait
 
@@ -97,12 +107,22 @@ function MMSnapshotCodec.capture(player)
 
     local known = player:getCharacterTraits():getKnownTraits()
     for i = 0, known:size() - 1 do
-        local nm = known:get(i):getName()
-        if not isWeightTrait(nm) then table.insert(snap.traits, nm) end -- weight traits re-derive from weight
+        local t = known:get(i)
+        -- A trait with no resolvable id is a ghost from a registry reset. Recording
+        -- its name would bake the ambiguity we just removed straight back into the
+        -- book, so drop it and say so - loudly, since it means something reloaded
+        -- scripts under a live character.
+        local id = traitKey(t)
+        if not id then
+            MMwarn("CAPTURE: unresolvable trait on " .. MMname(player)
+                .. " (stale registry object) - NOT recorded in the snapshot")
+        elseif not isWeightTrait(id) then
+            table.insert(snap.traits, id) -- weight traits re-derive from weight
+        end
     end
 
     local prof = player:getDescriptor() and player:getDescriptor():getCharacterProfession()
-    snap.profession = prof and prof:getName() or nil
+    snap.profession = prof and (traitKey(prof) or prof:getName()) or nil
 
     local recipes = player:getKnownRecipes()
     for i = 0, recipes:size() - 1 do snap.recipes[recipes:get(i)] = true end
@@ -149,18 +169,30 @@ end
 -- Returns matches(bool), reason(string|nil), detail table for the reconcile UI.
 function MMSnapshotCodec.identityMatches(player, snap)
     local curProf = player:getDescriptor() and player:getDescriptor():getCharacterProfession()
-    local curProfName = curProf and curProf:getName() or nil
+    local curProfName = curProf and (traitKey(curProf) or curProf:getName()) or nil
 
-    -- Weight traits are excluded from the identity compare on BOTH sides: they track body
-    -- weight, not character identity, so weight drifting across a bracket (e.g. you grind
-    -- Underweight off) must NOT register as an identity mismatch / fire the reconcile GUI.
-    -- (capture already drops them, but old v1 snapshots may still carry them - filter anyway.)
+    -- BOTH SIDES ARE CANONICALISED TO REGISTRY IDS before comparing. The live
+    -- character always yields an id; the snapshot may hold legacy bare names, which
+    -- canonTraitKey resolves the same way the apply will. Comparing raw would report
+    -- a phantom mismatch on every pre-v5 book, and - worse, before ids existed -
+    -- silently agreed that a mod placeholder WAS the vanilla trait it shadowed.
+    --
+    -- Weight traits are excluded on both sides: they track body weight, not character
+    -- identity, so weight drifting across a bracket (e.g. you grind Underweight off)
+    -- must NOT register as an identity mismatch / fire the reconcile GUI. (capture
+    -- already drops them, but old v1 snapshots may still carry them - filter anyway.)
     local snapTraits, curTraits = {}, {}
-    for _, n in ipairs(snap.traits or {}) do if not isWeightTrait(n) then snapTraits[n] = true end end
+    for _, n in ipairs(snap.traits or {}) do
+        if not isWeightTrait(n) then
+            local k = MMShared.canonTraitKey(n)
+            if k then snapTraits[k] = true end
+        end
+    end
     local known = player:getCharacterTraits():getKnownTraits()
     for i = 0, known:size() - 1 do
-        local nm = known:get(i):getName()
-        if not isWeightTrait(nm) then curTraits[nm] = true end
+        local t = known:get(i)
+        local k = traitKey(t) or (t:getName() or ""):lower()
+        if not isWeightTrait(k) then curTraits[k] = true end
     end
 
     local detail = {
@@ -176,7 +208,12 @@ function MMSnapshotCodec.identityMatches(player, snap)
     for n in pairs(curTraits) do if not snapTraits[n] then table.insert(detail.curOnly, n) end end
     table.sort(detail.snapOnly); table.sort(detail.curOnly)
 
-    if curProfName ~= snap.profession then return false, "profession", detail end
+    -- Canonicalised on both sides for the same reason as the traits above: a v4 book
+    -- saying "unemployed" and a live character saying "base:unemployed" are the same
+    -- profession and must not read as a mismatch.
+    if MMShared.canonProfessionKey(curProfName) ~= MMShared.canonProfessionKey(snap.profession) then
+        return false, "profession", detail
+    end
     if #detail.snapOnly > 0 or #detail.curOnly > 0 then return false, "traits", detail end
     return true, nil, detail
 end
@@ -186,12 +223,12 @@ end
 -- ========================
 -- Total creation point cost of a profession + trait set. The legality threshold
 -- (the pool rule vanilla creation uses) is enforced by the caller; this only sums.
-function MMSnapshotCodec.budgetCost(professionName, traitNames)
+function MMSnapshotCodec.budgetCost(professionKey, traitKeys)
     local total = 0
-    local profDef = professionName and MMShared.findProfessionDefByName(professionName)
+    local profDef = professionKey and MMShared.findProfessionDef(professionKey)
     if profDef and profDef.getCost then total = total + (profDef:getCost() or 0) end
-    for _, name in ipairs(traitNames or {}) do
-        local trait = MMShared.findTraitByName(name)
+    for _, name in ipairs(traitKeys or {}) do
+        local trait = MMShared.findTrait(name)
         if trait then
             local def = CharacterTraitDefinition.getCharacterTraitDefinition(trait)
             if def and def.getCost then total = total + (def:getCost() or 0) end
@@ -229,26 +266,61 @@ local function applyIdentity(player, ident)
     -- 2) PROFESSION (setProfessionSkills = clear()+putAll: wipes the whole boost
     -- map and installs the saved profession's boosts)
     if ident.profession then
-        local def = MMShared.findProfessionDefByName(ident.profession)
+        local def = MMShared.findProfessionDef(ident.profession)
         if def then
             player:getDescriptor():setCharacterProfession(def:getType())
             player:getDescriptor():setProfessionSkills(def)
             MMlog("  IDENTITY profession -> " .. tostring(ident.profession))
         else
-            MMlog("  IDENTITY profession '" .. tostring(ident.profession) .. "' not found - left as-is")
+            MMwarn("IDENTITY profession '" .. tostring(ident.profession)
+                .. "' did not resolve - left as-is (mod removed since the book was written?)")
         end
     end
-    -- 3) TRAITS: add chosen (boosts stack on top of the profession's, like creation)
+    -- 3) TRAITS: add chosen (boosts stack on top of the profession's, like creation).
+    -- Resolution is by registry id, so a mod trait sharing a vanilla path can no
+    -- longer be substituted for the real one - the whole point of this file's header.
+    local wanted, missing = {}, {}
     for _, name in ipairs(ident.traits or {}) do
-        local trait = MMShared.findTraitByName(name)
+        local trait = MMShared.findTrait(name)
         if trait then
             player:getCharacterTraits():add(trait)
             player:modifyTraitXPBoost(trait, false)
+            local id = traitKey(trait)
+            if id then wanted[id] = true end
         else
-            MMlog("  IDENTITY trait '" .. tostring(name) .. "' not found - skipped")
+            missing[#missing + 1] = tostring(name)
         end
     end
-    MMlog("  IDENTITY traits -> " .. tostring(#(ident.traits or {})) .. " trait(s)")
+    if #missing > 0 then
+        -- Never silent. A trait we cannot resolve is a trait the player LOSES, and
+        -- the pre-2026-08-09 code logged this at debug level only - which is how a
+        -- lost trait reached a player before it reached the console.
+        table.sort(missing)
+        MMwarn("IDENTITY " .. tostring(#missing) .. " trait(s) did not resolve and were NOT applied to "
+            .. MMname(player) .. ": " .. table.concat(missing, ", "))
+    end
+
+    -- 4) VERIFY. CharacterTraits.add() returns nothing and validates nothing
+    -- (CharacterTraits.java:82 - a bare map put), so until now NOTHING confirmed the
+    -- swap landed. Read the character back and diff against what we asked for: any
+    -- divergence means the apply did not do what the memoir says it did, and the
+    -- caller must be able to refuse rather than consume the book over a half-applied
+    -- character. Weight traits are excluded - applyBodyState re-derives them later.
+    local got, extra, absent = {}, {}, {}
+    local after = player:getCharacterTraits():getKnownTraits()
+    for i = 0, after:size() - 1 do
+        local id = traitKey(after:get(i))
+        if id and not isWeightTrait(id) then got[id] = true end
+    end
+    for id in pairs(wanted) do if not got[id] then absent[#absent + 1] = id end end
+    for id in pairs(got) do if not wanted[id] then extra[#extra + 1] = id end end
+    if #absent > 0 or #extra > 0 then
+        table.sort(absent); table.sort(extra)
+        error("MMSnapshotCodec.applyIdentity: trait set does not match the snapshot after apply"
+            .. " (missing: " .. (#absent > 0 and table.concat(absent, ", ") or "none")
+            .. " | unexpected: " .. (#extra > 0 and table.concat(extra, ", ") or "none") .. ")")
+    end
+    MMlog("  IDENTITY traits -> " .. tostring(#(ident.traits or {})) .. " trait(s), verified")
 end
 
 -- Free starting levels a build (profession + traits) grants per skill id. Mirrors
@@ -261,7 +333,7 @@ end
 -- (capture drops them - they're body state), so any xpBoost they carry is missed.
 -- Vanilla weight traits carry none; worst case is a small shift in the grant/earned
 -- split, never a broken floor.
-function MMSnapshotCodec.buildGrantLevels(professionName, traitNames)
+function MMSnapshotCodec.buildGrantLevels(professionKey, traitKeys)
     local levels = { Fitness = 5, Strength = 5 } -- engine's passive base, pre-boost
     local function addBoosts(boostMap)
         if not boostMap then return end
@@ -274,10 +346,10 @@ function MMSnapshotCodec.buildGrantLevels(professionName, traitNames)
             levels[id] = (levels[id] or 0) + (tonumber(tostring(lvl)) or 0)
         end
     end
-    local profDef = professionName and MMShared.findProfessionDefByName(professionName)
+    local profDef = professionKey and MMShared.findProfessionDef(professionKey)
     if profDef then addBoosts(profDef:getXpBoosts()) end
-    for _, name in ipairs(traitNames or {}) do
-        local trait = MMShared.findTraitByName(name)
+    for _, name in ipairs(traitKeys or {}) do
+        local trait = MMShared.findTrait(name)
         if trait then
             local def = CharacterTraitDefinition.getCharacterTraitDefinition(trait)
             if def then addBoosts(def:getXpBoosts()) end
@@ -295,13 +367,14 @@ end
 -- dismissed along with the build.
 function MMSnapshotCodec.playerBuildIdentity(player)
     local prof = player:getDescriptor() and player:getDescriptor():getCharacterProfession()
-    local traitNames = {}
+    local traitKeys = {}
     local known = player:getCharacterTraits():getKnownTraits()
     for i = 0, known:size() - 1 do
-        local nm = known:get(i):getName()
-        if not isWeightTrait(nm) then traitNames[#traitNames + 1] = nm end
+        local t = known:get(i)
+        local id = traitKey(t) -- nil only for a stale registry object; skip it
+        if id and not isWeightTrait(id) then traitKeys[#traitKeys + 1] = id end
     end
-    return { profession = prof and prof:getName() or nil, traits = traitNames }
+    return { profession = prof and (traitKey(prof) or prof:getName()) or nil, traits = traitKeys }
 end
 
 -- Grant levels of the live character's current build (see playerBuildIdentity).
@@ -314,16 +387,16 @@ end
 -- (applyProfessionRecipes / applyCharacterTraitsRecipes). Granted recipes are
 -- ABILITIES in B42 (Engineer explosives, etc.) - an identity overwrite must know the
 -- respawn build's set to dismiss it.
-function MMSnapshotCodec.buildGrantRecipes(professionName, traitNames)
+function MMSnapshotCodec.buildGrantRecipes(professionKey, traitKeys)
     local granted = {}
     local function addList(list)
         if not list then return end
         for i = 0, list:size() - 1 do granted[list:get(i)] = true end
     end
-    local profDef = professionName and MMShared.findProfessionDefByName(professionName)
+    local profDef = professionKey and MMShared.findProfessionDef(professionKey)
     if profDef and profDef.getGrantedRecipes then addList(profDef:getGrantedRecipes()) end
-    for _, name in ipairs(traitNames or {}) do
-        local trait = MMShared.findTraitByName(name)
+    for _, name in ipairs(traitKeys or {}) do
+        local trait = MMShared.findTrait(name)
         if trait then
             local def = CharacterTraitDefinition.getCharacterTraitDefinition(trait)
             if def and def.getGrantedRecipes then addList(def:getGrantedRecipes()) end

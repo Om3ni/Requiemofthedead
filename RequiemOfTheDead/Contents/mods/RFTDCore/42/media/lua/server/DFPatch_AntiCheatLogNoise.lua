@@ -22,6 +22,26 @@
 -- temporarily restore with the server command: /log multiplayer general
 -- (this patch only re-asserts at boot/server-start, not periodically).
 --
+-- ONE MUTED LINE THIS HEADER DID NOT LIST, found 2026-08-08 while auditing the
+-- engine's own Lua checksum: ChecksumPacket.parseServer emits
+--
+--   DebugType.Multiplayer.warn("user <name> will be kicked in <N>ms because
+--                               Lua/script checksums do not match")
+--
+-- when a connecting client's Lua, script or animation checksum differs from the
+-- server's. This patch silences that warning from the debug log and console.
+--
+-- IT IS STILL RECORDED TWICE, which is why the patch stands rather than growing
+-- a carve-out: the same code path calls AntiCheat.log, which writes to
+-- LoggerManager "user" (AntiCheat.java:123-126) - the file this header already
+-- names as the forensic record - and ServerWorldDatabase.addUserlog stores a
+-- persistent Userlog.LuaChecksum row against the account. So the evidence
+-- survives in both durable places; only the redundant console copy is lost,
+-- which is exactly the bargain the rest of this file makes.
+--
+-- Recorded here because a reader deciding whether to keep this patch should know
+-- a checksum kick is among the things it quietens.
+--
 -- REMOVABLE: delete this file to restore stock logging. Nothing depends
 -- on it.
 

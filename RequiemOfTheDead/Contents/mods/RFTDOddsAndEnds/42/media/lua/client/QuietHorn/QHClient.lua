@@ -1,52 +1,4 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- QHClient.lua - Quiet Horn: the horn still sounds, but it stops being a tool
--- for herding the dead.
---
--- THE ASK: a horn you can hear and cannot fight with. Leaning on it to drag a
--- crowd off a street is the exploit; the noise itself is not.
---
--- WHY THIS IS A REPLACEMENT AND NOT A TWEAK. The engine fuses the two halves.
--- BaseVehicle.onHornStart() sets soundHornOn AND calls
---   WorldSoundManager.instance.addSound(this, x, y, z, 150, 150, ...)
--- in the same method. That addSound IS the herding - radius 150, volume 150 -
--- and there is no way to ask for one half:
---
---   * hornEnable, the flag both halves are gated on, is a PUBLIC FIELD on
---     VehicleScript.Sounds. It has no setter, the struct carries no
---     @UsedFromLua, and Kahlua never exposes instance fields. A mod cannot turn
---     the horn off, so "disable it and replace it" is not on the table.
---   * WorldSoundManager has no removal call. Once a sound is added it is added.
---   * getSounds().horn - the FMOD event name - is a public field too, so we
---     cannot read a vehicle's own horn name either. Hence the table below.
---
--- So the only lever is to never let onHornStart run. Everything the engine
--- would have done, this module does instead.
---
--- WHERE THE VETO HAS TO LIVE, and it is not where you would want it. Vanilla's
--- server handler is server/Vehicles/VehicleCommands.lua, and its dispatch table
--- is declared `local Commands = {}` - FILE-LOCAL, dispatched at :458 through
--- that upvalue. It cannot be reached, let alone overridden, so there is no
--- server-side veto available at all. (Same shape as the file-local Transactions
--- table that silently swallowed LMRestrict's moveables veto in Limes. Check for
--- `local` before planning a seam.)
---
--- That makes the client override below LOAD BEARING rather than a convenience:
--- if a client ever sends the vanilla 'vehicle'/'onHorn' command, the server
--- calls onHornStart and the sound is created with nothing able to stop it. It
--- holds because Odds & Ends is in the server's mod list and PZ requires joining
--- clients to carry the server's mods - but say it plainly, because a
--- server-side guarantee is what we would normally want and this is not one.
---
--- ONE SEAM COVERS BOTH INPUTS. The keybind (ISVehicleMenu.lua:1686-1690) and
--- the radial menu (which queues ISHorn, whose start/stop/perform all call these
--- same two functions) both funnel through onHornStart/onHornStop. Nothing else
--- calls them.
---
--- NOTHING IS SHIPPED AND NOTHING IS EXTRACTED. The horn events are already in
--- every client's FMOD banks; we play them by name. That keeps the vehicles
--- sounding like themselves, adds no asset to a GPL tree, and redistributes none
--- of The Indie Stone's audio.
-
 if isServer() then return end
 
 require "OEShared"
@@ -60,17 +12,7 @@ function QuietHorn.isEnabled()
     return OEShared.enabled("QuietHornEnable")
 end
 
--- Vanilla ships exactly four horn events across every vehicle in 42.20, and a
--- vehicle's own choice is unreadable (see the header), so it is recovered from
--- the script name. Checked against media/scripts/generated/vehicles: 49 scripts
--- take Standard, the Van* family takes Van, SportsCar/SportsCar_ez take
--- SportsCar, OffRoad takes Jeep.
---
--- Prefix rather than an exact list on purpose: the van family alone is ~70
--- scripts (VanMail, VanSpiffo, Van_Leather ...) and TIS adds more each build.
--- An unknown or modded vehicle falls through to Standard, which is the same
--- answer vanilla gives 49 times out of 53 - a wrong-flavoured horn is a far
--- cheaper failure than a silent one.
+
 local HORN_BY_PREFIX = {
     { prefix = "SportsCar", sound = "VehicleHornSportsCar" },
     { prefix = "OffRoad",   sound = "VehicleHornJeep" },
@@ -95,16 +37,28 @@ local function hornSoundFor(vehicle)
     return DEFAULT_HORN
 end
 
--- vehicleId -> { instance = <FMOD handle>, at = <ms> }
+-- vehicleId -> { instance, emitter, sound, at }
+--
+-- THE EMITTER IS CAPTURED AT START AND THE STOP GOES THROUGH IT - never a
+-- fresh getVehicleById lookup. The beta crew caught why (2026-08-08): a
+-- vehicle that streams out mid-blast stops resolving (and one that streams
+-- back in has a NEW emitter), so a lookup-based stop was a silent no-op.
+-- The looped instance survived on the abandoned emitter, which the engine no
+-- longer position-updates - a horn sounding forever, pinned to where the
+-- vehicle was. The handle pair we hold stays valid for exactly as long as
+-- the loop we started on it.
 local playing = {}
 
 local function stopFor(id)
     local rec = playing[id]
     if not rec then return end
     playing[id] = nil
+    pcall(function() rec.emitter:stopSound(rec.instance) end)
+    -- Belt over braces: if the instance stop missed (engine restarted the
+    -- sound under the same emitter), kill it by name. Guarded by isPlaying
+    -- so a normal stop never touches an unrelated same-name loop.
     pcall(function()
-        local vehicle = getVehicleById(id)
-        if vehicle then vehicle:getEmitter():stopSound(rec.instance) end
+        if rec.emitter:isPlaying(rec.sound) then rec.emitter:stopSoundByName(rec.sound) end
     end)
 end
 
@@ -119,9 +73,11 @@ local function startFor(id)
         -- Respect the vehicle's own script. A trailer has no horn and must not
         -- grow one just because we are the ones playing it now.
         if not vehicle:hasHorn() then return end
-        local instance = vehicle:getEmitter():playSoundLooped(hornSoundFor(vehicle))
+        local emitter = vehicle:getEmitter()
+        local sound = hornSoundFor(vehicle)
+        local instance = emitter:playSoundLooped(sound)
         if instance and instance ~= 0 then
-            playing[id] = { instance = instance, at = getTimestampMs() }
+            playing[id] = { instance = instance, emitter = emitter, sound = sound, at = getTimestampMs() }
         end
     end)
 end
@@ -153,6 +109,13 @@ Events.OnTick.Add(reap)
 local origStart = ISVehicleMenu.onHornStart
 local origStop  = ISVehicleMenu.onHornStop
 
+-- The vehicle the local player last started a horn on. The stop half needs it
+-- because "has a vehicle" is not a property key-up can rely on: exit the seat
+-- while leaning on the horn and the key-up fires seatless. The old
+-- early-return there left the loop running to the reaper locally and never
+-- told the wire at all (the second half of the beta-crew bug).
+local lastLocalId = nil
+
 -- Disabled falls through to the captured originals, so the kill switch restores
 -- vanilla - horn attracts zombies again - without a restart.
 function ISVehicleMenu.onHornStart(playerObj)
@@ -161,6 +124,7 @@ function ISVehicleMenu.onHornStart(playerObj)
     if not vehicle then return end
     -- Local first, so the horn answers the key rather than the round trip.
     startFor(vehicle:getId())
+    lastLocalId = vehicle:getId()
     if isClient() then
         RDNet.send(OEShared.MODULE, "hornStart", {})
     end
@@ -169,8 +133,11 @@ end
 function ISVehicleMenu.onHornStop(playerObj)
     if not QuietHorn.isEnabled() then return origStop(playerObj) end
     local vehicle = playerObj and playerObj:getVehicle()
-    if not vehicle then return end
-    stopFor(vehicle:getId())
+    local id = (vehicle and vehicle:getId()) or lastLocalId
+    if id then stopFor(id) end
+    lastLocalId = nil
+    -- Always tell the wire, seated or not - the server resolves the vehicle
+    -- from its own memory of the start, never from this packet.
     if isClient() then
         RDNet.send(OEShared.MODULE, "hornStop", {})
     end

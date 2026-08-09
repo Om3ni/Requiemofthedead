@@ -146,26 +146,67 @@ end
 -- Paging
 -- ---------------------------------------------------------------------------
 
+-- BYTE-SPLIT, ADDED 2026-08-09. A 2026-08-08 wire capture caught this key at
+-- 12.6 KB in a single message, four chunks over budget, and reported as "paging
+-- implied, no declared budget" - which is the probe correctly saying "this thing
+-- pages but will not tell me what it is paging TO, so I am judging it against my
+-- general ceiling."
+--
+-- The scan was already paged, and paged on the RIGHT axis for its UX: it emits
+-- what it has found so far so the panel fills while the admin reads. What it
+-- never did was bound a page by SIZE. A page held however many rows the scan
+-- happened to accumulate before the pump ran, and a fleet of heavy rows - a
+-- vehicle with a long parts list, a verdict block, an overlay name - put all of
+-- them in one message.
+--
+-- So the page is now split against RDChunk's size model (the same model the wire
+-- probe judges the result by, which is the point) and the budget is DECLARED, so
+-- a future breach reports as "this constant is wrong" rather than "go write a
+-- chunker". The scan's own seq/page/done protocol is untouched: RDChunk.send
+-- supersedes by key, which is right for a complete snapshot and would delete
+-- every page but the last of a progressive stream like this one. Core exposes the
+-- splitter separately for exactly this case.
+local FLEET_CHUNK_BYTES = 3072
+
+if RDChunk then
+    RDChunk.declare(M, "Fleet", { budget = FLEET_CHUNK_BYTES, envelope = 260, maxRows = 120 })
+    -- Parts rows are fatter and fewer than fleet rows (each carries an item-type
+    -- list), so the row cap is lower against the same byte budget.
+    RDChunk.declare(M, "VehicleParts", { budget = FLEET_CHUNK_BYTES, envelope = 200, maxRows = 60 })
+end
+
 local function emit(scan, done)
     local rows = scan.rows
     scan.rows = {}
-    scan.page = scan.page + 1
     -- A page with no rows is still worth sending when it is the LAST one: it
     -- carries done/total/capped, and without it a fleet whose final slice
     -- happened to land empty would leave the panel spinning forever.
     if #rows == 0 and not done then return end
-    pcall(function()
-        sendServerCommand(scan.player, M, "Fleet", {
-            seq    = scan.seq,
-            scope  = scan.scope,
-            page   = scan.page,
-            rows   = rows,
-            done   = done and true or false,
-            total  = scan.emitted,
-            capped = scan.capped and true or false,
-            seen   = scan.seen,
-        })
-    end)
+
+    -- One send per slice. `done` rides ONLY the final message, or the client
+    -- stops assembling while pages are still in flight and renders a short fleet
+    -- as a complete one - which looks like data loss and is not.
+    local slices = (RDChunk and RDChunk.slice(M, "Fleet", rows)) or { rows }
+    if #slices == 0 then slices = { {} } end
+
+    for i = 1, #slices do
+        local last = (i == #slices)
+        scan.page = scan.page + 1
+        local page = scan.page
+        local slice = slices[i]
+        pcall(function()
+            sendServerCommand(scan.player, M, "Fleet", {
+                seq    = scan.seq,
+                scope  = scan.scope,
+                page   = page,
+                rows   = slice,
+                done   = (done and last) and true or false,
+                total  = scan.emitted,
+                capped = scan.capped and true or false,
+                seen   = scan.seen,
+            })
+        end)
+    end
 end
 
 local function finish(scan)
@@ -441,9 +482,26 @@ function RCFleet.parts(player, vid)
         end)
     end
 
-    pcall(function()
-        sendServerCommand(player, M, "VehicleParts", { vid = vid, parts = out })
-    end)
+    -- Split for the same reason Fleet is, and pre-emptively rather than after a
+    -- capture catches it. VehicleParts was NOT flagged in the 2026-08-08 report -
+    -- 5,067 B average, 7,021 B largest, comfortably inside the 8 KB ceiling. That
+    -- is exactly what a latent breach looks like: the payload is a list of parts
+    -- with an `items` array on each, so its size is set by the vehicle, not by us,
+    -- and a heavily-modded or fully-loaded vehicle is one longer list away from
+    -- the same 12 KB message Fleet was already sending.
+    --
+    -- seq/total ride every message so the client can assemble; a single-slice
+    -- send still carries seq=1 total=1, which keeps the receiver's path uniform.
+    local slices = (RDChunk and RDChunk.slice(M, "VehicleParts", out)) or { out }
+    if #slices == 0 then slices = { {} } end
+
+    for i = 1, #slices do
+        local seq, total, slice = i, #slices, slices[i]
+        pcall(function()
+            sendServerCommand(player, M, "VehicleParts",
+                { vid = vid, parts = slice, seq = seq, total = total })
+        end)
+    end
 end
 
 -- Drop a player's in-flight scan (disconnect, or the tab closing).

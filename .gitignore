@@ -43,6 +43,14 @@ IBdebuglog.txt
 *.jsonl.log
 guardiant.log
 
+# The archive companion to the above. 42.20's write-extension allowlist renamed
+# Memoir's recovery point from "latest.json" to "latest.json.txt" (RDShared
+# .EXT_DOC), and no rule here followed it - so a pulled archive sat untracked and
+# committable while its sibling events log was correctly ignored. These carry a
+# named player's full character: username, life ids, every skill and trait.
+# Caught 2026-08-09 with Mox's snapshot one `git add -A` away from going public.
+*.json.txt
+
 # Generated forensic reports - rebuild with tools/forensic-report.py, never commit
 # (a single run embeds the whole ring: ~1.9MB for 3.6k records)
 *forensic-report.html

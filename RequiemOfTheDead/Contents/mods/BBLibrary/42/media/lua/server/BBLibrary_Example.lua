@@ -15,7 +15,7 @@
 --
 -- You do NOT need the BBLibrary submod enabled to use the engine. BBLibrary is
 -- just a ready-made list; your own list mod needs RFTDBanBox (the engine), not
--- BBLibrary. RFTDBanBox is a separately enableable mod id, NOT something that is
+-- BBLibrary. RFTDBanBox,part of the Requiem of the Dead: Season 1 monomod,  is a separately enableable mod id, NOT something that is
 -- always present - declare `require=RFTDBanBox` in your mod.info and
 -- `require "DFBanBox"` in your Lua, or your ban calls hit a nil engine.
 --

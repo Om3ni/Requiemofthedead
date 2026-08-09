@@ -1386,6 +1386,51 @@ local function svOnTick()
         -- diff on this pass, so the delta already carries them; just clear the flag.
         local delta = svBuildSnapshot()
         if delta then
+            -- ---------------------------------------------------------------
+            -- SIZE WATCH, added 2026-08-09. NOT a chunker, deliberately.
+            --
+            -- The 2026-08-08 wire capture put this key at 7,915 B against an
+            -- 8,192 B alert ceiling - 96.6%, the mod's dominant key at 60.9% of
+            -- its traffic, and the observed max is a FLOOR because the sampler
+            -- was keeping 12 keys while up to 76 were live. It is the closest
+            -- thing in the family to an oversize breach that has not happened.
+            --
+            -- The other three streams in that capture were paged onto RDChunk.
+            -- This one was not, and the reason is protocol rather than effort:
+            --
+            --   * `changed` is a MAP keyed by id string, not an array, so it
+            --     cannot be sliced without changing the wire shape on both sides.
+            --   * `revision` drives the client's gap detector. It drops anything
+            --     where revision <= lastRevision, so naive chunks all carrying one
+            --     revision would apply the first and silently discard the rest -
+            --     presenting as zombie desync, not as a transport fault.
+            --   * A wrong fix here desyncs every zombie for every player, and it
+            --     cannot be verified outside a live server.
+            --
+            -- So this MEASURES instead of guessing. Declaring a budget without
+            -- paging would be worse than doing nothing: declareChunked makes a
+            -- breach report as "this constant is wrong" instead of "go write a
+            -- chunker", which is exactly the wrong instruction here.
+            --
+            -- What we get is the distribution rather than one sampled floor - how
+            -- often it approaches the ceiling, and how big it gets at 39 players
+            -- during a horde. That is what sizing the real fix needs.
+            if RDWire and RDLog then
+                local est = 0
+                pcall(function() est = RDWire.estimate(delta) end)
+                if est > 6144 then
+                    pcall(function()
+                        local changed = 0
+                        if delta.changed then for _ in pairs(delta.changed) do changed = changed + 1 end end
+                        RDLog.forensic("wire", "RQ.DELTA_LARGE", nil, {
+                            fp      = "zombieDelta",
+                            est     = est,
+                            changed = changed,
+                            removed = delta.removed and #delta.removed or 0,
+                        }, "RFTDDirge")
+                    end)
+                end
+            end
             RQSvShared.broadcast("zombieDelta", delta)
         end
         svSnapshotDirty = false

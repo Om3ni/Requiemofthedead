@@ -261,7 +261,29 @@ end
 local function onServerCommand(module, command, args)
     if module ~= MODULE then return end
     if command == "PlayersList" then
-        PlayersTab.rows = (args and args.players) or {}
+        -- Reassembly; see DFPlayersTab_Server on why the roster is paged. The
+        -- roster drives selection pruning below, so publishing a partial list
+        -- would drop selections for players who are online and simply had not
+        -- arrived yet - a wrong roster, not an incomplete one.
+        local total = tonumber(args and args.total) or 1
+        if total > 1 then
+            local gen = args and args.gen
+            local asm = PlayersTab._asm
+            if not asm or asm.gen ~= gen then
+                asm = { gen = gen, rows = {}, got = 0 }
+                PlayersTab._asm = asm
+            end
+            for _, r in ipairs((args and args.players) or {}) do
+                asm.rows[#asm.rows + 1] = r
+            end
+            asm.got = asm.got + 1
+            if asm.got < total then return end
+            PlayersTab._asm = nil
+            PlayersTab.rows = asm.rows
+        else
+            PlayersTab._asm = nil
+            PlayersTab.rows = (args and args.players) or {}
+        end
         rebuildList()
         -- Players disconnect mid-selection. Drop them from the set rather than
         -- firing a bulk action at someone who left, and SAY the selection shrank

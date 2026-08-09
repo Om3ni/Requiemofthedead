@@ -81,6 +81,38 @@ option RFTDCore.CmdRelayScope
     translation = RD_CmdRelayScope,
 }
 
+option RFTDCore.TripwireEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDCore,
+    translation = RD_TripwireEnabled,
+}
+
+option RFTDCore.SendWatchEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDCore,
+    translation = RD_SendWatchEnabled,
+}
+
+option RFTDCore.IntentWatchEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDCore,
+    translation = RD_IntentWatchEnabled,
+}
+
+option RFTDCore.TallyEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDCore,
+    translation = RD_TallyEnabled,
+}
+
 option RFTDCore.WireProbeEnabled
 {
     type = boolean,
@@ -103,8 +135,8 @@ option RFTDCore.WireProbeTopN
 {
     type = integer,
     min = 1,
-    max = 50,
-    default = 25,
+    max = 250,
+    default = 80,
     page = RFTDCore,
     translation = RD_WireProbeTopN,
 }

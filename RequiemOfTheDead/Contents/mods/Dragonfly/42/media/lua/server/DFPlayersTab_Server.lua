@@ -18,6 +18,12 @@
 
 if not isServer() then return end
 
+-- `field = "players"` keeps the wire shape the client already reads.
+if RDChunk then
+    RDChunk.declare(DFCore.MODULE, "PlayersList",
+        { budget = 3072, envelope = 240, maxRows = 60, field = "players" })
+end
+
 local function roleName(target)
     local ok, name = pcall(function()
         local role = target:getRole()
@@ -85,8 +91,20 @@ Events.OnServerStarted.Add(function()
                     if p then out[#out + 1] = serializePlayer(p) end
                 end
             end
-            pcall(sendServerCommand, player, DFCore.MODULE, "PlayersList",
-                { players = out })
+            -- PAGED SINCE 2026-08-09. Not flagged in the 2026-08-08 capture -
+            -- 4,093 B average, 4,696 B largest, inside the 8 KB ceiling - but this
+            -- payload is one row per ONLINE PLAYER, so its size is set by the
+            -- server's population and the capture was not taken at peak. At the
+            -- 39 players this server actually runs it is several times the size
+            -- that was measured, which puts it past the ceiling on the roster
+            -- alone. Paging it now costs nothing and removes the cliff.
+            if RDChunk then
+                RDChunk.send(player, DFCore.MODULE, "PlayersList", out,
+                    { total_players = #out })
+            else
+                pcall(sendServerCommand, player, DFCore.MODULE, "PlayersList",
+                    { players = out })
+            end
             return { ok = true }  -- silent success; PlayersList drives UI
         end,
     }

@@ -18,6 +18,10 @@
 require "DFBanBox"
 
 DFBanBox.ban("Base.Yoyo")
+DFBanBox.ban("dcollectibles.DCDCMjolnir")
+DFBanBox.ban("dcollectibles.DCCrescentRose")
+DFBanBox.ban("dcollectibles.DCPoseidonTrident")
+DFBanBox.ban("dcollectibles.DCRebellion")
 
 
 -- Server-specific player notice (policy, not engine mechanism): overrides the

@@ -55,8 +55,12 @@ RDShared = { mods = {}, nowMs = function() return clockMs end,
              debugOn = function() return false end }
 
 local chronicled = {}   -- list of event names, in order
+local lastPayload = {}  -- event name -> the payload table it last carried
 RDLog = {
-    chronicle = function(evt) chronicled[#chronicled + 1] = evt end,
+    chronicle = function(evt, _p, payload)
+        chronicled[#chronicled + 1] = evt
+        lastPayload[evt] = payload
+    end,
     forensic  = function() end,
 }
 
@@ -86,6 +90,26 @@ local function newPlayer(onlineId, username)
     function self:getSquare()     return self._loaded and {} or nil end
     function self:getInventory()  return self._loaded and {} or nil end
     function self:transmitModData() end
+    -- Traits/profession as the engine hands them over: getName() is the PATH with
+    -- the namespace stripped, tostring() is the full "namespace:path" id. The
+    -- chronicle must record the id - see the traitsOf comment in RDLife for why a
+    -- name-only record cannot tell base:organized from a mod trait shadowing it.
+    local function regObj(id)
+        local o = { getName = function(s) return (s.__id:match("^[^:]+:(.+)$")) end, __id = id }
+        return setmetatable(o, { __tostring = function(s) return s.__id end })
+    end
+    self._traits = { regObj("base:organized"), regObj("seinarextendedprofessions:slicer") }
+    self._prof   = regObj("base:unemployed")
+    function self:getCharacterTraits()
+        local t = self._traits
+        return { getKnownTraits = function()
+            return { size = function() return #t end, get = function(_, i) return t[i + 1] end }
+        end }
+    end
+    function self:getDescriptor()
+        local pr = self._prof
+        return { getCharacterProfession = function() return pr end }
+    end
     -- CreatePlayerPacket.processServer constructs a new IsoPlayer: same
     -- connection, same onlineID, empty modData.
     function self:respawnAsNewCharacter()
@@ -154,6 +178,16 @@ local spawn, login = counts(tick())
 eq("first ready chronicles RD.SPAWN", spawn, 1)
 eq("first ready does not chronicle RD.LOGIN", login, 0)
 eq("a life id was minted", type(p._md.RFTD_LifeId), "string")
+
+-- The build record must carry FULL REGISTRY IDS. Recording getName() was how a
+-- memoir read that swapped base:organized for a mod trait shadowing the same path
+-- produced a chronicle showing nothing had changed (Mox, 2026-08-09): both objects
+-- answer "organized", so the record could not distinguish the character it
+-- described from the one it had lost. traitsOf sorts, so the order is stable.
+local build = lastPayload["RD.SPAWN"] and lastPayload["RD.SPAWN"].build or {}
+eq("chronicled traits are namespaced ids, not getName()",
+    table.concat(build.traits or {}, ","), "base:organized,seinarextendedprofessions:slicer")
+eq("chronicled profession is a namespaced id", build.profession, "base:unemployed")
 local firstLife = p._md.RFTD_LifeId
 
 spawn, login = counts(tick())

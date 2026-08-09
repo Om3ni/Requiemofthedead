@@ -7,6 +7,20 @@ option RFTDMemoir.MemoirDebug
     page = RFTDMemoir,
     translation = DF_MemoirDebug,
 }
+/* One-shot migration knob. Memoir reads before 2026-08-09 resolved traits by name
+   with the namespace stripped, so a mod trait sharing a vanilla path (Seinar's
+   creation-screen placeholders, e.g. Organized) was handed back in place of the
+   real one - and the swap went into the player save, so it survives relogs. Turn
+   this on for one restart and every affected character repairs itself as it
+   reconnects. Default off because the rule is generic and another server's mod
+   may intend its shadowing trait to stick. Idempotent; safe to leave on. */
+option RFTDMemoir.MemoirAutoFixShadowedTraits
+{
+    type = boolean,
+    default = false,
+    page = RFTDMemoir,
+    translation = DF_MemoirAutoFixShadowedTraits,
+}
 option RFTDMemoir.MemoirXPRestore
 {
     type = integer,

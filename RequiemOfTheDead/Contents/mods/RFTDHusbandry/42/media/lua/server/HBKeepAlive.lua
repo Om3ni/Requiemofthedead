@@ -27,11 +27,18 @@ print("[HB] HBKeepAlive loaded - server tick + trailer override")
 
 local TRAILER_SCAN_RANGE = 20  -- ±squares around each player for trailer scan
 
--- Diagnostic instrumentation. Read-only state exposed for optional consumers
--- (e.g. HBErrorMagnifier). If you want to fully de-instrument the keep-alive
--- when the mod stabilises, deleting this table and the four `HBKeepAlive.*`
--- writes below removes it cleanly - no other module reads these fields
--- beyond HBErrorMagnifier.lua.
+-- Diagnostic instrumentation. Read-only state, exposed for any consumer that
+-- wants to report on the keep-alive.
+--
+-- ITS ONE READER IS GONE (2026-08-08): HBErrorMagnifier.lua registered these
+-- fields as a debug report with the third-party Error Magnifier mod, and was
+-- deleted when the console moved into Core. Nothing reads them today.
+--
+-- They are kept rather than removed because the keep-alive is the module whose
+-- failures are hardest to see from outside - it either ticks or silently does
+-- not - and re-adding counters after the fact means re-deriving which ones
+-- mattered. Deleting this table and the `HBKeepAlive.*` writes below removes the
+-- instrumentation cleanly whenever that is wanted; no other module reads them.
 HBKeepAlive = HBKeepAlive or {}
 HBKeepAlive.tickCount            = 0
 HBKeepAlive.lastTickAt           = 0

@@ -1,22 +1,17 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- DFDeck.lua - the deck: Growl-skinned admin shell (client only).
 --
--- INCUBATION CONTRACT. This is the successor chassis to DFPanel, running
--- ALONGSIDE it while the skin matures - same mod since 2026-08-13, when the
--- planned RFTDDragonfly split was folded back in (the server runs ONE
--- Dragonfly; the RFTDDragonfly name lives on only as the sandbox namespace
--- and wire module this mod always used): same registry (DFRegistry, in
--- Core), same tab build contract - spec.build(spec, contentPanel, 0, 0, w, h)
--- - same access policy (RDAccess.meetsTier over RFTDDragonfly.PanelAccess,
--- the sandbox page this mod ships). Every
--- tab the family registers appears here, functional immediately; tabs keep
--- their stock look inside the new chrome until their Phase 4 migration. The
--- old panel opens on Shift+U as always; the deck opens from its own sidebar
--- badge beneath Dragonfly's (DFDeckButton - red closed / green open, the old
--- badge's inverse for the incubation) or Shift+Numpad9, so both panels can
--- be compared live on the same box. At the swap, the deck inherits the old
--- keybind and colors, and DFPanel retires. (Shift+I was considered and
--- rejected: I is the inventory key.)
+-- THE ADMIN SHELL, GRADUATED 2026-08-13. Incubation is over: DFPanel and
+-- DFSideButton are retired, and this is the one admin surface. The deck
+-- inherited the classic panel's sandbox keybind (RFTDDragonfly.OpenKeybind,
+-- default Shift+U; the RFTDDragonfly name survives only as the sandbox
+-- namespace and wire module this mod always used) and its badge wears the
+-- family's honest colors - green closed, red open (DFDeckButton). Same
+-- registry as ever (DFRegistry, in Core), same tab build contract -
+-- spec.build(spec, contentPanel, 0, 0, w, h) - same access policy
+-- (RDAccess.meetsTier over RFTDDragonfly.PanelAccess). Every tab the family
+-- registers appears here; tabs keep their stock look inside the chrome until
+-- their Phase 4 migration.
 --
 -- PRESENTATION ONLY - the standing order of this whole mod: no tab logic, no
 -- domain knowledge, no wire traffic lives here, ever. The deck knows the
@@ -41,7 +36,7 @@
 -- DFDeckState (window instance, keybind-hooked flag), and the key handler is
 -- registered exactly once, dereferencing the DFDeck global at call time so
 -- one registration always drives the newest code. The loop: edit -> reload
--- via the debug Lua window -> toggle twice, badge or Shift+Numpad9 (close
+-- via the debug Lua window -> toggle twice, badge or Shift+U (close
 -- tears down the old-class window, open builds from the new). DFTheme reloads the same way; sprites
 -- do not hot-swap (engine texture cache) - which is fine, sprites are shape
 -- and shape is stable; color changes are DFTheme edits.
@@ -83,6 +78,13 @@ local GEAR_COL = 26
 local GRIP    = 18
 local MIN_W   = 820
 local MIN_H   = 460
+-- The opening footprint, and the fallback for tabs declaring no preference.
+local DEF_W   = 1292
+local DEF_H   = 714
+-- One line PER TAB ("<key> w=%d h=%d"), same scheme the player panel proved:
+-- a single remembered size forces every tab to open in whatever room the
+-- last one was dragged to. Tab specs may declare prefW/prefH; a size the
+-- admin drags a tab to is remembered for that tab and wins.
 local LAYOUT_FILE = "DFDeck_layout.txt"
 
 -- ---------------------------------------------------------------------------
@@ -199,10 +201,47 @@ function DFDeck:settleResize()
     if fontMoved or not self:reflowContent() then
         if self.activeId then self:showTab(self.activeId) end
     end
-    DFDeck.saveLayout(self.width, self.height)
+    -- Remembered PER TAB: a drag while Zones is up is a statement about the
+    -- Zones tab, not about every other room in the deck.
+    self.sizes = self.sizes or {}
+    self.sizes[DFDeck.sizeKey(self.activeId or "")] = { w = self.width, h = self.height }
+    DFDeck.saveSizes(self.sizes)
+end
+
+-- ---------------------------------------------------------------------------
+-- Per-tab sizing, the scheme the player panel proved. Priority: the size the
+-- admin last dragged THIS tab to, else the spec's prefW/prefH, else keep the
+-- current size. Clamped to screen and floor; shifted back on-screen when
+-- growth would push the grip off an edge.
+-- ---------------------------------------------------------------------------
+
+function DFDeck.sizeKey(id)
+    return (tostring(id):gsub("[%c%s]", ""))
+end
+
+function DFDeck:applyTabSize(id)
+    local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
+    local rec  = self.sizes and self.sizes[DFDeck.sizeKey(id)]
+    local spec = DFRegistry.tabs[id]
+    local w = (rec and rec.w) or (spec and spec.prefW)
+    local h = (rec and rec.h) or (spec and spec.prefH)
+    if not w and not h then return end
+
+    w = math.floor(math.min(w or self.width, sw - 40))
+    h = math.floor(math.min(h or self.height, sh - 40))
+    if w < MIN_W then w = MIN_W end
+    if h < MIN_H then h = MIN_H end
+    if w == self.width and h == self.height then return end
+
+    self:setWidth(w)
+    self:setHeight(h)
+    if self:getX() + w > sw then self:setX(math.max(0, sw - w)) end
+    if self:getY() + h > sh then self:setY(math.max(0, sh - h)) end
 end
 
 function DFDeck:showTab(id)
+    self:applyTabSize(id)   -- before contentRect is read: the size is the
+                            -- tab's, not whatever the last tab left behind
     self.activeId = id
     -- The tier these widgets are about to BAKE. The prefs listener below
     -- compares this stamp against DFKit.fontScale to know a rebuild is owed -
@@ -246,7 +285,8 @@ function DFDeck:refreshBeat()
     end
     self.statusText = limes .. user
 
-    -- capability greying, same beat (mirrors DFPanel's live prerender check)
+    -- capability greying, same beat (the retired DFPanel checked this live
+    -- per frame; the beat is the deck's cheaper answer)
     local p = getPlayer()
     for i = 1, #self.rows do
         local spec = self.rows[i].spec
@@ -278,8 +318,8 @@ function DFDeck:prerender()
 
     -- frame: void ground, scar outline, murk strips
     -- Translucent to the same weight as the classic panel: vanilla
-    -- ISCollapsableWindow initialises backgroundColor a = 0.8, and DFPanel
-    -- inherits it. The deck was drawing at a = 1, which read as a solid wall
+    -- ISCollapsableWindow initialises backgroundColor a = 0.8, which is the
+    -- weight the retired DFPanel wore. The deck was drawing at a = 1, which read as a solid wall
     -- sitting next to a window you can see the world through.
     local A = DFKit.alpha
     DFTheme.roundFrame(self, 0, 0, w, h, DFTheme.radius, A.window, C.scar, C.void)
@@ -346,16 +386,16 @@ function DFDeck:prerender()
                 self:drawRect(1, ry, ROSTER_W - 1, ROW_H, 0.3 * row.hoverT, C.hideHi.r, C.hideHi.g, C.hideHi.b)
                 self:drawRect(1, ry, 2, ROW_H, row.hoverT, C.sightDim.r, C.sightDim.g, C.sightDim.b)
             end
-            local base, lift = C.ash, row.hoverT
             if not row.enabled then
                 self:drawText(row.label, 18, ry + 7, C.scar.r, C.scar.g, C.scar.b, 1, DFTheme.font.label)
             else
+                -- Enabled-at-rest is BONE, not ash - same legibility fix as
+                -- the player deck's strip (ash read as "disabled" even to the
+                -- owner, 2026-08-08). Scar above keeps disabled unmistakable.
                 self:drawText(row.label,
                     18, ry + 7,
-                    base.r + (C.bone.r - base.r) * lift,
-                    base.g + (C.bone.g - base.g) * lift,
-                    base.b + (C.bone.b - base.b) * lift,
-                    1, DFTheme.font.label)
+                    C.bone.r, C.bone.g, C.bone.b,
+                    0.7 + 0.3 * row.hoverT, DFTheme.font.label)
             end
         end
     end
@@ -497,10 +537,11 @@ function DFDeck:onMouseUp(x, y)        endDrag(self) end
 function DFDeck:onMouseUpOutside(x, y) endDrag(self) end
 
 -- ---------------------------------------------------------------------------
--- Open / close / toggle / keybind. Same access policy as DFPanel: sandbox
--- tier via RDAccess.meetsTier, failing closed to admin-only. Shift+Numpad9
--- for the incubation (primary opener is the DFDeckButton sidebar badge);
--- the swap inherits Shift+U.
+-- Open / close / toggle / keybind. Access policy unchanged since the
+-- classic panel: sandbox
+-- tier via RDAccess.meetsTier, failing closed to admin-only. Openers: the
+-- DFDeckButton sidebar badge, and the sandbox keybind inherited from the
+-- classic panel at graduation (OpenKeybind, default Shift+U).
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
@@ -511,27 +552,33 @@ function DFDeck:onMouseUpOutside(x, y) endDrag(self) end
 -- may have changed since last session.
 -- ---------------------------------------------------------------------------
 
-function DFDeck.saveLayout(w, h)
+function DFDeck.saveSizes(sizes)
     pcall(function()
         local f = getFileWriter(LAYOUT_FILE, true, false)
         if not f then return end
-        f:write(string.format("w=%d h=%d\n", math.floor(w), math.floor(h)))
+        for k, r in pairs(sizes or {}) do
+            f:write(string.format("%s w=%d h=%d\n", k, math.floor(r.w), math.floor(r.h)))
+        end
         f:close()
     end)
 end
 
-function DFDeck.loadLayout()
-    local w, h
+-- The old single-line "w= h=" format fails this parse and is forgotten: one
+-- default-sized open, then the file is rewritten new-style.
+function DFDeck.loadSizes()
+    local out = {}
     pcall(function()
         local r = getFileReader(LAYOUT_FILE, false)
         if not r then return end
-        local line = r:readLine()
+        while true do
+            local line = r:readLine()
+            if not line then break end
+            local k, w, h = line:match("^(%S+) w=(%d+) h=(%d+)")
+            if k then out[k] = { w = tonumber(w), h = tonumber(h) } end
+        end
         r:close()
-        if not line then return end
-        w = tonumber(line:match("w=(%d+)"))
-        h = tonumber(line:match("h=(%d+)"))
     end)
-    return w, h
+    return out
 end
 
 function DFDeck.canOpen()
@@ -553,15 +600,13 @@ function DFDeck.open()
         return
     end
     local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
-    -- 1092x714: the 1456x952 it grew to, taken back down 25%. Net effect is
-    -- roughly the original 1040x680 plus 5%.
-    --
-    -- Clamped with a margin so the deck can never open larger than the screen
-    -- it lands on - an off-screen titlebar is an unmovable window. The clamp
-    -- still matters at this size: 1092 wide overflows a 1024x768 display.
-    local rw, rh = DFDeck.loadLayout()
-    local w = math.min(rw or 1292, sw - 80)
-    local h = math.min(rh or 714,  sh - 80)
+    -- Opens at the default; the landing tab's applyTabSize (inside the first
+    -- showTab, before anything renders) immediately takes it to that tab's
+    -- remembered or preferred size. Clamped with a margin so the deck can
+    -- never open larger than the screen it lands on - an off-screen titlebar
+    -- is an unmovable window.
+    local w = math.min(DEF_W, sw - 80)
+    local h = math.min(DEF_H, sh - 80)
     if w < MIN_W then w = math.min(MIN_W, sw - 80) end
     if h < MIN_H then h = math.min(MIN_H, sh - 80) end
 
@@ -573,6 +618,7 @@ function DFDeck.open()
         DFKit.setFontScale(DFPrefs.get("fontScale"))
     end
     local inst = DFDeck:new(math.floor((sw - w) / 2), math.floor((sh - h) / 2), w, h)
+    inst.sizes = DFDeck.loadSizes()
     inst:initialise()
     inst:addToUIManager()
     inst:setVisible(true)
@@ -603,18 +649,18 @@ end
 
 -- Registered ONCE across any number of reloads; the closure reads the DFDeck
 -- global at press time, so the single registration always runs current code.
--- Keycode resolved symbolically with the verified constant as the net
--- (KEY_NUMPAD9 = 73, org/lwjglx/input/Keyboard.java:94).
+-- The binding is the classic panel's sandbox pair, inherited at graduation:
+-- RFTDDragonfly.OpenKeybind (LWJGL keycode, default 22 = U; 0 disables the
+-- key entirely, leaving the badge as the only door) and OpenKeyRequiresShift
+-- (default true). Read at press time, not cached - a sandbox change applies
+-- on the next keypress, and key presses are human-cadence cheap.
 if not DFDeckState.hooked then
     DFDeckState.hooked = true
-    local deckKey = nil
     Events.OnKeyPressed.Add(function(key)
-        if deckKey == nil then
-            local ok, v = pcall(function() return Keyboard.KEY_NUMPAD9 end)
-            deckKey = (ok and type(v) == "number") and v or 73
-        end
-        if key ~= deckKey then return end
-        if not shiftDown() then return end
+        local s = SandboxVars.RFTDDragonfly or {}
+        local bound = tonumber(s.OpenKeybind) or 22
+        if bound == 0 or key ~= bound then return end
+        if s.OpenKeyRequiresShift ~= false and not shiftDown() then return end
         DFDeck.toggle()
     end)
 end
@@ -647,7 +693,7 @@ if DFPrefs and DFPrefs.onChange and not DFDeckState.prefsHooked then
     end)
 end
 
-print("[Deck] DFDeck loaded (incubation shell - sidebar badge or Shift+Numpad9)")
+print("[Deck] DFDeck loaded (the admin shell - sidebar badge or the sandbox keybind, default Shift+U)")
 
 return DFDeck
 

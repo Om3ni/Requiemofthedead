@@ -299,3 +299,21 @@ option RFTDOddsAndEnds.StickyHeadwearEnable
     page = OE_StickyHeadwear,
     translation = OE_StickyHeadwearEnable,
 }
+
+/* ============================================================
+   Workshop - the player panel's crafting home: vanilla handcraft
+   panel with target filtering (Craft), a carried-gear maintenance
+   dashboard (Gear), and the searchable recipe field guide
+   (Journal). Moved here from Reclamation 2026-08-08 - the day it
+   learned to serve more than vehicle parts it stopped being
+   vehicle domain. Off means the tab never registers and every
+   domain-mod door into it goes silent.
+   ============================================================ */
+
+option RFTDOddsAndEnds.WorkshopEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_Workshop,
+    translation = OE_WorkshopEnable,
+}

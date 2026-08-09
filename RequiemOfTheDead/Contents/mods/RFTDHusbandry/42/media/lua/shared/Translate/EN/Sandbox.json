@@ -14,7 +14,7 @@
     "Sandbox_RQHB_AnimalLifespanMultiplier_tooltip": "Extended mode only. How many times longer tame animals live. 4 = animals take 4x as long to reach old age (a species that normally ages out in ~6 months now takes ~2 years). 1 = vanilla speed.",
 
     "Sandbox_RQHB_HayTuftsPerBedding": "Hay tufts to fully bed a hutch",
-    "Sandbox_RQHB_HayTuftsPerBedding_tooltip": "How many hay tufts it takes to fill a hutch's bedding. 4 (default) = each tuft adds 25%. Lower = cheaper to bed; higher = more hay per coop. A harvested hay bale yields roughly 20 tufts.",
+    "Sandbox_RQHB_HayTuftsPerBedding_tooltip": "How many hay tufts it takes to fill a hutch's bedding. 4 (default) = each tuft adds 25%%. Lower = cheaper to bed; higher = more hay per coop. A harvested hay bale yields roughly 20 tufts.",
 
     "Sandbox_RQHB_BeddingDirtRatio": "Dirt absorbed per bedding",
     "Sandbox_RQHB_BeddingDirtRatio_tooltip": "How much coop dirt each point of bedding soaks up. 3 (default) = a full bedding absorbs ~300 dirt of buildup before running out; higher = bedding lasts longer. Minimum 0.5 = each bedding soaks only half a dirt, so hay is used up twice as fast as dirt builds (harshest upkeep). Bedding has no time decay; it is only consumed by absorbing dirt, so busier coops use it faster.",

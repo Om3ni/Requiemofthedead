@@ -17,9 +17,20 @@
 
 if isServer() then return end
 
-local DEFAULT_KEY = 68 -- F10. Unbound in vanilla B42 (the old "F10 = debug mode"
-                       -- behaviour came from a third-party mod, not the engine), so
-                       -- it's a clean default. Rebind via DebugGateKey if desired.
+-- F10. NOT unbound in vanilla, whatever an earlier version of this comment said:
+-- media/lua/shared/keyBinding.lua:191 binds F10 to "Take screenshot". Pressing it
+-- therefore ALSO writes a ~10 MB png to Zomboid/Screenshots, which is the visible
+-- half of the "F10 does nothing" report - the screenshots are the key working, just
+-- not the half anyone wanted.
+--
+-- It does not block us. GameWindow.java:426 polls GameKeyboard.isKeyPressed("Take
+-- screenshot") and never calls eatKeyPress, so the release still reaches
+-- LuaEventManager.triggerEvent("OnKeyPressed") at GameKeyboard.java:51 and this
+-- gate still gets its event. Both handlers fire, independently.
+--
+-- Sharing the key with a vanilla binding is still a poor default. DebugGateKey
+-- rebinds it; 41 (backtick) and 43 (backslash) are genuinely unbound.
+local DEFAULT_KEY = 68
 
 local DFDebugGate = {}
 

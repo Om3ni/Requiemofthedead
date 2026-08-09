@@ -558,6 +558,16 @@ end
 -- caller degrades to the old behaviour rather than erroring.
 function RDLog.forensic(streamName, evt, subj, payload, modId)
     push(streamName, envelope(evt, modId or "?", subj, payload))
+
+    -- Fingerprint tally, same removable-file idiom as the rest of the family.
+    -- The ring records every event; RDTally answers which handful of them account
+    -- for the volume - the question a rolled ring can no longer be asked. It gets
+    -- the payload already in hand here rather than re-deriving it from a second
+    -- listener, which is the whole reason this call lives inside this function.
+    -- Delete RDTally.lua and this is a nil check.
+    if RDTally then
+        pcall(function() RDTally.note(streamName, evt, payload) end)
+    end
 end
 
 -- Escape hatch for consolidating pre-Core writers incrementally: reroute an

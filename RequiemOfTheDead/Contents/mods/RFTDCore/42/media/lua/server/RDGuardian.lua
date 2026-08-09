@@ -158,6 +158,21 @@ if not RDGuardian._hooked then
                 RDCmdRelay.offer(module, command, player,
                     (player and player:getAccessLevel()) or "", est)
             end
+
+            -- Tripwire inspection, same removable-file idiom and the same reason
+            -- for living inside this handler rather than beside it. Two table
+            -- lookups on the miss path, and the miss path is every command that
+            -- nobody registered as privileged - which is nearly all of them.
+            --
+            -- This is the only tripwire tier that is EVIDENCE: the access level
+            -- it judges against is read server-side from the connection, so a
+            -- client can neither suppress the check nor lie its way past it.
+            -- Everything reported from the client is a weaker claim and is
+            -- labelled as one; see RDTripwire's header.
+            if RDTripwire then
+                RDTripwire.inspect(module, command, player,
+                    (player and player:getAccessLevel()) or "")
+            end
         end)
     end)
 end

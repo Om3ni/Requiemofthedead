@@ -2,12 +2,15 @@
 -- DFRegistry - tab/action/badge registration for consumer mods.
 --
 -- Reaper, Husbandry, Dirge, and Ladybug all call into this if Dragonfly is
--- loaded. Each registration is just a table description; DFPanel reads it
--- at panel-open time to build the UI. No registration means no surface,
--- which is how consumer mods stay shippable without Dragonfly.
+-- loaded. Each registration is just a table description; the deck (DFDeck)
+-- reads it at panel-open time to build the UI. No registration means no
+-- surface, which is how consumer mods stay shippable without Dragonfly.
 --
 -- Registration order doesn't matter; tabs are sorted by an optional `order`
--- field then alphabetically by label.
+-- field then alphabetically by label. A tab spec may also declare prefW /
+-- prefH - the size the shell resizes itself to when the tab is shown
+-- (clamped to the screen; a size the admin drags that tab to is remembered
+-- per tab and wins). Same contract as the player panel's DFPlayerRegistry.
 
 if isServer() then return end
 

@@ -81,9 +81,9 @@
     "IGUI_RC_Spawn_DirNorth": "North",
     "IGUI_RC_Spawn_DirSouth": "South",
     "IGUI_RC_Spawn_CondRandom": "Random",
-    "IGUI_RC_Spawn_CondPerfect": "Perfect (100%)",
-    "IGUI_RC_Spawn_CondAverage": "Average (40-80%)",
-    "IGUI_RC_Spawn_CondLow": "Low (<40%)",
+    "IGUI_RC_Spawn_CondPerfect": "Perfect (100%%)",
+    "IGUI_RC_Spawn_CondAverage": "Average (40-80%%)",
+    "IGUI_RC_Spawn_CondLow": "Low (<40%%)",
     "IGUI_RC_Spawn_CatAll": "All vehicles",
     "IGUI_RC_Spawn_CatBurned": "Only burned",
     "IGUI_RC_Spawn_CatSmashed": "Only smashed",
@@ -106,10 +106,5 @@
     "IGUI_CheatPanel_EternalTorch": "Eternal Torch",
     "IGUI_CheatPanel_EternalTorch_tooltip": "Reclaimation: blowtorches you are carrying never run dry - any use (dismantling, welding, anything) refills within moments. Like Unlimited Ammo, for torches.",
 
-    "IGUI_RC_Workshop": "Workshop",
-    "IGUI_RC_WS_For": "Crafting for",
-    "IGUI_RC_WS_ShowAll": "Show all",
-    "IGUI_RC_WS_All": "All handcraft recipes - click a part on My Vehicles to narrow this to one part of one car.",
-    "IGUI_RC_WS_Recipes": "recipes",
     "IGUI_RC_WS_Hint": "Click a part below to see what can be crafted for it."
 }

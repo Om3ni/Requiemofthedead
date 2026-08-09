@@ -6,6 +6,10 @@
   "Sandbox_OE_StickyHeadwear": "Odds & Ends: Sticky Headwear",
   "Sandbox_OE_ActionSpeed": "Odds & Ends: Action Speed",
   "Sandbox_OE_QuietHorn": "Odds & Ends: Quiet Horn",
+  "Sandbox_OE_Workshop": "Odds & Ends: Workshop",
+
+  "Sandbox_OE_WorkshopEnable": "Enable Workshop",
+  "Sandbox_OE_WorkshopEnable_tooltip": "The player panel's crafting home: the vanilla hand-craft panel with target filtering (Craft), a maintenance dashboard of carried gear that can be fixed or replaced (Gear), and a searchable recipe field guide - recipes you know in white, recipes you don't in grey with every way to learn them (Journal). Other panels open it pre-filtered: clicking a part on My Vehicles lands on that part's recipes. Off means the tab never appears and those doors quietly do nothing. Takes effect at the next world load.",
 
   "Sandbox_OE_QuietHornEnable": "Enable Quiet Horn",
   "Sandbox_OE_QuietHornEnable_tooltip": "Stops the vehicle horn attracting zombies. The horn still sounds normally for everyone nearby, and each vehicle keeps its own horn; it simply no longer makes a noise the dead can walk toward, so it cannot be used to herd a crowd off a street. Affects the horn only - the engine, the alarm and the reversing beeper are untouched. Turn off to restore vanilla, immediately and without a restart.",

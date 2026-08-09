@@ -52,7 +52,12 @@ MMShared.CMD = {
     DUMP          = "mm_dump",    -- debug: dump authoritative journal/player state
 }
 
-MMShared.SCHEMA_VERSION = 4 -- v4 adds snap.lifeId (same-life read guard); v3 faith; v2 nutrition
+-- v5 stores traits/profession as FULLY-QUALIFIED registry ids ("base:organized")
+-- instead of getName() (see the IDENTITY KEYS header below for why). Purely a
+-- record: nothing GATES on this number, because the reader is tolerant per entry
+-- - a v4 book's bare names resolve vanilla-first and read correctly forever.
+-- v4 adds snap.lifeId (same-life read guard); v3 faith; v2 nutrition.
+MMShared.SCHEMA_VERSION = 5
 
 -- WIPE EPOCH: read-time amnesty gate. Every write stamps the current epoch into the
 -- snapshot; reading a book stamped with an OLDER epoch (or none) refuses - "the ink
@@ -100,6 +105,24 @@ function MMShared.xpRestoreFraction(perkId)
     local globalFrac = pctToFraction(sv and sv.MemoirXPRestore) or 1.0
     if not perkId or MMShared.xpRestoreMode() ~= 2 then return globalFrac end
     return pctToFraction(sv and sv["MemoirXPRestore_" .. perkId]) or globalFrac
+end
+
+-- Auto-repair on login (sandbox MemoirAutoFixShadowedTraits). When a character
+-- connects, swap any mod trait that SHADOWS a vanilla one back to the vanilla
+-- original - see MMTraitRepair for the whole story.
+--
+-- DEFAULT OFF, deliberately, and not out of timidity: this suite ships to the
+-- Workshop, and the repair rule is generic ("a mod trait occupying a vanilla
+-- path"). On Mosaic that describes exactly one thing - Seinar's creation-screen
+-- placeholders, which Seinar's OWN CreatePlayer.lua swaps to base, so repairing
+-- them agrees with the author's intent. On somebody else's server it could
+-- describe a mod trait a player deliberately chose and is meant to keep, and
+-- silently editing characters on a server whose mod list we have never seen is
+-- not a default we get to pick for them. Turn it on for the migration restart,
+-- leave it on or off afterwards - the repair is idempotent either way.
+function MMShared.autoFixShadowedTraits()
+    local sv = SandboxVars and SandboxVars.RFTDMemoir
+    return (sv and sv.MemoirAutoFixShadowedTraits == true) or false
 end
 
 -- =====================================================================
@@ -166,16 +189,69 @@ function MMlogTable(label, tbl, maxDepth)
 end
 
 -- =====================================================================
---  LOOKUPS (engine has no by-name static getters exposed; scan + cache)
+--  IDENTITY KEYS + LOOKUPS
+--
+--  THE LANDMINE (found live 2026-08-09, Mox's Organized): getName() IS NOT
+--  UNIQUE. CharacterTrait.getName() returns ResourceLocation.getPath() - the
+--  namespace is stripped and what is left is lowercased (CharacterTrait.java
+--  :118, ResourceLocation.java:24-25). So base:Organized and
+--  SeinarExtendedProfessions:Organized BOTH answer "organized", and a
+--  name-keyed lookup table silently resolves to whichever was registered last.
+--  Vanilla scripts always parse before mod scripts (ScriptManager.Reset() ->
+--  Load()), so the MOD always wins - a memoir read swapped the player's real
+--  base:organized for Seinar's inert profession-trait placeholder, and the
+--  container bonus (ItemContainer.getEffectiveCapacity, hard-keyed to
+--  CharacterTrait.ORGANIZED) vanished. Capture logged "organized" either way,
+--  so the forensics agreed with the player that nothing had happened.
+--  CharacterProfession has the identical getName() (CharacterProfession.java
+--  :46-48); it does not collide with anything on Mosaic today, but it is the
+--  same defect and is keyed the same way here.
+--
+--  THE RULE: the fully-qualified registry id ("base:organized") is the ONLY
+--  safe key. Never store, compare, or look up a trait or profession by
+--  getName(). Resolution goes through the live registry (CharacterTrait.get /
+--  CharacterProfession.get), which is unambiguous and never stale.
 -- =====================================================================
 
--- Traits: resolve a saved trait NAME back to its CharacterTrait.
--- Dedi guard (same gap findProfessionDefByName guards below for professions): trait
--- definitions are populated by the character-creation Lua (BaseGameCharacterDetails
--- .DoTraits), which a dedicated server never runs on its own. Without the guard the
--- first server-side applyIdentity dies inside getTraits() - a "Restore Saved" that
--- errors before the reply and looks to the player like nothing happened at all.
+-- The registry id of a CharacterTrait / CharacterProfession, lowercased
+-- ("base:organized"). Both classes' toString() is
+-- Registries.X.getLocation(this).toString() - VERIFIED live in-game via
+-- print(tostring(...)) on 2026-08-09, which is what proved the collision.
+-- Returns nil for a stale object (getLocation() null after a registry reset ->
+-- toString NPEs -> pcall catches), which is what makes staleness detectable.
+local function fqid(obj)
+    if obj == nil then return nil end
+    local ok, s = pcall(tostring, obj)
+    if not ok or type(s) ~= "string" or s == "" then return nil end
+    s = s:lower()
+    if not s:find(":", 1, true) then return nil end -- not an id; refuse to guess
+    return s
+end
+MMShared.fqid = fqid
+
+-- ---------------------------------------------------------------------
+--  Legacy by-name scan (fallback ONLY - see findTrait below)
+-- ---------------------------------------------------------------------
+-- Dedi guard: trait definitions are populated by the character-creation Lua
+-- (BaseGameCharacterDetails.DoTraits), which a dedicated server never runs on
+-- its own. Without the guard the first server-side applyIdentity dies inside
+-- getTraits() - a "Restore Saved" that errors before the reply and looks to the
+-- player like nothing happened at all.
 local traitByName = nil
+
+-- Collisions are reported ONCE per cache build, unconditionally (not gated by
+-- MemoirDebug). This is the diagnostic that would have turned Mox's ticket into
+-- a boot-time line: any mod that shadows a vanilla trait path announces itself
+-- here instead of six weeks later through a player.
+local function reportCollisions(kind, dupes)
+    if not dupes or #dupes == 0 then return end
+    table.sort(dupes)
+    MMwarn(kind .. " NAME COLLISIONS (" .. tostring(#dupes) .. ") - these share a getName() and are"
+        .. " only distinguishable by namespace: " .. table.concat(dupes, ", "))
+    MMwarn("  Memoir keys on the full id so it restores the right one; any OTHER mod comparing"
+        .. " " .. kind:lower() .. "s by name on this server is resolving them ambiguously.")
+end
+
 function MMShared.findTraitByName(name)
     if not traitByName then
         local ok, defs = pcall(function() return CharacterTraitDefinition.getTraits() end)
@@ -190,28 +266,76 @@ function MMShared.findTraitByName(name)
             return nil -- leave the cache unbuilt so a later call retries
         end
         traitByName = {}
+        local dupes = {}
         for i = 0, defs:size() - 1 do
             local t = defs:get(i):getType()
-            traitByName[t:getName()] = t
+            local nm = t:getName()
+            local prev = traitByName[nm]
+            if prev ~= nil and prev ~= t then
+                dupes[#dupes + 1] = tostring(nm) .. " [" .. tostring(fqid(prev) or "?")
+                    .. " vs " .. tostring(fqid(t) or "?") .. "]"
+            end
+            traitByName[nm] = t
         end
+        reportCollisions("TRAIT", dupes)
     end
-    return traitByName[name]
+    local t = traitByName[name]
+    -- Staleness self-heal: ScriptManager.Reset() drops every non-base registry
+    -- entry and Load() re-registers NEW objects, so a cached mod trait can
+    -- outlive its registry. A stale object has no location, so fqid() is nil -
+    -- rebuild once rather than hand back a ghost that NPEs on use.
+    if t ~= nil and fqid(t) == nil then
+        traitByName = nil
+        return MMShared.findTraitByName(name)
+    end
+    return t
 end
 
--- True once the trait-definition cache is (or can be) built on this side. applyIdentity
--- checks this BEFORE stripping traits: resolving zero defs mid-swap would wipe every
--- trait and re-add none, which is far worse than aborting the whole apply.
+-- Resolve a STORED trait key to its CharacterTrait.
+--   * "namespace:path" -> exact registry lookup. Unambiguous, never stale.
+--   * bare "path"      -> LEGACY key, from a snapshot written before ids. It
+--     cannot say which namespace it meant, so VANILLA WINS: base:<path> if the
+--     registry has it, else the by-name scan for mod-only traits. That bias is
+--     deliberate - every pre-id book was written by a character who picked from
+--     the creation screen, where the vanilla trait is the one with the effect.
+function MMShared.findTrait(key)
+    if type(key) ~= "string" or key == "" then return nil end
+    key = key:lower()
+    local function reg(id)
+        local ok, t = pcall(function() return CharacterTrait.get(ResourceLocation.of(id)) end)
+        if ok then return t end
+        return nil
+    end
+    if key:find(":", 1, true) then return reg(key) end
+    return reg("base:" .. key) or MMShared.findTraitByName(key)
+end
+
+-- Canonical comparison key for a stored trait key, so a legacy bare name and a
+-- modern id for the SAME trait compare equal. Unresolvable keys fall back to the
+-- lowercased input so an unknown trait still compares equal to itself.
+function MMShared.canonTraitKey(key)
+    local t = MMShared.findTrait(key)
+    if t then return fqid(t) or (type(key) == "string" and key:lower()) or nil end
+    return (type(key) == "string" and key:lower()) or nil
+end
+
+-- True once the trait-definition cache is (or can be) built on this side.
+-- applyIdentity checks this BEFORE stripping traits. Registry resolution alone
+-- no longer needs the definitions, but modifyTraitXPBoost and buildGrantLevels
+-- read getXpBoosts() off them, so a swap with no defs loaded would re-add every
+-- trait with none of its boosts - still worth aborting for.
 function MMShared.traitDefsReady()
     if traitByName then return true end
     MMShared.findTraitByName("") -- triggers a cache-build attempt (with the DoTraits guard)
     return traitByName ~= nil
 end
 
--- Professions: resolve a saved profession NAME back to its
--- CharacterProfessionDefinition (carries getType() + getXpBoosts()).
--- BaseGameCharacterDetails.DoProfessions() must have populated the table - it runs
--- at creation/boot; we guard-call it lazily in case a snapshot read is the first
--- thing that needs it.
+-- ---------------------------------------------------------------------
+--  Professions (same shape, same landmine - see the header)
+-- ---------------------------------------------------------------------
+-- BaseGameCharacterDetails.DoProfessions() must have populated the table - it
+-- runs at creation/boot; we guard-call it lazily in case a snapshot read is the
+-- first thing that needs it.
 local profByName = nil
 function MMShared.findProfessionDefByName(name)
     if not profByName then
@@ -219,24 +343,77 @@ function MMShared.findProfessionDefByName(name)
             pcall(BaseGameCharacterDetails.DoProfessions)
         end
         profByName = {}
+        local dupes = {}
         local list = CharacterProfessionDefinition.getProfessions()
         for i = 0, list:size() - 1 do
             local def = list:get(i)
-            profByName[def:getType():getName()] = def
+            local t = def:getType()
+            local nm = t:getName()
+            local prev = profByName[nm]
+            if prev ~= nil and prev:getType() ~= t then
+                dupes[#dupes + 1] = tostring(nm) .. " [" .. tostring(fqid(prev:getType()) or "?")
+                    .. " vs " .. tostring(fqid(t) or "?") .. "]"
+            end
+            profByName[nm] = def
         end
+        reportCollisions("PROFESSION", dupes)
     end
-    return profByName[name]
+    local def = profByName[name]
+    if def ~= nil and fqid(def:getType()) == nil then -- stale (see findTraitByName)
+        profByName = nil
+        return MMShared.findProfessionDefByName(name)
+    end
+    return def
 end
 
--- Plain display name for a profession ("securityguard" -> "Security Guard").
-function MMShared.professionUIName(name)
-    if not name or name == "" then return "?" end
-    local def = MMShared.findProfessionDefByName(name)
+-- Resolve a STORED profession key to its CharacterProfessionDefinition (carries
+-- getType() + getXpBoosts()). Same id-first / vanilla-wins-on-legacy rule as
+-- findTrait.
+function MMShared.findProfessionDef(key)
+    if type(key) ~= "string" or key == "" then return nil end
+    key = key:lower()
+    local function reg(id)
+        local ok, def = pcall(function()
+            local p = CharacterProfession.get(ResourceLocation.of(id))
+            return p and CharacterProfessionDefinition.getCharacterProfessionDefinition(p)
+        end)
+        if ok then return def end
+        return nil
+    end
+    if key:find(":", 1, true) then return reg(key) end
+    return reg("base:" .. key) or MMShared.findProfessionDefByName(key)
+end
+
+-- Canonical comparison key for a stored profession key (see canonTraitKey).
+function MMShared.canonProfessionKey(key)
+    if key == nil then return nil end
+    local def = MMShared.findProfessionDef(key)
+    if def then return fqid(def:getType()) or (type(key) == "string" and key:lower()) or nil end
+    return (type(key) == "string" and key:lower()) or nil
+end
+
+-- Plain display name for a profession ("base:securityguard" -> "Security Guard").
+function MMShared.professionUIName(key)
+    if not key or key == "" then return "?" end
+    local def = MMShared.findProfessionDef(key)
     if def and def.getUIName then
         local ok, n = pcall(function() return def:getUIName() end)
         if ok and n and n ~= "" then return n end
     end
-    return name
+    return key
+end
+
+-- Drop both caches. ScriptManager.Reset() clears and rebuilds the definition
+-- maps (and re-registers every non-base registry entry as a NEW object), so a
+-- cache built before a reload describes a world that no longer exists. The
+-- per-lookup fqid() check above self-heals, but a clean boot hook is cheaper
+-- than discovering it one ghost at a time.
+function MMShared.resetLookups()
+    traitByName, profByName = nil, nil
+end
+if Events then
+    if Events.OnGameBoot then Events.OnGameBoot.Add(MMShared.resetLookups) end
+    if Events.OnServerStarted then Events.OnServerStarted.Add(MMShared.resetLookups) end
 end
 
 return MMShared
