@@ -62,3 +62,17 @@ RequiemOfTheDead/Contents/mods/RFTDEchoes/42/media/anims_X/
 # there are snapshots of files that already live in the tree. Nothing here is
 # repo content, and one of them is 2.3MB of live player data.
 bughuntresults/
+
+# --- Design/engine documentation: local-only, purged from history 2026-08-09 ---
+# The docs/ tree is working notes, engine teardowns and legacy Workshop items -
+# 9.4MB that was never meant to be public. Removed from GitHub and from every
+# commit that carried it (git filter-repo), and kept out from here on.
+# NOTE: this must be `docs/*`, not `docs/`. Git does not descend into an
+# excluded DIRECTORY, so a `!` exception under `docs/` would never re-include -
+# and the one file below is a live test fixture that has to stay tracked.
+docs/*
+
+# The Limes import fixture: test_lmimport.lua and test_lmpersist.lua parse this
+# file directly and os.exit(2) without it. It is test data, not documentation,
+# so it survives the purge and stays in git.
+!docs/dirge-phunzones.md
