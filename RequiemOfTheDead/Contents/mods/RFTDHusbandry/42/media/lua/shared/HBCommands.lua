@@ -9,7 +9,7 @@
 -- require=, so this only bites clients.)
 require "RDShared"
 
-RDShared.registerMod("RFTDHusbandry", "1.0.0")   -- keep in sync with mod.info
+RDShared.registerMod("RFTDHusbandry", "1.2.0")   -- keep in sync with mod.info
 
 HBCmd = {}
 
@@ -88,6 +88,12 @@ Events.OnClientCommand.Add(function(module, command, player, args)
             if not animal then
                 missing = missing + 1
             else
+                -- KEEP: Stats.set (Stats.java:80) clamps through the
+                -- CharacterStat argument, so a build without
+                -- CharacterStat.HUNGER/THIRST passes null and NPEs inside the
+                -- engine; updateLastTimeSinceUpdate (IsoAnimal:1561) goes
+                -- through the GameTime.getInstance() singleton. The error is
+                -- counted and reported to the caller, not swallowed.
                 local ok, err = pcall(function()
                     animal:getStats():set(CharacterStat.HUNGER, target)
                     animal:getStats():set(CharacterStat.THIRST, target)

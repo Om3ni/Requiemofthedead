@@ -29,8 +29,7 @@ local function isAdmin()
     if isServer() and not isClient() then return false end
 
     -- MP client: sandbox-chosen tier
-    local tier
-    pcall(function() tier = SandboxVars.RFTDDirge and SandboxVars.RFTDDirge.ConvertAccess end)
+    local tier = SandboxVars and SandboxVars.RFTDDirge and SandboxVars.RFTDDirge.ConvertAccess
     return RDAccess.meetsTier(player, tier)
 end
 
@@ -119,8 +118,8 @@ local convertTick     = 0
 local function convertZombie(zombie, zType)
     if not zombie or zombie:isDead() then return end
 
-    local ok2, oid = pcall(zombie.getOnlineID, zombie)
-    if not ok2 or not oid or oid == 0 then oid = nil end
+    local oid = zombie:getOnlineID()
+    if oid == 0 then oid = nil end
 
     if oid and RQRegistry.isSpecial(oid) then
         showIdentifyResult("Dirge: Already " .. tostring(RQRegistry.getType(oid)))
@@ -190,8 +189,8 @@ local function getZombieSpecialType(zombie)
         return md[RQRegistry.KEY_TYPE]
     end
 
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if ok and oid and oid ~= 0 then
+    local oid = zombie:getOnlineID()
+    if oid and oid ~= 0 then
         return RQRegistry.getType(oid)
     end
 
@@ -204,8 +203,8 @@ local function identifyZombie(zombie)
         return
     end
 
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if not ok or not oid or oid == 0 then
+    local oid = zombie:getOnlineID()
+    if not oid or oid == 0 then
         local zType = getZombieSpecialType(zombie)
         if zType then
             showIdentifyResult("Dirge: " .. zType, zType)

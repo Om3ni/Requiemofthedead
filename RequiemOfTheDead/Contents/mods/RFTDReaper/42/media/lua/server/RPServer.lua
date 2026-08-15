@@ -23,7 +23,7 @@ local MODULE = "RFTDReaper"
 require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
 require "RDWire"     -- same rule; the chunker sizes itself with RDWire's model
 
-RDShared.registerMod(MODULE, "1.0.0")   -- keep in sync with mod.info
+RDShared.registerMod(MODULE, "1.2.0")   -- keep in sync with mod.info
 
 -- Staff gate: RDAccess capability model (RFTDCore adoption) - the old
 -- four-level access allowlist is retired; any role holding at least one
@@ -36,15 +36,19 @@ local function broadcastAudit(action, player, extra)
     local username = player and player.getUsername and player:getUsername() or "?"
     local tail = extra and (" " .. tostring(extra)) or ""
     print(string.format("[Reaper] %s by %s%s", action, username, tail))
-    pcall(sendServerCommand, "RFTDDragonfly", "LogBroadcast", {
+    sendServerCommand("RFTDDragonfly", "LogBroadcast", {
         source = "Mod:RFTDReaper",
         level  = "audit",
         text   = string.format("%s by %s%s", action, username, tail),
     })
 end
 
+-- No guard on the send: GameServer.sendServerCommand returns early both when
+-- the player has left PlayerToAddressMap and when the connection is already
+-- closed, so a disconnect between queue and send is the engine's no-op, not
+-- ours to catch.
 local function reply(player, command, args)
-    pcall(sendServerCommand, player, MODULE, command, args)
+    sendServerCommand(player, MODULE, command, args)
 end
 
 -- -------------------------------------------------------------------------

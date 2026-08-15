@@ -67,6 +67,7 @@ local referenceFH
 
 local function measure(font)
     local h
+    -- getFontHeight (TextManager:127) NPEs on a font this build lacks
     if font then pcall(function() h = getTextManager():getFontHeight(font) end) end
     if type(h) ~= "number" or h < 1 then return nil end
     return h

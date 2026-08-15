@@ -56,6 +56,7 @@ function RCSpawn.spawn(spec)
     local model = spec.model
     if type(model) ~= "string" or model == "" or #model > 128 then return nil, "badmodel" end
     local script
+    -- guarded: getVehicle can NPE on a null bucket (ScriptBucketCollection.java:86-87)
     pcall(function() script = getScriptManager():getVehicle(model) end)
     if not script then return nil, "badmodel" end
 
@@ -82,6 +83,9 @@ function RCSpawn.spawn(spec)
     -- Latched so RCNoVanilla's story interceptor never burns a staff spawn:
     -- OnSpawnVehicleStart fires synchronously inside addVehicleDebug.
     RCNoVanilla.beginExempt()
+    -- guarded: addVehicleDebug builds physics/model/parts and fires spawn
+    -- events (foreign handlers included) - a throw must report "failed", and
+    -- endExempt must still run
     local ok, vehicle = pcall(addVehicleDebug, model, direction, nil, square)
     RCNoVanilla.endExempt()
     if not ok or not vehicle then return nil, "failed" end
@@ -91,11 +95,11 @@ function RCSpawn.spawn(spec)
     -- working parts worth conditioning anyway.
     if RCShared.isWreck(vehicle) then return vehicle, nil end
 
-    local count = 0
-    pcall(function() count = vehicle:getPartCount() end)
+    local count = vehicle:getPartCount()
     for i = 0, count - 1 do
         -- Per-part pcall: one modded part with a nonstandard layout must not
-        -- abort the rest of the pass (the dumpVehicleContainers lesson).
+        -- abort the rest of the pass (the dumpVehicleContainers lesson) -
+        -- setCondition/setEngineFeature/createVehicleKey are not verifiable-trivial.
         pcall(function()
             local part = vehicle:getPartByIndex(i)
             if not part then return end
@@ -166,15 +170,16 @@ function RCSpawn.spawn(spec)
     if spec.missingParts == true then
         local cap = RCShared.cfg().spawnerMissingMax
         local candidates = {}
+        -- bounds-checked walk and field returns (VehicleParts.java:111,
+        -- VehiclePart.java:130/166) - no guard needed
         for i = 0, count - 1 do
-            pcall(function()
-                local part = vehicle:getPartByIndex(i)
-                if not part then return end
+            local part = vehicle:getPartByIndex(i)
+            if part then
                 local id = part:getId()
                 if id and string.lower(id) ~= "engine" and part:getInventoryItem() ~= nil then
                     candidates[#candidates + 1] = part
                 end
-            end)
+            end
         end
         local pool = #candidates
         if pool > 0 then
@@ -184,6 +189,9 @@ function RCSpawn.spawn(spec)
             for k = 1, n do
                 local j = ZombRand(k, pool + 1)   -- k..pool inclusive
                 candidates[k], candidates[j] = candidates[j], candidates[k]
+                -- guarded: setInventoryItem cascades through part stats, mass
+                -- and model visibility (VehiclePart.java:170) - one part that
+                -- throws must not abort the strip pass
                 pcall(function()
                     candidates[k]:setInventoryItem(nil)
                     vehicle:transmitPartItem(candidates[k])

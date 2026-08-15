@@ -22,10 +22,15 @@ local BUTTON_HGT       = FONT_HGT_SMALL + 6
 local PROGRESS_WIDTH   = 200
 local UI_BORDER_SPACING = 10
 
+-- KEEP: getFirstTypeRecurse (ItemContainer:1470) is overloaded on ItemKey/String
+-- and allocates from a thread-local predicate pool before recursing - overload
+-- dispatch through Kahlua is not a field read. Called from render(), so the
+-- guard is the allocation-free form.
 local function findHay(chr)
-    local hay
-    pcall(function() hay = chr:getInventory():getFirstTypeRecurse(HAY_TYPE) end)
-    return hay
+    local inv = chr and chr:getInventory()
+    if not inv then return nil end
+    local ok, hay = pcall(inv.getFirstTypeRecurse, inv, HAY_TYPE)
+    return ok and hay or nil
 end
 
 -- Button handler (called as ISHutchUI method: self == the hutch window).
@@ -34,9 +39,11 @@ function ISHutchUI:onAddHayBedding()
     if not chr or not hutch then return end
     local hay = findHay(chr)
     if not hay then return end
-    local entry
-    pcall(function() entry = hutch:getEntrySq() end)
-    if entry and luautils.walkAdj(chr, entry) then
+    -- KEEP: getEntrySq (IsoHutch:950) chains getSquare():getCell():getGridSquare
+    -- and offsets by getEnterSpotX/Y, which read this.def.rawgetInt - def is null
+    -- for any hutch the definitions do not cover, and that NPEs in the engine.
+    local ok, entry = pcall(hutch.getEntrySq, hutch)
+    if ok and entry and luautils.walkAdj(chr, entry) then
         ISTimedActionQueue.add(HBAddHayAction:new(chr, hutch, hay))
     end
 end
@@ -68,9 +75,8 @@ function ISHutchRoostParentPanel:render()
     if not hutch or not btn then return end
 
     -- Hidden when the coop is closed (vanilla render early-returns then).
-    local open = false
-    pcall(function() open = hutch:isOpen() end)
-    if not open then btn:setVisible(false); return end
+    -- isOpen (IsoHutch:616) is `return this.open`.
+    if not hutch:isOpen() then btn:setVisible(false); return end
 
     local clean = self.birdPooCleanBtn
     local boxY  = clean:getY() - FONT_HGT_SMALL - 2   -- the dirt-bar row Y

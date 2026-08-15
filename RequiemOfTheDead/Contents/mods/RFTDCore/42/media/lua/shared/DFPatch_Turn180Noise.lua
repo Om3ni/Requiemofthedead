@@ -36,8 +36,12 @@
 
 local MUTED = { "ActionSystem", "Animation" }
 
+-- setLogSeverity/getLogSeverity are field accessors (DebugType:132/136);
+-- isLogEnabled is an ordinal compare (LogSeverity:28) that NPEs only on a nil
+-- argument, so Warning is nil-checked alongside Error below.
 local function applyMute()
-    if not DebugType or not LogSeverity or not LogSeverity.Error then return end
+    if not DebugType or not LogSeverity or not LogSeverity.Error
+        or not LogSeverity.Warning then return end
     for _, name in ipairs(MUTED) do
         local chan = DebugType[name]
         if chan and chan.setLogSeverity then
@@ -52,10 +56,10 @@ end
 
 -- Apply at load (catches boot-time spam) and re-assert after boot in case the
 -- server's log config re-applies severities later in startup.
-pcall(applyMute)
+applyMute()
 if Events then
-    if Events.OnGameBoot     then Events.OnGameBoot.Add(function()     pcall(applyMute) end) end
-    if Events.OnServerStarted then Events.OnServerStarted.Add(function() pcall(applyMute) end) end
+    if Events.OnGameBoot      then Events.OnGameBoot.Add(applyMute) end
+    if Events.OnServerStarted then Events.OnServerStarted.Add(applyMute) end
 end
 
 print("[Dragonfly] DFPatch_Turn180Noise: muted vanilla turning180 ActionSystem/Animation warnings (delete file to restore)")

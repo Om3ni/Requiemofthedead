@@ -177,6 +177,8 @@ function DFDeck:reflowContent()
 
     local spec = DFRegistry.tabs[self.activeId or ""]
     if spec and type(spec.resize) == "function" then
+        -- pcall: tenant containment - a foreign mod's resize hook must not
+        -- take the deck down mid-drag.
         local ok, err = pcall(spec.resize, spec, self.contentArea, cw, ch)
         if ok then return true end
         print("[Deck] tab resize failed (" .. tostring(self.activeId) .. "): " .. tostring(err))
@@ -260,6 +262,8 @@ function DFDeck:showTab(id)
     self:addChild(self.contentArea)
 
     if type(spec.build) == "function" then
+        -- pcall: tenant containment - a foreign mod's build callback must not
+        -- take the deck down.
         local ok, err = pcall(spec.build, spec, self.contentArea, 0, 0, cw, ch)
         if not ok then
             print("[Deck] tab build failed (" .. tostring(id) .. "): " .. tostring(err))
@@ -278,7 +282,8 @@ end
 function DFDeck:refreshBeat()
     -- status line: cached, rebuilt on the beat, never per frame
     local user = "?"
-    pcall(function() user = getPlayer():getUsername() end)
+    local me = getPlayer()
+    if me then user = me:getUsername() end
     local limes = ""
     if Limes and Limes.revision and Limes.revision > 0 then
         limes = "zones " .. tostring(#Limes.zoneNames()) .. " · rev " .. tostring(Limes.revision) .. "   "

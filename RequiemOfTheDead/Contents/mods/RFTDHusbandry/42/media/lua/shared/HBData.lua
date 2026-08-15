@@ -62,8 +62,9 @@ end
 -- Mark a live animal as seen: adds its onlineID to the seen set and, if it
 -- has an RQHB record, wires up idMap. Safe to call repeatedly.
 function HBData.addSeen(animal)
-    local ok, oid = pcall(function() return animal:getOnlineID() end)
-    if not ok or not oid or oid == 0 then return end
+    if not animal then return end   -- the guard here was only ever a nil check
+    local oid = animal:getOnlineID()
+    if not oid or oid == 0 then return end
     HBData.seen[oid] = true
     local rec = HBData.getRecord(animal)
     if rec and rec.id then HBData.idMap[rec.id] = oid end

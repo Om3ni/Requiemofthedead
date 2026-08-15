@@ -39,9 +39,11 @@ local function forEachLoadedVehicle(fn)
     if not cell then return end
     local vs = cell:getVehicles()
     if not vs then return end
-    local ok, it = pcall(function() return vs:iterator() end)
-    if not ok or not it then return end
+    local it = vs:iterator()
+    if not it then return end
     while it:hasNext() do
+        -- guarded: one vehicle that throws mid-reconcile (transmit, expiry)
+        -- must not abort the hourly pass for every car behind it
         local v = it:next()
         if v then pcall(fn, v) end
     end

@@ -21,6 +21,8 @@ if isServer() then return end
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
+    -- DFRegistry is Core's: containment for a foreign-mod API whose contract
+    -- may change; a refusal must not kill this OnGameStart listener.
     local ok, err = pcall(function()
         DFRegistry.registerTab{
             id       = "admin",

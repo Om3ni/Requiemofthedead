@@ -72,11 +72,14 @@ local function load()
     local reader
     -- createIfNull false: a server that has never marked anything should not
     -- have a mystery empty file appear next to its ledger.
+    -- guarded: file I/O through the getFileReader allowlist can throw
     if not pcall(function() reader = getFileReader(FILE, false) end) or not reader then
         RCShared.dbg("nopark: %d built-in, no file yet", builtin)
         return
     end
     local bad = 0
+    -- guarded: disk reads; a truncated or vanished file must fall back to the
+    -- built-ins already collected
     pcall(function()
         local line = reader:readLine()
         while line do
@@ -86,6 +89,7 @@ local function load()
             line = reader:readLine()
         end
     end)
+    -- guarded: close on a handle whose read may already have failed
     pcall(function() reader:close() end)
 
     -- Malformed lines are COUNTED, not swallowed. This file is meant to be hand
@@ -130,14 +134,17 @@ function RCNoPark.add(x, y, z, w, h, label)
     label = tostring(label or "marked"):gsub("[,\r\n]", " "):sub(1, 60)
 
     local writer
+    -- guarded: file I/O through the getFileWriter allowlist can throw
     if not pcall(function() writer = getFileWriter(FILE, true, true) end) or not writer then
         return nil, "cannot write " .. FILE
     end
+    -- guarded: disk write; the caller gets "write failed" instead of an error
     local ok = pcall(function()
         writer:writeln(string.format("%d,%d,%d,%d,%d,%s",
             math.floor(x), math.floor(y), math.floor(z or 0),
             math.floor(w), math.floor(h), label))
     end)
+    -- guarded: close on a handle whose write may already have failed
     pcall(function() writer:close() end)
     if not ok then return nil, "write failed" end
 
@@ -149,31 +156,25 @@ end
 -- reason the admin can act on.
 function RCNoPark.addRoomAt(player)
     if not player then return nil, "no player" end
-    local sq
-    pcall(function() sq = player:getSquare() end)
+    local sq = player:getSquare()
     if not sq then return nil, "no square under you" end
 
-    local def
-    pcall(function()
-        local room = sq:getRoom()
-        if room then def = room:getRoomDef() end
-    end)
+    -- getRoom null-checks its id (IsoGridSquare.java:8013); getRoomDef and the
+    -- RoomDef bounds/name are field returns (IsoRoom.java:450, RoomDef.java:210-245)
+    local room = sq:getRoom()
+    local def = room and room:getRoomDef()
     -- Outdoors has no room, and that is the common misfire: an admin standing
     -- in the car park rather than the garage. Say which, so the next press is
     -- from the right place.
     if not def then return nil, "you are not inside a room - stand in the garage" end
 
-    local x, y, w, h, name
-    local ok = pcall(function()
-        x, y, w, h = def:getX(), def:getY(), def:getW(), def:getH()
-        name = def:getName()
-    end)
-    if not ok or not (x and y and w and h) or w < 1 or h < 1 then
+    local x, y, w, h = def:getX(), def:getY(), def:getW(), def:getH()
+    local name = def:getName()
+    if not (x and y and w and h) or w < 1 or h < 1 then
         return nil, "could not read this room's bounds"
     end
 
-    local z = 0
-    pcall(function() z = math.floor(sq:getZ()) end)
+    local z = math.floor(sq:getZ())
 
     local added, why = RCNoPark.add(x, y, z, w, h, name or "room")
     if not added then return nil, why end

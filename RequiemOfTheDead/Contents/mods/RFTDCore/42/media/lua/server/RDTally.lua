@@ -64,9 +64,8 @@ local armed = nil           -- nil = not yet resolved; see enabled()
 -- re-reading it per forensic record would cost more than the tally does.
 local function enabled()
     if armed ~= nil then return armed end
-    local v
-    local ok = pcall(function() v = SandboxVars.RFTDCore and SandboxVars.RFTDCore.TallyEnabled end)
-    if not ok or v == nil then return true end   -- absent option = on, don't latch
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore.TallyEnabled
+    if v == nil then return true end   -- absent option = on, don't latch
     armed = (v == true)
     return armed
 end
@@ -241,6 +240,8 @@ function RDTally.write()
     for name in pairs(RDTally.streams) do
         local doc = RDTally.summary(name)
         if doc then
+            -- getFileWriter allowlist I/O; a refused or failed write drops one
+            -- summary rewrite, the tally itself stays live in memory
             pcall(function()
                 local w = getFileWriter(summaryPath(name), true, false)  -- truncate
                 if w then
@@ -256,6 +257,7 @@ end
 -- anything that asks; the file exists so a reader who arrives after a restart, or
 -- who is not in the game at all, still gets the answer. Once a minute is far more
 -- often than anyone reads it and far less often than it changes.
+-- a tally fault must not take the minute event down with it
 Events.EveryOneMinute.Add(function() pcall(RDTally.write) end)
 
 return RDTally

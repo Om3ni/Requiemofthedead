@@ -62,51 +62,43 @@ local budget = 0
 -- Rounded fuel litres in the tank - driving burns fuel, so this catches a
 -- car that was used and re-parked on the exact same tile.
 local function fuelInt(vehicle)
-    local n = 0
-    pcall(function()
-        local tank = vehicle:getPartById("GasTank")
-        if tank then n = math.floor((tank:getContainerContentAmount() or 0) + 0.5) end
-    end)
-    return n
+    local tank = vehicle:getPartById("GasTank")
+    if not tank then return 0 end
+    return math.floor((tank:getContainerContentAmount() or 0) + 0.5)
 end
 
 local function isOccupied(vehicle)
-    local occupied = false
-    pcall(function()
-        local script = vehicle:getScript()
-        local seats = script and script:getPassengerCount() or 0
-        for s = 0, seats - 1 do
-            if vehicle:isSeatOccupied(s) then occupied = true; return end
-        end
-    end)
-    return occupied
+    local script = vehicle:getScript()
+    local seats = script and script:getPassengerCount() or 0
+    for s = 0, seats - 1 do
+        if vehicle:isSeatOccupied(s) then return true end
+    end
+    return false
 end
 
 -- Driver first (the person USING it), any occupant as fallback.
 local function occupantName(vehicle)
-    local name
-    pcall(function()
-        local d = vehicle:getDriver()
-        if d and d.getUsername then name = d:getUsername() end
-        if not name then
-            local script = vehicle:getScript()
-            local seats = script and script:getPassengerCount() or 0
-            for s = 0, seats - 1 do
-                local ch = vehicle:getCharacter(s)
-                if ch and ch.getUsername then name = ch:getUsername(); return end
-            end
+    local d = vehicle:getDriver()
+    if d and d.getUsername then
+        local name = d:getUsername()
+        if name then return name end
+    end
+    local script = vehicle:getScript()
+    local seats = script and script:getPassengerCount() or 0
+    for s = 0, seats - 1 do
+        local ch = vehicle:getCharacter(s)
+        if ch and ch.getUsername then
+            local name = ch:getUsername()
+            if name then return name end
         end
-    end)
-    return name
+    end
+    return nil
 end
 
 local function signature(vehicle)
-    local x, y, z = 0, 0, 0
-    pcall(function()
-        x = math.floor(vehicle:getX())
-        y = math.floor(vehicle:getY())
-        z = math.floor(vehicle:getZ())
-    end)
+    local x = math.floor(vehicle:getX())
+    local y = math.floor(vehicle:getY())
+    local z = math.floor(vehicle:getZ())
     return string.format("%d:%d:%d:%d", x, y, z, fuelInt(vehicle))
 end
 
@@ -118,21 +110,23 @@ end
 
 local function reclaim(vehicle, lastUser)
     local report = {}
-    pcall(function()
-        report.vehicle = vehicle:getScriptName()
-        report.x = math.floor(vehicle:getX())
-        report.y = math.floor(vehicle:getY())
-        report.z = math.floor(vehicle:getZ())
-        report.trailer = RCShared.isTrailer(vehicle)
-    end)
+    report.vehicle = vehicle:getScriptName()
+    report.x = math.floor(vehicle:getX())
+    report.y = math.floor(vehicle:getY())
+    report.z = math.floor(vehicle:getZ())
+    report.trailer = RCShared.isTrailer(vehicle)
 
+    -- guarded: the dump walks part containers and spills items onto squares
+    -- that can be unloading under it; a failed dump must still allow removal
     local dumped = 0
     local okDump, n = pcall(RCShared.dumpVehicleContainers, vehicle)
     if okDump and type(n) == "number" then dumped = n end
 
     -- We ARE the server: permanentlyRemove() here is the authoritative call
     -- (the same one VehicleCommands.remove makes) and propagates to clients.
-    local removed = pcall(function() vehicle:permanentlyRemove() end)
+    -- guarded: removal cascades through exit/physics/world teardown
+    -- (BaseVehicle.java:7205 -> removeFromWorld), unverifiable-trivial
+    local removed = pcall(vehicle.permanentlyRemove, vehicle)
     if not removed then
         RCShared.dbg("janitor: removal threw on %s at %s,%s",
             tostring(report.vehicle), tostring(report.x), tostring(report.y))
@@ -160,8 +154,8 @@ function RCJanitor.consider(vehicle)
     if not c.janitorDays or c.janitorDays <= 0 then return end
     if not vehicle then return end
 
-    local md
-    if not pcall(function() md = vehicle:getModData() end) or not md then return end
+    local md = vehicle:getModData()
+    if not md then return end
 
     if RCClaim.isClaimed(vehicle) then
         -- claimed cars carry no janitor state at all; clearing here is what
@@ -202,18 +196,14 @@ function RCJanitor.consider(vehicle)
         if seen and (now - seen) <= c.janitorDays * 86400 then return end
     end
 
-    local x, y = 0, 0
-    pcall(function() x = vehicle:getX(); y = vehicle:getY() end)
+    local x, y = vehicle:getX(), vehicle:getY()
     if RCShared.phunZoneBlocks(x, y) then return end
 
     -- Safehouse shield: presence protection for cars nobody was ever seen
     -- with but that sit inside a player base. Checked last - it only runs
     -- for cars that already passed every other gate (rare).
-    local sheltered = false
-    pcall(function()
-        sheltered = SafeHouse.getSafeHouse(vehicle:getSquare()) ~= nil
-    end)
-    if sheltered then return end
+    -- getSafeHouse handles a nil square itself (SafeHouse.java:186).
+    if SafeHouse.getSafeHouse(vehicle:getSquare()) ~= nil then return end
 
     if budget <= 0 then return end
     budget = budget - 1
@@ -254,8 +244,8 @@ function RCJanitor.assess(vehicle)
     if not c.janitorDays or c.janitorDays <= 0 then return out end
     if not vehicle then return out end
 
-    local md
-    if not pcall(function() md = vehicle:getModData() end) or not md then return out end
+    local md = vehicle:getModData()
+    if not md then return out end
 
     out.window = c.janitorDays * 86400
 
@@ -305,17 +295,14 @@ function RCJanitor.assess(vehicle)
     -- Past every clock gate; only the location shields remain. Both are read
     -- exactly as consider() reads them, including the deliberate ordering -
     -- safehouse last, because it is the expensive one.
-    local x, y = 0, 0
-    pcall(function() x = vehicle:getX(); y = vehicle:getY() end)
+    local x, y = vehicle:getX(), vehicle:getY()
     if RCShared.phunZoneBlocks(x, y) then
         out.verdict = "shielded"
         out.shields.phunzone = true
         return out
     end
 
-    local sheltered = false
-    pcall(function() sheltered = SafeHouse.getSafeHouse(vehicle:getSquare()) ~= nil end)
-    if sheltered then
+    if SafeHouse.getSafeHouse(vehicle:getSquare()) ~= nil then
         out.verdict = "shielded"
         out.shields.safehouse = true
         return out
@@ -368,13 +355,11 @@ function RCJanitor.attribute(name, vehicle)
     if not (name and vehicle) then return end
     local c = RCShared.cfg()
     if not (c.enabled and c.janitorEnabled) then return end
-    pcall(function()
-        if RCClaim.isClaimed(vehicle) or RCShared.isWreck(vehicle) then return end
-        local md = vehicle:getModData()
-        md[KEY_USER] = name
-        md[KEY_SEEN] = os.time()
-        md[KEY_DT]   = RCRegistry.downtimeTotal()
-    end)
+    if RCClaim.isClaimed(vehicle) or RCShared.isWreck(vehicle) then return end
+    local md = vehicle:getModData()
+    md[KEY_USER] = name
+    md[KEY_SEEN] = os.time()
+    md[KEY_DT]   = RCRegistry.downtimeTotal()
 end
 
 local function onVehicleCommand(module, command, player, args)
@@ -383,12 +368,13 @@ local function onVehicleCommand(module, command, player, args)
     if not (player and args and args.vehicle) then return end
     local c = RCShared.cfg()
     if not (c.enabled and c.janitorEnabled) then return end
-    pcall(function()
-        local name = player:getUsername()
-        if not name then return end
-        RCRegistry.notePresence(name)
-        RCJanitor.attribute(name, getVehicleById(args.vehicle))
-    end)
+    local name = player:getUsername()
+    if not name then return end
+    RCRegistry.notePresence(name)
+    -- args.vehicle comes off the wire from vanilla's channel: a non-number
+    -- would blow the (short) cast inside getVehicleById, so the guard stays.
+    local okv, v = pcall(getVehicleById, args.vehicle)
+    if okv and v then RCJanitor.attribute(name, v) end
 end
 Events.OnClientCommand.Add(onVehicleCommand)
 

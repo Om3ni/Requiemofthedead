@@ -24,40 +24,39 @@ if RDChunk then
         { budget = 3072, envelope = 240, maxRows = 60, field = "players" })
 end
 
+-- getRole (IsoPlayer:6987) and Role.getName (:47) are field returns.
 local function roleName(target)
-    local ok, name = pcall(function()
-        local role = target:getRole()
-        return role and role:getName() or "-"
-    end)
-    return ok and name or "-"
+    local role = target:getRole()
+    local name = role and role:getName()
+    return name or "-"
 end
 
+-- IsoPlayer.getAccessLevel:6983 null-checks the role and answers "none" itself.
 local function accessLevel(target)
-    local ok, lvl = pcall(function() return target:getAccessLevel() end)
-    return ok and lvl or "none"
+    return target:getAccessLevel() or "none"
 end
 
+-- isGodMod / isInvisible are PlayerCheats EnumSet reads
+-- (IsoGameCharacter:11023 / :10943) - cannot throw.
 local function isGod(target)
-    local ok, v = pcall(function() return target:isGodMod() end)
-    return ok and v or false
+    return target:isGodMod()
 end
 
 local function isInvis(target)
-    local ok, v = pcall(function() return target:isInvisible() end)
-    return ok and v or false
+    return target:isInvisible()
 end
 
 local function displayName(target)
-    local ok, name = pcall(function() return target:getDisplayName() end)
+    -- pcall: IsoPlayer.getDisplayName (:7343) chains getUsername ->
+    -- updateDisguisedState, which derefs player.role unguarded
+    -- (IsoGameCharacter:14138) when disguise server options are on.
+    local ok, name = pcall(target.getDisplayName, target)
     if ok and name and name ~= "" then return name end
     return target:getUsername()
 end
 
 local function serializePlayer(target)
-    local ok, x, y, z = pcall(function()
-        return target:getX(), target:getY(), target:getZ()
-    end)
-    if not ok then x, y, z = 0, 0, 0 end
+    local x, y, z = target:getX(), target:getY(), target:getZ()
     return {
         username = target:getUsername(),
         display  = displayName(target),
@@ -102,7 +101,7 @@ Events.OnServerStarted.Add(function()
                 RDChunk.send(player, DFCore.MODULE, "PlayersList", out,
                     { total_players = #out })
             else
-                pcall(sendServerCommand, player, DFCore.MODULE, "PlayersList",
+                sendServerCommand(player, DFCore.MODULE, "PlayersList",
                     { players = out })
             end
             return { ok = true }  -- silent success; PlayersList drives UI

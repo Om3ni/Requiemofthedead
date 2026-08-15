@@ -47,8 +47,7 @@ QuietHornSv = QuietHornSv or {}
 local lastHorn = {}   -- username -> vehicle id, remembered at start
 
 local function keyFor(player)
-    local ok, name = pcall(function() return player:getUsername() end)
-    return (ok and name) or tostring(player)
+    return (player and player:getUsername()) or tostring(player)
 end
 
 local function onStart(player, _args)

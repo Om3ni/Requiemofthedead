@@ -94,13 +94,10 @@ end
 -- half-felled trunk - you always end on a clean boundary.
 local function axeSpent(axe)
     if not axe then return true end
-    local ok, spent = pcall(function()
-        if axe:isBroken() then return true end
-        local maxc = axe:getConditionMax()
-        if not maxc or maxc <= 0 then return false end
-        return (axe:getCondition() / maxc) <= dial("LumberjackSweepAxeFloor", 0.05)
-    end)
-    return (not ok) or spent == true
+    if axe:isBroken() then return true end
+    local maxc = axe:getConditionMax()
+    if not maxc or maxc <= 0 then return false end
+    return (axe:getCondition() / maxc) <= dial("LumberjackSweepAxeFloor", 0.05)
 end
 
 -- Without this the sweep does not politely pause: every remaining
@@ -118,19 +115,16 @@ end
 -- which is simply "not at the maximum exhaustion moodle". If the dial cannot
 -- be honoured, the sweep still stops - it just stops later than asked.
 local function tooTired(playerObj)
-    local ok, tired = pcall(function()
-        local stats = playerObj:getStats()
-        if stats and stats.get and CharacterStat and CharacterStat.ENDURANCE then
-            return stats:get(CharacterStat.ENDURANCE) < dial("LumberjackSweepEnduranceFloor", 0.15)
-        end
-        return not playerObj:isEnduranceSufficientForAction()
-    end)
-    return (not ok) or tired == true
+    local stats = playerObj:getStats()
+    if stats and stats.get and CharacterStat and CharacterStat.ENDURANCE then
+        return stats:get(CharacterStat.ENDURANCE) < dial("LumberjackSweepEnduranceFloor", 0.15)
+    end
+    return not playerObj:isEnduranceSufficientForAction()
 end
 
 local function health(playerObj)
-    local ok, hp = pcall(function() return playerObj:getBodyDamage():getOverallBodyHealth() end)
-    return ok and hp or nil
+    local bd = playerObj:getBodyDamage()
+    return bd and bd:getOverallBodyHealth() or nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -151,8 +145,7 @@ end
 
 local function isAxe(item)
     if not item then return false end
-    local ok, yes = pcall(function() return item:hasTag(ItemTag.CHOP_TREE) and not item:isBroken() end)
-    return ok and yes == true
+    return item:hasTag(ItemTag.CHOP_TREE) and not item:isBroken()
 end
 
 -- getItems() is the top level of the main inventory only, which is the one
@@ -164,6 +157,8 @@ end
 -- ahead on iteration order alone and the sweep re-equips between every tree.
 function LJS.bestAxe(playerObj)
     local best = nil
+    -- guarded: getTreeDamage exists only on HandWeapon; a CHOP_TREE-tagged
+    -- non-weapon from a mod would throw "no such method" here
     local ok = pcall(function()
         local held = playerObj:getPrimaryHandItem()
         if isAxe(held) then best = held end
@@ -192,11 +187,8 @@ function LJS.findTrees(playerObj, radius)
     for dx = -radius, radius do
         for dy = -radius, radius do
             local sq = cell:getGridSquare(px + dx, py + dy, pz)
-            local ok, tree = pcall(function()
-                if sq and sq:HasTree() then return sq:getTree() end
-                return nil
-            end)
-            if ok and tree then
+            local tree = sq and sq:HasTree() and sq:getTree() or nil
+            if tree then
                 table.insert(found, { tree = tree, square = sq, d = dx * dx + dy * dy })
             end
         end
@@ -216,10 +208,7 @@ local function halt(reason)
 end
 
 local function stillStanding(entry)
-    local ok, alive = pcall(function()
-        return entry.tree ~= nil and entry.tree:getObjectIndex() >= 0
-    end)
-    return ok and alive == true
+    return entry.tree ~= nil and entry.tree:getObjectIndex() >= 0
 end
 
 -- step queues the walk and the chop; the chop's own ending calls step again
@@ -264,6 +253,9 @@ step = function(state)
 
     -- Walk, equip, chop - queued in that order because that is the order they
     -- must run in, and vanilla's doChopTree walks before it equips too.
+    -- guarded: walkAdj/equip/ISChopTreeAction/ISTimedActionQueue are all
+    -- vanilla Lua, unverifiable against the Java decompile - a throw ends the
+    -- sweep cleanly (nothing queued) instead of erroring the context menu.
     local ok, reachable = pcall(function()
         -- walkAdj over a raw AdjacentFreeTileFinder.Find: it skips the walk
         -- entirely when you are already standing in range, which on a dense
@@ -303,10 +295,8 @@ step = function(state)
             -- was the removal packet outrunning the done packet, not an
             -- interruption: keep going. A standing tree is a real interrupt
             -- (damage, player input, queue cleared) and ends the sweep.
-            local ok, down = pcall(function()
-                return self.tree == nil or self.tree:getObjectIndex() < 0
-            end)
-            if ok and down then fellAndContinue(self, state) end
+            local down = self.tree == nil or self.tree:getObjectIndex() < 0
+            if down then fellAndContinue(self, state) end
         end
 
         ISTimedActionQueue.add(chop)

@@ -150,3 +150,31 @@ option RFTDCore.WireProbeOversizedKB
     page = RFTDCore,
     translation = RD_WireProbeOversizedKB,
 }
+
+option RFTDCore.StallWatchEnabled
+{
+    type = boolean,
+    default = true,
+    page = RFTDCore,
+    translation = RD_StallWatchEnabled,
+}
+
+option RFTDCore.StallWatchMs
+{
+    type = integer,
+    min = 50,
+    max = 10000,
+    default = 250,
+    page = RFTDCore,
+    translation = RD_StallWatchMs,
+}
+
+option RFTDCore.StallSummarySeconds
+{
+    type = integer,
+    min = 30,
+    max = 3600,
+    default = 300,
+    page = RFTDCore,
+    translation = RD_StallSummarySeconds,
+}

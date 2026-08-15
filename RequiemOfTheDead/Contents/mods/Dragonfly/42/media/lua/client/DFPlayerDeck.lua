@@ -174,6 +174,8 @@ function DFPlayerDeck:reflowContent()
     end
     local spec = DFPlayerRegistry.tabs[self.activeId or ""]
     if spec and type(spec.resize) == "function" then
+        -- tenant callback (foreign mod): contained so a broken tab cannot
+        -- wedge the shell's resize; failure is reported below
         local ok, err = pcall(spec.resize, spec, self.contentArea, cw, ch)
         if ok then return true end
         print("[PlayerDeck] tab resize failed (" .. tostring(self.activeId) .. "): " .. tostring(err))
@@ -276,6 +278,8 @@ function DFPlayerDeck:showTab(id)
 
     local spec = DFPlayerRegistry.tabs[id]
     if spec and type(spec.build) == "function" then
+        -- tenant callback (foreign mod): a tab that throws in build must not
+        -- kill showTab; the shell survives with an empty pane and a log line
         local ok, err = pcall(spec.build, spec, self.contentArea, 0, 0, cw, ch)
         if not ok then
             print("[PlayerDeck] tab build failed (" .. tostring(id) .. "): " .. tostring(err))
@@ -288,9 +292,8 @@ end
 -- ---------------------------------------------------------------------------
 
 function DFPlayerDeck:refreshBeat()
-    local user = "?"
-    pcall(function() user = getPlayer():getUsername() end)
-    self.statusText = user
+    local p = getPlayer()   -- nil during boot; "?" is the honest label then
+    self.statusText = p and p:getUsername() or "?"
 end
 
 function DFPlayerDeck:prerender()
@@ -481,6 +484,7 @@ function DFPlayerDeck:onMouseUpOutside(x, y) endDrag(self) end
 -- ---------------------------------------------------------------------------
 
 function DFPlayerDeck.saveSizes(sizes)
+    -- getFileWriter allowlist I/O (throws on a denied path)
     pcall(function()
         local f = getFileWriter(LAYOUT_FILE, true, false)
         if not f then return end
@@ -493,6 +497,7 @@ end
 
 function DFPlayerDeck.loadSizes()
     local out = {}
+    -- getFileReader allowlist I/O; an unreadable layout file means defaults
     pcall(function()
         local r = getFileReader(LAYOUT_FILE, false)
         if not r then return end
@@ -571,6 +576,8 @@ if DFPrefs and DFPrefs.onChange and not DFPlayerDeckState.prefsHooked then
         local inst = DFPlayerDeckState.instance
         if not inst then return end
         local vis = false
+        -- getIsVisible is vanilla ISUI Lua reaching javaObject, which is nil
+        -- until instantiate - and this listener can fire in that window
         pcall(function() vis = inst:getIsVisible() end)
         if not vis then return end
         if inst.builtTier ~= DFKit.fontScale then
@@ -591,6 +598,7 @@ if DFPlayerRegistry and DFPlayerRegistry.onShowRequest and not DFPlayerDeckState
         if not DFPlayerDeck then return end
         local inst = DFPlayerDeckState.instance
         local vis = false
+        -- same javaObject-nil window as the prefs listener above
         if inst then pcall(function() vis = inst:getIsVisible() end) end
         if not vis then DFPlayerDeck.open() end
         inst = DFPlayerDeckState.instance

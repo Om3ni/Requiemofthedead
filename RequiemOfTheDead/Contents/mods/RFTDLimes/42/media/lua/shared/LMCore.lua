@@ -587,6 +587,9 @@ local function fireZoneEvents(events)
     for i = 1, #events do
         local e = events[i]
         for j = 1, #zoneListeners do
+            -- pcall: foreign-callback containment. A listener belongs to
+            -- whichever module registered it, and one that throws must not
+            -- stop the others - or the rest of this event batch - from firing.
             local ok, err = pcall(zoneListeners[j], e.event, e.name, e.zone, Limes.revision)
             if not ok then warn("onZoneEvent listener error: " .. tostring(err)) end
         end
@@ -786,6 +789,9 @@ end
 
 local function fireChanged()
     for i = 1, #listeners do
+        -- pcall: foreign-callback containment, as fireZoneEvents. One
+        -- module's onChanged throwing must not deny every later listener
+        -- the store revision they are waiting on.
         local ok, err = pcall(listeners[i], Limes.revision)
         if not ok then warn("onChanged listener error: " .. tostring(err)) end
     end

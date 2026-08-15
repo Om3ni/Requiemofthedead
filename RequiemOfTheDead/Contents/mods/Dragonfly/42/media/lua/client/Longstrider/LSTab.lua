@@ -82,13 +82,19 @@ local function build(spec, panel, x, y, w, h)
     -- ---- Map (cached, re-parented across tab rebuilds) ----
     local map = LSMap.acquire(player, mapW, midH)
     if map.parent and map.parent ~= panel then
+        -- vanilla ISUI Lua (removeChild -> UIElement internals, unverifiable
+        -- against the decompile); a stale parent from a torn-down tab must not
+        -- kill this rebuild
         pcall(function() map.parent:removeChild(map) end)
     end
     map:setX(mapX); map:setY(midY); map:setMapSize(mapW, midH)
     panel:addChild(map)
 
-    -- Sync the big 300-tile CellGrid to the saved toggle.
-    pcall(function() map:getAPI():setBoolean("CellGrid", LSTours.gridOn) end)
+    -- Sync the big 300-tile CellGrid to the saved toggle. Only the API can be
+    -- missing; setBoolean itself is instanceof-guarded (WorldMapRenderer:697)
+    -- on a final renderer (UIWorldMap:85, UIWorldMapV1:29).
+    local mapApi = map:getAPI()
+    if mapApi then mapApi:setBoolean("CellGrid", LSTours.gridOn) end
 
     -- ---- Overlay (cached on the map instance) ----
     local overlay = map._lsOverlay
@@ -149,11 +155,15 @@ local function build(spec, panel, x, y, w, h)
         rebuildList(); syncFields(); recompute()
         DFFeedback.good("Added " .. t.name .. " - drag its handles to size it.")
     end)
+    -- vanilla ISUI Lua (ISButton colour helper, unverifiable against the
+    -- decompile); losing the green tint must not lose the button
     pcall(function() addBtn:enableAcceptColor() end)
 
     renameBtn = mkBtn("Rename", PAD + 62, 66, listBtnY, function()
         local t = LSTours.getSelected()
         if not t then DFFeedback.bad("Select a tour first."); return end
+        -- vanilla ISTextBox construction chain (ISUI Lua, unverifiable against
+        -- the decompile); a modal that fails to build must not break the tab
         pcall(function()
             local modal
             modal = ISTextBox:new(getCore():getScreenWidth() / 2 - 150, getCore():getScreenHeight() / 2 - 60,
@@ -176,6 +186,8 @@ local function build(spec, panel, x, y, w, h)
         rebuildList(); syncFields(); recompute()
         DFFeedback.good("Deleted " .. t.name .. ".")
     end)
+    -- vanilla ISUI Lua (ISButton colour helper, existence-checked because older
+    -- builds lack it; the body stays unverifiable against the decompile)
     pcall(function() if deleteBtn.enableCancelColor then deleteBtn:enableCancelColor() end end)
 
     -- ---- Bottom row 1: Cell / Dwell / Grid / coords ----
@@ -191,6 +203,8 @@ local function build(spec, panel, x, y, w, h)
     local function addField(initText, width, rowY, onlyNums, onChange)
         local f = ISTextEntryBox:new(initText, cur, rowY, width, BTN_H)
         f:initialise(); f:instantiate()
+        -- vanilla ISTextEntryBox Lua (unverifiable against the decompile); a
+        -- field without the digit filter still works, just accepts junk
         if onlyNums then pcall(function() f:setOnlyNumbers(true) end) end
         if onChange then f.onTextChange = onChange end
         panel:addChild(f)
@@ -211,7 +225,9 @@ local function build(spec, panel, x, y, w, h)
         local on = not LSTours.gridOn
         LSTours.setGridOn(on)
         overlay:setGridOn(on)
-        pcall(function() map:getAPI():setBoolean("CellGrid", on) end)
+        -- same shape as the build-time sync above: only the API can be missing
+        local api = map:getAPI()
+        if api then api:setBoolean("CellGrid", on) end
         gridBtn:setTitle(on and "Grid: ON" or "Grid: OFF")
     end)
     cur = cur + 92 + PAD
@@ -398,6 +414,8 @@ print(MODULE_TAG .. " body loaded; deferring registration to OnGameStart")
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
+    -- DFRegistry is Core's: containment for a foreign-mod API whose contract
+    -- may change; a refusal must not kill this OnGameStart listener.
     local ok, err = pcall(function()
         DFRegistry.registerTab{
             id         = "longstrider",

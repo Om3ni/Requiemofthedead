@@ -72,6 +72,9 @@ local function flushTransmits()
     local batch = pendingTransmit
     pendingTransmit = {}
     for _, veh in pairs(batch) do
+        -- guarded: transmitModData serializes the whole modData table onto the
+        -- wire (GameServer.java:2666); foreign mods write into that table and
+        -- an unserializable value must not kill the flush loop
         pcall(function() veh:transmitModData() end)
     end
 end
@@ -93,6 +96,8 @@ end
 local function resolveVehicle(args)
     if not args then return nil end
     if args.vehicleId then
+        -- args.vehicleId comes off the wire: a non-number would blow the
+        -- (short) cast inside getVehicleById, so the guard stays.
         local ok, v = pcall(getVehicleById, args.vehicleId)
         if ok and v then return v end
     end
@@ -126,17 +131,17 @@ local function sendSlice(player)
             -- the one-glance summary. Loaded cars only: an unloaded car has
             -- no object to read, which is exactly why the tab greys its
             -- inspector pane on loaded=false.
-            pcall(function() rec.vid = v:getId() end)
-            pcall(function()
-                local eng = v:getPartById("Engine")
-                if eng then rec.engine = math.floor(eng:getCondition()) end
-            end)
+            rec.vid = v:getId()
+            local eng = v:getPartById("Engine")
+            if eng then rec.engine = math.floor(eng:getCondition()) end
             rec.kind = RCShared.isWreck(v) and "wreck"
                 or (RCShared.isTrailer(v) and "trailer" or "car")
-            -- CALLED, never probed - indexing an exposed Java object for a
-            -- key Kahlua cannot resolve THROWS (see RCFleet.buildRow).
-            local okO, overlay = pcall(function() return v:getScript():getCarMechanicsOverlay() end)
-            if okO and overlay and overlay ~= "" then rec.overlay = tostring(overlay) end
+            -- getScript/getCarMechanicsOverlay are field returns
+            -- (BaseVehicle.java:1403, VehicleScript.java:2224); only the
+            -- script can be nil.
+            local vs = v:getScript()
+            local overlay = vs and vs:getCarMechanicsOverlay()
+            if overlay and overlay ~= "" then rec.overlay = tostring(overlay) end
         else
             rec.loaded = false
         end
@@ -440,6 +445,8 @@ end
 -- + fleet panel update - its modData died with the vehicle.
 local function hDismantled(player, args)
     if args.claimId and args.owner then
+        -- guarded: owner/claimId are wire-typed values; the index prune must
+        -- not be able to abort the ledger write below
         pcall(RCRegistry.remove, args.owner, args.claimId)
     end
     RCAudit.log(args.delete and "VEHICLE-DELETE" or "DISMANTLE", player, {
@@ -455,7 +462,8 @@ local function hDismantled(player, args)
     -- is possible but worthless-until-§4 and fully attributed in the ledger.
     if not args.delete and not args.wreck and args.vehicle then
         local kind = string.contains(tostring(args.vehicle), "Trailer") and "trailer" or "vehicle"
-        pcall(RCRegistry.addToken, kind)
+        -- addToken is a plain table increment (RCRegistry.lua:476) - no guard
+        RCRegistry.addToken(kind)
     end
 end
 
@@ -884,6 +892,7 @@ local function onClientCommand(module, command, player, args)
         return
     end
     if not RDRate.allow(player, RATE_MAX, 1000) then return end
+    -- guarded: wire args reach every handler; a throw is logged, not fatal
     local ok, err = pcall(h, player, args or {})
     if not ok then print("[RC] handler error (" .. tostring(command) .. "): " .. tostring(err)) end
 end

@@ -81,16 +81,18 @@ end
 -- (no player object, dedi without Steam, lookup failure).
 function RDIdentity.sidApprox(player)
     if type(player) == "string" or player == nil then return nil end
-    local ok, s = pcall(function()
-        local id = player:getSteamID()
-        if not id or id == 0 then return nil end
-        return string.format("%.0f", id)
-    end)
-    if ok and s and s ~= "0" then return s end
+    -- getSteamID (IsoPlayer:5954) is a field return; the probe keeps a
+    -- non-player receiver (no such method) at nil instead of a throw
+    if not player.getSteamID then return nil end
+    local id = player:getSteamID()
+    if not id or id == 0 then return nil end
+    local s = string.format("%.0f", id)
+    if s ~= "0" then return s end
     return nil
 end
 
 local function readLedgerFile(path)
+    -- file I/O: reader can fail mid-line; the ledger is best-effort (KEEP)
     pcall(function()
         local r = getFileReader(path, false)
         if not r then return end
@@ -129,6 +131,8 @@ local function appendClaim(dir, user)
             .. "directory still works; it will be re-minted next boot.")
         return
     end
+    -- getFileWriter allowlist I/O: write/close can fail on a full or locked
+    -- disk; a lost claim line is re-minted next boot (KEEP)
     pcall(function()
         local w = getFileWriter(FILE, true, true)
         if w then
@@ -140,9 +144,9 @@ end
 
 local function usernameOf(subj)
     if type(subj) == "string" then return subj end
-    if subj ~= nil then
-        local ok, name = pcall(function() return subj:getUsername() end)
-        if ok and name then return tostring(name) end
+    if (type(subj) == "table" or type(subj) == "userdata") and subj.getUsername then
+        local name = subj:getUsername()
+        if name then return tostring(name) end
     end
     return "unknown"
 end

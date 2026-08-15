@@ -68,6 +68,8 @@ local TOKEN = "RFTDLimes"
 -- exactly the way every other field inherits.
 local function denied(x, y, flag)
     if not x or not y then return false, nil end
+    -- pcall stays: this runs INSIDE wrapped vanilla globals, and a throw here
+    -- would break the wrapped action itself, not just the flag.
     local ok, zone = pcall(Limes.getLocation, math.floor(x), math.floor(y))
     if not ok or not zone or not zone.fields then return false, nil end
     if zone.fields[flag] == true then return true, zone.name end
@@ -80,10 +82,7 @@ end
 -- ACTOR rather than at the TARGET.
 local function at(character)
     if not character then return nil, nil end
-    local x, y
-    local ok = pcall(function() x, y = character:getX(), character:getY() end)
-    if not ok or not x then return nil, nil end
-    return x, y
+    return character:getX(), character:getY()
 end
 
 -- ---------------------------------------------------------------------------
@@ -92,6 +91,7 @@ end
 
 local counts = {}   -- flag -> refusals since boot, for the report
 
+-- pcall: evidence-writing must never break the refusal it records.
 local function forensic(event, data)
     if RDLog and RDLog.forensic then pcall(RDLog.forensic, event, data) end
 end
@@ -102,13 +102,16 @@ end
 -- administered.
 local function refuse(character, flag, zoneName, what)
     counts[flag] = (counts[flag] or 0) + 1
-    pcall(function()
-        RDNet.reply(character, TOKEN, "restricted", {
-            flag = flag, zone = zoneName, what = what,
-        })
-    end)
+    -- pcall: the refusal already happened; a wire failure must not throw back
+    -- into the wrapped vanilla global that called us.
+    pcall(RDNet.reply, character, TOKEN, "restricted", {
+        flag = flag, zone = zoneName, what = what,
+    })
+    -- `character` is whatever the wrapped handler was given, so the method is
+    -- tested rather than assumed - indexing an absent method is safe, calling
+    -- one is not. getUsername itself is a field return (IsoGameCharacter).
     local who = "?"
-    pcall(function() who = character:getUsername() end)
+    if character and character.getUsername then who = character:getUsername() end
     forensic("LM.RESTRICT", { flag = flag, zone = zoneName, user = who, what = what })
 end
 
@@ -175,13 +178,16 @@ end
 -- "I could not tell" blocks ordinary play wherever the engine's shapes
 -- drift.
 local function coordsOfMove(self, square)
-    local x, y
-    pcall(function()
-        local sq = square
-        if not sq and self and self.object then sq = self.object:getSquare() end
-        if sq then x, y = sq:getX(), sq:getY() end
-    end)
-    return x, y
+    -- self.object's concrete class is the handler's business, so getSquare is
+    -- tested rather than assumed; on the classes that do carry it it is a field
+    -- return (IsoObject:1126, IsoMovingObject:534), as are IsoGridSquare's
+    -- getX/getY (:6331/:6335). No guard left to buy.
+    local sq = square
+    if not sq and self and self.object and self.object.getSquare then
+        sq = self.object:getSquare()
+    end
+    if not sq then return nil, nil end
+    return sq:getX(), sq:getY()
 end
 
 local function wrapMoveable(method, flag, action)
@@ -238,15 +244,14 @@ end
 -- player may see a flame for an instant.
 local function onNewFire(fire)
     if not fire then return end
-    local x, y
-    local ok = pcall(function()
-        local sq = fire:getSquare()
-        if sq then x, y = sq:getX(), sq:getY() end
-    end)
-    if not ok or not x then return end
+    local sq = fire:getSquare()
+    if not sq then return end
+    local x, y = sq:getX(), sq:getY()
     local no, zone = denied(x, y, "nofire")
     if not no then return end
-    pcall(function() IsoFireManager.Remove(fire) end)
+    -- No guard: IsoFireManager.Remove:166 is a contains-then-remove on a static
+    -- final ArrayList (:64) and returns early on an unknown fire.
+    IsoFireManager.Remove(fire)
     counts.nofire = (counts.nofire or 0) + 1
     forensic("LM.RESTRICT", { flag = "nofire", zone = zone, what = "extinguish" })
 end
@@ -261,12 +266,8 @@ end
 -- ground, and testing only the middle would let someone claim a building whose
 -- back half sits inside the boundary.
 local function safehouseDenied(sh)
-    local x, y, w, h
-    local ok = pcall(function()
-        x, y = sh:getX(), sh:getY()
-        w, h = sh:getW(), sh:getH()
-    end)
-    if not ok or not x then return false, nil end
+    local x, y = sh:getX(), sh:getY()
+    local w, h = sh:getW(), sh:getH()
     local corners = {
         { x, y }, { x + w - 1, y }, { x, y + h - 1 }, { x + w - 1, y + h - 1 },
         { x + math.floor(w / 2), y + math.floor(h / 2) },
@@ -279,21 +280,21 @@ local function safehouseDenied(sh)
 end
 
 local function onSafehousesChanged()
-    local list = nil
-    pcall(function() list = SafeHouse.getSafehouseList() end)
+    local list = SafeHouse.getSafehouseList()
     if not list then return end
-    local n = 0
-    pcall(function() n = list:size() end)
+    local n = list:size()
     -- Backwards: removeSafeHouse mutates the very list being walked.
     for i = n - 1, 0, -1 do
-        local sh = nil
-        pcall(function() sh = list:get(i) end)
+        local sh = list:get(i)
         if sh then
             local no, zone = safehouseDenied(sh)
             if no then
-                local owner = "?"
-                pcall(function() owner = sh:getOwner() end)
-                pcall(function() SafeHouse.removeSafeHouse(sh) end)
+                local owner = sh:getOwner() or "?"
+                -- pcall stays: removeSafeHouse:297 formats a DebugType line off
+                -- the record's own fields and re-triggers OnSafehousesChanged
+                -- when GameClient.client - neither is safe to unwind this walk.
+                -- Direct form; this is inside the list loop.
+                pcall(SafeHouse.removeSafeHouse, sh)
                 counts.nosafehouse = (counts.nosafehouse or 0) + 1
                 forensic("LM.RESTRICT",
                     { flag = "nosafehouse", zone = zone, user = owner, what = "unclaim" })
@@ -329,6 +330,8 @@ if Events and Events.OnServerStarted then
     end)
 end
 
+-- pcall on both: a throw in either handler would break every other listener
+-- on the event.
 if Events and Events.OnNewFire then
     Events.OnNewFire.Add(function(fire) pcall(onNewFire, fire) end)
 end

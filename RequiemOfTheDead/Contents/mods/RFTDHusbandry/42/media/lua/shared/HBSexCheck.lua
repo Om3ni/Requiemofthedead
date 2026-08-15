@@ -20,7 +20,10 @@ HBSexCheck = HBSexCheck or {}
 
 local function readDef(d)
     local t, female, male, baby = "?", "?", "?", "?"
-    pcall(function() t = d:getAnimalType() end)
+    if d then t = d:getAnimalType() end  -- AnimalDefinitions:699, field return
+    -- KEEP x3: female / male / babyType are Java INSTANCE FIELDS, which Kahlua
+    -- does not expose - reading one is exactly the case these guards exist for,
+    -- and "?" in the dump is the honest answer when the read is refused.
     pcall(function() female = tostring(d.female) end)
     pcall(function() male   = tostring(d.male) end)
     pcall(function() baby   = tostring(d.babyType) end)
@@ -29,14 +32,17 @@ end
 
 function HBSexCheck.dumpDefs(tag)
     tag = tag or (isServer() and "server" or "client")
+    -- Indexing an absent global is nil in Lua; only CALLING it throws, so the
+    -- existence check is the guard. (LuaManager:2789 in 42.20.2.)
     local defs
-    pcall(function() defs = getAllAnimalsDefinitions() end)
+    if type(getAllAnimalsDefinitions) == "function" then
+        defs = getAllAnimalsDefinitions()
+    end
     if not defs then
         print("[HBSexCheck] (" .. tag .. ") getAllAnimalsDefinitions() unavailable")
         return
     end
-    local n = 0
-    pcall(function() n = defs:size() or 0 end)
+    local n = defs:size() or 0   -- ArrayList.size on a non-nil list
     print(string.format("[HBSexCheck] (%s) ==== %d animal definitions ====", tag, n))
     local males, females, randoms = 0, 0, 0
     for i = 0, n - 1 do
@@ -68,6 +74,10 @@ function HBSexCheck.run(oid)
     end
     local a = getAnimal(oid)
     if a then
+        -- KEEP: isFemale (IsoGameCharacter:9312) resolves through
+        -- getCharacterGender() -> this.descriptor, and an animal whose
+        -- constructor bailed early (IsoAnimal:259-275) has no descriptor. "?"
+        -- is the diagnostic's own answer for an unreadable sex.
         local sex = "?"
         pcall(function() sex = a:isFemale() and "FEMALE" or "MALE" end)
         print(string.format("[HBSexCheck] %s view: oid=%d sex=%s",

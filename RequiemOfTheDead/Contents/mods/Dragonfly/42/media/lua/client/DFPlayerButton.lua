@@ -51,9 +51,10 @@ local SIZE_BUCKETS = { 48, 64, 80, 96, 128 }
 local iconCache = {}   -- bucket -> { off = tex, on = tex } | false
 
 local function tex(path)
-    local t
-    pcall(function() t = getTexture(path) end)
-    return t
+    -- the getTexture GLOBAL is self-catching (LuaManager:6855 ->
+    -- Texture.getSharedTexture:406, try/catch returning null), so a missing
+    -- file is a nil here, never a throw
+    return getTexture(path)
 end
 
 local function bucketFor(width)
@@ -100,6 +101,8 @@ if not DFPlayerBtnState.wrapped then
         if not self.adminBtn then return end
 
         if self.dfPlayerBtn then
+            -- vanilla ISUI Lua (removeChild); a stale button from a previous
+            -- initialise must not kill the sidebar rebuild
             pcall(function() self:removeChild(self.dfPlayerBtn) end)
             self.dfPlayerBtn = nil
         end

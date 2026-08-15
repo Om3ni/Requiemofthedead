@@ -21,8 +21,10 @@ local function onAnimalContext(playerNum, context, animals, test)
     if not player then return end
 
     for _, animal in ipairs(animals) do
-        local ok, oid = pcall(function() return animal:getOnlineID() end)
-        if ok and oid and oid ~= 0 then
+        -- getOnlineID is a field read; the guard was standing in for a nil entry
+        -- in the list vanilla hands us.
+        local oid = animal and animal:getOnlineID()
+        if oid and oid ~= 0 then
             sendClientCommand(player, "RFTDHusbandry", HBCmd.ADD_SEEN, { id = tostring(oid) })
         end
     end

@@ -68,9 +68,10 @@ function RDEvents.registerNamespace(prefix, modId, events)
         end
     end
     namespaces[prefix] = ns
-    pcall(function()
-        if RDSeasonServer then RDSeasonServer.markSchemaDirty() end
-    end)
+    -- server-only sibling; markSchemaDirty is a flag set (RDSeasonServer:87)
+    if RDSeasonServer and type(RDSeasonServer.markSchemaDirty) == "function" then
+        RDSeasonServer.markSchemaDirty()
+    end
     return true
 end
 

@@ -50,9 +50,11 @@ Limes.fields.register("LMSuppress", "weaponDebuffMult",
 -- for every player on every tick, for nothing.
 local function zoneMult(player)
     if not player then return nil end
-    local ok, zone = pcall(function()
-        return Limes.getLocation(player:getX(), player:getY())
-    end)
+    -- pcall stays: this is called from inside RQSuppress's per-render-tick
+    -- composition, so a throw in the store walk would break Dirge's whole
+    -- suppression pass. Direct form and getX/getY hoisted out - both are field
+    -- returns on IsoMovingObject, and `player` is checked non-nil above.
+    local ok, zone = pcall(Limes.getLocation, player:getX(), player:getY())
     if not ok or not zone or not zone.fields then return nil end
 
     local mult = zone.fields.weaponDebuffMult

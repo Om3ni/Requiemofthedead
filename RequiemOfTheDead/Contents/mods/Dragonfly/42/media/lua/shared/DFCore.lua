@@ -78,6 +78,9 @@ function DFCore.audit(action, player, extra)
 
     if isServer() and sendServerCommand then
         local text = string.format("%s by %s%s", tostring(action), tostring(username), tail)
+        -- pcall: the broadcast overload (GameServer:3209) walks
+        -- GameServer.udpEngine.connections - udpEngine is nil until the socket
+        -- is up, and the index walk can trip on a mid-loop disconnect.
         pcall(sendServerCommand, DFCore.MODULE, "LogBroadcast", {
             source = "Admin",
             level  = "audit",

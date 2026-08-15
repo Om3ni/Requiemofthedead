@@ -59,13 +59,11 @@ local seqNext = 0
 
 local function occupantCount(v)
     local n = 0
-    pcall(function()
-        local script = v:getScript()
-        local seats = script and script:getPassengerCount() or 0
-        for s = 0, seats - 1 do
-            if v:isSeatOccupied(s) then n = n + 1 end
-        end
-    end)
+    local script = v:getScript()
+    local seats = script and script:getPassengerCount() or 0
+    for s = 0, seats - 1 do
+        if v:isSeatOccupied(s) then n = n + 1 end
+    end
     return n
 end
 
@@ -99,19 +97,15 @@ local function buildRow(v)
     row.script = v:getScriptName() or "?"
     row.loaded = true
 
-    pcall(function()
-        row.x = math.floor(v:getX())
-        row.y = math.floor(v:getY())
-        row.z = math.floor(v:getZ())
-    end)
+    row.x = math.floor(v:getX())
+    row.y = math.floor(v:getY())
+    row.z = math.floor(v:getZ())
 
     row.kind = RCShared.isWreck(v) and "wreck"
         or (RCShared.isTrailer(v) and "trailer" or "car")
 
-    pcall(function()
-        local eng = v:getPartById("Engine")
-        if eng then row.engine = math.floor(eng:getCondition()) end
-    end)
+    local eng = v:getPartById("Engine")
+    if eng then row.engine = math.floor(eng:getCondition()) end
 
     row.occupied = occupantCount(v)
     row.owner    = RCClaim.getOwner(v)
@@ -119,14 +113,11 @@ local function buildRow(v)
 
     -- The overlay family the parts diagram should draw, when the script declares
     -- one (this is how a modded vehicle opts in; the client falls back if absent).
-    --
-    -- CALLED, never probed. `if script.getCarMechanicsOverlay then` reads as a
-    -- harmless existence check but indexing an exposed Java object for a key
-    -- Kahlua cannot resolve THROWS - and PZ logs a caught pcall, so the "safe"
-    -- guard produced an exception per vehicle per scan. Just call it and let the
-    -- pcall decide.
-    local okOverlay, overlay = pcall(function() return v:getScript():getCarMechanicsOverlay() end)
-    if okOverlay and overlay and overlay ~= "" then row.overlay = tostring(overlay) end
+    -- getScript and getCarMechanicsOverlay are both field returns
+    -- (BaseVehicle.java:1403, VehicleScript.java:2224); only the script can be nil.
+    local vscript = v:getScript()
+    local overlay = vscript and vscript:getCarMechanicsOverlay()
+    if overlay and overlay ~= "" then row.overlay = tostring(overlay) end
 
     local a = RCJanitor and RCJanitor.assess(v) or nil
     if a then
@@ -194,18 +185,18 @@ local function emit(scan, done)
         scan.page = scan.page + 1
         local page = scan.page
         local slice = slices[i]
-        pcall(function()
-            sendServerCommand(scan.player, M, "Fleet", {
-                seq    = scan.seq,
-                scope  = scan.scope,
-                page   = page,
-                rows   = slice,
-                done   = (done and last) and true or false,
-                total  = scan.emitted,
-                capped = scan.capped and true or false,
-                seen   = scan.seen,
-            })
-        end)
+        -- sendServerCommand returns early for an unmapped player or closed
+        -- connection (GameServer.java:3256), so no guard for a mid-page quit.
+        sendServerCommand(scan.player, M, "Fleet", {
+            seq    = scan.seq,
+            scope  = scan.scope,
+            page   = page,
+            rows   = slice,
+            done   = (done and last) and true or false,
+            total  = scan.emitted,
+            capped = scan.capped and true or false,
+            seen   = scan.seen,
+        })
     end
 end
 
@@ -219,8 +210,7 @@ end
 
 local function stillOnline(player)
     if not player then return false end
-    local ok, name = pcall(function() return player:getUsername() end)
-    return ok and name ~= nil
+    return player:getUsername() ~= nil
 end
 
 -- THE DUE SCOPE (2026-08-03). "Which cars is the Janitor coming for?" is the
@@ -253,9 +243,10 @@ local function step(scan, budget)
 
         -- re-validate: this ref was collected up to several ticks ago and the
         -- car may have streamed out or been removed since
-        local alive = false
-        pcall(function() alive = v:getId() ~= nil end)
+        local alive = v:getId() ~= nil
         if alive then
+            -- guarded: buildRow reads claim modData and Janitor state off a ref
+            -- that can stream out between the id check and here
             local ok, row = pcall(buildRow, v)
             if ok and row and not (scan.dueOnly and not DUE_VERDICTS[row.verdict or ""]) then
                 scan.rows[#scan.rows + 1] = row
@@ -312,8 +303,8 @@ local function collectLoaded()
     if not cell then return refs end
     local vs = cell:getVehicles()
     if not vs then return refs end
-    local ok, it = pcall(function() return vs:iterator() end)
-    if not ok or not it then return refs end
+    local it = vs:iterator()
+    if not it then return refs end
     while it:hasNext() do
         local v = it:next()
         if v then refs[#refs + 1] = v end
@@ -339,6 +330,8 @@ local function collectClaimed()
     for _, rec in ipairs(RCRegistry.allClaims()) do
         local v = loaded[rec.claimId]
         if v then
+            -- guarded: the mapped ref can be mid-removal; one bad car must not
+            -- lose the rest of the claimed list
             local ok, row = pcall(buildRow, v)
             if ok and row then rows[#rows + 1] = row end
         else
@@ -391,6 +384,8 @@ function RCFleet.begin(player, scope)
         -- The claimed set is index-sized (KB-scale, bounded by MaxClaims x
         -- players), not world-sized, so it is built in one go and then PAGED
         -- out on the same ticker - the wire still gets modest packets.
+        -- guarded: the registry self-heal inside walks live vehicles that can
+        -- mutate under it; the fallback is an empty (not partial) snapshot
         local ok, rows = pcall(collectClaimed)
         scan.pre = ok and rows or {}
         scan.refs = {}
@@ -411,6 +406,9 @@ function RCFleet.begin(player, scope)
         end
         scan.count = #scan.pre
     else
+        -- guarded: getCell() dereferences IsoWorld.instance unguarded
+        -- (LuaManager.java:4772) - an early request must degrade to an empty
+        -- scan, not an error mid-dispatch
         local ok, refs = pcall(collectLoaded)
         scan.refs = ok and refs or {}
         scan.count = #scan.refs
@@ -436,33 +434,28 @@ end
 -- ---------------------------------------------------------------------------
 function RCFleet.parts(player, vid)
     if not (player and sendServerCommand and vid) then return end
-    local v
-    if not pcall(function() v = getVehicleById(vid) end) or not v then
+    -- vid comes off the wire: a non-number would blow the (short) cast inside
+    -- getVehicleById, so the guard stays.
+    local okv, v = pcall(getVehicleById, vid)
+    if not okv or not v then
         -- Answer anyway with an empty list. Silence would leave the client's
         -- in-flight flag set forever and the diagram stuck on "reading parts".
-        pcall(function()
-            sendServerCommand(player, M, "VehicleParts", { vid = vid, parts = {} })
-        end)
+        sendServerCommand(player, M, "VehicleParts", { vid = vid, parts = {} })
         return
     end
 
-    local out, n = {}, 0
-    pcall(function() n = v:getPartCount() end)
+    local out = {}
+    local n = v:getPartCount()
     for i = 0, n - 1 do
-        pcall(function()
-            local p = v:getPartByIndex(i)
-            if not p then return end
+        local p = v:getPartByIndex(i)
+        if p then
             local rec = { id = p:getId() }
-            pcall(function() rec.cond = math.floor(p:getCondition() or 0) end)
-            pcall(function()
-                rec.missing = (p:getInventoryItem() == nil) and (p:getTable("install") ~= nil) or false
-            end)
-            pcall(function()
-                if p:isContainer() then
-                    rec.amount   = p:getContainerContentAmount()
-                    rec.capacity = p:getContainerCapacity()
-                end
-            end)
+            rec.cond = math.floor(p:getCondition() or 0)
+            rec.missing = (p:getInventoryItem() == nil) and (p:getTable("install") ~= nil) or false
+            if p:isContainer() then
+                rec.amount   = p:getContainerContentAmount()
+                rec.capacity = p:getContainerCapacity()
+            end
             -- The item types this part slot ACCEPTS, for the Workshop tab's
             -- recipe filter. Read here because it is unreachable client-side
             -- for a car that is not streamed to that client: the script-level
@@ -470,16 +463,14 @@ function RCFleet.parts(player, vid)
             -- Part class) and Kahlua reads fields never, methods only - only
             -- the LIVE VehiclePart carries a getItemType() getter, and for a
             -- remote car the live object exists only here on the server.
-            pcall(function()
-                local it = p:getItemType()
-                if it and it:size() > 0 then
-                    local list = {}
-                    for j = 0, it:size() - 1 do list[#list + 1] = tostring(it:get(j)) end
-                    rec.items = list
-                end
-            end)
+            local it = p:getItemType()
+            if it and it:size() > 0 then
+                local list = {}
+                for j = 0, it:size() - 1 do list[#list + 1] = tostring(it:get(j)) end
+                rec.items = list
+            end
             out[#out + 1] = rec
-        end)
+        end
     end
 
     -- Split for the same reason Fleet is, and pre-emptively rather than after a
@@ -496,18 +487,16 @@ function RCFleet.parts(player, vid)
     if #slices == 0 then slices = { {} } end
 
     for i = 1, #slices do
-        local seq, total, slice = i, #slices, slices[i]
-        pcall(function()
-            sendServerCommand(player, M, "VehicleParts",
-                { vid = vid, parts = slice, seq = seq, total = total })
-        end)
+        sendServerCommand(player, M, "VehicleParts",
+            { vid = vid, parts = slices[i], seq = i, total = #slices })
     end
 end
 
 -- Drop a player's in-flight scan (disconnect, or the tab closing).
 function RCFleet.cancel(player)
-    local ok, key = pcall(function() return player:getUsername() end)
-    if ok and key then scans[key] = nil end
+    if not player then return end
+    local key = player:getUsername()
+    if key then scans[key] = nil end
 end
 
 print("[RC] RCFleet loaded (paged fleet snapshot)")

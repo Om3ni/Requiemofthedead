@@ -23,11 +23,9 @@ local function forEachLoadedZombie(visitor)
     for pi = 0, players:size() - 1 do
         local p = players:get(pi)
         if p then
-            local cell
-            pcall(function() cell = p:getCell() end)
+            local cell = p:getCell()
             if cell then
-                local zlist
-                pcall(function() zlist = cell:getZombieList() end)
+                local zlist = cell:getZombieList()
                 if zlist then
                     local n = zlist:size()
                     for zi = 0, n - 1 do
@@ -45,6 +43,8 @@ local function forEachLoadedZombie(visitor)
         end
     end
     for i = 1, #snapshot do
+        -- pcall: visitor containment - one zombie's error must not abort the
+        -- rest of the snapshot walk mid-cull.
         local ok, err = pcall(visitor, snapshot[i].z, snapshot[i].id)
         if not ok then print("[Dragonfly] visitor error: " .. tostring(err)) end
     end
@@ -55,15 +55,18 @@ end
 -- scan still sees it and visually it persists. Explicit list:remove(z) wipes
 -- the dangling reference too. Matches RPCore.cullZombie exactly.
 local function cull(z)
-    pcall(function() z:removeFromSquare() end)
-    pcall(function() z:removeFromWorld() end)
-    pcall(function()
-        local cell = z:getCell()
-        if cell and cell.getZombieList then
-            local list = cell:getZombieList()
-            if list and list.remove then list:remove(z) end
-        end
-    end)
+    z:removeFromSquare()
+    -- pcall: IsoZombie.removeFromWorld - the super chains getCell():isSafeToAdd()
+    -- unguarded, and getCell derefs IsoWorld.instance (IsoObject:1842).
+    pcall(z.removeFromWorld, z)
+    -- Stepped through IsoWorld.instance rather than z:getCell(): IsoObject.getCell
+    -- derefs the instance unconditionally (:1842), this form yields nil instead.
+    -- getZombieList is a field return (IsoCell:2339) and remove(Object) on the
+    -- backing java.util.ArrayList cannot throw.
+    local world = IsoWorld and IsoWorld.instance
+    local cell = world and world:getCell()
+    local list = cell and cell:getZombieList()
+    if list then list:remove(z) end
 end
 
 local function chunkOf(x, y)
@@ -78,8 +81,7 @@ DFServer.registerHandler{
         local cx, cy = chunkOf(px, py)
         local found, removed = 0, 0
         forEachLoadedZombie(function(z)
-            local sq
-            pcall(function() sq = z:getSquare() end)
+            local sq = z:getSquare()
             if not sq then return end
             local zcx, zcy = chunkOf(sq:getX(), sq:getY())
             if zcx == cx and zcy == cy then
@@ -108,8 +110,7 @@ DFServer.registerHandler{
         local r2 = radius * radius
         local removed = 0
         forEachLoadedZombie(function(z)
-            local sq
-            pcall(function() sq = z:getSquare() end)
+            local sq = z:getSquare()
             if not sq then return end
             local dx, dy = sq:getX() - px, sq:getY() - py
             if dx * dx + dy * dy <= r2 then

@@ -1,6 +1,6 @@
 name=BBLibrary
 id=BBLibrary
-modversion=1.1.0
+modversion=1.2.0
 description=Ban-list library for the Requiem of the Dead BanBox engine. Enable this mod to apply its bundled ban list (the Requiem of the Dead server's defaults): the listed item types are stripped from loot distribution at server start so no new copies spawn (prevention, not a world sweep - items already placed are left alone), and with confiscate-on-login enabled any carried banned items are removed when a player connects. Requires Requiem of the Dead: BanBox. Leave it disabled to run the BanBox engine with no built-in bans, or copy the bundled example file into your own mod to ban your own items.
 pzversion=42
 require=RFTDBanBox

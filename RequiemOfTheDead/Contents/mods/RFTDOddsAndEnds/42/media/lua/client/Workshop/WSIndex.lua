@@ -57,29 +57,24 @@ local function indexRecipe(r)
         taughtBy  = {},
         grantedBy = {},
     }
-    pcall(function()
-        local outs = r:getOutputs()
-        for j = 0, outs:size() - 1 do
-            local res = outs:get(j):getPossibleResultItems()
-            if res then
-                for k = 0, res:size() - 1 do
-                    local it = res:get(k)
-                    local fn = it and it:getFullName()
-                    if fn then
-                        rec.outputs[#rec.outputs + 1] = fn
-                        local ok, d = pcall(function() return it:getDisplayName() end)
-                        rec.outputDisp[#rec.outputDisp + 1] = (ok and d) or fn
-                    end
+    local outs = r:getOutputs()
+    for j = 0, outs:size() - 1 do
+        local res = outs:get(j):getPossibleResultItems()
+        if res then
+            for k = 0, res:size() - 1 do
+                local it = res:get(k)
+                local fn = it and it:getFullName()
+                if fn then
+                    rec.outputs[#rec.outputs + 1] = fn
+                    rec.outputDisp[#rec.outputDisp + 1] = it:getDisplayName() or fn
                 end
             end
         end
-    end)
-    pcall(function() rec.autoAny = jlist(r:getAutoLearnAnySkills()) end)
-    pcall(function() rec.autoAll = jlist(r:getAutoLearnAllSkills()) end)
-    pcall(function() rec.reqSkills = jlist(r:getRequiredSkills()) end)
-    pcall(function()
-        if r:canBeResearched() then rec.research = r:getResearchSkillLevel() or 0 end
-    end)
+    end
+    rec.autoAny = jlist(r:getAutoLearnAnySkills())
+    rec.autoAll = jlist(r:getAutoLearnAllSkills())
+    rec.reqSkills = jlist(r:getRequiredSkills())
+    if r:canBeResearched() then rec.research = r:getResearchSkillLevel() or 0 end
     return rec
 end
 
@@ -88,7 +83,10 @@ function X.build()
     X.recipes, X.byOutput = {}, {}
     local catSet = {}
 
-    -- 1) every loaded craft recipe
+    -- 1) every loaded craft recipe. This walk and the three below stay under
+    -- pcall (see header): script-object accessors vary in nullability across
+    -- mods, and one malformed modded script must cost its own entry - or its
+    -- own walk - never the index.
     pcall(function()
         local all = ScriptManager.instance:getAllCraftRecipes()
         for i = 0, all:size() - 1 do
@@ -112,17 +110,12 @@ function X.build()
         local items = ScriptManager.instance:getAllItems()
         for i = 0, items:size() - 1 do
             local it = items:get(i)
-            local okL, taught = pcall(function() return it:getLearnedRecipes() end)
-            if okL and taught and taught.size and taught:size() > 0 then
-                local entry
-                pcall(function()
-                    entry = { disp = it:getDisplayName() or it:getName(), type = it:getName() }
-                end)
-                if entry then
-                    for j = 0, taught:size() - 1 do
-                        local rec = X.recipes[tostring(taught:get(j))]
-                        if rec then rec.taughtBy[#rec.taughtBy + 1] = entry end
-                    end
+            local taught = it and it:getLearnedRecipes()
+            if taught and taught.size and taught:size() > 0 then
+                local entry = { disp = it:getDisplayName() or it:getName(), type = it:getName() }
+                for j = 0, taught:size() - 1 do
+                    local rec = X.recipes[tostring(taught:get(j))]
+                    if rec then rec.taughtBy[#rec.taughtBy + 1] = entry end
                 end
             end
         end
@@ -135,11 +128,9 @@ function X.build()
         local profs = CharacterProfessionDefinition.getProfessions()
         for i = 0, profs:size() - 1 do
             local def = profs:get(i)
-            local okG, granted = pcall(function() return def:getGrantedRecipes() end)
-            if okG and granted then
-                local nm
-                pcall(function() nm = def:getUIName() end)
-                nm = nm or tostring(def)
+            local granted = def:getGrantedRecipes()
+            if granted then
+                local nm = def:getUIName() or tostring(def)
                 for j = 0, granted:size() - 1 do
                     local rec = X.recipes[tostring(granted:get(j))]
                     if rec then rec.grantedBy[#rec.grantedBy + 1] = nm .. " (profession)" end
@@ -151,11 +142,9 @@ function X.build()
         local defs = CharacterTraitDefinition.getTraits()
         for i = 0, defs:size() - 1 do
             local def = defs:get(i)
-            local okG, granted = pcall(function() return def:getGrantedRecipes() end)
-            if okG and granted and granted:size() > 0 then
-                local nm
-                pcall(function() nm = def:getLabel() end)
-                nm = nm or "a trait"
+            local granted = def:getGrantedRecipes()
+            if granted and granted:size() > 0 then
+                local nm = def:getLabel() or "a trait"
                 for j = 0, granted:size() - 1 do
                     local rec = X.recipes[tostring(granted:get(j))]
                     if rec then rec.grantedBy[#rec.grantedBy + 1] = nm .. " (trait)" end
@@ -183,8 +172,7 @@ end
 -- a recipe that never needs learning is known by everyone.
 function X.known(player, rec)
     if not rec.needLearn then return true end
-    local ok, k = pcall(function() return player:isRecipeActuallyKnown(rec.name) end)
-    return ok and k == true
+    return player ~= nil and player:isRecipeActuallyKnown(rec.name) == true
 end
 
 -- Sorted array of every rec, for the Journal's catalogue walk.
@@ -206,10 +194,8 @@ function X.skillLine(player, s)
     local pname, lvl = tostring(s):match("^(.-)%s+(%d+)$")
     if not pname then return tostring(s), nil end
     local cur
-    pcall(function()
-        local pt = Perks.FromString(pname)
-        if pt then cur = player:getPerkLevel(pt) end
-    end)
+    local pt = Perks.FromString(pname)
+    if pt and player then cur = player:getPerkLevel(pt) end
     if cur == nil then return tostring(s), nil end
     return string.format("%s %s (you: %d)", pname, lvl, cur), cur >= tonumber(lvl)
 end

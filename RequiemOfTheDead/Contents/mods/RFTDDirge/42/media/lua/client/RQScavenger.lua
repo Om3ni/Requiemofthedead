@@ -75,8 +75,7 @@ Events.OnRenderTick.Add(function()
                 local lz  = pos and pos.z or 0
                 local scav = RQCore.findZombieByID(onlineID, lx, ly, lz)
                 if scav then
-                    local ok, dead = pcall(scav.isDead, scav)
-                    if ok and not dead then
+                    if not scav:isDead() then
                         local zx = math.floor(scav:getX())
                         local zy = math.floor(scav:getY())
                         local zz = math.floor(scav:getZ())
@@ -107,8 +106,8 @@ Events.OnRenderTick.Add(function()
                                                     then
                                                         local ooid = obj:getOnlineID()
                                                         if RQRegistry.isSpecial(ooid) then
-                                                            pcall(obj.setOutlineHighlight, obj, playerNum, true)
-                                                            pcall(obj.setOutlineHighlightCol, obj, playerNum,
+                                                            obj:setOutlineHighlight(playerNum, true)
+                                                            obj:setOutlineHighlightCol(playerNum,
                                                                 color.r, color.g, color.b, color.a)
                                                         end
                                                     end
@@ -133,8 +132,8 @@ end)
 -- since isServer() is true on the host loop.
 
 function RQScavenger.onDead(zombie)
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if ok and oid and oid ~= 0 then
+    local oid = zombie and zombie:getOnlineID()
+    if oid and oid ~= 0 then
         RQRing.clear("scav_" .. oid)
         RQRing.clear("scav_eat_" .. oid)
         if RQGlutton and RQGlutton.stopEating then

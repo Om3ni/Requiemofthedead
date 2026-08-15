@@ -54,46 +54,39 @@ RDLife = RDLife or {}
 -- ---------------------------------------------------------------------------
 
 local function deathCaptureOn()
-    local ok, v = pcall(function() return SandboxVars.RFTDCore and SandboxVars.RFTDCore.DeathCaptureEnabled end)
-    if ok and v ~= nil then return v == true end
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore.DeathCaptureEnabled
+    if v ~= nil then return v == true end
     return true
 end
 
 local function hoursSurvived(p)
-    local ok, h = pcall(function() return p:getHoursSurvived() end)
-    if ok and type(h) == "number" then return h end
+    local h = p:getHoursSurvived()
+    if type(h) == "number" then return h end
     return 0
 end
 
 local function killsOf(p)
-    local z, s = 0, 0
-    pcall(function() z = p:getZombieKills() or 0 end)
-    pcall(function() s = p:getSurvivorKills() or 0 end)
+    local z = p:getZombieKills() or 0
+    local s = p:getSurvivorKills() or 0
     return { zombies = z, survivors = s }
 end
 
 local function posOf(p)
-    local x, y, z = -1, -1, -1
-    pcall(function()
-        x = math.floor(p:getX()); y = math.floor(p:getY()); z = math.floor(p:getZ())
-    end)
-    return x, y, z
+    return math.floor(p:getX()), math.floor(p:getY()), math.floor(p:getZ())
 end
 
 -- Perk LEVELS, not raw XP: smaller, and levels are what a record of
 -- progression should carry. Zero levels are skipped.
 local function perkLevels(p)
     local out = {}
-    pcall(function()
-        for i = 0, PerkFactory.PerkList:size() - 1 do
-            local perk = PerkFactory.PerkList:get(i)
-            local t = perk:getType()
-            if t ~= PerkFactory.Perks.None and t ~= PerkFactory.Perks.MAX then
-                local lvl = p:getPerkLevel(t)
-                if lvl and lvl > 0 then out[perk:getId()] = lvl end
-            end
+    for i = 0, PerkFactory.PerkList:size() - 1 do
+        local perk = PerkFactory.PerkList:get(i)
+        local t = perk:getType()
+        if t ~= PerkFactory.Perks.None and t ~= PerkFactory.Perks.MAX then
+            local lvl = p:getPerkLevel(t)
+            if lvl and lvl > 0 then out[perk:getId()] = lvl end
         end
-    end)
+    end
     return out
 end
 
@@ -120,6 +113,8 @@ local function traitsOf(p)
 end
 
 local function professionOf(p)
+    -- same registry landmine as traitsOf above: tostring/getName on a stale
+    -- registry object resolve through the registry and can NPE
     local name
     pcall(function()
         local prof = p:getDescriptor() and p:getDescriptor():getCharacterProfession()
@@ -136,14 +131,12 @@ end
 -- resolved to "the house on the corner" rather than a bare point.
 local function houseOf(p)
     local box
-    pcall(function()
-        local sq = p:getSquare()
-        local b = sq and sq:getBuilding()
-        local def = b and b:getDef()
-        if def then
-            box = { x1 = def:getX(), y1 = def:getY(), x2 = def:getX2(), y2 = def:getY2() }
-        end
-    end)
+    local sq = p:getSquare()
+    local b = sq and sq:getBuilding()
+    local def = b and b:getDef()
+    if def then
+        box = { x1 = def:getX(), y1 = def:getY(), x2 = def:getX2(), y2 = def:getY2() }
+    end
     return box
 end
 
@@ -170,8 +163,7 @@ end
 local RETRO_HOURS = 1.0
 
 local function mintLifeId(p)
-    local rand = 0
-    pcall(function() rand = ZombRand(100000000) end)
+    local rand = ZombRand(100000000)
     local id = tostring(RDShared.nowSec()) .. "-" .. tostring(p:getOnlineID()) .. "-" .. tostring(rand)
     return id
 end
@@ -184,8 +176,7 @@ local function helloSignature()
 end
 
 local function handleReady(p)
-    local md
-    pcall(function() md = p:getModData() end)
+    local md = p:getModData()
     if not md then return end
 
     if md.RFTD_LifeId then
@@ -193,7 +184,9 @@ local function handleReady(p)
         RDLog.chronicle("RD.LOGIN", p, { hours = hoursSurvived(p), x = x, y = y, z = z })
     else
         md.RFTD_LifeId = mintLifeId(p)
-        pcall(function() p:transmitModData() end)
+        -- IsoObject:4470 - square null-checked, both send paths funnel into
+        -- INetworkPacket.send's try/catch - cannot throw
+        p:transmitModData()
         local hours = hoursSurvived(p)
         local x, y, z = posOf(p)
         RDLog.chronicle("RD.SPAWN", p, {
@@ -219,6 +212,7 @@ local function handleReady(p)
         RDLog.chronicle("RD.HELLO", p, { mods = RDShared.mods })
     end
 
+    -- foreign code: satellites register these; containment is the feature
     for _, fn in ipairs(readyFns) do pcall(fn, p) end
 end
 
@@ -237,8 +231,7 @@ local lastPoll   = 0
 -- RFTD_LifeId is a NEW character on an OLD connection, because modData died with
 -- the previous IsoPlayer. That is the whole detection.
 local function swappedCharacter(p)
-    local md
-    pcall(function() md = p:getModData() end)
+    local md = p:getModData()
     return md ~= nil and md.RFTD_LifeId == nil
 end
 
@@ -271,8 +264,7 @@ local function poll()
     local now = RDShared.nowMs()
     if now == 0 or (now - lastPoll) < POLL_INTERVAL_MS then return end
     lastPoll = now
-    local players
-    pcall(function() players = getOnlinePlayers() end)
+    local players = getOnlinePlayers()
     if not players then return end
     for i = 0, players:size() - 1 do
         local p = players:get(i)
@@ -284,15 +276,14 @@ local function poll()
         -- died. It also keeps the give-up timer from burning down while a player
         -- sits on the death screen.
         local dead = false
-        if p then pcall(function() dead = p:isDead() end) end
+        if p then dead = p:isDead() end
 
         if id and not dead then
             if readyID[id] and not gaveUpID[id] and swappedCharacter(p) then
                 readyID[id] = nil; watchStart[id] = nil
             end
             if not readyID[id] then
-                local sq, inv
-                pcall(function() sq = p:getSquare(); inv = p:getInventory() end)
+                local sq, inv = p:getSquare(), p:getInventory()
                 if sq and inv then
                     readyID[id] = true; watchStart[id] = nil
                     handleReady(p)
@@ -328,9 +319,8 @@ local deathCalls = 0   -- every invocation, players or not: the measurable rate
 
 local function killerOf(p)
     local kind, who
-    pcall(function()
-        local a = p:getAttackedBy()
-        if a == nil then return end
+    local a = p:getAttackedBy()
+    if a ~= nil then
         if instanceof(a, "IsoPlayer") then
             kind = "player"
             who  = a:getUsername()
@@ -341,7 +331,7 @@ local function killerOf(p)
         else
             kind = "other"
         end
-    end)
+    end
     return kind and { kind = kind, who = who } or nil
 end
 
@@ -378,18 +368,16 @@ local function sampleSignature(p)
 end
 
 local function homePass(p, md)
-    local sh
-    pcall(function() sh = SafeHouse.hasSafehouse(p) end)
-    if not sh then return end
-    local key, payload
-    pcall(function()
-        key = tostring(sh:getX()) .. "," .. tostring(sh:getY())
-        payload = {
-            x = sh:getX(), y = sh:getY(),
-            w = sh:getW(), h = sh:getH(),
-            title = sh:getTitle(),
-        }
-    end)
+    -- guarded: hasSafehouse walks the safehouse list and NPEs on a record with
+    -- a null owner
+    local okSH, sh = pcall(SafeHouse.hasSafehouse, p)
+    if not okSH or not sh then return end
+    local key = tostring(sh:getX()) .. "," .. tostring(sh:getY())
+    local payload = {
+        x = sh:getX(), y = sh:getY(),
+        w = sh:getW(), h = sh:getH(),
+        title = sh:getTitle(),
+    }
     if not key or md.RFTD_HomeKey == key then return end
     local evt = md.RFTD_HomeKey and "RD.HOME_CHANGE" or "RD.HOME_SET"
     md.RFTD_HomeKey = key
@@ -400,8 +388,7 @@ Events.EveryHours.Add(function()
     if RDShared.debugOn() and deathCalls > 0 then
         print("[RFTDCore] RDLife: OnCharacterDeath calls this session: " .. tostring(deathCalls))
     end
-    local players
-    pcall(function() players = getOnlinePlayers() end)
+    local players = getOnlinePlayers()
     if not players then return end
     for i = 0, players:size() - 1 do
         local p = players:get(i)
@@ -416,11 +403,10 @@ Events.EveryHours.Add(function()
         -- permanent and would tell a future reader that life lasted 300 hours
         -- rather than 49. RD.DEATH is the last thing a life may record.
         local dead = false
-        if p then pcall(function() dead = p:isDead() end) end
+        if p then dead = p:isDead() end
 
         if id and not dead and readyID[id] then
-            local md
-            pcall(function() md = p:getModData() end)
+            local md = p:getModData()
             if md then
                 local sig  = sampleSignature(p)
                 local day  = RDShared.gameDay() or 0

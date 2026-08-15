@@ -1,6 +1,6 @@
 name=Requiem of the Dead: Limes
 id=RFTDLimes
-modversion=1.1.0
+modversion=1.2.0
 require=RFTDCore
 description=Limes - the border markers of the dead world. One zone substrate for the whole Requiem family: named regions drawn over the map that decide how hard the world bites there - special spawns, sprinter risk, loot shaped up or down, what may be built or torn apart, where the living are simply not welcome. Server-authoritative store, synced once on join and again only when an admin redraws a border; every read after that is local and free. Zones live in a hand-editable RFTDLimes.ini on the server, import once from a PhunZones export, and inherit from named templates so a district can be "Very_Hard, but with sprinters". This is the substrate release - the map editor, per-zone loot and restriction enforcement arrive milestone by milestone. Requires Requiem of the Dead: Core.
 pzversion=42

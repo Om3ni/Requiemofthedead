@@ -40,7 +40,7 @@ MMShared = MMShared or {}
 -- file scope needs this line.
 require "RDShared"
 
-RDShared.registerMod("RFTDMemoir", "1.0.0")   -- keep in sync with mod.info
+RDShared.registerMod("RFTDMemoir", "1.2.0")   -- keep in sync with mod.info
 
 MMShared.MODULE = "RFTDMemoir"   -- wire token = mod id (was "RFTDDragonflyMemoir" pre-shakeout; client+server ship atomically in the bundle, so the flip needs no dual-accept)
 
@@ -147,10 +147,12 @@ end
 
 function MMname(player)
     if not player then return "?" end
-    local ok, n = pcall(function() return player:getUsername() end)
-    if ok and n and n ~= "" then return n end
-    ok, n = pcall(function() return player:getFullName() end)
-    return (ok and n) or tostring(player)
+    local n = player:getUsername()
+    if n and n ~= "" then return n end
+    -- getFullName is IsoGameCharacter's, absent on some non-player characters
+    -- this can be handed in a log line; indexing it is safe, calling it is not.
+    if player.getFullName then return player:getFullName() or tostring(player) end
+    return tostring(player)
 end
 
 function MMlog(...)
@@ -217,16 +219,59 @@ end
 -- ("base:organized"). Both classes' toString() is
 -- Registries.X.getLocation(this).toString() - VERIFIED live in-game via
 -- print(tostring(...)) on 2026-08-09, which is what proved the collision.
--- Returns nil for a stale object (getLocation() null after a registry reset ->
--- toString NPEs -> pcall catches), which is what makes staleness detectable.
-local function fqid(obj)
-    if obj == nil then return nil end
+--
+-- WHY THREE FUNCTIONS AND NOT ONE (2026-08-13). Resolution fails four distinct
+-- ways, and the old `fqid(x) or x:getName()` idiom collapsed all four into one
+-- answer - the WRONG one for a stored key, because a bare getName() is exactly
+-- the ambiguous key THE RULE above forbids. Worse, only ONE of the four (stale)
+-- also breaks getName(), so the fallback looked like a safety net while quietly
+-- reintroducing the collision in the other three. So: idOf REPORTS, the two
+-- wrappers DECIDE, and which wrapper you call is chosen by what the value is
+-- FOR, never by what went wrong.
+--
+--   requireId  storage + comparison (capture, identityMatches, grant math).
+--              Every failure is fatal, including a healthy object whose id is
+--              merely unqualified: an unqualified key is the collision bug.
+--   labelOf    display only. Never persisted, never compared. Marks anything it
+--              could not verify so a placeholder cannot be read back as an id.
+
+-- Reports the registry id, or nil plus a STABLE reason token for logs and audit
+-- rows ("nil" | "stale" | "empty" | "unqualified"). Never decides, never throws.
+-- "stale" is the registry-reset case that makes staleness detectable at all.
+function MMShared.idOf(obj)
+    if obj == nil then return nil, "nil" end
+    -- stale: the object outlived its registry, getLocation() is null, toString NPEs
     local ok, s = pcall(tostring, obj)
-    if not ok or type(s) ~= "string" or s == "" then return nil end
+    if not ok then return nil, "stale" end
+    if type(s) ~= "string" or s == "" then return nil, "empty" end
     s = s:lower()
-    if not s:find(":", 1, true) then return nil end -- not an id; refuse to guess
-    return s
+    if not s:find(":", 1, true) then return nil, "unqualified" end
+    return s, nil
 end
+
+-- Storage/comparison resolver. Raises rather than guess; the command handlers
+-- pcall their whole operation, so this surfaces as a denial that keeps the
+-- memoir intact and writes an audit row, never as a half-written snapshot.
+function MMShared.requireId(obj, what)
+    local id, why = MMShared.idOf(obj)
+    if id then return id end
+    error("MMShared.requireId: cannot resolve " .. tostring(what)
+        .. " (" .. tostring(why) .. ")")
+end
+
+-- Human-readable label for UI. "?" prefixes anything unverified so no reader -
+-- and no future copy-paste - mistakes it for a registry id.
+function MMShared.labelOf(obj)
+    local id = MMShared.idOf(obj)
+    if id then return id end
+    local ok, nm = pcall(function() return obj and obj:getName() end)
+    if ok and type(nm) == "string" and nm ~= "" then return "?" .. nm end
+    return "?unresolved?"
+end
+
+-- Back-compat alias: the plain "id or nil" reading, for the internal callers
+-- below that test for staleness directly and want no policy attached.
+local function fqid(obj) return (MMShared.idOf(obj)) end
 MMShared.fqid = fqid
 
 -- ---------------------------------------------------------------------

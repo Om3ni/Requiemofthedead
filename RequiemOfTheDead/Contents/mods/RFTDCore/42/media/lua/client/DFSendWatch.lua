@@ -150,9 +150,9 @@ end
 -- that fix. It is read server-side and synced, so the SERVER decides whether its
 -- clients instrument themselves.
 local function armed()
-    local v
-    local ok = pcall(function() v = SandboxVars.RFTDCore and SandboxVars.RFTDCore.SendWatchEnabled end)
-    if not ok or v == nil then return true end   -- absent option = on
+    -- SandboxVars is nil until options load; the chain replaces the guard
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore.SendWatchEnabled
+    if v == nil then return true end   -- absent option = on
     return v == true
 end
 
@@ -191,8 +191,10 @@ local function install()
         return "invited [" .. tostring(invited) .. "] to faction [" .. nameOf(faction) .. "]"
     end)
     w("sendFactionRemoveMember", function(faction, username)
-        local me
-        pcall(function() me = getPlayer():getUsername() end)
+        -- wrap() pcalls every describer already (:124) - no inner guard, just
+        -- the nil-check that keeps the generic label when there is no player.
+        local p = getPlayer()
+        local me = p and p:getUsername()
         if me and tostring(username) == tostring(me) then
             return "left faction [" .. nameOf(faction) .. "]"
         end
@@ -206,7 +208,7 @@ local function install()
     -- Safehouse. Signatures verified at LuaManager.java:4311-4372.
     w("sendSafehouseClaim", function(square, player, title)
         local x, y
-        pcall(function() x, y = square:getX(), square:getY() end)
+        if square then x, y = square:getX(), square:getY() end
         return "claimed safehouse [" .. tostring(title) .. "] at ["
             .. tostring(x or "?") .. "," .. tostring(y or "?") .. "]"
     end)
@@ -252,6 +254,8 @@ local function install()
         .. " faction/safehouse call sites instrumented (lifecycle ledger; see header for what it is worth)")
 end
 
+-- install rewrites sixteen engine globals; a failed install must cost the
+-- ledger, not the boot
 Events.OnGameStart.Add(function() pcall(install) end)
 
 return DFSendWatch

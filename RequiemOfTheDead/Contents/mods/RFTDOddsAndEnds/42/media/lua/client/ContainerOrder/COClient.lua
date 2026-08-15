@@ -195,27 +195,21 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Stable key for a container. The player's own inventory has no containing item,
--- which is exactly what distinguishes it.
---
--- A FAILED lookup is not the same as "no containing item". Both used to fall
--- through to `return "main"`, which would quietly alias a bag onto the player's
--- own inventory key: commit() would write both to t["main"], apply() would hand
--- them the same rank, and the order would collapse to the name tie-break. Only
--- treat a call that SUCCEEDED and returned nil as the character's inventory.
+-- which is exactly what distinguishes it - a nil from getContainingItem IS the
+-- character's inventory. Both calls are field returns in the 42.20.2 decompile
+-- (ItemContainer.getContainingItem:356, InventoryItem.getID:3333), so neither
+-- can throw on the nil-checked receivers here.
 local function keyFor(container)
     if not container then return nil end
-    local ok, item = pcall(function() return container:getContainingItem() end)
-    if not ok then return nil end
+    local item = container:getContainingItem()
     if not item then return "main" end
-    local gotId, id = pcall(function() return item:getID() end)
-    if gotId and id then return "i" .. tostring(id) end
-    return nil
+    return "i" .. tostring(item:getID())
 end
 
 local function orderTable(playerObj, create)
     if not playerObj then return nil end
-    local md
-    pcall(function() md = playerObj:getModData() end)
+    -- lazy-alloc table return (IsoObject.getModData:1110), cannot throw
+    local md = playerObj:getModData()
     if not md then return nil end
     if type(md[MD_KEY]) ~= "table" then
         if not create then return nil end
@@ -263,7 +257,9 @@ function ContainerOrder.commit(page)
         local k = keyFor(b.inventory)
         if k then t[k] = i * STEP end
     end
-    pcall(function() playerObj:transmitModData() end)
+    -- IsoObject.transmitModData:4470 null-checks the square and the packet send
+    -- is try/catch'd throughout (INetworkPacket.send:127) - cannot throw
+    playerObj:transmitModData()
 end
 
 -- ---------------------------------------------------------------------------
@@ -320,6 +316,8 @@ function ContainerOrder.apply(page)
     end
 
     -- Vanilla set this before we moved anything; the bottom button changed.
+    -- guarded: setScrollHeight/getBottom are vanilla ISUI Lua, unverifiable
+    -- against the Java decompile; a miss just leaves vanilla's scroll height.
     if page.containerButtonPanel and page.backpacks[#page.backpacks] then
         pcall(function()
             page.containerButtonPanel:setScrollHeight(page.backpacks[#page.backpacks]:getBottom())
@@ -490,6 +488,8 @@ function ContainerOrder.finishDrag(button)
     end
 
     ContainerOrder.commit(page)
+    -- guarded: refreshBackpacks is vanilla (or a third-party override) Lua;
+    -- a throw here would leave the drag half-committed with no rebuild.
     if page.refreshBackpacks then pcall(function() page:refreshBackpacks() end) end
     return true
 end
@@ -534,7 +534,9 @@ local function install()
         -- field and it is the only record of the order vanilla handed us.
         if button then button.coEngineIndex = #self.backpacks end
         if button and self.onCharacter and ContainerOrder.isEnabled() then
-            pcall(attach, button)
+            -- attach is pure Lua field reads/writes on the button table; it
+            -- cannot throw, so it runs unguarded.
+            attach(button)
         end
         return button
     end
@@ -542,8 +544,11 @@ local function install()
     local origRefresh = ISInventoryPage.refreshBackpacks
     function ISInventoryPage:refreshBackpacks(...)
         -- Engine order going in, player order coming out. Both halves matter - see
-        -- the header on vanilla's double dispatch.
-        pcall(ContainerOrder.restoreEngineOrder, self)
+        -- the header on vanilla's double dispatch. restoreEngineOrder is pure Lua
+        -- table work and cannot throw; apply stays guarded because it reaches
+        -- vanilla ISUI Lua (setY, scroll height) and a throw inside this wrapper
+        -- would take refreshBackpacks down for every mod.
+        ContainerOrder.restoreEngineOrder(self)
         local r = origRefresh(self, ...)
         pcall(ContainerOrder.apply, self)
         return r
@@ -565,6 +570,8 @@ local function install()
                 -- drawRect is (x, y, w, h, A, R, G, B) - ISUIElement.lua:1191, and
                 -- the alpha leads. Passed as (r, g, b, a) this drew pale blue at
                 -- 0.9 alpha instead of solid pink.
+                -- guarded: vanilla ISUI Lua on the per-frame render path - a
+                -- throw here would error the panel render every frame.
                 pcall(function()
                     self:drawRect(1, y, self:getWidth() - 2, 2, 1.0, 0.9, 0.55, 0.75)
                 end)

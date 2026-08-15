@@ -54,6 +54,10 @@ function RQEMP.drainPlayerElectronics(player, drainPercent)
             local getFn = item.getUsedDelta
             local setFn = item.setUsedDelta
             if getFn and setFn then
+                -- guards stay: getUsedDelta/setUsedDelta are overridden per item
+                -- subclass (DrainableComboItem:86/98, Clothing:1257,
+                -- WeaponPart:307) and the drainable path divides by the script's
+                -- useDelta -- unverifiable across all of them.
                 local ok, current = pcall(getFn, item)
                 if ok and type(current) == "number" and current < 1.0 then
                     pcall(setFn, item, math.min(1.0, current + drainFraction))
@@ -89,8 +93,12 @@ local function damageWorldElectronics(x, y, z, radius, damagePercent)
                                         obj:setCondition(math.max(0, cond - dmg))
                                     end
                                 elseif instanceof(obj, "IsoTelevision") or instanceof(obj, "IsoRadio") then
+                                    -- turnOff exists only on IsoBarbecue:244 in
+                                    -- 42.20.2, never on TVs or radios, so the
+                                    -- presence test is the whole guard: indexing an
+                                    -- absent method is nil, only calling it throws.
                                     if obj.turnOff then
-                                        pcall(obj.turnOff, obj)
+                                        obj:turnOff()
                                     end
                                 end
                             end
@@ -151,11 +159,15 @@ function RQEMP.playDetonationVFX(x, y, z, radius)
     RQDirgeLog.write("EMP", "[INFO] playDetonationVFX at (" .. x .. "," .. y .. "," .. z .. ") radius=" .. tostring(radius))
     RQEMP.startExpandingRing(x, y, z, radius, RQConfig.COLORS.EMP)
 
+    -- guard stays: getClimateManager() is a vanilla Lua global and returns nil
+    -- before the climate sim exists; the failure drives the WARN line below.
     local ok1 = pcall(function()
         getClimateManager():getThunderStorm():triggerThunderEvent(x, y, false, true, false)
     end)
     if not ok1 then RQDirgeLog.write("EMP", "[WARN] triggerThunderEvent failed") end
 
+    -- guard stays: WorldFlares is vanilla Lua (not in the Java decompile) and
+    -- may be absent entirely; the failure drives the WARN line below.
     local ok2 = pcall(function()
         WorldFlares.launchFlare(60, x, y, radius, 0, 0.8, 0.9, 1.0, 0.5, 0.7, 1.0)
     end)
@@ -174,6 +186,7 @@ function RQEMP.playDetonationVFX(x, y, z, radius)
 
     -- Zombie-attraction world sound (inaudible to players) is gameplay, not
     -- audio presentation: unchanged.
+    -- guard stays: addSound is a vanilla Lua global, not in the Java decompile.
     pcall(addSound, nil, x, y, z, 100, 100)
 end
 
@@ -187,23 +200,24 @@ function RQEMP.applyKnockback(player, distSq, radiusSq)
     RQDirgeLog.write("EMP", "[INFO] applyKnockback zone=" .. zone
         .. " dist=" .. string.format("%.1f", dist) .. " radius=" .. string.format("%.1f", radius))
 
+    -- guard stays: ISTimedActionQueue is vanilla Lua, not in the Java decompile,
+    -- and clear() runs every queued action's stop() - foreign-mod actions
+    -- included.
     pcall(function() ISTimedActionQueue.clear(player) end)
 
     if dist <= halfRadius then
+        -- guard stays: BodyDamage.ReduceGeneralHealth:932 calls forceAwake() and
+        -- walks getBodyParts() by index, so it throws on a half-initialised body.
         pcall(function() player:getBodyDamage():ReduceGeneralHealth(10) end)
-        pcall(function()
-            player:setBumpType("stagger")
-            player:setVariable("BumpDone", false)
-            player:setVariable("BumpFall", true)
-            player:setVariable("BumpFallType", "pushedFront")
-        end)
+        player:setBumpType("stagger")
+        player:setVariable("BumpDone", false)
+        player:setVariable("BumpFall", true)
+        player:setVariable("BumpFallType", "pushedFront")
     else
-        pcall(function()
-            player:setBumpType("stagger")
-            player:setVariable("BumpDone", false)
-            player:setVariable("BumpFall", false)
-            player:setVariable("BumpFallType", "pushedFront")
-        end)
+        player:setBumpType("stagger")
+        player:setVariable("BumpDone", false)
+        player:setVariable("BumpFall", false)
+        player:setVariable("BumpFallType", "pushedFront")
     end
 
     -- Fire the state-machine transition that CONSUMES the bump variables set
@@ -215,6 +229,9 @@ function RQEMP.applyKnockback(player, distSq, radiusSq)
     -- - the reported weapon-swap glitch. This mirrors the engine itself:
     -- IsoGameCharacter.attackFromWindowsLunge sets the same variables and then
     -- calls reportEvent("wasBumped"). It also makes the stagger actually play.
+    -- guard stays: reportEvent on the LOCAL player reaches
+    -- ActionContext:223 -> getNetworkCharacterAI().getState().reportEvent(),
+    -- and getState() is null until the network state machine has ticked once.
     pcall(function() player:reportEvent("wasBumped") end)
 end
 
@@ -263,6 +280,9 @@ Events.OnPostUIDraw.Add(function()
         end
         alpha = (fadeEnd - now) / BLIND_FADE_MS
     end
+    -- guard stays: UIManager.DrawTexture/getBlack are static engine draw calls
+    -- and this runs inside OnPostUIDraw -- a throw here would kill the whole
+    -- UI draw pass, not just the blackout.
     pcall(function()
         local pn = sensory.playerNum or 0
         UIManager.DrawTexture(UIManager.getBlack(),
@@ -286,6 +306,9 @@ local function restoreHearing(player)
     if not player then return end
     local md = player:getModData()
     if md.RQEMPDeafUntil ~= nil then
+        -- guard stays: CharacterTrait is a registry-backed global and
+        -- CharacterTraits:remove resolves the trait through it - the same
+        -- unregistered-trait throw MMSnapshotCodec guards on purpose.
         pcall(function() player:getCharacterTraits():remove(CharacterTrait.DEAF) end)
         md.RQEMPDeafUntil = nil
         RQDirgeLog.write("EMP", "[INFO] deafness lifted")
@@ -317,6 +340,9 @@ function RQEMP.applySensoryEffects(player, distSq, radiusSq)
             sensory.deafUntil = math.max(sensory.deafUntil, now + deafMs)
             player:getModData().RQEMPDeafUntil = sensory.deafUntil
         elseif not player:hasTrait(CharacterTrait.DEAF) then
+            -- guard stays and is load-bearing: same registry-backed
+            -- CharacterTrait lookup as restoreHearing, and only a successful add
+            -- may arm the deafUntil timer below.
             local ok = pcall(function() player:getCharacterTraits():add(CharacterTrait.DEAF) end)
             if ok then
                 sensory.deafUntil = now + deafMs
@@ -401,22 +427,22 @@ function RQEMP.stumbleZombies(x, y, z, radius)
             local dy  = zed:getY() - y
             local dSq = dx * dx + dy * dy
             if dSq <= outerSq then
-                -- Colon-call inside the pcall closure - see the dispatch note
-                -- in RQSvShared.svApplyEMPBlast.
+                -- Unguarded: IsoZombie.knockDown:4094 is six field sets plus
+                -- reportEvent, which on a zombie is only ActionContext:219
+                -- occurredAnimEvents.add - the getNetworkCharacterAI() branch
+                -- there is local-IsoPlayer only.
                 if dSq <= innerSq and not zed:isCrawling() and not zed:isOnFloor() then
                     -- Engine's own "shove crit" bundle: flags + wasHit anim event.
-                    pcall(function() zed:knockDown(false) end)
+                    zed:knockDown(false)
                     downed = downed + 1
                 else
                     -- Stagger-only: IsoZombie.knockDown's flag set minus the
                     -- knockdown flag, so the anim graph picks the staggerback
                     -- state instead of staggerback-knockeddown.
-                    pcall(function()
-                        zed:setStaggerBack(true)
-                        zed:setHitForce(0.5)
-                        zed:setHitReaction("")
-                        zed:reportEvent("wasHit")
-                    end)
+                    zed:setStaggerBack(true)
+                    zed:setHitForce(0.5)
+                    zed:setHitReaction("")
+                    zed:reportEvent("wasHit")
                     staggered = staggered + 1
                 end
             end

@@ -116,8 +116,7 @@ function RQSvBoss.tick(zombie)
             RQSvShared.broadcast("castDone", { ringId = completedRingId, fixedX = x, fixedY = y, fixedZ = z,
                 skill = skill,
                 radius = (skill == "EMPulse") and cfg.empRadius or nil })
-            local ok, dead = pcall(zombie.isDead, zombie)
-            if ok and not dead then
+            if not zombie:isDead() then
                 if skill == "Scream" then
                     addSound(zombie, x, y, z, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
                     local nearbyCount = RQSvShared.svCountNearbyAliveZombies(x, y, z, RQSvShared.SCREAMER_SPAWN_RADIUS, zombie)

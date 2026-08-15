@@ -88,11 +88,13 @@ end
 function HBBedding.getStatus(hutch)
     local md = hutch and hutch:getModData()
     local t  = md and md[HBData.NS_HUTCH]
+    -- getHutchDirt/getNestBoxDirt are field returns (IsoHutch:965/973); the
+    -- guards here were only ever standing in for the nil-hutch case above.
     local dirt, nbDirt
     if t and t.dirt ~= nil then dirt = t.dirt
-    else pcall(function() dirt = hutch:getHutchDirt() or 0 end) end
+    elseif hutch then dirt = hutch:getHutchDirt() or 0 end
     if t and t.nbDirt ~= nil then nbDirt = t.nbDirt
-    else pcall(function() nbDirt = hutch:getNestBoxDirt() or 0 end) end
+    elseif hutch then nbDirt = hutch:getNestBoxDirt() or 0 end
     return {
         dirt    = dirt or 0,
         nbDirt  = nbDirt or 0,
@@ -135,6 +137,10 @@ function HBBedding.applyBedding(hutch)
     local amount = HBBedding.getAmount(hutch)
     if amount <= 0 then return end
 
+    -- KEEP: the dirt getters/setters are field accesses, but transmitModData
+    -- (IsoObject:4470) pushes an ObjectModData packet through GameServer, and
+    -- this runs once per hutch per HBKeepAlive tick - a send failure must not
+    -- abort the keep-alive sweep mid-scan.
     pcall(function()
         local dirt = hutch:getHutchDirt()   or 0
         local nb   = hutch:getNestBoxDirt() or 0
@@ -183,27 +189,34 @@ function HBBedding.addBedding(hutch, amount)
     amount = amount or HBBedding.perAdd()
     local newAmt = math.min(HBBedding.MAX, HBBedding.getAmount(hutch) + amount)
     putState(hutch, "bedding", newAmt)
-    pcall(function() hutch:transmitModData() end)
+    -- KEEP: transmitModData (IsoObject:4470) is a network send, not a getter.
+    pcall(hutch.transmitModData, hutch)
     return newAmt
 end
 
 -- Resolve the live MASTER hutch on a given square (client sends coords).
--- Skips slave halves of multi-tile coops (isSlave: linkedX>0 && linkedY>0) -
--- the master holds the real dirt/animals/bedding.
+-- A multi-tile coop puts a linked slave IsoHutch on its other squares and keeps
+-- the dirt, animals and bedding on the master alone, so the coords that arrive
+-- here may name either half - see HBHutchContextMenu's header for the shape of
+-- it. getHutch resolves both to the master.
 function HBBedding.resolveHutchAt(x, y, z)
     local cell = getCell()
     if not cell then return nil end
-    local sq
-    pcall(function() sq = cell:getGridSquare(x, y, z) end)
-    if not sq then return nil end
-    local objs = sq:getObjects()
+    -- KEEP: getGridSquare (IsoCell:2791) dereferences the ServerMap.instance
+    -- singleton; client-supplied coordinates can land off any loaded chunk.
+    local ok, sq = pcall(cell.getGridSquare, cell, x, y, z)
+    if not ok or not sq then return nil end
+    local objs = sq:getObjects()   -- IsoGridSquare:8005, field return
     if not objs then return nil end
     for i = 0, objs:size() - 1 do
         local o = objs:get(i)
         if o and instanceof(o, "IsoHutch") then
-            local slave = false
-            pcall(function() slave = o:isSlave() end)
-            if not slave then return o end
+            -- getHutch (IsoHutch:127) returns itself for a master and follows
+            -- linkedX/linkedY home for a slave. It answers nil when that linked
+            -- square is not loaded, so keep walking the square rather than
+            -- calling the whole lookup a miss on the strength of one object.
+            local master = o:getHutch()
+            if master then return master end
         end
     end
     return nil

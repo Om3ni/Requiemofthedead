@@ -19,24 +19,32 @@ require "TimedActions/ISTimedActionQueue"
 
 local HAY_TYPE = "Base.HayTuft"
 
--- Find the live MASTER hutch from the right-clicked objects: check the objects
--- themselves, then their squares. Skips slave halves of multi-tile coops
--- (isSlave: linkedX>0 && linkedY>0) - the master holds the real bedding/dirt.
-local function findHutch(worldobjects)
+-- A COOP IS NOT ONE TILE, WHICH IS THE WHOLE OF THIS PROBLEM. IsoHutch's
+-- constructor walks the def's extraSprites table and spawns a SECOND IsoHutch
+-- on each offset square (IsoHutch:110-121), linked back to the first; isSlave()
+-- is literally `linkedX > 0 && linkedY > 0` (:827). Only the master carries the
+-- animals, the dirt, the nest boxes and the bedding - the slave is a sprite.
+--
+-- This used to SKIP slaves and look no further, so right-clicking the far half
+-- of a two-tile coop resolved to nothing and the Add Hay option never appeared,
+-- with nothing on screen to say why. That is the "hay does nothing on that one"
+-- report. getHutch (:127) is the engine's own answer: a master hands back
+-- itself, a slave follows its link home, so either half now answers the same.
+local function masterHutchOf(object)
+    if not object or not instanceof(object, "IsoHutch") then return nil end
+    -- nil when a slave's linked square is not loaded - the caller keeps looking.
+    return object:getHutch()
+end
+
+local function masterHutchUnderCursor(worldobjects)
     if not worldobjects then return nil end
-    local function masterOrNil(o)
-        if not o or not instanceof(o, "IsoHutch") then return nil end
-        local slave = false
-        pcall(function() slave = o:isSlave() end)
-        return (not slave) and o or nil
-    end
     local squares = {}
     for i = 1, #worldobjects do
         local o = worldobjects[i]
         if o then
-            local m = masterOrNil(o)
-            if m then return m end
-            local sq; pcall(function() sq = o:getSquare() end)
+            local master = masterHutchOf(o)
+            if master then return master end
+            local sq = o:getSquare()   -- IsoObject:1126, field return
             if sq then squares[sq] = true end
         end
     end
@@ -44,8 +52,8 @@ local function findHutch(worldobjects)
         local objs = sq:getObjects()
         if objs then
             for k = 0, objs:size() - 1 do
-                local m = masterOrNil(objs:get(k))
-                if m then return m end
+                local master = masterHutchOf(objs:get(k))
+                if master then return master end
             end
         end
     end
@@ -55,16 +63,20 @@ end
 Events.OnPreFillWorldObjectContextMenu.Add(function(playerNum, context, worldobjects, test)
     if test then return end
 
-    local hutch = findHutch(worldobjects)
+    local hutch = masterHutchUnderCursor(worldobjects)
     if not hutch then return end
 
     local player = getSpecificPlayer(playerNum)
     if not player or player:isDead() then return end
 
     -- Need hay in inventory to offer the option at all.
-    local hay
-    pcall(function() hay = player:getInventory():getFirstTypeRecurse(HAY_TYPE) end)
-    if not hay then return end
+    -- KEEP: getFirstTypeRecurse (ItemContainer:1470) is overloaded on
+    -- ItemKey/String and allocates from a thread-local predicate pool before
+    -- recursing - overload dispatch through Kahlua is not a field read. Runs on
+    -- every world right-click, so the guard is the allocation-free form.
+    local inv = player:getInventory()
+    local ok, hay = pcall(inv.getFirstTypeRecurse, inv, HAY_TYPE)
+    if not ok or not hay then return end
 
     local max     = (HBBedding and HBBedding.MAX) or 100
     local bedding = (HBBedding and HBBedding.getAmount and HBBedding.getAmount(hutch)) or 0

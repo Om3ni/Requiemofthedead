@@ -22,7 +22,9 @@ local function reply(player, ok, action, reasonOrMessage)
     if not player or not sendServerCommand then return end
     local args = { ok = ok and true or false, action = action }
     if ok then args.message = reasonOrMessage else args.reason = reasonOrMessage end
-    pcall(sendServerCommand, player, DFCore.MODULE, "Result", args)
+    -- GameServer.sendServerCommand:3256 returns early for an unmapped player
+    -- and a closed connection, so a disconnected caller needs no guard.
+    sendServerCommand(player, DFCore.MODULE, "Result", args)
 end
 
 -- Per-player command rate limit. 20 commands/sec is far above any human
@@ -37,8 +39,8 @@ local lastWarnMs     = {}   -- username -> last console-warn time (ms), or true
 local function noteThrottled(player)
     local name = player and player.getUsername and player:getUsername()
     if not name then return end
-    local ok, now = pcall(getTimestampMs)
-    if not ok or type(now) ~= "number" then
+    local now = getTimestampMs()
+    if type(now) ~= "number" then
         if lastWarnMs[name] then return end          -- no clock: warn once ever
         lastWarnMs[name] = true
         print("[Dragonfly] rate-limit: dropping commands from " .. name)
@@ -81,6 +83,8 @@ local function onClientCommand(module, command, player, args)
     end
 
     DFCore.audit(command, player)
+    -- pcall: handler containment - consumer mods (Reaper etc.) register run
+    -- callbacks here, and a tenant's error must not take the dispatcher down.
     local ok, result = pcall(handler.run, player, args or {})
     if not ok then
         print(string.format("[Dragonfly] handler error (%s): %s", tostring(command), tostring(result)))
@@ -129,8 +133,7 @@ local function onDisconnect(a)
     if type(a) == "string" then
         name = a
     elseif a and a.getUsername then
-        local ok, n = pcall(function() return a:getUsername() end)
-        name = ok and n or nil
+        name = a:getUsername()   -- IsoGameCharacter.getUsername, field return
     end
     if not name then return end
     DFCore.forgetRateLimit(name)

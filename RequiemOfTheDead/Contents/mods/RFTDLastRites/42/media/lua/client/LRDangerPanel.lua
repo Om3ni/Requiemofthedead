@@ -32,7 +32,7 @@ local function onToggle(_, index, selected)
     local row = TOGGLES[index]
     if row then
         LRPrefs.set(row.pref, selected and true or false)
-        if LRDanger and LRDanger.update then pcall(LRDanger.update) end
+        if LRDanger and LRDanger.update then LRDanger.update() end
     end
 end
 

@@ -77,8 +77,7 @@ function V.populate()
     local player = getPlayer()
     if not player or not V.list then return end
 
-    local needle = ""
-    pcall(function() needle = string.lower(V.search:getText() or "") end)
+    local needle = string.lower((V.search and V.search:getText()) or "")
     needle = needle:gsub("^%s+", ""):gsub("%s+$", "")
     local cat = V.catSel or ALL_CATS
     local kf  = V.knownSel or 1
@@ -144,8 +143,7 @@ local function detailLines(player, rec, known)
     add("You do not know this recipe yet. Ways to get it:", "warn")
     local inv = player:getInventory()
     for _, t in ipairs(rec.taughtBy) do
-        local carried = false
-        pcall(function() carried = inv:containsTypeRecurse(t.type) end)
+        local carried = (inv ~= nil and t.type ~= nil and inv:containsTypeRecurse(t.type)) == true
         add("  Read: " .. t.disp .. (carried and "  (in your inventory!)" or ""),
             carried and "ok" or "text")
     end
@@ -188,10 +186,9 @@ function Root:prerender()
     -- Filter changes are detected by polling here rather than wiring each
     -- widget's change callback - one code path, and a hot-reloaded panel
     -- cannot strand a stale closure inside a combo.
-    local needle = ""
-    pcall(function() needle = V.search:getText() or "" end)
-    local cat = ALL_CATS
-    pcall(function() cat = V.catCombo:getOptionText(V.catCombo.selected) or ALL_CATS end)
+    local needle = (V.search and V.search:getText()) or ""
+    -- getOptionText is nil-safe on an out-of-range selected index
+    local cat = (V.catCombo and V.catCombo:getOptionText(V.catCombo.selected)) or ALL_CATS
     local kf = V.knownCombo and V.knownCombo.selected or 1
     if needle ~= V.lastSearch or cat ~= V.catSel or kf ~= V.knownSel then
         V.lastSearch, V.catSel, V.knownSel = needle, cat, kf
@@ -275,6 +272,8 @@ function V.create(parent, w, h)
     V.btnCraft = DFKit.button(V.root, 0, 0, 110, "Open in Craft", V, function()
         local sel = V.list.items and V.list.items[V.list.selected]
         if sel and sel.item.known and WSTab and WSTab.openCraft then
+            -- guarded: a Workshop door (see WSTab's header) - a routing bug
+            -- costs one console line, never a stack trace out of a click
             pcall(WSTab.openCraft, { sel.item.rec }, sel.item.rec.disp)
         end
     end, "primary")

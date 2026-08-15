@@ -27,10 +27,16 @@
 --
 -- THE GRANT RULE: grants follow the build being restored; only earned XP carries, and
 -- only MEMOIR-earned XP is taxed by the restore knob:
---     savedEarned = max(0, savedXP - grantXP(saved build))    -- recovered from the book, taxed
+--     floorXP     = min(grantXP(saved build), savedXP)        -- never more than the book holds
+--     savedEarned = savedXP - floorXP                         -- recovered from the book, taxed
 --     newEarned   = max(0, curXP  - grantXP(respawn build))   -- this life's play, untaxed (never lost)
---     target      = grantXP(saved build) + savedEarned * pct + newEarned
--- Consequences: never below a fresh spawn of the saved build; the respawn build's
+--     target      = floorXP + savedEarned * pct + newEarned
+-- The min() is load-bearing: B42 evolves fitness/strength traits mid-life (Unfit ->
+-- Out of Shape, Weak -> Feeble, and Fit can be EARNED) without ever adjusting XP, so
+-- grantXP(write-time traits) can exceed what the character ever had. Unclamped, every
+-- restore paid the phantom difference out as free levels - the S1 Fitness/Strength
+-- inflation (nine bad restores, season-wide, all passives).
+-- Consequences: never below what the book records; the respawn build's
 -- starting XP is dismissed with the build (write-at-spawn -> die -> remake cycles net
 -- exactly zero - no min/max laundering); post-respawn grinding always survives the
 -- read. Additive newEarned relies on the current life's state being ORGANIC play:
@@ -108,21 +114,22 @@ function MMSnapshotCodec.capture(player)
     local known = player:getCharacterTraits():getKnownTraits()
     for i = 0, known:size() - 1 do
         local t = known:get(i)
-        -- A trait with no resolvable id is a ghost from a registry reset. Recording
-        -- its name would bake the ambiguity we just removed straight back into the
-        -- book, so drop it and say so - loudly, since it means something reloaded
-        -- scripts under a live character.
-        local id = traitKey(t)
-        if not id then
-            MMwarn("CAPTURE: unresolvable trait on " .. MMname(player)
-                .. " (stale registry object) - NOT recorded in the snapshot")
-        elseif not isWeightTrait(id) then
+        -- Same rule as the profession below - and it used to differ. This loop
+        -- dropped an unresolvable trait with a warning, which wrote a book that
+        -- was quietly missing one; because a read REPLACES the whole trait set,
+        -- that book then stripped the trait off the character it restored. A
+        -- refused write costs one write. The old behaviour cost a trait.
+        local id = MMShared.requireId(t, "trait")
+        if not isWeightTrait(id) then
             table.insert(snap.traits, id) -- weight traits re-derive from weight
         end
     end
 
+    -- requireId, not "id or getName()": a profession that will not resolve must
+    -- fail the write, because the name it would fall back to is the ambiguous
+    -- key the whole registry-id migration exists to keep out of the book.
     local prof = player:getDescriptor() and player:getDescriptor():getCharacterProfession()
-    snap.profession = prof and (traitKey(prof) or prof:getName()) or nil
+    snap.profession = prof and MMShared.requireId(prof, "profession") or nil
 
     local recipes = player:getKnownRecipes()
     for i = 0, recipes:size() - 1 do snap.recipes[recipes:get(i)] = true end
@@ -168,8 +175,11 @@ end
 -- ========================
 -- Returns matches(bool), reason(string|nil), detail table for the reconcile UI.
 function MMSnapshotCodec.identityMatches(player, snap)
+    -- requireId on the LIVE side: this is a comparison, and a key we had to guess
+    -- at is exactly how a mod placeholder once "matched" the vanilla trait it
+    -- shadowed. If the live character will not resolve, refuse to answer.
     local curProf = player:getDescriptor() and player:getDescriptor():getCharacterProfession()
-    local curProfName = curProf and (traitKey(curProf) or curProf:getName()) or nil
+    local curProfName = curProf and MMShared.requireId(curProf, "profession") or nil
 
     -- BOTH SIDES ARE CANONICALISED TO REGISTRY IDS before comparing. The live
     -- character always yields an id; the snapshot may hold legacy bare names, which
@@ -191,7 +201,7 @@ function MMSnapshotCodec.identityMatches(player, snap)
     local known = player:getCharacterTraits():getKnownTraits()
     for i = 0, known:size() - 1 do
         local t = known:get(i)
-        local k = traitKey(t) or (t:getName() or ""):lower()
+        local k = MMShared.requireId(t, "trait")
         if not isWeightTrait(k) then curTraits[k] = true end
     end
 
@@ -340,9 +350,9 @@ function MMSnapshotCodec.buildGrantLevels(professionKey, traitKeys)
         local t = transformIntoKahluaTable(boostMap)
         if type(t) ~= "table" then return end
         for perk, lvl in pairs(t) do
-            local id
-            local ok = pcall(function() id = perk:getId() end)
-            if not ok or not id then id = tostring(perk) end
+            -- Keys are PerkFactory.Perk; getId (PerkFactory:175) is a field
+            -- read. tostring stands in only for a nil id, not a throw.
+            local id = perk:getId() or tostring(perk)
             levels[id] = (levels[id] or 0) + (tonumber(tostring(lvl)) or 0)
         end
     end
@@ -369,12 +379,16 @@ function MMSnapshotCodec.playerBuildIdentity(player)
     local prof = player:getDescriptor() and player:getDescriptor():getCharacterProfession()
     local traitKeys = {}
     local known = player:getCharacterTraits():getKnownTraits()
+    -- requireId: this build drives the grant math that decides how much XP the
+    -- read hands back. A silently-skipped trait here understates the respawn
+    -- build's grant floor and pays the difference out as free levels - the same
+    -- shape of defect as the S1 Fitness/Strength inflation.
     for i = 0, known:size() - 1 do
-        local t = known:get(i)
-        local id = traitKey(t) -- nil only for a stale registry object; skip it
-        if id and not isWeightTrait(id) then traitKeys[#traitKeys + 1] = id end
+        local id = MMShared.requireId(known:get(i), "trait")
+        if not isWeightTrait(id) then traitKeys[#traitKeys + 1] = id end
     end
-    return { profession = prof and (traitKey(prof) or prof:getName()) or nil, traits = traitKeys }
+    return { profession = prof and MMShared.requireId(prof, "profession") or nil,
+             traits = traitKeys }
 end
 
 -- Grant levels of the live character's current build (see playerBuildIdentity).
@@ -411,11 +425,11 @@ end
 --               build (may REDUCE, never below saved-build floor + this life's play)
 --   "max"       legacy top-up bridge (pre-v4 books, identity match): never below current
 --
--- Per skill (THE GRANT RULE, header):
---   savedEarned = max(0, savedXP - grantXP(saved build))       -- taxed by the knob
+-- Per skill (THE GRANT RULE, header; floorXP = min(grantXP(saved build), savedXP)):
+--   savedEarned = savedXP - floorXP                            -- taxed by the knob
 --   newEarned   = max(0, curXP  - grantXP(pre-read build))     -- this life's play, untaxed
---   overwrite: target = grantXP(saved) + savedEarned*pct + newEarned
---   max:       target = max(cur, grantXP(saved) + savedEarned*pct)
+--   overwrite: target = floorXP + savedEarned*pct + newEarned
+--   max:       target = max(cur, floorXP + savedEarned*pct)
 -- We scale RAW XP, never levels, so the engine re-derives the level from the total.
 -- preSwapBuild = {profession, traits} worn BEFORE applyIdentity ran (caller captures
 -- it; after the swap the "current build" IS the saved build and the info is gone).
@@ -433,8 +447,9 @@ local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpF
     --
     -- WHAT THE FRACTION ACTUALLY SCALES, because it is the most misread number in
     -- this subsystem: savedEarned ONLY - the XP earned ABOVE the saved build's
-    -- grant floor. grantXP(saved) always restores in full, so no fraction, not
-    -- even 0, can land a character below a fresh spawn of their own build. "60%"
+    -- grant floor (clamped to the book's own XP, see the loop). The floor always
+    -- restores in full, so no fraction, not
+    -- even 0, can land a character below what their book records. "60%"
     -- means "60% of what they earned", never "60% of their XP bar". That is the
     -- anti-laundering invariant in the header, and a fraction must not break it.
     local fixedPct = nil
@@ -456,8 +471,16 @@ local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpF
             local cur = xp:getXP(t) or 0
             local rawSaved = (snap.perks and snap.perks[id]) or 0
             local savedGrantXP = perk:getTotalXpForLevel(savedGrant[id] or 0) or 0
+            if savedGrantXP > rawSaved then
+                -- Write-time traits can imply a spawn this character never had (a
+                -- negative fitness/strength trait evolved away mid-life; the engine
+                -- grants no XP for that). The floor is what the book HOLDS - paying
+                -- out the phantom spawn instead was the S1 passive-XP inflation.
+                MMlog("  XP[" .. mode .. "] " .. id .. " grant floor " .. tostring(savedGrantXP)
+                    .. " > saved XP " .. tostring(rawSaved) .. " (trait evolved since spawn) - floor clamped")
+                savedGrantXP = rawSaved
+            end
             local savedEarned = rawSaved - savedGrantXP
-            if savedEarned < 0 then savedEarned = 0 end
             local target
             if mode == "overwrite" then
                 local preGrantXP = perk:getTotalXpForLevel((preSwapGrant and preSwapGrant[id]) or 0) or 0

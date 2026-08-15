@@ -82,6 +82,7 @@ local function buildCatalogue()
 
         if rv and not wreck then
             local interior
+            -- guarded: RVInterior is a foreign mod - its lookup is not ours to trust
             pcall(function() interior = RVInterior.getVehicleName(full, true) end)
             if interior ~= nil then
                 table.insert(byKey.withInterior, row)

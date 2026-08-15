@@ -51,14 +51,16 @@ SH.original = SH.original or {}
 
 -- getChanceToFall/setChanceToFall live on Clothing (Clothing.java:872), and a
 -- worn slot can hold something that is not Clothing. Test for the METHOD
--- before calling rather than letting pcall catch the miss: a caught error is
--- still an error to the engine, and PZ's poller logged one per non-clothing
--- worn item on every clothing change - a wall of "Tried to call nil" from code
--- that was technically working.
+-- before calling: a caught error is still an error to the engine, and PZ's
+-- poller logged one per non-clothing worn item on every clothing change - a
+-- wall of "Tried to call nil" from code that was technically working. Once the
+-- method exists the calls run bare: both declarations of each name in the
+-- 42.20.2 decompile are plain field accessors (Clothing.java:872/876,
+-- scripting Item.java:3819), so neither can throw.
 local function chanceOf(item)
     if not item or not item.getChanceToFall then return nil end
-    local ok, chance = pcall(function() return item:getChanceToFall() end)
-    if not ok or type(chance) ~= "number" then return nil end
+    local chance = item:getChanceToFall()
+    if type(chance) ~= "number" then return nil end
     return chance
 end
 
@@ -68,7 +70,7 @@ local function pin(item)
     if not item.setChanceToFall then return end
     local id = item:getID()
     if SH.original[id] == nil then SH.original[id] = chance end
-    pcall(function() item:setChanceToFall(0) end)
+    item:setChanceToFall(0)
 end
 
 local function unpin(item)
@@ -76,7 +78,7 @@ local function unpin(item)
     local id = item:getID()
     local was = SH.original[id]
     if was == nil then return end
-    pcall(function() item:setChanceToFall(was) end)
+    item:setChanceToFall(was)
     SH.original[id] = nil
 end
 
@@ -86,8 +88,10 @@ end
 -- thing this module is for, including anything modded that opts in.
 local function sweep(character, apply)
     if not character then return end
-    local ok, worn = pcall(function() return character:getWornItems() end)
-    if not ok or not worn then return end
+    -- field return (IsoGameCharacter.getWornItems:3040) - may legitimately BE
+    -- nil, which the next line handles; it cannot throw.
+    local worn = character:getWornItems()
+    if not worn then return end
     for i = 0, worn:size() - 1 do
         local entry = worn:get(i)
         local item = entry and entry.getItem and entry:getItem()

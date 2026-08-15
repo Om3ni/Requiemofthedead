@@ -93,7 +93,7 @@ end
 
 local function clearHighlight()
     if NecroTab.highlightTarget then
-        pcall(function() NecroTab.highlightTarget:setOutlineHighlight(false) end)
+        NecroTab.highlightTarget:setOutlineHighlight(false)
         NecroTab.highlightTarget = nil
     end
 end
@@ -381,6 +381,7 @@ function NecroList:onRightMouseUp(x, y)
     for _, spec in ipairs(actions) do
         local enabled = true
         if spec.capability then enabled = DFCore.roleHas(getPlayer(), spec.capability) end
+        -- pcall: registered handler belongs to another mod; contain its faults
         local opt = context:addOption(spec.label, row, function(rowData) pcall(spec.handler, rowData) end)
         if not enabled then opt.notAvailable = true end
     end
@@ -389,7 +390,7 @@ end
 function NecroList:prerender()
     ISScrollingListBox.prerender(self)
     if NecroTab.highlightTarget then
-        pcall(function() NecroTab.highlightTarget:setOutlineHighlight(true) end)
+        NecroTab.highlightTarget:setOutlineHighlight(true)
     end
 end
 
@@ -705,7 +706,7 @@ local function build(spec, panel, x, y, w, h)
             return
         end
         local p = getPlayer()
-        pcall(function() p:setX(target.x); p:setY(target.y); p:setZ(target.z) end)
+        if p then p:setX(target.x); p:setY(target.y); p:setZ(target.z) end
         if DFFeedback then
             DFFeedback.good(string.format("Teleported to %d,%d,%d.",
                 target.x, target.y, target.z))

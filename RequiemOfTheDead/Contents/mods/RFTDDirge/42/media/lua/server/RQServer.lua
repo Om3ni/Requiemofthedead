@@ -103,13 +103,10 @@ RQSvScavenger.setActiveZombies(svActiveZombies)
 
 local function svRememberZombie(zombie, zType)
     if not zombie or not zType then return end
-    local okID, oid = pcall(zombie.getOnlineID, zombie)
-    if not okID or not oid or oid == 0 then return end
+    local oid = zombie:getOnlineID()
+    if not oid or oid == 0 then return end
 
-    local okX, x = pcall(zombie.getX, zombie)
-    local okY, y = pcall(zombie.getY, zombie)
-    local okZ, z = pcall(zombie.getZ, zombie)
-    if not (okX and okY and okZ) then return end
+    local x, y, z = zombie:getX(), zombie:getY(), zombie:getZ()
 
     svDeathCache[oid] = {
         zType     = zType,
@@ -127,10 +124,10 @@ end
 -- losing the identity. Single entry point for conversion, reload recovery,
 -- and the per-tick refresh -- Phase 2 adoption should reuse it too.
 local function svDormantTrack(zombie, zType)
-    local okOid, outfitID = pcall(zombie.getPersistentOutfitID, zombie)
+    local outfitID = zombie:getPersistentOutfitID()
     local pid = svPids[zombie]
     if pid and RQSvDormant.touch(pid, zombie:getX(), zombie:getY(), zombie:getZ(),
-                                 zombie:getHealth(), okOid and outfitID or nil) then
+                                 zombie:getHealth(), outfitID) then
         return
     end
     if not pid then
@@ -138,7 +135,7 @@ local function svDormantTrack(zombie, zType)
         svPids[zombie] = pid
     end
     RQSvDormant.record(pid, zType, zombie:getX(), zombie:getY(), zombie:getZ(),
-                       okOid and outfitID or nil, zombie:getHealth())
+                       outfitID, zombie:getHealth())
 end
 
 local function svMarkZombie(zombie, zType)
@@ -194,14 +191,8 @@ local function svCanSpawnHere(zombie, zType, spacingDist)
     local distSq = spacingDist * spacingDist
     for existing, existingType in pairs(svActiveZombies) do
         if existingType == zType then
-            local ok, ex = pcall(existing.getX, existing)
-            if ok then
-                local ok2, ey = pcall(existing.getY, existing)
-                if ok2 then
-                    local dx, dy = zx - ex, zy - ey
-                    if dx * dx + dy * dy < distSq then return false end
-                end
-            end
+            local dx, dy = zx - existing:getX(), zy - existing:getY()
+            if dx * dx + dy * dy < distSq then return false end
         end
     end
     return true
@@ -275,8 +266,7 @@ end
 -- Ghost/invisible admins don't count (isAnyPlayerInRange already skips them):
 -- they're watching the funnel, not playing in it.
 local function svIsEngagedOrObserved(zombie)
-    local okT, target = pcall(zombie.getTarget, zombie)
-    if okT and target then return true end
+    if zombie:getTarget() then return true end
     return RQSvShared.isAnyPlayerInRange(zombie, GUARD_RANGE)
 end
 
@@ -375,111 +365,105 @@ local function svBuildSnapshot()
     local anyChange   = false
 
     for zombie, zType in pairs(svActiveZombies) do
-        local ok, dead = pcall(zombie.isDead, zombie)
-        if ok and not dead then
-            local ok2, oid = pcall(zombie.getOnlineID, zombie)
-            if ok2 and oid then
+        if not zombie:isDead() then
+            local oid = zombie:getOnlineID()
+            if oid then
                 local idStr = tostring(oid)
-                local ok3, zx = pcall(zombie.getX, zombie)
-                local ok4, zy = pcall(zombie.getY, zombie)
-                local ok5, zz = pcall(zombie.getZ, zombie)
-                if ok3 and ok4 and ok5 then
-                    local row = {
-                        id    = oid,
-                        zType = zType,
-                        x     = math.floor(zx),
-                        y     = math.floor(zy),
-                        z     = math.floor(zz),
-                        alive = true,
-                    }
+                local row = {
+                    id    = oid,
+                    zType = zType,
+                    x     = math.floor(zombie:getX()),
+                    y     = math.floor(zombie:getY()),
+                    z     = math.floor(zombie:getZ()),
+                    alive = true,
+                }
 
-                    -- Type-specific enrichment
-                    if zType == "Screamer" then
-                        local st = RQSvScreamer.state[oid]
-                        if st and st.castDue and st.castDue > now then
-                            row.castDue      = st.castDue
-                            row.castDuration = cfg.screamerCastTime
-                            row.castLabel    = "Screaming..."
-                            row.castRadius   = math.min(cfg.screamerSoundRadius, 15)
-                            row.castRingId   = "screamer_" .. idStr
-                        end
-
-                    elseif zType == "Glutton" then
-                        local gt = RQSvGlutton.state[oid]
-                        if gt then
-                            row.phase    = gt.phase
-                            row.eatCount = gt.eatCount
-                            if gt.castDue and gt.castDue > now then
-                                row.castDue      = gt.castDue
-                                row.castDuration = cfg.devourTime
-                                row.castLabel    = "Devouring..."
-                                row.castRadius   = cfg.gluttonRadius
-                                row.castRingId   = "glutton_" .. idStr
-                            end
-                        end
-
-                    elseif zType == "Boss" then
-                        local bt = RQSvBoss.state[oid]
-                        if bt then
-                            row.bossSkill = bt.currentSkill
-                            if bt.castDue and bt.castDue > now then
-                                row.castDue      = bt.castDue
-                                row.castDuration = cfg.bossCastTime
-                                row.castLabel    = RQSvShared.BOSS_SKILL_LABELS[bt.currentSkill] or "..."
-                                local skill = bt.currentSkill
-                                if     skill == "Scream"  then row.castRadius = math.min(cfg.screamerSoundRadius, 15)
-                                elseif skill == "Buff"    then row.castRadius = cfg.juggernautBuffRadius
-                                elseif skill == "EMPulse" then row.castRadius = cfg.empRadius
-                                else                           row.castRadius = 0
-                                end
-                                row.castRingId = (skill == "EMPulse")
-                                    and ("boss_emp_" .. idStr)
-                                    or  ("boss_"     .. idStr)
-                            end
-                        end
-
-                    elseif zType == "Scavenger" then
-                        local sc = RQSvScavenger.state[oid]
-                        if sc then
-                            row.phase      = sc.phase
-                            row.hostile    = sc.hostile
-                            row.enraged    = sc.hostile  -- client gradient uses this
-                            -- Bucket currentHP/peakHP to nearest integer for snapshot churn
-                            -- protection. The previous /5*5 bucket floored small-HP scavs
-                            -- (base/peak < 5) to zero, which made the client's bar code fall
-                            -- back to "no peakHP info" mode and never reflect the rage balloon.
-                            -- Integer buckets are still coarse enough to suppress sub-tick
-                            -- decay noise without losing visible HP granularity.
-                            row.currentHP  = math.floor(zombie:getHealth())
-                            row.peakHP     = math.floor(sc.peakHP or 0)
-                            row.baseHealth = sc.baseHealth
-                            if sc.castDue and sc.castDue > now then
-                                row.castDue      = sc.castDue
-                                row.castDuration = cfg.devourTime
-                                row.castLabel    = "Scavenging..."
-                                row.castRadius   = RQSvShared.SCAV_CORPSE_RADIUS
-                                row.castRingId   = "scav_" .. idStr
-                            end
-                        end
-                    end
-                    -- EMP and Juggernaut have no extra behavior state to snapshot
-
-                    -- Per-row revision: only bump when client-visible state changed.
-                    -- Changed/added rows (svRowChanged is true for a nil prev) go into
-                    -- the delta; unchanged rows keep their rev and stay out of it.
-                    local prev = prevActive[idStr]
-                    if svRowChanged(prev, row) then
-                        row.rev            = (prev and prev.rev or 0) + 1
-                        row.updatedAt      = now
-                        changedRows[idStr] = row
-                        anyChange          = true
-                    else
-                        row.rev       = prev.rev
-                        row.updatedAt = prev.updatedAt
+                -- Type-specific enrichment
+                if zType == "Screamer" then
+                    local st = RQSvScreamer.state[oid]
+                    if st and st.castDue and st.castDue > now then
+                        row.castDue      = st.castDue
+                        row.castDuration = cfg.screamerCastTime
+                        row.castLabel    = "Screaming..."
+                        row.castRadius   = math.min(cfg.screamerSoundRadius, 15)
+                        row.castRingId   = "screamer_" .. idStr
                     end
 
-                    newActive[idStr] = row
+                elseif zType == "Glutton" then
+                    local gt = RQSvGlutton.state[oid]
+                    if gt then
+                        row.phase    = gt.phase
+                        row.eatCount = gt.eatCount
+                        if gt.castDue and gt.castDue > now then
+                            row.castDue      = gt.castDue
+                            row.castDuration = cfg.devourTime
+                            row.castLabel    = "Devouring..."
+                            row.castRadius   = cfg.gluttonRadius
+                            row.castRingId   = "glutton_" .. idStr
+                        end
+                    end
+
+                elseif zType == "Boss" then
+                    local bt = RQSvBoss.state[oid]
+                    if bt then
+                        row.bossSkill = bt.currentSkill
+                        if bt.castDue and bt.castDue > now then
+                            row.castDue      = bt.castDue
+                            row.castDuration = cfg.bossCastTime
+                            row.castLabel    = RQSvShared.BOSS_SKILL_LABELS[bt.currentSkill] or "..."
+                            local skill = bt.currentSkill
+                            if     skill == "Scream"  then row.castRadius = math.min(cfg.screamerSoundRadius, 15)
+                            elseif skill == "Buff"    then row.castRadius = cfg.juggernautBuffRadius
+                            elseif skill == "EMPulse" then row.castRadius = cfg.empRadius
+                            else                           row.castRadius = 0
+                            end
+                            row.castRingId = (skill == "EMPulse")
+                                and ("boss_emp_" .. idStr)
+                                or  ("boss_"     .. idStr)
+                        end
+                    end
+
+                elseif zType == "Scavenger" then
+                    local sc = RQSvScavenger.state[oid]
+                    if sc then
+                        row.phase      = sc.phase
+                        row.hostile    = sc.hostile
+                        row.enraged    = sc.hostile  -- client gradient uses this
+                        -- Bucket currentHP/peakHP to nearest integer for snapshot churn
+                        -- protection. The previous /5*5 bucket floored small-HP scavs
+                        -- (base/peak < 5) to zero, which made the client's bar code fall
+                        -- back to "no peakHP info" mode and never reflect the rage balloon.
+                        -- Integer buckets are still coarse enough to suppress sub-tick
+                        -- decay noise without losing visible HP granularity.
+                        row.currentHP  = math.floor(zombie:getHealth())
+                        row.peakHP     = math.floor(sc.peakHP or 0)
+                        row.baseHealth = sc.baseHealth
+                        if sc.castDue and sc.castDue > now then
+                            row.castDue      = sc.castDue
+                            row.castDuration = cfg.devourTime
+                            row.castLabel    = "Scavenging..."
+                            row.castRadius   = RQSvShared.SCAV_CORPSE_RADIUS
+                            row.castRingId   = "scav_" .. idStr
+                        end
+                    end
                 end
+                -- EMP and Juggernaut have no extra behavior state to snapshot
+
+                -- Per-row revision: only bump when client-visible state changed.
+                -- Changed/added rows (svRowChanged is true for a nil prev) go into
+                -- the delta; unchanged rows keep their rev and stay out of it.
+                local prev = prevActive[idStr]
+                if svRowChanged(prev, row) then
+                    row.rev            = (prev and prev.rev or 0) + 1
+                    row.updatedAt      = now
+                    changedRows[idStr] = row
+                    anyChange          = true
+                else
+                    row.rev       = prev.rev
+                    row.updatedAt = prev.updatedAt
+                end
+
+                newActive[idStr] = row
             end
         end
     end
@@ -541,8 +525,7 @@ local function svCheckZombie(zombie)
     -- on a body you drag around -- a screamer becomes a portable siren, a
     -- glutton/scavenger an evil broom that eats corpses on contact. These husks
     -- exist ONLY to be dragged (isReanimatedForGrappleOnly); never track them.
-    local okGrab, grappleOnly = pcall(zombie.isReanimatedForGrappleOnly, zombie)
-    if okGrab and grappleOnly then
+    if zombie:isReanimatedForGrappleOnly() then
         -- Grapple-only is a permanent property of the husk: safe to burn.
         md["RQRolled"]      = true
         md["RQPendingType"] = nil
@@ -554,9 +537,8 @@ local function svCheckZombie(zombie)
     -- calibrate ADOPT_RADIUS before Phase 2 turns adoption on. Must stay
     -- side-effect free -- the zombie falls through to the normal roll path.
     if not md["RQConverted"] and not RQSvDormant.isEmpty() then
-        local okOid, probeOutfit = pcall(zombie.getPersistentOutfitID, zombie)
         RQSvDormant.probeMatch(zombie:getX(), zombie:getY(), zombie:getZ(),
-                               okOid and probeOutfit or nil)
+                               zombie:getPersistentOutfitID())
     end
 
     -- Save/chunk reload recovery: zombie was already converted, just restore tracking
@@ -689,8 +671,8 @@ local function svRunConversionScan()
             playerList[#playerList + 1] = online:get(i)
         end
     else
-        local ok, p = pcall(getPlayer)
-        if ok and p then playerList[1] = p end
+        local p = getPlayer()
+        if p then playerList[1] = p end
     end
     if #playerList == 0 then return 0 end
 
@@ -759,6 +741,8 @@ local function svDropLoot(zombie, zType)
     local count = c[1] + ZombRand(c[2] - c[1] + 1)
     for i = 1, count do
         local itemType = pool[ZombRand(#pool) + 1]
+        -- guard stays: AddItem runs the item factory (script lookup +
+        -- InstanceItem), which is too deep to prove throw-free.
         pcall(inv.AddItem, inv, itemType)
     end
 end
@@ -796,13 +780,12 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         -- Answer with authoritative rows AND log the same rows server-side,
         -- so the truth survives even if the response packet never lands.
         local pingNow = getTimestampMs()
-        local uname   = "?"
-        pcall(function() uname = player:getUsername() end)
+        local uname   = player and player:getUsername() or "?"
         if svReflectPingAt[uname] and pingNow - svReflectPingAt[uname] < 3000 then return end
         svReflectPingAt[uname] = pingNow
 
         local px, py, pz = 0, 0, 0
-        pcall(function() px, py, pz = player:getX(), player:getY(), player:getZ() end)
+        if player then px, py, pz = player:getX(), player:getY(), player:getZ() end
         -- client-reported position rides along; disagreement with the server's
         -- own view of the player is itself a sync-health datapoint
         local cx = tonumber(args and args.x) or px
@@ -816,13 +799,12 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         local total = 0
         for zombie, zType in pairs(svActiveZombies) do
             total = total + 1
-            local ok, dead = pcall(zombie.isDead, zombie)
-            if ok and not dead then
-                local ok2, oid = pcall(zombie.getOnlineID, zombie)
-                local ok3, zx  = pcall(zombie.getX, zombie)
-                local ok4, zy  = pcall(zombie.getY, zombie)
-                local ok5, zz  = pcall(zombie.getZ, zombie)
-                if ok2 and ok3 and ok4 and ok5 then
+            if not zombie:isDead() then
+                local oid = zombie:getOnlineID()
+                local zx  = zombie:getX()
+                local zy  = zombie:getY()
+                local zz  = zombie:getZ()
+                if oid then
                     local dx, dy = zx - px, zy - py
                     local dist = math.sqrt(dx * dx + dy * dy)
                     -- 48 tiles: comfortably past the client's 30-tile sample
@@ -1157,8 +1139,7 @@ Events.OnClientCommand.Add(function(module, command, player, args)
                                     -- poisons svProcessedDeaths so its genuine death is
                                     -- later swallowed. Bail before loot/effects/dedup so
                                     -- the real death report still processes normally.
-                                    local okDead, isDead = pcall(obj.isDead, obj)
-                                    if okDead and not isDead then return end
+                                    if not obj:isDead() then return end
                                     deadObj = obj
                                     -- Prefer live server object state; fall back to ID cache after corpse cleanup
                                     zType = svActiveZombies[obj] or obj:getModData()["RQType"] or zType
@@ -1282,23 +1263,23 @@ local function svOnTick()
     -- Iterate alive special zombies and dispatch to type modules
     local cleanupCount = 0
     for zombie, zType in pairs(svActiveZombies) do
-        local ok, dead = pcall(zombie.isDead, zombie)
-        local ok2, gid = pcall(zombie.getOnlineID, zombie)
+        local dead = zombie:isDead()
+        local gid  = zombie:getOnlineID()
         -- Defensive: a dragged corpse reanimates into a grapple-only husk
         -- (isDead()=false, health>0) that inherits modData. svCheckZombie blocks
         -- it from ever being adopted, but if one slips in, evict it like a dead
         -- zombie so its scream/eat cast rings get cleared too.
-        local okG, grappleOnly = pcall(zombie.isReanimatedForGrappleOnly, zombie)
+        local grappleOnly = zombie:isReanimatedForGrappleOnly()
         -- Stale Java refs come back isDead()=false but getOnlineID()=-1 forever.
         -- Evict them so they don't sit as permanently inert entries.
         -- Use gid == -1 (not gid < 0) - B42 assigns valid negative IDs like -31580.
-        if not ok or dead or (okG and grappleOnly) or (ok2 and (not gid or gid == -1)) then
+        if dead or grappleOnly or (not gid or gid == -1) then
             cleanupCount = cleanupCount + 1
             svToCleanup[cleanupCount] = zombie
             -- Genuine death (or a grapple husk that should never have a record)
             -- deletes the dormant record; a stale ref (vanished without dying,
             -- i.e. the virtualization moment) keeps it as an adoption candidate.
-            svToCleanupDead[cleanupCount] = (ok and dead) or (okG and grappleOnly) or false
+            svToCleanupDead[cleanupCount] = dead or grappleOnly
         else
             svRememberZombie(zombie, zType)
             svDormantTrack(zombie, zType)
@@ -1336,8 +1317,8 @@ local function svOnTick()
             svPids[zombie] = nil
         end
         svToCleanupDead[i] = nil
-        local ok2, zid = pcall(zombie.getOnlineID, zombie)
-        if ok2 and zid then
+        local zid = zombie:getOnlineID()
+        if zid then
             local sid = tostring(zid)
             RQSvScreamer.state[zid]  = nil
             RQSvBoss.state[zid]      = nil
@@ -1347,13 +1328,13 @@ local function svOnTick()
                 -- Co-eating: drop the dying zombie from any shared cast it was part of so
                 -- survivors get the correct share count.
                 RQSvEating.svRemoveEaterFromCast(RQSvGlutton.state[zid].targetCorpse, zid)
-                pcall(RQSvEating.svRestoreAI, zombie)
+                RQSvEating.svRestoreAI(zombie)
                 RQSvGlutton.state[zid] = nil
             end
             if RQSvScavenger.state[zid] then
                 RQSvEating.svClearEatingIntent(zombie)
                 RQSvEating.svRemoveEaterFromCast(RQSvScavenger.state[zid].targetCorpse, zid)
-                pcall(RQSvEating.svRestoreAI, zombie)
+                RQSvEating.svRestoreAI(zombie)
                 RQSvScavenger.state[zid] = nil
             end
             -- One packet, not seven. This sweep runs per EVICTION (deaths, stale
@@ -1417,8 +1398,13 @@ local function svOnTick()
             -- during a horde. That is what sizing the real fix needs.
             if RDWire and RDLog then
                 local est = 0
-                pcall(function() est = RDWire.estimate(delta) end)
+                -- RDWire.estimate self-guards (type check + internal pcall);
+                -- only its existence varies across Core versions.
+                if type(RDWire.estimate) == "function" then est = RDWire.estimate(delta) end
                 if est > 6144 then
+                    -- guard stays: RDLog.forensic is RFTDCore's, version-skewed
+                    -- against this mod, and a telemetry write must never abort
+                    -- the delta broadcast it is only observing.
                     pcall(function()
                         local changed = 0
                         if delta.changed then for _ in pairs(delta.changed) do changed = changed + 1 end end

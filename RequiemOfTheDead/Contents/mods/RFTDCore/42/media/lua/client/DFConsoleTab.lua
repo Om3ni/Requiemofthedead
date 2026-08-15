@@ -122,6 +122,8 @@ local function rebuildDetail()
     ui.detail.lineColor = e and (LEVEL_COLOR[e.level] or LEVEL_COLOR.info) or LEVEL_COLOR.info
 
     local fh = 12
+    -- getFontHeight (TextManager:127) NPEs on a font this build lacks;
+    -- fallback height stands in
     pcall(function() fh = getTextManager():getFontHeight(font) end)
     ui.detail.itemheight = math.max(12, fh + 1)
 
@@ -173,6 +175,7 @@ local function rebuildList()
         -- pinned anything.
         ui.list.selected     = #snap
         ui.selectedEntry     = snap[#snap]
+        -- vanilla ISUI Lua (ISScrollingListBox); unverifiable here
         pcall(function() ui.list:ensureVisible(#snap) end)
         rebuildDetail()
         return
@@ -190,6 +193,7 @@ end
 function ConsoleList:prerender()
     if dirty then
         dirty = false
+        -- a rebuild fault must not take the render loop down with it
         pcall(rebuildList)
     end
     ISScrollingListBox.prerender(self)
@@ -204,6 +208,7 @@ function ConsoleList:onMouseDown(x, y)
     local item = self.items[self.selected]
     if item then
         ui.selectedEntry = item.item
+        -- a detail-rebuild fault must not eat the click handler
         pcall(rebuildDetail)
     end
     return r
@@ -240,6 +245,7 @@ local function layout(panel, x, y, w, h)
     ui.list.itemheight = DFKit.rowHeight()
 
     -- The wrap was measured against the old width and is wrong at the new one.
+    -- (guarded like the other rebuild calls: a fault must not break layout)
     pcall(rebuildDetail)
 end
 
@@ -364,6 +370,8 @@ Events.OnGameStart.Add(function()
         print("[RFTDCore] DFConsoleTab: DFLog not loaded, skipping tab registration")
         return
     end
+    -- a tab-registration fault is reported below, not allowed to kill
+    -- the OnGameStart chain
     local ok, err = pcall(function()
         DFRegistry.registerTab{
             id     = "console",

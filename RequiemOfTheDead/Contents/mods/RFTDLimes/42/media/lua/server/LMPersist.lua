@@ -80,6 +80,9 @@ function LMPersist.serialize(rawZones)  return LMIni.serialize(rawZones) end
 -- extension-gated (only writes are), so this opens .lua candidates too.
 function LMPersist.readAll(name)
     local text = nil
+    -- pcall stays: file I/O. getFileReader can refuse the name outright and
+    -- readLine/close are IO calls on a handle the jail owns; an absent or
+    -- unreadable candidate must read as "no file", not as a boot failure.
     pcall(function()
         local reader = getFileReader(name, false)
         if not reader then return end
@@ -117,6 +120,9 @@ LMPersist.BACKUP = "RFTDLimes.backup.ini"
 function LMPersist.snapshot(why, who)
     local text = LMPersist.serialize(Limes.raw())
     local ok = false
+    -- pcall stays: getFileWriter enforces the 42.20 extension allowlist
+    -- (LuaManager:9884) and throws on a name it refuses; `ok` staying false is
+    -- the failure path this file reports on.
     pcall(function()
         local w = getFileWriter(LMPersist.BACKUP, true, false)
         if not w then return end
@@ -124,6 +130,8 @@ function LMPersist.snapshot(why, who)
         w:close()
         ok = true
     end)
+    -- pcall stays: writeLog is the engine's rotating-log machinery and touches
+    -- disk; a journal line failing must not lose the snapshot's own verdict.
     pcall(function()
         writeLog("RFTDLimes", string.format("snapshot %s: %s by %s, %d bytes",
             ok and "ok" or "FAILED", tostring(why), tostring(who), #text))
@@ -137,11 +145,16 @@ function LMPersist.save(rawZones, why, who)
     local text = LMPersist.serialize(rawZones)
     local n = 0
     for _ in pairs(rawZones or {}) do n = n + 1 end
+    -- pcall stays: writeLog touches disk, and the journal line must never be
+    -- the reason a save does not happen - it exists to explain one that did not.
     pcall(function()
         writeLog("RFTDLimes", string.format("save begin: %s by %s, %d zones, %d bytes",
             tostring(why), tostring(who), n, #text))
     end)
     local ok = false
+    -- pcall stays: getFileWriter enforces the 42.20 extension allowlist
+    -- (LuaManager:9884) and throws on a name it refuses; the SAVE FAILED branch
+    -- below is that throw's reported form.
     pcall(function()
         local w = getFileWriter(LMPersist.FILE, true, false)
         if not w then return end

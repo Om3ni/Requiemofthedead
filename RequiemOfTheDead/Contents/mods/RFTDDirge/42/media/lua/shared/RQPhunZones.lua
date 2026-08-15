@@ -95,6 +95,9 @@ function RQPhunZones.getEffectiveRules(zombieOrX, yOrNil, cfg)
         x, y = z:getX(), z:getY()
     end
 
+    -- guard stays: PhunZones is a foreign mod - its getLocation is unowned Lua
+    -- that can change or throw at any version, and a failure must degrade to
+    -- the un-overridden cfg, not kill the spawn roll.
     local ok, zone = pcall(PhunZones.getLocation, x, y)
     if not ok or not zone then return cfg end
 

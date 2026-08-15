@@ -58,8 +58,7 @@ Events.OnRenderTick.Add(function()
             local lz   = pos and pos.z or 0
             local boss = RQCore.findZombieByID(onlineID, lx, ly, lz)
             if boss then
-                local ok, dead = pcall(boss.isDead, boss)
-                if ok and not dead then
+                if not boss:isDead() then
                     local bx = math.floor(boss:getX())
                     local by = math.floor(boss:getY())
                     local bz = math.floor(boss:getZ())
@@ -88,8 +87,8 @@ Events.OnRenderTick.Add(function()
                                                    and not obj:isDead()
                                                    and obj ~= boss
                                                 then
-                                                    pcall(obj.setOutlineHighlight, obj, playerNum, true)
-                                                    pcall(obj.setOutlineHighlightCol, obj, playerNum,
+                                                    obj:setOutlineHighlight(playerNum, true)
+                                                    obj:setOutlineHighlightCol(playerNum,
                                                         BOSS_RING_COLOR.r, BOSS_RING_COLOR.g, BOSS_RING_COLOR.b, BOSS_RING_COLOR.a)
                                                     painted[obj] = true
                                                 end
@@ -109,8 +108,8 @@ Events.OnRenderTick.Add(function()
 end)
 
 function RQBoss.onDead(zombie)
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if ok and oid and oid ~= 0 then
+    local oid = zombie and zombie:getOnlineID()
+    if oid and oid ~= 0 then
         RQRing.clear("boss_" .. oid)
         RQRing.clear("boss_emp_" .. oid)
         RQRing.clear("boss_aura_" .. oid)

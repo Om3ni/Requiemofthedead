@@ -72,9 +72,15 @@ local AnimalsTab = {
 -- World-outline pattern lifted from RPNecroTab. Outline state on the animal
 -- decays when the panel stops re-asserting it each frame, so we (re)apply
 -- in the list's prerender and clear when selection moves away.
+--
+-- setOutlineHighlight (IsoObject:5133/5154) writes a per-player array behind a
+-- lazily-created FBORenderObjectOutline singleton - no guard needed, which is
+-- how RQNecroTab calls it. getAnimal (LuaManager:3167) is a map lookup on
+-- AnimalInstanceManager's `static final` instance (:24), so it returns nil for
+-- a stale id rather than throwing.
 local function clearHighlight()
     if AnimalsTab.highlightTarget then
-        pcall(function() AnimalsTab.highlightTarget:setOutlineHighlight(false) end)
+        AnimalsTab.highlightTarget:setOutlineHighlight(false)
         AnimalsTab.highlightTarget = nil
     end
 end
@@ -82,8 +88,7 @@ end
 local function applyHighlight(oid)
     clearHighlight()
     if not oid or oid == 0 then return end
-    local a
-    pcall(function() a = getAnimal(tonumber(oid)) end)
+    local a = getAnimal(tonumber(oid))
     if a then AnimalsTab.highlightTarget = a end
 end
 
@@ -197,6 +202,11 @@ local function drawCard(el, row, x, y, w, h)
         else
             el:drawText(f.label, x, cy, dim.r, dim.g, dim.b, 1, FONT)
 
+            -- KEEP x2: f.get / f.bar are the CARD table's own closures, called
+            -- once per field per frame against a row that may be missing any of
+            -- them. The card's whole contract is that a field renders in its
+            -- fixed slot every time, so a bad accessor draws "-" and an empty
+            -- bar rather than taking the pane's layout down.
             local value = "-"
             if row then
                 local ok, v = pcall(f.get, row)
@@ -260,21 +270,28 @@ local function updateAvatar(row)
 
     local animal
     if row and row.oid and row.oid ~= 0 then
-        pcall(function() animal = getAnimal(tonumber(row.oid)) end)
+        animal = getAnimal(tonumber(row.oid))   -- LuaManager:3167, map lookup
     end
 
     if not animal then
         AnimalsTab.avatarOid = nil
-        pcall(function() av:setVisible(false) end)
+        av:setVisible(false)
         return
     end
 
     if AnimalsTab.avatarOid ~= row.oid then
         AnimalsTab.avatarOid = row.oid
+        -- KEEP: setCharacter and the framing setters are ISUI3DModel's - vanilla
+        -- Lua over an engine model panel, not verifiable against the decompile,
+        -- and a species this build cannot skin must leave the pane blank rather
+        -- than break the tab's refresh.
         pcall(function()
-            local def  = avatarDef(animal:getAnimalType())
-            local size = 1
-            pcall(function() size = animal:getData():getSize() or 1 end)
+            local def  = avatarDef(animal:getAnimalType())   -- IsoAnimal:1487, field
+            -- getData (IsoAnimal:1185) returns the raw field, which is nil on an
+            -- animal whose constructor bailed early - hence the nil-check, not a
+            -- guard. getSize (AnimalData:1389) is a field return.
+            local data = animal:getData()
+            local size = (data and data:getSize()) or 1
 
             av:setAnimSetName(animal:GetAnimSetName())
             av:setCharacter(animal)
@@ -288,7 +305,7 @@ local function updateAvatar(row)
             av:setYOffset((def.yoffset or 0) * size)
         end)
     end
-    pcall(function() av:setVisible(true) end)
+    av:setVisible(true)
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -369,6 +386,9 @@ function AnimalsList:onRightMouseUp(x, y)
     local player = getPlayer()
     if not player then return false end
 
+    -- KEEP: everything inside is vanilla Lua (ISAnimalContextMenu), which the
+    -- Java decompile cannot vouch for, and the cheat-flag swap below leaves the
+    -- menu builder in a state we must be able to log and walk away from.
     local ok, err = pcall(function()
         require "ISUI/Animal/ISAnimalContextMenu"
         local pn      = player:getPlayerNum()
@@ -402,7 +422,7 @@ end
 function AnimalsList:prerender()
     ISScrollingListBox.prerender(self)
     if AnimalsTab.highlightTarget then
-        pcall(function() AnimalsTab.highlightTarget:setOutlineHighlight(true) end)
+        AnimalsTab.highlightTarget:setOutlineHighlight(true)
     end
 end
 
@@ -460,7 +480,7 @@ end
 local function derive(rows)
     local p = getPlayer()
     local px, py
-    if p then pcall(function() px, py = p:getX(), p:getY() end) end
+    if p then px, py = p:getX(), p:getY() end
 
     for _, r in ipairs(rows) do
         -- Authoritative reads only. getHunger()/getThirst() are the OTHER API;
@@ -470,16 +490,18 @@ local function derive(rows)
         r.hunger = r.hngB or r.hngA or 0
         r.thirst = r.thrB or r.thrA or 0
 
+        -- getAnimal (LuaManager:3167) is a map lookup on a `static final`
+        -- manager (AnimalInstanceManager:24): a stale id gives nil, not an
+        -- error, and getX/getY are field reads. Distance stays nil either way.
         r.dist = nil
         if px and r.oid and r.oid ~= 0 then
-            pcall(function()
-                local a = getAnimal(tonumber(r.oid))
-                if not a then return end
+            local a = getAnimal(tonumber(r.oid))
+            if a then
                 local ax, ay = a:getX(), a:getY()
                 if ax and ay then
                     r.dist = math.floor(math.sqrt((ax - px) ^ 2 + (ay - py) ^ 2) + 0.5)
                 end
-            end)
+            end
         end
     end
 end
@@ -543,17 +565,20 @@ local function teleportToSelected()
         if DFFeedback then DFFeedback.bad("Animal no longer resolvable.") end
         return
     end
-    local sq
-    pcall(function() sq = animal:getCurrentSquare() end)
+    -- getCurrentSquare (IsoMovingObject:1819) is `return this.current` and is nil
+    -- for a containerised animal - the getX/getY/getZ fallback is for that, not
+    -- for an error. setX/setY/setZ (IsoMovingObject:478/495/512) are field sets.
+    local sq = animal:getCurrentSquare()
     local tx, ty, tz
     if sq then
         tx, ty, tz = sq:getX() + 0.5, sq:getY() + 0.5, sq:getZ()
     else
-        pcall(function() tx, ty, tz = animal:getX(), animal:getY(), animal:getZ() end)
+        tx, ty, tz = animal:getX(), animal:getY(), animal:getZ()
     end
     if not (tx and ty) then return end
     local p = getPlayer()
-    pcall(function() p:setX(tx); p:setY(ty); p:setZ(tz or 0) end)
+    if not p then return end
+    p:setX(tx); p:setY(ty); p:setZ(tz or 0)
     if DFFeedback then
         DFFeedback.good(string.format("Teleported to %s.", row.name or row.species or "animal"))
     end

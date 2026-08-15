@@ -23,7 +23,7 @@ if not isServer() then return end
 
 require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
 
-RDShared.registerMod("RFTDStaffTools", "1.0.0")   -- keep in sync with mod.info
+RDShared.registerMod("RFTDStaffTools", "1.2.0")   -- keep in sync with mod.info
 
 DFPlayerRoles = DFPlayerRoles or {}
 

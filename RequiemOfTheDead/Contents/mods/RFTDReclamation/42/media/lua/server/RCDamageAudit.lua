@@ -30,11 +30,10 @@ local EVENTS = {
     crash        = "crash",        -- collision / ramming
 }
 
--- GMT/UTC timestamp. The leading "!" makes os.date format in UTC.
+-- GMT/UTC timestamp. The leading "!" makes os.date format in UTC. A fixed
+-- all-numeric format is plain Calendar reads in Kahlua (OsLib.java:110/149).
 local function gmtStamp()
-    local ok, s = pcall(function() return os.date("!%Y-%m-%d %H:%M:%S") end)
-    if ok and s then return s .. " GMT" end
-    return tostring(os.time()) .. " epoch"
+    return os.date("!%Y-%m-%d %H:%M:%S") .. " GMT"
 end
 
 -- Light per-(attacker,vehicle) throttle so a melee flurry doesn't write
@@ -44,8 +43,8 @@ local lastMs = {}
 local lastCount = 0
 
 local function throttled(key)
-    local ok, now = pcall(getTimestampMs)
-    if not ok or type(now) ~= "number" then return false end -- no clock: never throttle
+    local now = getTimestampMs() -- System.currentTimeMillis (LuaManager.java:7470)
+    if type(now) ~= "number" then return false end -- no clock: never throttle
     local prev = lastMs[key]
     if prev and (now - prev) < THROTTLE_MS then return true end
     lastMs[key] = now
@@ -62,15 +61,20 @@ local function val(x)
     return s
 end
 
+-- getSteamID is a field return (IsoPlayer.java:5954); the existence check
+-- covers a sender that is not an IsoPlayer.
 local function steamIdOf(player)
-    local ok, id = pcall(function() return player:getSteamID() end)
-    if ok and id and tostring(id) ~= "0" then return tostring(id) end
+    if not (player and player.getSteamID) then return "-" end
+    local id = player:getSteamID()
+    if id and tostring(id) ~= "0" then return tostring(id) end
     return "-"
 end
 
 local function write(line)
+    -- guarded: file I/O through the getFileWriter allowlist can throw
     local ok, writer = pcall(getFileWriter, FILE, true, true) -- createIfNull, append (never truncate)
     if not ok or not writer then return end
+    -- guarded: disk write/close; a full disk must not break the damage path
     pcall(function()
         writer:write(line .. "\n")
         writer:close()
@@ -86,6 +90,8 @@ local function onClientCommand(module, command, player, args)
 
     local vehicle = nil
     if args.vehicle then
+        -- args.vehicle comes off the wire: a non-number would blow the (short)
+        -- cast inside getVehicleById, so the guard stays.
         local ok, v = pcall(getVehicleById, args.vehicle)
         if ok then vehicle = v end
     end
@@ -99,8 +105,7 @@ local function onClientCommand(module, command, player, args)
         owner    = RCClaim.getOwner(vehicle)
         griefing = not RCClaim.canInteract(vehicle, player) -- true => no rights to this car
         x = math.floor(vehicle:getX()); y = math.floor(vehicle:getY()); z = math.floor(vehicle:getZ())
-        local okn, n = pcall(function() return vehicle:getScriptName() end)
-        vname = okn and n or nil
+        vname = vehicle:getScriptName() -- field return (BaseVehicle.java:1593)
     end
     part = args.part
 
@@ -113,6 +118,7 @@ local function onClientCommand(module, command, player, args)
     -- Dual-write (RFTDCore adoption): the same observation, structured, into
     -- Core's forensic ring. claimId included when the vehicle carries one so a
     -- reader can join damage rows onto the claim timeline.
+    -- guarded: foreign module doing file I/O; its failure must not break ours
     pcall(function()
         RDLog.forensic("rc-damage", "RC.DAMAGE", player, {
             how = how, vehicle = vname, vid = args.vehicle,

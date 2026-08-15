@@ -1,0 +1,315 @@
+# Brief: RFTDMemoir restore inflating Fitness/Strength
+
+**Subject:** Twitchy Irritation / Felicia (`76561198082677790`), Season S1
+**Raised via:** support ticket, self-reported by the player
+**Prepared:** 2026-08-13
+**Verdict:** Confirmed mod defect. No player fault, no exploit. Six players affected season-wide.
+
+---
+
+## 1. What the player asked
+
+She suspected her character came out of a post-death memoir restore with more Strength and
+Fitness than the memoir should have given her, and asked for it to be checked so she could
+be corrected if needed. She proposed a cause: that her `Weak`/`Unfit` traits had downgraded
+to the milder `Feeble`/`Out of Shape` versions before she wrote the memoir, and that this
+threw off the restore calculation.
+
+She is right that she gained levels she should not have. Her proposed cause is not the
+mechanism, though the trait downgrade she remembered did genuinely happen and is in the log.
+
+---
+
+## 2. Finding
+
+On the restore of **2026-08-12 04:38 UTC** she received **+2 Fitness levels and +1 Strength
+level** that the memoir did not contain.
+
+### 2.1 Direct evidence (assumption-free)
+
+From the chronicle. Left column is the character that wrote the memoir, at death (04:34 UTC).
+Right column is the new character, first full sample 24 minutes later (04:59 UTC).
+
+| Skill | Died with | Restored to | |
+|---|---|---|---|
+| Aiming | 2 | 2 | — |
+| Blacksmith | 2 | 2 | — |
+| Blunt | 1 | 1 | — |
+| Butchering | 1 | 1 | — |
+| Doctor | 2 | 2 | — |
+| Electricity | 3 | 3 | — |
+| **Fitness** | **2** | **4** | **+2** |
+| Husbandry | 1 | 1 | — |
+| Lightfoot | 1 | 1 | — |
+| Maintenance | 5 | 4 | −1 (normal decay) |
+| MetalWelding | 4 | 4 | — |
+| Nimble | 3 | 3 | — |
+| PlantScavenging | 2 | 2 | — |
+| Reloading | 2 | 2 | — |
+| SmallBlade | 5 | 4 | −1 (normal decay) |
+| Sprinting | 3 | 3 | — |
+| **Strength** | **2** | **3** | **+1** |
+| Tailoring | 5 | 5 | — |
+| Woodwork | 1 | 1 | — |
+
+Seventeen of nineteen skills restored exactly or one level down. Only Fitness and Strength
+increased. Her prior character had been flat at Fitness 2 / Strength 2 for its entire
+49-hour life, which matches her recollection of "1 and 2 a day before" precisely.
+
+### 2.2 Confirming evidence (memoir mod's own log)
+
+The memoir stores raw XP, not levels. The `READ_OK` record for that restore:
+
+| Perk | XP stored in memoir | Level that XP represents | XP the restore wrote | Level granted |
+|---|---|---|---|---|
+| Fitness | 8,058 | 2 | **19,500** | **4** |
+| Strength | 7,136 | 2 | **10,508** | **3** |
+
+19,500 and 10,500 are the exact level-4 and level-3 XP thresholds. The restore did not copy
+the stored XP forward — it snapped her up to a higher level's floor.
+
+---
+
+## 3. Mechanism
+
+The failure is in the XP-to-level step of the restore path (`xpMode: "overwrite"`), not in
+what the memoir captured. The snapshot XP is correct in every case examined; the value
+written back to the new character is not.
+
+Auditing every restore this season (38 events, 36 players), nine landed on the wrong level.
+All nine are Fitness or Strength. The error goes in **both** directions:
+
+| Player | Date (UTC) | Perk | Memoir XP | True level | Restored to | Error |
+|---|---|---|---|---|---|---|
+| Squiddlecakes | Aug 08 | Fitness | 38,340 | 5 | 7 | **+2** |
+| **Twitchy Irritation** | **Aug 12 04:38** | **Fitness** | **8,058** | **2** | **4** | **+2** |
+| eilistraee | Aug 12 09:23 | Fitness | 69,118 | 6 | 7 | +1 |
+| eilistraee | Aug 12 23:11 | Fitness | 69,422 | 6 | 7 | +1 |
+| Driven | Aug 08 | Fitness | 5,324 | 2 | 3 | +1 |
+| Mox | Aug 07 | Strength | 9,258 | 2 | 3 | +1 |
+| **Twitchy Irritation** | **Aug 10 16:35** | **Fitness** | **3,108** | **1** | **2** | **+1** |
+| **Twitchy Irritation** | **Aug 12 04:38** | **Strength** | **7,136** | **2** | **3** | **+1** |
+| Samothy | Aug 11 | Fitness | 238,188 | 8 | 7 | **−1** |
+
+Because the error appears at every trait band — `unfit`, `out of shape`, no trait, and `fit`
+— and because it can also undershoot, it is not caused by the trait downgrade the player
+suspected. It reads as an off-by-one at level-band boundaries, occasionally applied twice.
+Confirming that requires the mod source, which was not available for this review.
+
+**Note on method:** the "true level" column uses the Fitness/Strength XP threshold table
+`1,500 / 4,500 / 10,500 / 19,500 / 37,500 / 67,500 / 127,500 / 217,500 / 337,500 / 487,500`,
+derived empirically from the logs themselves (several restores land on these values exactly,
+and they reproduce the observed level for all 76 Fitness/Strength restores). The headline
+finding in §2.1 does not depend on this table.
+
+---
+
+## 4. Where the player should be
+
+Replaying her XP chain with the bad restore removed:
+
+| | Current | Should be | Unearned |
+|---|---|---|---|
+| Fitness | 4 (22,182 XP) | **~2** (~9,300 XP) | ~12,800 XP |
+| Strength | 3 (13,948 XP) | **3** | none remaining |
+
+**Strength has self-corrected.** The +1 was real on 08-12, but she has since out-earned it —
+the counterfactual puts her roughly 75 XP past the level-3 threshold as of today. No
+adjustment warranted.
+
+**Fitness is 1–2 levels high.** The estimate assumes she would have earned the same raw XP
+at a lower level. Fitness XP in PZ is largely exercise-driven so this holds up reasonably,
+but "2, arguably 3" is the honest reading rather than a hard figure.
+
+Her third restore (Aug 12, 21:50 UTC) was clean — it introduced no new error, but carried
+the existing inflation forward.
+
+---
+
+## 5. Conclusions
+
+1. **The player did not cheat and could not have.** She wrote a memoir, died, and read it.
+   Every step between those actions belongs to the mod; there is no player-side input to the
+   XP-to-level conversion that failed.
+
+2. **She reported it unprompted and accurately.** Her account of her stats before the death
+   matches the telemetry exactly. Her proposed cause was wrong but her instinct that
+   something in the Fitness/Strength handling was broken was correct.
+
+3. **The defect is live and affects others.** Five other players hold restores with the same
+   signature. Squiddlecakes carries the largest single error (+2 Fitness levels, level 5 → 7).
+   Samothy was penalised a level rather than rewarded.
+
+4. **Recommended actions:**
+   - Correct Felicia's Fitness to 2 (or 3, at staff discretion). Leave Strength alone.
+   - Decide whether to correct or grandfather the other five players; Squiddlecakes and
+     Samothy are the two worth a deliberate call.
+   - Hand §3 to whoever maintains RFTDMemoir. Fixing the conversion matters more than the
+     back-corrections, since the error compounds across successive restores.
+
+---
+
+## Sources
+
+- `Lua/RFTD/season/S1/chronicle/p/Twitchy_Irritation.76561198082677790/events.jsonl.log`
+  — `RD.SPAWN` / `RD.DEATH` / `RD.SAMPLE` perk telemetry
+- `Lua/Memoirs/Twitchy_Irritation/events.jsonl.log` — `WRITE` / `READ_OK` / `READ_RECHECK`
+- `Lua/Memoirs/Twitchy_Irritation/latest.json.txt` — current snapshot
+- `Lua/Memoirs/*/events.jsonl.log` — season-wide restore audit (38 events, 36 players)# Brief: RFTDMemoir restore inflating Fitness/Strength
+
+**Subject:** Twitchy Irritation / Felicia (`76561198082677790`), Season S1
+**Raised via:** support ticket, self-reported by the player
+**Prepared:** 2026-08-13
+**Verdict:** Confirmed mod defect. No player fault, no exploit. Six players affected season-wide.
+
+---
+
+## 1. What the player asked
+
+She suspected her character came out of a post-death memoir restore with more Strength and
+Fitness than the memoir should have given her, and asked for it to be checked so she could
+be corrected if needed. She proposed a cause: that her `Weak`/`Unfit` traits had downgraded
+to the milder `Feeble`/`Out of Shape` versions before she wrote the memoir, and that this
+threw off the restore calculation.
+
+She is right that she gained levels she should not have. Her proposed cause is not the
+mechanism, though the trait downgrade she remembered did genuinely happen and is in the log.
+
+---
+
+## 2. Finding
+
+On the restore of **2026-08-12 04:38 UTC** she received **+2 Fitness levels and +1 Strength
+level** that the memoir did not contain.
+
+### 2.1 Direct evidence (assumption-free)
+
+From the chronicle. Left column is the character that wrote the memoir, at death (04:34 UTC).
+Right column is the new character, first full sample 24 minutes later (04:59 UTC).
+
+| Skill | Died with | Restored to | |
+|---|---|---|---|
+| Aiming | 2 | 2 | — |
+| Blacksmith | 2 | 2 | — |
+| Blunt | 1 | 1 | — |
+| Butchering | 1 | 1 | — |
+| Doctor | 2 | 2 | — |
+| Electricity | 3 | 3 | — |
+| **Fitness** | **2** | **4** | **+2** |
+| Husbandry | 1 | 1 | — |
+| Lightfoot | 1 | 1 | — |
+| Maintenance | 5 | 4 | −1 (normal decay) |
+| MetalWelding | 4 | 4 | — |
+| Nimble | 3 | 3 | — |
+| PlantScavenging | 2 | 2 | — |
+| Reloading | 2 | 2 | — |
+| SmallBlade | 5 | 4 | −1 (normal decay) |
+| Sprinting | 3 | 3 | — |
+| **Strength** | **2** | **3** | **+1** |
+| Tailoring | 5 | 5 | — |
+| Woodwork | 1 | 1 | — |
+
+Seventeen of nineteen skills restored exactly or one level down. Only Fitness and Strength
+increased. Her prior character had been flat at Fitness 2 / Strength 2 for its entire
+49-hour life, which matches her recollection of "1 and 2 a day before" precisely.
+
+### 2.2 Confirming evidence (memoir mod's own log)
+
+The memoir stores raw XP, not levels. The `READ_OK` record for that restore:
+
+| Perk | XP stored in memoir | Level that XP represents | XP the restore wrote | Level granted |
+|---|---|---|---|---|
+| Fitness | 8,058 | 2 | **19,500** | **4** |
+| Strength | 7,136 | 2 | **10,508** | **3** |
+
+19,500 and 10,500 are the exact level-4 and level-3 XP thresholds. The restore did not copy
+the stored XP forward — it snapped her up to a higher level's floor.
+
+---
+
+## 3. Mechanism
+
+The failure is in the XP-to-level step of the restore path (`xpMode: "overwrite"`), not in
+what the memoir captured. The snapshot XP is correct in every case examined; the value
+written back to the new character is not.
+
+Auditing every restore this season (38 events, 36 players), nine landed on the wrong level.
+All nine are Fitness or Strength. The error goes in **both** directions:
+
+| Player | Date (UTC) | Perk | Memoir XP | True level | Restored to | Error |
+|---|---|---|---|---|---|---|
+| Squiddlecakes | Aug 08 | Fitness | 38,340 | 5 | 7 | **+2** |
+| **Twitchy Irritation** | **Aug 12 04:38** | **Fitness** | **8,058** | **2** | **4** | **+2** |
+| eilistraee | Aug 12 09:23 | Fitness | 69,118 | 6 | 7 | +1 |
+| eilistraee | Aug 12 23:11 | Fitness | 69,422 | 6 | 7 | +1 |
+| Driven | Aug 08 | Fitness | 5,324 | 2 | 3 | +1 |
+| Mox | Aug 07 | Strength | 9,258 | 2 | 3 | +1 |
+| **Twitchy Irritation** | **Aug 10 16:35** | **Fitness** | **3,108** | **1** | **2** | **+1** |
+| **Twitchy Irritation** | **Aug 12 04:38** | **Strength** | **7,136** | **2** | **3** | **+1** |
+| Samothy | Aug 11 | Fitness | 238,188 | 8 | 7 | **−1** |
+
+Because the error appears at every trait band — `unfit`, `out of shape`, no trait, and `fit`
+— and because it can also undershoot, it is not caused by the trait downgrade the player
+suspected. It reads as an off-by-one at level-band boundaries, occasionally applied twice.
+Confirming that requires the mod source, which was not available for this review.
+
+**Note on method:** the "true level" column uses the Fitness/Strength XP threshold table
+`1,500 / 4,500 / 10,500 / 19,500 / 37,500 / 67,500 / 127,500 / 217,500 / 337,500 / 487,500`,
+derived empirically from the logs themselves (several restores land on these values exactly,
+and they reproduce the observed level for all 76 Fitness/Strength restores). The headline
+finding in §2.1 does not depend on this table.
+
+---
+
+## 4. Where the player should be
+
+Replaying her XP chain with the bad restore removed:
+
+| | Current | Should be | Unearned |
+|---|---|---|---|
+| Fitness | 4 (22,182 XP) | **~2** (~9,300 XP) | ~12,800 XP |
+| Strength | 3 (13,948 XP) | **3** | none remaining |
+
+**Strength has self-corrected.** The +1 was real on 08-12, but she has since out-earned it —
+the counterfactual puts her roughly 75 XP past the level-3 threshold as of today. No
+adjustment warranted.
+
+**Fitness is 1–2 levels high.** The estimate assumes she would have earned the same raw XP
+at a lower level. Fitness XP in PZ is largely exercise-driven so this holds up reasonably,
+but "2, arguably 3" is the honest reading rather than a hard figure.
+
+Her third restore (Aug 12, 21:50 UTC) was clean — it introduced no new error, but carried
+the existing inflation forward.
+
+---
+
+## 5. Conclusions
+
+1. **The player did not cheat and could not have.** She wrote a memoir, died, and read it.
+   Every step between those actions belongs to the mod; there is no player-side input to the
+   XP-to-level conversion that failed.
+
+2. **She reported it unprompted and accurately.** Her account of her stats before the death
+   matches the telemetry exactly. Her proposed cause was wrong but her instinct that
+   something in the Fitness/Strength handling was broken was correct.
+
+3. **The defect is live and affects others.** Five other players hold restores with the same
+   signature. Squiddlecakes carries the largest single error (+2 Fitness levels, level 5 → 7).
+   Samothy was penalised a level rather than rewarded.
+
+4. **Recommended actions:**
+   - Correct Felicia's Fitness to 2 (or 3, at staff discretion). Leave Strength alone.
+   - Decide whether to correct or grandfather the other five players; Squiddlecakes and
+     Samothy are the two worth a deliberate call.
+   - Hand §3 to whoever maintains RFTDMemoir. Fixing the conversion matters more than the
+     back-corrections, since the error compounds across successive restores.
+
+---
+
+## Sources
+
+- `Lua/RFTD/season/S1/chronicle/p/Twitchy_Irritation.76561198082677790/events.jsonl.log`
+  — `RD.SPAWN` / `RD.DEATH` / `RD.SAMPLE` perk telemetry
+- `Lua/Memoirs/Twitchy_Irritation/events.jsonl.log` — `WRITE` / `READ_OK` / `READ_RECHECK`
+- `Lua/Memoirs/Twitchy_Irritation/latest.json.txt` — current snapshot
+- `Lua/Memoirs/*/events.jsonl.log` — season-wide restore audit (38 events, 36 players)

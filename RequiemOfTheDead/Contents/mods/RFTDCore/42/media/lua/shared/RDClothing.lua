@@ -31,24 +31,29 @@
 -- credits the same amount rather than inventing a number.
 --
 -- ENGINE-TOUCHING, unlike RDItemKind: BloodBodyPartType, syncClothingFields and
--- instanceof are all globals. Each is reached inside a function and pcall'd, so
--- loading this file costs nothing and a test only stubs what it actually calls.
+-- instanceof are all globals. Each is reached inside a function behind a
+-- nil/type() check, so loading this file costs nothing and a test only stubs
+-- what it actually calls.
 
 RDClothing = RDClothing or {}
 
 -- Number of body-part slots the blood/dirt/hole arrays are indexed by. Read from
 -- the enum rather than hardcoded because it has changed across builds.
 function RDClothing.partCount()
-    local n = nil
-    pcall(function() n = BloodBodyPartType.MAX:index() end)
+    -- index() is ordinal() (BloodBodyPartType:44); the chain covers the
+    -- global being absent under test stubs
+    local maxPart = BloodBodyPartType and BloodBodyPartType.MAX
+    local n = maxPart and maxPart:index() or nil
     if type(n) ~= "number" or n <= 0 then return 0 end
     return n
 end
 
 function RDClothing.isClothing(item)
     if not item then return false end
-    local ok, isInst = pcall(instanceof, item, "Clothing")
-    return ok and isInst == true
+    -- instanceof (LuaManager:2837) null-checks obj and falls through to
+    -- false on an unknown name; the type() covers test stubs
+    if type(instanceof) ~= "function" then return false end
+    return instanceof(item, "Clothing") == true
 end
 
 -- Body-part indices that currently have a hole, ascending.
@@ -56,14 +61,17 @@ function RDClothing.holeParts(item)
     local out = {}
     if not item then return out end
 
-    local visual
+    -- getVisual (InventoryItem:2070) can NPE: getClothingItem:2045 derefs
+    -- scriptItem.replacePrimaryHand.clothingItem unguarded on hand-replacement
+    -- items, and arbitrary items land here from the admin panel - guard stays
     if type(item.getVisual) ~= "function" then return out end
-    local ok = pcall(function() visual = item:getVisual() end)
+    local ok, visual = pcall(item.getVisual, item)
     if not ok or not visual then return out end
 
     for i = 0, RDClothing.partCount() - 1 do
-        local hole = nil
-        pcall(function() hole = visual:getHole(BloodBodyPartType.FromIndex(i)) end)
+        -- getHole (ItemVisual:508) null-checks the holes array; FromIndex
+        -- (:48) clamps, and i < MAX:index() keeps the byte index in bounds
+        local hole = visual:getHole(BloodBodyPartType.FromIndex(i))
         if type(hole) == "number" and hole > 0 then
             out[#out + 1] = i
         end
@@ -84,11 +92,11 @@ function RDClothing.mendHoles(item, targetCount)
     if not targetCount then return false, "hole count must be a number", 0 end
     if targetCount < 0 then targetCount = 0 end
 
-    local visual
+    -- same getVisual NPE path as holeParts above - guard stays
     if type(item.getVisual) ~= "function" then
         return false, "item has no visual", 0
     end
-    local gotVisual = pcall(function() visual = item:getVisual() end)
+    local gotVisual, visual = pcall(item.getVisual, item)
     if not gotVisual or not visual then
         return false, "item has no visual", 0
     end
@@ -108,9 +116,10 @@ function RDClothing.mendHoles(item, targetCount)
     local toRemove = current - targetCount
     local removed = 0
     for i = current, current - toRemove + 1, -1 do
-        local partIdx = parts[i]
-        local ok = pcall(function() visual:removeHole(partIdx) end)
-        if ok then removed = removed + 1 end
+        -- removeHole (ItemVisual:617) null-checks the array; indices come
+        -- from holeParts so they are in bounds
+        visual:removeHole(parts[i])
+        removed = removed + 1
     end
 
     if removed > 0 then
@@ -125,17 +134,18 @@ end
 function RDClothing.creditHoleCondition(item, holesRemoved)
     if not item or not holesRemoved or holesRemoved <= 0 then return end
 
-    local per, cond, maxCond
-    pcall(function() per     = item:getCondLossPerHole() end)
-    pcall(function() cond    = item:getCondition()       end)
-    pcall(function() maxCond = item:getConditionMax()    end)
+    -- getCondLossPerHole is Clothing's alone (Clothing:1074) - anything else
+    -- that lands here bows out at the door instead of hiding behind a guard.
+    -- The rest are field reads (getCondition:2502, getConditionMax:2233), and
+    -- setCondition (:2506) clamps, null-checks its sound paths, and cannot hit
+    -- onBreak from a credit - condition only ever goes UP here.
+    if not item.getCondLossPerHole then return end
 
-    if type(per) ~= "number" or type(cond) ~= "number" then return end
+    local target = item:getCondition() + item:getCondLossPerHole() * holesRemoved
+    local maxCond = item:getConditionMax()
+    if target > maxCond then target = maxCond end
 
-    local target = cond + (per * holesRemoved)
-    if type(maxCond) == "number" and target > maxCond then target = maxCond end
-
-    pcall(function() item:setCondition(math.floor(target)) end)
+    item:setCondition(math.floor(target))
 end
 
 -- Push clothing FIELD state (the ItemVisual side) to other clients. Server-gated
@@ -146,7 +156,10 @@ end
 function RDClothing.sync(player)
     if not player then return false end
     if type(syncClothingFields) ~= "function" then return false end
-    return pcall(function() syncClothingFields(player) end) == true
+    -- LuaManager:3720 server-gates; GameServer.syncClothingFields:2298
+    -- null-checks each worn item and INetworkPacket.send:127 try/catches
+    syncClothingFields(player)
+    return true
 end
 
 return RDClothing

@@ -126,24 +126,26 @@ InventoryCollapse.GROUPS = {
 -- Preference
 -- ---------------------------------------------------------------------------
 
+-- getModData is a lazy-alloc table return (IsoObject.java:1110) and cannot
+-- throw on the nil-checked receivers here.
 function InventoryCollapse.isCollapsed(playerObj, group)
     if not playerObj or not group then return false end
-    local md = nil
-    pcall(function() md = playerObj:getModData() end)
+    local md = playerObj:getModData()
     return md ~= nil and md[group.modKey] == true
 end
 
 function InventoryCollapse.setCollapsed(playerObj, group, collapsed)
     if not playerObj or not group then return end
-    local md = nil
-    pcall(function() md = playerObj:getModData() end)
+    local md = playerObj:getModData()
     if not md then return end
     -- nil rather than false when off, so the key does not accumulate in saves for
     -- players who never use this.
     md[group.modKey] = collapsed and true or nil
     -- Player modData is persisted server-side, so a purely local write would not
-    -- survive a relog on a dedicated server.
-    pcall(function() playerObj:transmitModData() end)
+    -- survive a relog on a dedicated server. transmitModData null-checks the
+    -- square and the send is try/catch'd (IsoObject.java:4470,
+    -- INetworkPacket.send:127) - cannot throw.
+    playerObj:transmitModData()
 end
 
 -- ---------------------------------------------------------------------------
@@ -163,9 +165,21 @@ function InventoryCollapse.summarize(itemslist, group)
             for i = 2, #v.items do
                 local it = v.items[i]
                 local w = nil
-                pcall(function() w = it[group.weightOf](it) end)
-                if type(w) ~= "number" then
-                    pcall(function() w = it:getUnequippedWeight() end)
+                if it then
+                    -- guarded: the group accessor is looked up by name (a
+                    -- rename in a later 42.x indexes nil and throws on call),
+                    -- and both weight getters chain through getContentsWeight
+                    -- (InventoryItem.java:3137) into ammo-script and fluid
+                    -- lookups too deep to certify. Allocation-free direct
+                    -- form; a failed read degrades to the unequipped weight,
+                    -- then to skipping the item.
+                    local ok, r = pcall(it[group.weightOf], it)
+                    if ok and type(r) == "number" then
+                        w = r
+                    else
+                        ok, r = pcall(it.getUnequippedWeight, it)
+                        if ok and type(r) == "number" then w = r end
+                    end
                 end
                 if type(w) == "number" then weight = weight + w end
             end
@@ -266,6 +280,8 @@ function InventoryCollapse.applyToPane(pane)
 
     reindexSelection(pane, selectedItems)
 
+    -- guarded: updateScrollbars is vanilla ISUI Lua, unverifiable against the
+    -- Java decompile; a miss just leaves the scrollbar range one refresh stale.
     if pane.updateScrollbars then
         pcall(function() pane:updateScrollbars() end)
     end
@@ -340,6 +356,8 @@ local function defineHandler(group)
             not InventoryCollapse.isCollapsed(self.playerObj, group))
 
         local pane = self:pane()
+        -- guarded: refreshContainer is vanilla (or CleanUI's) pane Lua - a
+        -- throw here would eat the button click with the preference half-set.
         if pane and pane.refreshContainer then
             pcall(function() pane:refreshContainer() end)
         end

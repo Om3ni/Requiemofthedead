@@ -28,8 +28,8 @@ local COLORS = {
 -- role holding a capability). Read live so a mid-session sandbox change
 -- takes effect without a restart.
 function RQSvShared.svIsAdminPlayer(player)
-    local tier
-    pcall(function() tier = SandboxVars.RFTDDirge and SandboxVars.RFTDDirge.ConvertAccess end)
+    -- SandboxVars can be nil at load time
+    local tier = SandboxVars and SandboxVars.RFTDDirge and SandboxVars.RFTDDirge.ConvertAccess
     return RDAccess.meetsTier(player, tier)
 end
 
@@ -207,6 +207,9 @@ end
 -- damage subtraction from racing the cap.
 local MAX_NETWORK_HP = 30.0
 
+-- Cross-build probe verdict for IsoZombie:getOwnerPlayer (nil = unprobed).
+local svHasGetOwnerPlayer = nil
+
 -- ownerOnly: send to the zombie's owning client instead of broadcasting.
 -- Only the owner's setHealth survives anyway -- every other client's write is
 -- overwritten by the owner's next NetworkZombieManager sync -- so broadcasting
@@ -226,7 +229,7 @@ local function svSetZombieHP(zombie, targetHP, ownerOnly)
         targetHP = MAX_NETWORK_HP
     end
     if targetHP < 0 then targetHP = 0 end
-    pcall(function() zombie:setHealth(targetHP) end)
+    zombie:setHealth(targetHP)
     local oid = zombie:getOnlineID()
     if not oid or oid < 0 then return false end
 
@@ -239,16 +242,20 @@ local function svSetZombieHP(zombie, targetHP, ownerOnly)
     }
 
     if ownerOnly then
-        -- Colon-call inside the pcall: grabbing zombie.getOwnerPlayer as a value
-        -- can yield nil and pcall would swallow the "call a nil value" error,
-        -- making a missing method look like "no owner" -- the same trap
-        -- documented for knockDown further down this file.
-        local owner
-        local okOwner = pcall(function() owner = zombie:getOwnerPlayer() end)
-        if okOwner then
+        -- Lazy one-shot cross-build probe: getOwnerPlayer is IsoZombie:454 in
+        -- 42.20.2 (an ECS field read that cannot throw), but it may vanish in a
+        -- later engine change, and this is the only branch that can tell.
+        -- Colon-call inside the pcall so a missing method reads as a failed
+        -- probe, not as "no owner". Verdict cached; the hot per-zombie callers
+        -- never re-probe.
+        if svHasGetOwnerPlayer == nil then
+            svHasGetOwnerPlayer = pcall(function() return zombie:getOwnerPlayer() end)
+        end
+        if svHasGetOwnerPlayer then
             -- nil owner means the SERVER owns this zombie: the setHealth above
             -- is already authoritative and no packet is needed. Do NOT fall
             -- back to a broadcast here or the saving is undone.
+            local owner = zombie:getOwnerPlayer()
             if owner then
                 sendServerCommand(owner, RQCommon.MODULE, "applyZombieHP", payload)
             end
@@ -291,12 +298,10 @@ RQSvShared.MAX_NETWORK_HP        = MAX_NETWORK_HP
 -- come along too. resetModelNextFrame is what actually swaps the run animation in.
 local function applyBossSprinter(zombie)
     if not zombie then return end
-    pcall(function()
-        zombie:setWalkType("Run")
-        zombie:setVariable("bSprinter", true)
-        zombie:setVariable("MovementSpeed", 1.2)
-        zombie:resetModelNextFrame()
-    end)
+    zombie:setWalkType("Run")
+    zombie:setVariable("bSprinter", true)
+    zombie:setVariable("MovementSpeed", 1.2)
+    zombie:resetModelNextFrame()
 end
 RQSvShared.applyBossSprinter = applyBossSprinter
 
@@ -320,9 +325,7 @@ end
 
 -- invisible or ghost admins shouldn't trigger zombie behaviors
 local function isPlayerVisible(p)
-    local ok1, inv  = pcall(p.isInvisible, p)
-    local ok2, gst  = pcall(p.isGhostMode, p)
-    if (ok1 and inv) or (ok2 and gst) then return false end
+    if p:isInvisible() or p:isGhostMode() then return false end
     return true
 end
 
@@ -341,8 +344,8 @@ local function isAnyPlayerInRange(zombie, range)
         end
         return false
     end
-    local ok, p = pcall(getPlayer)
-    if ok and p and isPlayerVisible(p) then
+    local p = getPlayer()
+    if p and isPlayerVisible(p) then
         local dx = p:getX() - zx
         local dy = p:getY() - zy
         return dx * dx + dy * dy <= rangeSq
@@ -367,8 +370,8 @@ local function getPlayersInRange(x, y, range)
             end
         end
     else
-        local ok, p = pcall(getPlayer)
-        if ok and p then
+        local p = getPlayer()
+        if p then
             local dx = p:getX() - x
             local dy = p:getY() - y
             if dx * dx + dy * dy <= rangeSq then
@@ -500,8 +503,7 @@ end
 local function svFindActiveZombieByOnlineID(onlineID)
     if not _activeZombies then return nil, nil end
     for zombie, zType in pairs(_activeZombies) do
-        local ok, oid = pcall(zombie.getOnlineID, zombie)
-        if ok and oid == onlineID then
+        if zombie:getOnlineID() == onlineID then
             return zombie, zType
         end
     end
@@ -550,10 +552,16 @@ local function svDoSpawn(x, y, z, count, onSpawned)
         if dx * dx + dy * dy <= rSq then
             local sq = cell:getGridSquare(x + dx, y + dy, z)
             if sq and not sq:isSolid() then
+                -- guard stays: addZombiesInOutfit is a vanilla Lua global (not in
+                -- the Java decompile) and it fails on an unloaded/invalid chunk --
+                -- a failed attempt must cost one attempt, not the whole summon.
                 local okAdd, added = pcall(addZombiesInOutfit, x + dx, y + dy, z, 1, nil, 50)
                 if okAdd then
                     spawned = spawned + 1
                     if added and handler then
+                        -- guard stays: handler is caller-supplied mod logic
+                        -- (onSummonSpawned or an admin-spawn closure); one bad
+                        -- newborn must not abort the rest of the summon.
                         pcall(function()
                             for i = 0, added:size() - 1 do
                                 local zed = added:get(i)
@@ -574,6 +582,9 @@ end
 
 local function svApplyEMPEnduranceDrain(player)
     if not player then return end
+    -- guard stays: MoodleType and CharacterStat are Java enum globals, and
+    -- indexing them when the enum is absent in a future build throws before
+    -- any of the reads below run.
     pcall(function()
         local level = player:getMoodles():getMoodleLevel(MoodleType.ENDURANCE)
         if level < 4 then
@@ -614,14 +625,17 @@ local function svDamageWorldElectronics(x, y, z, radius, drainPercent)
                                 -- ISMoveablesAction.lua and ISVehicleDashboard.lua.
                                 local dd = obj.getDeviceData and obj:getDeviceData()
                                 if dd and dd.getIsTurnedOn and dd:getIsTurnedOn() then
+                                    -- guard stays: DeviceData.setIsTurnedOn:455 ends
+                                    -- with IsoGenerator.updateGenerator(getParent()
+                                    -- .getSquare()) and never null-checks getParent().
                                     pcall(dd.setIsTurnedOn, dd, false)
                                 end
                             elseif obj and instanceof(obj, "IsoWindow") then
                                 -- Shockwave shatters intact panes in the blast radius.
-                                -- pcall around smashWindow because the engine call can
-                                -- throw if the window is in a half-state mid-smash.
-                                local okSm, smashed = pcall(obj.isSmashed, obj)
-                                if okSm and not smashed then
+                                -- guard stays: IsoWindow.smashWindow:275 dereferences
+                                -- this.square and PolygonalMap2.instance unguarded, so
+                                -- a pane on a half-unloaded square throws.
+                                if not obj:isSmashed() then
                                     pcall(obj.smashWindow, obj)
                                 end
                             end
@@ -638,7 +652,7 @@ local EMP_INNER_DMG = 0.15
 local EMP_OUTER_DMG = 0.10
 
 -- Switch off + partially drain a player's handheld electronics. Filter is
--- "currently activated OR has a Battery tag OR type is Battery" so we hit
+-- "currently activated OR type is Battery" so we hit
 -- flashlights, lanterns, walkies, watches, plus loose battery stockpiles,
 -- without accidentally consuming "uses" on unrelated drainables (food, water,
 -- books, page-read trackers). Everything pcall-wrapped because inventory item
@@ -659,23 +673,27 @@ local function svDrainPlayerElectronics(player, drainPercent)
         local it = items:get(i)
         if it then
             local wasActive = false
-            local okA, isAct = pcall(it.isActivated, it)
-            if okA and isAct then
+            if it:isActivated() then
                 wasActive = true
-                pcall(it.setActivated, it, false)
+                it:setActivated(false)
             end
 
+            -- No hasTag("Battery") probe: InventoryItem.hasTag:2665/2669 only
+            -- takes ItemTag, Kahlua registers no String->ItemTag converter
+            -- (KahluaNumberConverter/KahluaArrayConverter are the only ones), and
+            -- ItemTag has no Battery constant anyway -- so that branch always
+            -- threw and was always swallowed. getType is the path that works.
             local isBattery = false
-            if it.hasTag then
-                local okTag, hasBat = pcall(it.hasTag, it, "Battery")
-                if okTag and hasBat then isBattery = true end
-            end
-            if not isBattery and it.getType then
-                local okT, t = pcall(it.getType, it)
-                if okT and t == "Battery" then isBattery = true end
+            if it.getType then
+                if it:getType() == "Battery" then isBattery = true end
             end
 
             if (wasActive or isBattery) and it.getCurrentUsesFloat and it.setUsedDelta then
+                -- guard stays: getCurrentUsesFloat/setUsedDelta are overridden per
+                -- item subclass (DrainableComboItem:86/98, Clothing:1257,
+                -- WeaponPart:307, Food:2037, Radio:271) and the drainable path
+                -- divides by the script's useDelta -- unverifiable across all of
+                -- them, and "hit" must only count items that really drained.
                 local okD = pcall(function()
                     local cur = it:getCurrentUsesFloat() or 0
                     it:setUsedDelta(math.max(0.0, cur - drainFrac))
@@ -749,26 +767,23 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent)
                                 local zdy = obj:getY() - y
                                 local zdSq = zdx * zdx + zdy * zdy
                                 if zdSq <= outerSq then
-                                    -- IsoZombie methods must be dispatched via colon-call
-                                    -- syntax (`obj:knockDown(...)`) for the Java bridge to
-                                    -- resolve them. Grabbing `obj.knockDown` as a value can
-                                    -- yield nil, and pcall would silently swallow the
-                                    -- "attempt to call a nil value" error - the original
-                                    -- pcall(obj.knockDown, obj, false) form looked correct
-                                    -- but quietly no-op'd in dedicated MP. Wrap in a
-                                    -- function so the dispatch happens inside the pcall.
+                                    -- Unguarded: IsoZombie.knockDown:4094 is six field
+                                    -- sets plus reportEvent, which on a zombie is only
+                                    -- ActionContext:219 occurredAnimEvents.add (the
+                                    -- IsoPlayer branch there is client-local-player only),
+                                    -- and getActionContext:1460 reads the
+                                    -- StateMachineComponent every IsoGameCharacter
+                                    -- registers in its constructor.
                                     if zdSq <= innerSq and not obj:isCrawling() and not obj:isOnFloor() then
-                                        pcall(function() obj:knockDown(false) end)
+                                        obj:knockDown(false)
                                     else
                                         -- Stagger-only: knockDown's flag set minus the
                                         -- knockdown flag, so the anim graph picks plain
                                         -- staggerback instead of staggerback-knockeddown.
-                                        pcall(function()
-                                            obj:setStaggerBack(true)
-                                            obj:setHitForce(0.5)
-                                            obj:setHitReaction("")
-                                            obj:reportEvent("wasHit")
-                                        end)
+                                        obj:setStaggerBack(true)
+                                        obj:setHitForce(0.5)
+                                        obj:setHitReaction("")
+                                        obj:reportEvent("wasHit")
                                     end
                                     zombiesHit = zombiesHit + 1
                                 end

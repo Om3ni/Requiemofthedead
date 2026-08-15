@@ -87,8 +87,8 @@ end
 function RQLoot.dropForZombie(zombie)
     if not zombie then return end
 
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if not ok or not oid then return end
+    local oid = zombie:getOnlineID()
+    if not oid then return end
     local zType = RQRegistry.getType(oid)
     if not zType then return end
 
@@ -108,6 +108,9 @@ function RQLoot.dropForZombie(zombie)
             -- Verify item script exists before adding (avoid Java NPE)
             local sm = getScriptManager()
             if sm and sm:getItem(itemType) then
+                -- guard stays: AddItem runs the item factory (script resolve +
+                -- InstanceItem), too deep to prove throw-free, and a bad entry
+                -- must not cost the rest of the drop.
                 local addOk, item = pcall(inv.AddItem, inv, itemType)
                 if addOk and item then
                     given[#given + 1] = itemType

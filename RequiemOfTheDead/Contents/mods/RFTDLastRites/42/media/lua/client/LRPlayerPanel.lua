@@ -74,7 +74,7 @@ Events.OnGameBoot.Add(function()
             else
                 LRPrefs.set(k, v == true)
             end
-            if LRDanger and LRDanger.update then pcall(LRDanger.update) end
+            if LRDanger and LRDanger.update then LRDanger.update() end
         end,
     }
 end)

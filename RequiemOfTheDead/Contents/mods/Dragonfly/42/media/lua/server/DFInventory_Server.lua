@@ -70,30 +70,23 @@ local function listAddressableItems(target)
     -- 1) Main inventory
     local inv = target:getInventory()
     if inv then
-        local items
-        pcall(function() items = inv:getItems() end)
+        local items = inv:getItems()
         if items then
             for i = 0, items:size() - 1 do add(items:get(i), "main", nil) end
         end
     end
 
     -- 2) Worn clothing
-    local worn
-    pcall(function() worn = target:getWornItems() end)
+    local worn = target:getWornItems()
     if worn then
-        local n = 0
-        pcall(function() n = worn:size() end)
-        for i = 0, n - 1 do
-            local item, loc
-            pcall(function() item = worn:getItemByIndex(i) end)
+        for i = 0, worn:size() - 1 do
             -- The WornItem carries the body location, which the modal's Location
-            -- column needs. Fetch it regardless of which accessor produced the
-            -- item, and leave the item-resolution order alone.
-            local entry
-            pcall(function() entry = worn:get(i) end)
+            -- column needs.
+            local entry = worn:get(i)
+            local item, loc
             if entry then
-                if not item then pcall(function() item = entry:getItem() end) end
-                pcall(function() loc = entry:getLocation() end)
+                item = entry:getItem()
+                loc  = entry:getLocation()
             end
             add(item, "worn", "[Worn] ", loc)
         end
@@ -101,27 +94,25 @@ local function listAddressableItems(target)
 
     -- 3) One-level bag contents
     if inv then
-        local items
-        pcall(function() items = inv:getItems() end)
+        local items = inv:getItems()
         if items then
             for i = 0, items:size() - 1 do
                 local container = items:get(i)
                 local sub
                 -- getInventory() lives ONLY on the InventoryContainer subclass
                 -- (bags), not base InventoryItem. Calling it on an ordinary
-                -- item is a nil-method call: pcall catches it functionally but
-                -- PZ still dumps a full stack trace to the log EVERY time, so a
-                -- snapshot of an inventory full of non-bag items floods the log.
-                -- Gate on the method's existence so the nil-call never fires.
+                -- item is a nil-method call, so gate on the method's existence.
                 if container and type(container.getInventory) == "function" then
-                    pcall(function() sub = container:getInventory() end)
+                    sub = container:getInventory()
                 end
                 if sub then
-                    local subItems
-                    pcall(function() subItems = sub:getItems() end)
+                    local subItems = sub:getItems()
                     local prefix = "[in bag] "
                     if container then
-                        pcall(function() prefix = "[in " .. (container:getName() or "bag") .. "] " end)
+                        -- getName routes through Translator/fluid chains -
+                        -- not verifiable throw-free, guard stays in direct form.
+                        local okN, nm = pcall(container.getName, container)
+                        if okN and nm then prefix = "[in " .. nm .. "] " end
                     end
                     if subItems then
                         for j = 0, subItems:size() - 1 do add(subItems:get(j), "bag", prefix) end
@@ -154,8 +145,7 @@ local function resolveItem(target, slotIdx, fullType)
     -- inventory shifted between snapshot and edit this catches it before we
     -- write to the wrong item.
     if fullType and fullType ~= "" then
-        local ok, ft = pcall(function() return it:getFullType() end)
-        if ok and ft ~= fullType then
+        if it:getFullType() ~= fullType then
             return nil, "inventory changed; refresh"
         end
     end
@@ -163,7 +153,9 @@ local function resolveItem(target, slotIdx, fullType)
 end
 
 local function syncTarget(target)
-    pcall(function() target:transmitModData() end)
+    -- pcall: wire send; must not let a transmit fault kill the handler
+    -- (suite policy on network sends - HBBedding keeps the same guard).
+    pcall(target.transmitModData, target)
     -- transmitModData only covers ModData. Item field changes (condition,
     -- usedDelta, etc.) need sendItemStats per-item or the owning client's
     -- next sync overwrites our writes - same client-authoritative pattern
@@ -175,19 +167,24 @@ end
 -- clobbered by their next inbound inventory sync.
 local function syncItem(item)
     if not item then return end
-    pcall(function() sendItemStats(item) end)
+    -- pcall: sendItemStats derefs worldItem:getSquare() with no null check
+    -- (GameServer:2906) - a floor item mid-despawn NPEs.
+    pcall(sendItemStats, item)
 end
 
 -- Container-level sync for add/remove. The state-field sendItemStats isn't
 -- enough when the item itself is new or gone.
+-- sendAddItemToContainer / sendRemoveItemFromContainer (GameServer:2220 / :2250)
+-- null-guard every branch and route through INetworkPacket.send, which
+-- try/catches the packet write - no guard needed on non-nil args.
 local function syncAdded(container, item)
     if not container or not item then return end
-    pcall(function() sendAddItemToContainer(container, item) end)
+    sendAddItemToContainer(container, item)
 end
 
 local function syncRemoved(container, item)
     if not container or not item then return end
-    pcall(function() sendRemoveItemFromContainer(container, item) end)
+    sendRemoveItemFromContainer(container, item)
 end
 
 -- Where an item sits on the target, for the modal's Location column.
@@ -202,8 +199,7 @@ local function resolveLocation(entry, primary, secondary)
     if it == primary   then return "Primary"   end
     if it == secondary then return "Secondary" end
 
-    local slot = nil
-    pcall(function() slot = it:getAttachedSlot() end)
+    local slot = it:getAttachedSlot()
     if type(slot) == "number" and slot > -1 then
         return "Hotbar " .. tostring(slot)
     end
@@ -254,9 +250,8 @@ Events.OnServerStarted.Add(function()
                 tostring(target:getUsername())))
 
             -- Resolve hand items up front so we can tag equipped weapons.
-            local primary, secondary
-            pcall(function() primary   = target:getPrimaryHandItem()   end)
-            pcall(function() secondary = target:getSecondaryHandItem() end)
+            local primary   = target:getPrimaryHandItem()
+            local secondary = target:getSecondaryHandItem()
 
             local rows = listAddressableItems(target)
             local out = {}
@@ -270,19 +265,23 @@ Events.OnServerStarted.Add(function()
                 -- the index into the unfiltered walk, because resolveItem re-walks
                 -- that same function to map an edit back to an item, and DFBanBox's
                 -- login scrub shares it.
-                local hidden = false
-                pcall(function() hidden = it:isHidden() == true end)
+                -- isHidden dereferences scriptItem, which can be null on
+                -- legacy items - guard stays, in direct form.
+                local okH, hidden = pcall(it.isHidden, it)
+                hidden = okH and hidden == true
 
                 if hidden then
                     hiddenCount = hiddenCount + 1
                 else
                     if entry.source == "worn" then wornCount = wornCount + 1 end
-                    local ft, name, cond, condMax, count
-                    pcall(function() ft      = it:getFullType()     end)
-                    pcall(function() name    = it:getName()         end)
-                    pcall(function() cond    = it:getCondition()    end)
-                    pcall(function() condMax = it:getConditionMax() end)
-                    pcall(function() count   = it:getCount()        end)
+                    local ft      = it:getFullType()
+                    local cond    = it:getCondition()
+                    local condMax = it:getConditionMax()
+                    local count   = it:getCount()
+                    -- getName routes through Translator/fluid chains - not
+                    -- verifiable throw-free, guard stays in direct form.
+                    local okN, name = pcall(it.getName, it)
+                    if not okN then name = nil end
 
                     local bucket, baseCat, weaponCapable = RDItemKind.classify(it)
 
@@ -335,7 +334,7 @@ Events.OnServerStarted.Add(function()
                     { total_items = #out },
                     { username = args.username })
             else
-                pcall(sendServerCommand, player, DFCore.MODULE, "PlayerInventory",
+                sendServerCommand(player, DFCore.MODULE, "PlayerInventory",
                     { username = args.username, items = out })
             end
             return { ok = true }
@@ -354,7 +353,7 @@ Events.OnServerStarted.Add(function()
             snap.username = args.username
             snap.slot     = args.slot
             snap.fullType = args.fullType
-            pcall(sendServerCommand, player, DFCore.MODULE, "PlayerInventoryItem", snap)
+            sendServerCommand(player, DFCore.MODULE, "PlayerInventoryItem", snap)
             return { ok = true }
         end,
     }
@@ -436,8 +435,8 @@ Events.OnServerStarted.Add(function()
             if not inv then return { ok = false, reason = "no inventory" } end
             local added = 0
             for _ = 1, count do
-                local newItem
-                local ok = pcall(function() newItem = inv:AddItem(ft) end)
+                -- AddItem takes an arbitrary client string; it can throw.
+                local ok, newItem = pcall(inv.AddItem, inv, ft)
                 if ok and newItem then
                     added = added + 1
                     syncAdded(inv, newItem)
@@ -467,9 +466,10 @@ Events.OnServerStarted.Add(function()
             -- Capture the item's actual container before removal - if it was
             -- in a sub-container (bag) we need to sync against that container,
             -- not the player's main inventory.
-            local container = inv
-            pcall(function() container = item:getContainer() or inv end)
-            pcall(function() inv:Remove(item) end)
+            local container = item:getContainer() or inv
+            -- ItemContainer.Remove:1940 is null/instanceof-guarded throughout;
+            -- inv itself can be nil for a worn-only resolve, hence the check.
+            if inv then inv:Remove(item) end
             syncRemoved(container, item)
             syncTarget(target)
             DFCore.audit("playerInventoryRemove", player,
@@ -501,7 +501,8 @@ Events.OnServerStarted.Add(function()
             for _, entry in ipairs(listAddressableItems(target)) do
                 local it = entry.item
                 if it and RDClothing.isClothing(it) then
-                    local ok = pcall(function() it:fullyRestore() end)
+                    -- pcall: compound engine op, per-item loop - direct form
+                    local ok = pcall(it.fullyRestore, it)
                     if ok then
                         repaired = repaired + 1
                         clothing = clothing + 1
@@ -552,7 +553,8 @@ Events.OnServerStarted.Add(function()
                 end
             end
             local before = #toRemove
-            pcall(function() inv:clear() end)
+            -- ItemContainer.clear:2527 is a list clear plus two flag sets.
+            inv:clear()
             for _, it in ipairs(toRemove) do
                 syncRemoved(inv, it)
             end

@@ -24,17 +24,16 @@ if isServer() and not isClient() then return end
 
 local function onEnterVehicle(character)
     if not character then return end
-    local ok, v = pcall(function() return character:getVehicle() end)
-    if not ok or not v then return end
+    -- getVehicle is a field return (IsoGameCharacter.java:10160); isDriver is
+    -- a bounds-checked seat scan (BaseVehicle.java:1815)
+    local v = character:getVehicle()
+    if not v then return end
     -- Attribute the DRIVER only - the one who took / hotwired the car. A
     -- passenger riding along is not the keeper.
-    local okDrv, isDrv = pcall(function() return v:isDriver(character) end)
-    if not okDrv or not isDrv then return end
+    if not v:isDriver(character) then return end
     if RCShared.isWreck(v) then return end
     if RCClaim.isClaimed(v) then return end   -- claimed = already Janitor-immune
-    pcall(function()
-        sendClientCommand(RCShared.MODULE, "used", { vehicleId = v:getId() })
-    end)
+    sendClientCommand(RCShared.MODULE, "used", { vehicleId = v:getId() })
 end
 
 Events.OnEnterVehicle.Add(onEnterVehicle)

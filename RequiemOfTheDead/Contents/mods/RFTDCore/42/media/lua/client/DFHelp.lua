@@ -38,6 +38,9 @@ local MAX_H = 460
 local function fontBody()  return DFKit.font.small or UIFont.Small end
 local function fontTitle() return DFKit.font.label or UIFont.Small end
 
+-- getFontHeight/MeasureStringX (TextManager:127) NPE on a font this build
+-- lacks; each measure below keeps its fallback behind the guard.
+
 local function lineH()
     local fh = 14
     pcall(function() fh = getTextManager():getFontHeight(fontBody()) end)
@@ -157,6 +160,7 @@ function DFHelp:onMouseUpOutside() self.dragging = false end
 function DFHelp.close()
     local w = DFHelpState.instance
     if w then
+        -- vanilla ISUI Lua teardown; a fault must still null the instance
         pcall(function() w:removeFromUIManager() end)
         DFHelpState.instance = nil
     end

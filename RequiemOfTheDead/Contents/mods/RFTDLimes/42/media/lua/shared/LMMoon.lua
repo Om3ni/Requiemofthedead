@@ -114,12 +114,17 @@ end
 -- to become a phase no profile can name.
 function Limes.moonPhase()
     if provider then
+        -- pcall: `provider` is injected from outside this file (tests, an
+        -- admin console) and its body is not ours to verify.
         local ok, p = pcall(provider)
         p = ok and tonumber(p) or nil
         if p and p >= 0 and p <= 7 then return math.floor(p) end
         return nil
     end
     local phase = nil
+    -- pcall: getClimateMoon is absent under a headless test harness and
+    -- returns nil before ClimateManager is up, so both the global and its
+    -- result can fail - which is exactly the "unknowable" this returns nil for.
     local ok = pcall(function()
         phase = getClimateMoon():getCurrentMoonPhase()
     end)
@@ -168,6 +173,8 @@ end
 function LMMoon.poll() watch() end
 
 if Events and Events.EveryTenMinutes then
+    -- pcall: watch() calls Limes.refresh(), which fans out to every registered
+    -- listener; a throw from any of them must not take EveryTenMinutes down.
     Events.EveryTenMinutes.Add(function() pcall(watch) end)
 end
 

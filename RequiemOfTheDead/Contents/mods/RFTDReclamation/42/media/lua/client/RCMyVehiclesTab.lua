@@ -211,7 +211,8 @@ function T.request()
     -- time it was ever looked at. Clearing all of it is fine - it refills on
     -- demand, one request per car actually looked at.
     if RCPartsView.invalidate then RCPartsView.invalidate() end
-    pcall(function() sendClientCommand(getPlayer(), M, "myvehicles", {}) end)
+    -- sendClientCommand is verified safe (pcall-safe.json globals)
+    sendClientCommand(getPlayer(), M, "myvehicles", {})
 end
 
 function T.setList(list)
@@ -386,7 +387,7 @@ end
 function T:onReleaseConfirm(button, claimId)
     if button.internal ~= "YES" then return end
     if not claimId then return end
-    pcall(function() sendClientCommand(getPlayer(), M, "releaseclaim", { claimId = claimId }) end)
+    sendClientCommand(getPlayer(), M, "releaseclaim", { claimId = claimId })
     -- the server pushes a fresh slice back after processing; nothing else to do
 end
 
@@ -398,6 +399,8 @@ function T.build(spec, panel, x, y, w, h)
     -- portrait, and a hot reload from that build can leave its scene alive.
     -- The portrait itself is retired (see header).
     if T.preview then
+        -- guarded: removeFromUIManager is vanilla LUA and the stale scene may
+        -- be from an older build (hot reload); failure just leaks the element
         pcall(function() T.preview:removeFromUIManager() end)
         T.preview = nil
     end

@@ -32,16 +32,18 @@ LMRestrictCl = LMRestrictCl or {}
 
 local function denied(x, y, flag)
     if not x or not y then return false, nil end
+    -- pcall stays: this runs INSIDE a wrapped vanilla action, and a throw in
+    -- the store walk would break that action rather than just the flag.
     local ok, zone = pcall(Limes.getLocation, math.floor(x), math.floor(y))
     if not ok or not zone or not zone.fields then return false, nil end
     if zone.fields[flag] == true then return true, zone.name end
     return false, nil
 end
 
+-- No guard: getSpecificPlayer (LuaManager:3617) is `IsoPlayer.players[player]`,
+-- and index 0 is always in bounds of that four-slot static array.
 local function me()
-    local p = nil
-    pcall(function() p = getSpecificPlayer(0) end)
-    return p
+    return getSpecificPlayer(0)
 end
 
 -- ---------------------------------------------------------------------------
@@ -64,6 +66,8 @@ local SAYS = {
 function LMRestrictCl.explain(flag, zone)
     local shape = SAYS[flag] or "That is not allowed in %s."
     local msg = string.format(shape, tostring(zone or "this area"))
+    -- pcall: DFFeedback belongs to Dragonfly - a foreign callback whose body is
+    -- not ours to verify, and a toast must never break the refusal it explains.
     if DFFeedback and DFFeedback.bad then pcall(DFFeedback.bad, msg) end
     return msg
 end
@@ -71,6 +75,8 @@ end
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= "RFTDLimes" or command ~= "restricted" then return end
     if type(args) ~= "table" then return end
+    -- pcall: OnServerCommand is shared with every other mod's handler, so a
+    -- throw here would cost them their turn on this event.
     pcall(LMRestrictCl.explain, args.flag, args.zone)
 end)
 
@@ -96,11 +102,14 @@ local function wrapDestroy()
     end
     local original = ISDestroyStuffAction.isValid
     ISDestroyStuffAction.isValid = function(self)
+        -- self.item is the action's target object, and getSquare is a field
+        -- return on every class that carries it (IsoObject:1126,
+        -- IsoMovingObject:534); IsoGridSquare.getX/getY are too (:6331/:6335).
+        -- Tested rather than assumed, because the target is the action's to
+        -- choose - indexing an absent method is safe, calling one is not.
         local x, y
-        pcall(function()
-            local sq = self.item and self.item:getSquare()
-            if sq then x, y = sq:getX(), sq:getY() end
-        end)
+        local sq = self.item and self.item.getSquare and self.item:getSquare()
+        if sq then x, y = sq:getX(), sq:getY() end
         if x then
             local no, zone = denied(x, y, "nodestruction")
             if no then
@@ -136,9 +145,9 @@ local lastSaid = 0
 local function bounce()
     local p = me()
     if not p then return end
-    local x, y
-    local ok = pcall(function() x, y = p:getX(), p:getY() end)
-    if not ok or not x then return end
+    -- No guard: getX/getY are field returns on IsoMovingObject and p is the
+    -- local player, checked non-nil above.
+    local x, y = p:getX(), p:getY()
 
     local no, zone = denied(x, y, "noplayers")
     if not no then
@@ -158,6 +167,9 @@ local function bounce()
         return
     end
 
+    -- pcall stays and is load-bearing: setX/setY exist (IsoMovingObject:478,
+    -- :495) but setLx/setLy appear NOWHERE in 42.20.2, so this body throws
+    -- part-way through. The guard is what keeps that out of OnPlayerUpdate.
     pcall(function()
         p:setX(lastGood[1]); p:setLx(lastGood[1])
         p:setY(lastGood[2]); p:setLy(lastGood[2])
@@ -180,6 +192,8 @@ Events.OnGameStart.Add(function() wrapDestroy() end)
 -- checked once a second, a sprinting player is most of the way across a small
 -- zone before anything notices.
 Events.OnPlayerUpdate.Add(function(player)
+    -- pcall: per player per tick on an event every other mod listens to, and
+    -- bounce()'s teleport can throw (see setLx above).
     if player and player == me() then pcall(bounce) end
 end)
 

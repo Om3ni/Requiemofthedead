@@ -43,16 +43,15 @@ local function collect(player)
 
     local function consider(item, where)
         if not item then return end
-        local okId, id = pcall(function() return item:getID() end)
-        if not okId or seen[id] then return end
+        local id = item:getID()
+        if seen[id] then return end
         seen[id] = true
 
         local full = item:getFullType()
-        local fixes = 0
-        pcall(function()
-            local f = FixingManager.getFixes(item)
-            fixes = (f and f:size()) or 0
-        end)
+        -- getFixes NPEs on any loaded fixing script with no Require line
+        -- (Fixing.require stays null) - the guard is load-bearing.
+        local okF, f = pcall(FixingManager.getFixes, item)
+        local fixes = (okF and f and f:size()) or 0
         local known, learnable = 0, 0
         for _, rec in ipairs(WSIndex.forOutput(full)) do
             if WSIndex.known(player, rec) then known = known + 1
@@ -60,10 +59,9 @@ local function collect(player)
         end
         if fixes == 0 and known == 0 and learnable == 0 then return end
 
-        local cond, condMax = nil, 0
-        pcall(function() condMax = item:getConditionMax() or 0 end)
+        local cond, condMax = nil, (item:getConditionMax() or 0)
         if condMax and condMax > 0 then
-            pcall(function() cond = item:getCondition() end)
+            cond = item:getCondition()
         end
         rows[#rows + 1] = {
             item = item, full = full,
@@ -84,10 +82,8 @@ local function collect(player)
     for i = 0, (att and att:size() or 0) - 1 do
         consider(att:getItemByIndex(i), "Hotbar")
     end
-    pcall(function()
-        local all = player:getInventory():getAllEvalRecurse(function() return true end)
-        for i = 0, all:size() - 1 do consider(all:get(i), "Carried") end
-    end)
+    local all = player:getInventory():getAllEvalRecurse(function() return true end)
+    for i = 0, all:size() - 1 do consider(all:get(i), "Carried") end
 
     -- Worst condition first; condition-less lines (crafting targets that
     -- never wear) after, alphabetical.

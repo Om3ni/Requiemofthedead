@@ -21,9 +21,8 @@ local function onRenderTick()
         local pz = pos and pos.z or 0
         local zombie = RQCore.findZombieByID(onlineID, px, py, pz)
         if zombie then
-            local ok, dead = pcall(zombie.isDead, zombie)
-            if not ok or dead then
-                pcall(zombie.setOutlineHighlight, zombie, playerNum, false)
+            if zombie:isDead() then
+                zombie:setOutlineHighlight(playerNum, false)
             else
                 local col
                 -- Boss aura override: if this zombie is currently being painted by
@@ -41,8 +40,8 @@ local function onRenderTick()
                 end
                 col = col or RQConfig.COLORS[zType]
                 if col then
-                    pcall(zombie.setOutlineHighlight, zombie, playerNum, true)
-                    pcall(zombie.setOutlineHighlightCol, zombie, playerNum, col.r, col.g, col.b, col.a)
+                    zombie:setOutlineHighlight(playerNum, true)
+                    zombie:setOutlineHighlightCol(playerNum, col.r, col.g, col.b, col.a)
                 end
             end
         end
@@ -60,7 +59,7 @@ function RQHighlight.remove(onlineID)
     if not zombie then return end
     local player = getPlayer()
     if not player then return end
-    pcall(zombie.setOutlineHighlight, zombie, player:getPlayerNum(), false)
+    zombie:setOutlineHighlight(player:getPlayerNum(), false)
 end
 
 -- ---------------------------------------------------------------------------

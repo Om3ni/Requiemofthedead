@@ -67,12 +67,14 @@ end
 -- wipe makes staleness expensive) and not a Lua constant (changing a server
 -- setting must never require a Workshop republish).
 local function configuredName()
-    local ok, v = pcall(function() return SandboxVars.RFTDCore and SandboxVars.RFTDCore.SeasonName end)
-    if ok and type(v) == "string" and v ~= "" then return sanitize(v) end
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore.SeasonName
+    if type(v) == "string" and v ~= "" then return sanitize(v) end
     return "unset"
 end
 
 local function emitSchema()
+    -- getFileWriter allowlist I/O; a failed schema write is retried on the
+    -- next dirty mark and must not disturb the caller
     pcall(function()
         -- Rewritten whole, so EXT_DOC; the bare ".json" is refused since 42.20.
         local w = getFileWriter(DIR .. "schema" .. RDShared.EXT_DOC, true, false)
@@ -95,8 +97,9 @@ end
 local function seasonHasRecords(name)
     local base = DIR .. "season/" .. name .. "/chronicle/world"
     for _, ext in ipairs({ RDShared.EXT_STREAM, RDShared.EXT_STREAM_LEGACY }) do
-        local ok, exists = pcall(function() return cacheFileExists(base .. ext) end)
-        if ok and exists == true then return true end
+        -- cacheFileExists (LuaManager:4618) is string ops + File.exists -
+        -- cannot throw
+        if cacheFileExists(base .. ext) == true then return true end
     end
     return false
 end
@@ -105,8 +108,10 @@ end
 -- clock exists (nothing chronicle-worthy can happen before it does).
 function RDSeasonServer.ensure()
     if booted then return true end
-    local ok = pcall(function() return getGameTime() ~= nil end)
-    if not ok then return false end
+    -- getGameTime() is a bare read of GameTime.instance (LuaManager:4733) and
+    -- never throws; the old pcall checked only that it RAN, so this nil-check
+    -- is the gate the comment above always described
+    if getGameTime() == nil then return false end
     booted = true   -- set first: the write below goes through RDLog, which calls back here
 
     current = configuredName()

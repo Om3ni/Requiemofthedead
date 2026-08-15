@@ -1,0 +1,17 @@
+{
+  "_comment": "Per-mod pcall ceiling. Lower is free; raising it is a deliberate act - document the guard's reason in the code first.",
+  "mods": {
+    "Dragonfly": 48,
+    "RFTDBanBox": 1,
+    "RFTDCore": 124,
+    "RFTDDirge": 43,
+    "RFTDHusbandry": 40,
+    "RFTDLastRites": 4,
+    "RFTDLimes": 50,
+    "RFTDMemoir": 46,
+    "RFTDOddsAndEnds": 39,
+    "RFTDReaper": 8,
+    "RFTDReclamation": 82,
+    "RFTDStaffTools": 4
+  }
+}

@@ -106,9 +106,7 @@ function MMTraitRepair.runOne(admin, targetUsername, apply)
     if not target then
         return { ok = false, reason = targetUsername .. " must be online to repair." }
     end
-    local dead = false
-    pcall(function() dead = target:isDead() end)
-    if dead then
+    if target:isDead() then
         return { ok = false, reason = targetUsername .. " is dead - repair after they respawn." }
     end
 

@@ -12,10 +12,10 @@ RQSvScreamer.state = {}  -- scID -> { lastScreamTime, castDue, isAlert }
 
 -- returns true if the zombie currently has a live target in aggro, used to avoid double-triggering
 local function svScreamerHasAggro(zombie)
-    local okTarget, target = pcall(zombie.getTarget, zombie)
-    if not okTarget or not target then return false end
-    local okDead, dead = pcall(target.isDead, target)
-    if okDead and dead then return false end
+    local target = zombie:getTarget()
+    if not target then return false end
+    -- isDead lives on IsoGameCharacter; a non-character target indexes nil
+    if target.isDead and target:isDead() then return false end
     return true
 end
 
@@ -28,9 +28,14 @@ end
 -- nearby count. Coords are explicit rather than read off the source, so the
 -- admin path and the zombie path run the exact same code instead of drifting.
 function RQSvScreamer.screamAt(source, zx, zy, zz, cfg)
+    -- guard stays and is load-bearing: addSound is a vanilla Lua global (not in
+    -- the Java decompile), and its failure is what selects the WorldSoundManager
+    -- fallback below.
     local okSound = pcall(addSound, source, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
     if not okSound then
         RQDirgeLog.write("Screamer", "[WARN] addSound failed - falling back to WorldSoundManager at (" .. zx .. "," .. zy .. "," .. zz .. ")")
+        -- guard stays: last-resort fallback -- if getWorldSoundManager() is nil
+        -- too, the scream must still spawn its wave.
         pcall(function()
             getWorldSoundManager():addSound(source, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius, false)
         end)
@@ -80,8 +85,8 @@ function RQSvScreamer.tick(zombie)
     local playerInAwareness = RQSvShared.isAnyPlayerInRange(zombie, awarenessRange)
     if playerInAwareness and not state.isAlert then
         state.isAlert = true
-        pcall(zombie.setUseless,  zombie, false)
-        pcall(zombie.setVariable, zombie, "bPathfind", true)
+        zombie:setUseless(false)
+        zombie:setVariable("bPathfind", true)
         RQDirgeLog.write("Screamer", "[INFO] id=" .. tostring(scID) .. " idle->ALERT awarenessRange=" .. awarenessRange)
     elseif not playerInAwareness and state.isAlert then
         state.isAlert = false

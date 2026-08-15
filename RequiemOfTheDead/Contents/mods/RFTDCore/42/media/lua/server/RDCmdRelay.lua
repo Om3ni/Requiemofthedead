@@ -52,9 +52,8 @@ local dropped      = 0
 local lastFlushMs  = 0
 
 local function sb(key, default)
-    local v
-    local ok = pcall(function() v = SandboxVars.RFTDCore and SandboxVars.RFTDCore[key] end)
-    if not ok or v == nil then return default end
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore[key]
+    if v == nil then return default end
     return v
 end
 
@@ -74,10 +73,7 @@ end
 -- already uses; isTopAdmin alone would miss capability-granted roles.
 local function isStaff(player)
     if not RDAccess then return false end
-    local ok, v = pcall(function()
-        return RDAccess.isTopAdmin(player) or RDAccess.hasAnyCapability(player)
-    end)
-    return ok and v == true
+    return (RDAccess.isTopAdmin(player) or RDAccess.hasAnyCapability(player)) == true
 end
 
 -- ---------------------------------------------------------------------------
@@ -126,17 +122,18 @@ local function flush()
     local payload = { n = #buf, dropped = dropped, rows = buf }
     buf, dropped = {}, 0
 
-    local ok, players = pcall(getOnlinePlayers)
-    if not ok or not players then return end
+    local players = getOnlinePlayers()
+    if not players then return end
 
-    pcall(function()
-        for i = 0, players:size() - 1 do
-            local p = players:get(i)
-            if p and isStaff(p) then
-                sendServerCommand(p, RDShared.MODULE, "cmdRelay", payload)
-            end
+    -- size/get are bounds-safe in the loop; isStaff routes through RDAccess
+    -- (non-throwing); sendServerCommand (GameServer:3256) early-returns for
+    -- unmapped/closed connections
+    for i = 0, players:size() - 1 do
+        local p = players:get(i)
+        if p and isStaff(p) then
+            sendServerCommand(p, RDShared.MODULE, "cmdRelay", payload)
         end
-    end)
+    end
 end
 
 Events.OnTick.Add(function()

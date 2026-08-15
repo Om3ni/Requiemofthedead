@@ -75,8 +75,7 @@ function RQHealthBarHUD:render()
                     for i = 0, movObjs:size() - 1 do
                         local obj = movObjs:get(i)
                         if obj and instanceof(obj, "IsoZombie") then
-                            local ok, dead = pcall(obj.isDead, obj)
-                            if ok and not dead then
+                            if not obj:isDead() then
                                 local zx = obj:getX()
                                 local zy = obj:getY()
                                 local zz = obj:getZ()
@@ -97,8 +96,8 @@ function RQHealthBarHUD:render()
                                     local md = obj:getModData()
                                     local maxHP = md["RQJuggMaxHP"]
                                     if not maxHP then
-                                        local sok, oid = pcall(obj.getOnlineID, obj)
-                                        if sok and oid and RQReconcile and RQReconcile.scavClientState then
+                                        local oid = obj:getOnlineID()
+                                        if oid and RQReconcile and RQReconcile.scavClientState then
                                             local sc = RQReconcile.scavClientState[oid]
                                             if sc and sc.peakHP and sc.peakHP > 0 then
                                                 maxHP = sc.peakHP
@@ -136,8 +135,8 @@ function RQHealthBarHUD:render()
                                     end
 
                                     -- colored border on specials so they pop
-                                    local ok2, zoid = pcall(obj.getOnlineID, obj)
-                                    local zType = ok2 and zoid and RQRegistry.activeZombies[zoid]
+                                    local zoid = obj:getOnlineID()
+                                    local zType = zoid and RQRegistry.activeZombies[zoid]
                                     if zType then
                                         local col = RQConfig.COLORS[zType]
                                         if col then
@@ -168,6 +167,9 @@ end
 local function onGameStart()
     hudActive = false
     if hudPanel and hudPanel.javaObject then
+        -- guard stays: removeFromUIManager is vanilla ISUIElement Lua, not in the
+        -- Java decompile, and a half-torn-down panel from a previous session must
+        -- not stop the new HUD being created below.
         pcall(hudPanel.removeFromUIManager, hudPanel)
     end
     hudPanel = RQHealthBarHUD:new()

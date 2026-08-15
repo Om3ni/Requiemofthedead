@@ -84,30 +84,28 @@ function RCRespawn.observe(vehicle)
     local c = RCShared.cfg()
     if not (c.enabled and c.respawnOnDestroy) then return end
 
-    pcall(function()
-        local md = vehicle:getModData()
-        if not md then return end
-        if RCShared.isWreck(vehicle) then
-            if md[KEY_INTACT] then
-                md[KEY_INTACT] = nil
-                local trailer = RCShared.isTrailer(vehicle)
-                RCRegistry.addToken(trailer and "trailer" or "vehicle")
-                local tv, tt = RCRegistry.tokens()
-                RCAudit.log("DESTROYED", nil, {
-                    vehicle = vehicle:getScriptName(),
-                    x = math.floor(vehicle:getX()), y = math.floor(vehicle:getY()),
-                    trailer = trailer and true or false,
-                    tokensVehicle = tv, tokensTrailer = tt,
-                })
-                RCShared.dbg("respawn: %s became a wreck - token minted (v=%d t=%d)",
-                    tostring(vehicle:getScriptName()), tv, tt)
-            end
-        elseif not md[KEY_INTACT] then
-            -- First time we have seen this car alive. Stamped once, so the
-            -- write happens on discovery rather than every sweep.
-            md[KEY_INTACT] = true
+    local md = vehicle:getModData()
+    if not md then return end
+    if RCShared.isWreck(vehicle) then
+        if md[KEY_INTACT] then
+            md[KEY_INTACT] = nil
+            local trailer = RCShared.isTrailer(vehicle)
+            RCRegistry.addToken(trailer and "trailer" or "vehicle")
+            local tv, tt = RCRegistry.tokens()
+            RCAudit.log("DESTROYED", nil, {
+                vehicle = vehicle:getScriptName(),
+                x = math.floor(vehicle:getX()), y = math.floor(vehicle:getY()),
+                trailer = trailer and true or false,
+                tokensVehicle = tv, tokensTrailer = tt,
+            })
+            RCShared.dbg("respawn: %s became a wreck - token minted (v=%d t=%d)",
+                tostring(vehicle:getScriptName()), tv, tt)
         end
-    end)
+    elseif not md[KEY_INTACT] then
+        -- First time we have seen this car alive. Stamped once, so the
+        -- write happens on discovery rather than every sweep.
+        md[KEY_INTACT] = true
+    end
 end
 
 -- ---------------------------------------------------------------------------
@@ -166,11 +164,10 @@ function RCRespawn.placeNear(player, avoid)
     local roster = RCNoVanilla.roster(c.respawnModdedOnly)
     if not roster or #roster == 0 then return nil, "noroster" end
 
-    local px, py, pz
-    local okPos = pcall(function()
-        px, py, pz = math.floor(player:getX()), math.floor(player:getY()), math.floor(player:getZ())
-    end)
-    if not okPos or not px then return nil, "nospot" end
+    if not player then return nil, "nospot" end
+    local px = math.floor(player:getX())
+    local py = math.floor(player:getY())
+    local pz = math.floor(player:getZ())
 
     local sx, sy, sz = RCParking.findSpot(px, py, pz, c.respawnMinDist, c.respawnMaxDist, avoid)
     if not sx then return nil, "nospot" end
@@ -198,13 +195,11 @@ function RCRespawn.placeNear(player, avoid)
     })
     if not vehicle then return nil, reason or "spawnfailed" end
 
-    pcall(function()
-        local md = vehicle:getModData()
-        md[KEY_BORN]   = os.time()
-        -- Born alive, so a later wreck correctly mints its own replacement and
-        -- the loop continues rather than terminating at this car.
-        md[KEY_INTACT] = true
-    end)
+    local md = vehicle:getModData()
+    md[KEY_BORN]   = os.time()
+    -- Born alive, so a later wreck correctly mints its own replacement and
+    -- the loop continues rather than terminating at this car.
+    md[KEY_INTACT] = true
 
     RCAudit.log("RESPAWN", nil, {
         vehicle = model, x = sx, y = sy, z = sz,

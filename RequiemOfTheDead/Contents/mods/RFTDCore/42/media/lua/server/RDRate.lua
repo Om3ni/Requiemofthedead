@@ -85,7 +85,7 @@ end
 local function prune(p)
     local name
     if type(p) == "string" then name = p
-    elseif p and p.getUsername then pcall(function() name = p:getUsername() end) end
+    elseif p and p.getUsername then name = p:getUsername() end
     RDRate.forget(name)
 end
 if Events.OnDisconnect then Events.OnDisconnect.Add(prune) end

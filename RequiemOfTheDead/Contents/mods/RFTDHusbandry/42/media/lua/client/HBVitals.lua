@@ -29,18 +29,20 @@ if isServer() then return end
 
 HBVitals = HBVitals or {}
 
--- Read vitals off a LIVE IsoAnimal. Every accessor is pcall-wrapped so one
--- broken method cannot kill the caller's whole row.
+-- Read vitals off a LIVE IsoAnimal. getHealth/getStats():get are trivial
+-- field reads (stats is a final field; Stats.get is a map lookup), so no
+-- guards are needed on a non-nil animal.
 -- Returns a table shaped exactly like a scanned row's vitals fields, so
 -- severity() below takes either without caring which it got.
 function HBVitals.read(animal)
     local v = { hp = 0, hunger = 0, thirst = 0, stress = 0 }
     if not animal then return v end
     -- getHealth() is 0..1 for animals, NOT 0..100 like player getHealth.
-    pcall(function() v.hp = (animal:getHealth() or 0) * 100 end)
-    pcall(function() v.hunger = animal:getStats():get(CharacterStat.HUNGER) or 0 end)
-    pcall(function() v.thirst = animal:getStats():get(CharacterStat.THIRST) or 0 end)
-    pcall(function() v.stress = animal:getStats():get(CharacterStat.STRESS) or 0 end)
+    v.hp = (animal:getHealth() or 0) * 100
+    local stats = animal:getStats()
+    v.hunger = stats:get(CharacterStat.HUNGER) or 0
+    v.thirst = stats:get(CharacterStat.THIRST) or 0
+    v.stress = stats:get(CharacterStat.STRESS) or 0
     return v
 end
 
@@ -90,13 +92,17 @@ end
 
 -- A short name for an animal, preferring what the player called it.
 function HBVitals.nameOf(animal)
-    local name
-    pcall(function()
-        local n = animal:getCustomName()
-        if n and n ~= "" then name = n else name = animal:getFullName() end
-    end)
+    if not animal then return "?" end
+    local name = animal:getCustomName()
     if not name or name == "" then
-        pcall(function() name = animal:getAnimalType() end)
+        -- KEEP: getFullName (IsoAnimal:2050) dereferences getData().getBreed()
+        -- and runs the Translator; data is null on an animal whose constructor
+        -- bailed early (IsoAnimal:259-275). Falls through to the type name.
+        local ok, fn = pcall(animal.getFullName, animal)
+        if ok then name = fn end
+    end
+    if not name or name == "" then
+        name = animal:getAnimalType()
     end
     return name or "?"
 end

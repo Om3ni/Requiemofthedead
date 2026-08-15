@@ -90,9 +90,10 @@ local ALERT_FRAME_MS = 400
 local iconCache = {}   -- bucket -> { off = tex, on = tex, alert = tex } | false
 
 local function tex(path)
-    local t
-    pcall(function() t = getTexture(path) end)
-    return t
+    -- the getTexture GLOBAL is self-catching (LuaManager:6855 ->
+    -- Texture.getSharedTexture:406, try/catch returning null), so a missing
+    -- file is a nil here, never a throw
+    return getTexture(path)
 end
 
 local function bucketFor(width)
@@ -141,8 +142,7 @@ end
 -- then round again - derived from the wall clock rather than counted, so it
 -- cannot drift with frame rate and needs no state.
 local function alertPlate(icon)
-    local ms = 0
-    pcall(function() ms = getTimestampMs() end)
+    local ms = getTimestampMs()   -- System.currentTimeMillis (LuaManager:7470)
 
     local frames = { icon.on, icon.alert, icon.off }
     if not icon.alert then frames = { icon.on, icon.off } end
@@ -160,6 +160,8 @@ local function mayOpen()
     if not DFDeck or not DFDeck.canOpen then return false end
     local s = SandboxVars.RFTDDragonfly or {}
     if s.Enabled == false then return false end
+    -- canOpen chains into Core's RDAccess (foreign mod): a missing or
+    -- mismatched Core must not break every sidebar prerender
     local ok, allowed = pcall(DFDeck.canOpen)
     return ok and allowed == true
 end
@@ -178,6 +180,8 @@ if not DFDeckBtnState.wrapped then
         if not self.adminBtn then return end
 
         if self.dfDeckBtn then
+            -- vanilla ISUI Lua (removeChild); a stale button from a previous
+            -- initialise must not kill the sidebar rebuild
             pcall(function() self:removeChild(self.dfDeckBtn) end)
             self.dfDeckBtn = nil
         end
@@ -244,6 +248,8 @@ if not DFDeckBtnState.wrapped then
         -- Idempotent, because this runs every frame the deck is visible.
         local open = deckOpen()
         if open and DFTripwire and DFTripwire.acknowledge then
+            -- Core's tripwire (foreign mod): contained so it cannot take the
+            -- sidebar prerender down with it
             pcall(DFTripwire.acknowledge)
         end
 
@@ -263,6 +269,7 @@ if not DFDeckBtnState.wrapped then
         local want
         if (not open) and alerting() then
             local n = 0
+            -- Core's tripwire (foreign mod): a count that throws reads as 0
             pcall(function() n = DFTripwire.pendingCount() or 0 end)
             want = "Dragonfly Admin Deck  -  " .. tostring(n)
                 .. " unreviewed tripwire" .. ((n == 1) and "" or "s")

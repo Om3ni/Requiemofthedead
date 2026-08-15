@@ -22,6 +22,8 @@ local DEBUG = false -- flip true for verbose [DF-Safehouse] tracing
 
 local function dbg(fmt, ...)
     if not DEBUG then return end
+    -- string.format throws on a specifier/argument mismatch; the raw format
+    -- string is an acceptable trace line when it does
     local ok, msg = pcall(string.format, fmt, ...)
     print("[DF-Safehouse] " .. (ok and msg or fmt))
 end

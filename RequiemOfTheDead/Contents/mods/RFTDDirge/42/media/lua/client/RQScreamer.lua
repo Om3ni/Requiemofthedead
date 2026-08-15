@@ -66,6 +66,8 @@ local function getResistance(player)
 end
 
 local function applyPanicBump(player)
+    -- guard stays: CharacterStat is a Java enum global; indexing it throws
+    -- outright if a future build drops or renames PANIC.
     pcall(function()
         player:getStats():add(CharacterStat.PANIC, 25)
     end)
@@ -80,6 +82,10 @@ local function startDisorientation(player, fx, lingerMs)
         RQDirgeLog.write("Screamer", "[WARN] getSearchMode() returned nil - screen effect SKIPPED")
     end
 
+    -- guard stays: SearchMode is a client-render subsystem reached through the
+    -- getSearchMode() vanilla Lua global; getSearchModeForPlayer and the
+    -- Blur/Darkness/Desat/Radius accessors under it are not in the Java
+    -- decompile, so none of this chain can be proven throw-free.
     if sm then pcall(function()
         local psm  = sm:getSearchModeForPlayer(pn)
         local cfg  = RQConfig.get()
@@ -132,6 +138,9 @@ local function clearDisorientation()
         local pn = player:getPlayerNum()
         local sm = getSearchMode()
         if sm then
+            -- guard stays: same unverifiable SearchMode chain as
+            -- startDisorientation, and the release must never abort the
+            -- disorientation.active reset below it.
             pcall(function()
                 local psm = sm:getSearchModeForPlayer(pn)
                 -- Zero all parameters before releasing so nothing lingers
@@ -204,8 +213,8 @@ function RQScreamer.onCastDone(player, screamer)
 end
 
 function RQScreamer.onDead(zombie)
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if ok and oid and oid ~= 0 then
+    local oid = zombie and zombie:getOnlineID()
+    if oid and oid ~= 0 then
         RQRing.clear("screamer_" .. oid)
     end
     clearDisorientation()

@@ -29,8 +29,9 @@ local DEFAULT_HORN = "VehicleHornStandard"
 local MAX_MS = 10000
 
 local function hornSoundFor(vehicle)
-    local name = ""
-    pcall(function() name = tostring(vehicle:getScriptName() or "") end)
+    -- getScriptName (BaseVehicle:1593) answers with a field even when the
+    -- script itself is null; the caller has already nil-checked the vehicle.
+    local name = tostring(vehicle:getScriptName() or "")
     for _, entry in ipairs(HORN_BY_PREFIX) do
         if name:sub(1, #entry.prefix) == entry.prefix then return entry.sound end
     end
@@ -53,10 +54,15 @@ local function stopFor(id)
     local rec = playing[id]
     if not rec then return end
     playing[id] = nil
-    pcall(function() rec.emitter:stopSound(rec.instance) end)
+    -- guarded: the emitter may be the abandoned handle of a streamed-out
+    -- vehicle (see the table note above), and FMODSoundEmitter.stopSound:98
+    -- derefs each instance's clip on the way through - FMOD internals on a
+    -- stale emitter are exactly what this must survive.
+    pcall(rec.emitter.stopSound, rec.emitter, rec.instance)
     -- Belt over braces: if the instance stop missed (engine restarted the
     -- sound under the same emitter), kill it by name. Guarded by isPlaying
-    -- so a normal stop never touches an unrelated same-name loop.
+    -- so a normal stop never touches an unrelated same-name loop - and by
+    -- pcall for the same stale-emitter reason as above.
     pcall(function()
         if rec.emitter:isPlaying(rec.sound) then rec.emitter:stopSoundByName(rec.sound) end
     end)
@@ -67,6 +73,9 @@ local function startFor(id)
     -- the broadcast back to the honking player, who started theirs locally the
     -- moment they pressed the key.
     if playing[id] then return end
+    -- guarded: hasHorn NPEs on a scriptless vehicle (VehicleSoundOwner.java:73
+    -- derefs getScript() unguarded), and playSoundLooped is FMOD internals - a
+    -- horn that fails to start must cost one blast, not the handler.
     pcall(function()
         local vehicle = getVehicleById(id)
         if not vehicle then return end

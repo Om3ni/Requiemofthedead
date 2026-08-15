@@ -59,7 +59,7 @@ local function cfg()
         sweepInterval       = r.sweepInterval or s.SweepInterval or 2,
         -- Zombies inspected per tick while a scan is in flight. This is the
         -- knob that decides whether a scan is a stutter or a background hum:
-        -- the walk costs 2-4 pcalls per zombie, so it is bounded by count
+        -- the walk costs 2-4 engine calls per zombie, so it is bounded by count
         -- rather than run to completion in one tick.
         scanBudget          = r.scanBudget or s.ScanBudget or 200,
     }
@@ -71,29 +71,26 @@ end
 
 local function safeOutfit(z)
     -- Try persistent outfit ID first - integer, survives saves, twins share it.
-    local ok, id = pcall(function() return z:getPersistentOutfitID() end)
-    if ok and id and id ~= 0 then return "o" .. tostring(id) end
-    -- Fall back to getOutfitName (may only work on IsoDeadBody).
-    local ok2, name = pcall(function() return z:getOutfitName() end)
+    local id = z:getPersistentOutfitID()
+    if id and id ~= 0 then return "o" .. tostring(id) end
+    -- getOutfitName guard stays: the 42.20.2 body routes through
+    -- ModelManager.dressInRandomOutfit on a per-zombie flag, so failure is
+    -- per-zombie state, not per-build - a cached verdict would be a gamble.
+    local ok2, name = pcall(z.getOutfitName, z)
     if ok2 and name and name ~= "" then return tostring(name) end
     return "?outfit?"
 end
 
 local function inventorySig(z)
-    local ok, inv = pcall(function() return z:getInventory() end)
-    if not ok or not inv then return "" end
-    local ok2, items = pcall(function() return inv:getItems() end)
-    if not ok2 or not items then return "" end
+    local inv = z:getInventory()
+    if not inv then return "" end
+    local items = inv:getItems()
+    if not items then return "" end
     local counts = {}
-    local size = 0
-    pcall(function() size = items:size() end)
-    for i = 0, size - 1 do
-        local it
-        pcall(function() it = items:get(i) end)
+    for i = 0, items:size() - 1 do
+        local it = items:get(i)
         if it then
-            local t
-            pcall(function() t = it:getFullType() end)
-            t = t or "?"
+            local t = it:getFullType() or "?"
             counts[t] = (counts[t] or 0) + 1
         end
     end
@@ -104,12 +101,9 @@ local function inventorySig(z)
 end
 
 local function tileKey(z)
-    local sq
-    pcall(function() sq = z:getSquare() end)
+    local sq = z:getSquare()
     if not sq then return nil end
-    local x, y, zc
-    pcall(function() x = sq:getX(); y = sq:getY(); zc = sq:getZ() end)
-    if not x or not y or not zc then return nil end
+    local x, y, zc = sq:getX(), sq:getY(), sq:getZ()
     return x .. "," .. y .. "," .. zc, x, y, zc
 end
 
@@ -119,12 +113,17 @@ end
 -- the discriminating and the signature does the confirming.
 
 -- -------------------------------------------------------------------------
--- Removal - defensive; multiple known APIs, pcall each
+-- Removal - three engine paths, only the ones that can actually throw guarded
 -- -------------------------------------------------------------------------
 
 local function cullZombie(z)
-    pcall(function() z:removeFromSquare() end)
-    pcall(function() z:removeFromWorld() end)
+    z:removeFromSquare() -- null-checks every field it touches
+    -- removeFromWorld DOES throw: IsoZombie's override reaches
+    -- IsoMovingObject.removeFromWorld, which calls getCell().isSafeToAdd()
+    -- with no null check, and getCell() is null until a world exists.
+    pcall(z.removeFromWorld, z)
+    -- Same getCell() hazard, plus getZombieList/remove are probed because the
+    -- cell's list API has moved between builds.
     pcall(function()
         local cell = z:getCell()
         if cell and cell.getZombieList then
@@ -233,8 +232,7 @@ local function drainCullQueue(c)
         -- The engine pools IsoZombie objects: a queued reference may have
         -- unloaded and been recycled as a different zombie by drain time.
         -- Only cull if it still answers to the ID it was queued under.
-        local ok, curId = pcall(function() return e.z:getOnlineID() end)
-        if ok and curId == e.id then
+        if e.z:getOnlineID() == e.id then
             if c.logCulls then
                 print(string.format("[Reaper:%s] CULL id=%d @%s",
                     tostring(e.why), e.id, tileKey(e.z) or "?"))
@@ -264,8 +262,9 @@ end
 -- -------------------------------------------------------------------------
 
 local function forEachLoadedZombie(visitor)
-    local zlist
-    pcall(function() zlist = getCell():getZombieList() end)
+    -- getCell dereferences IsoWorld.instance, nil until a world exists.
+    local okCell, cell = pcall(getCell)
+    local zlist = okCell and cell and cell:getZombieList() or nil
     if not zlist then return end
     local zsize = zlist:size()
     for zi = 0, zsize - 1 do
@@ -323,9 +322,8 @@ local function processNewborns(c, now)
     -- that never resolves was removed before it mattered - drop it.
     local resolved = {}
     for _, e in ipairs(batch) do
-        local id
-        local ok = pcall(function() id = e.z:getOnlineID() end)
-        if ok and isValidId(id) then
+        local id = e.z:getOnlineID()
+        if isValidId(id) then
             resolved[#resolved + 1] = { z = e.z, id = id }
         elseif e.tries < 3 then
             e.tries = e.tries + 1
@@ -354,9 +352,7 @@ local function processNewborns(c, now)
                 -- the id it was recorded under.
                 local myInv
                 for _, s in ipairs(siblings) do
-                    local sid
-                    local sok = pcall(function() sid = s.z:getOnlineID() end)
-                    if sok and sid == s.id then
+                    if s.z:getOnlineID() == s.id then
                         if s.inv == nil then s.inv = inventorySig(s.z) end
                         if myInv == nil then myInv = inventorySig(e.z) end
                         if s.inv == myInv then twin = true; break end
@@ -379,7 +375,7 @@ end
 -- Incremental scanner
 --
 -- Every detection pass below is O(N) over the whole loaded zombie list with
--- 2-4 pcalls per zombie, and N is unbounded whenever the vanilla cull is off
+-- 2-4 engine calls per zombie, and N is unbounded whenever the vanilla cull is off
 -- (ZombiesCountBeforeDelete = 0) - which is exactly the configuration this mod
 -- exists to make survivable. Running a pass to completion inside one tick
 -- therefore costs more the better the server is doing.
@@ -431,8 +427,9 @@ local function startScan(kind, c)
     -- the wander scan and the Necro tab both read. The cull scans do not.
     if kind ~= SCAN_SWEEP and not c.cullEnabled then return false end
 
-    local zlist
-    pcall(function() zlist = getCell():getZombieList() end)
+    -- getCell dereferences IsoWorld.instance, nil until a world exists.
+    local okCell, cell = pcall(getCell)
+    local zlist = okCell and cell and cell:getZombieList() or nil
     if not zlist then return false end
 
     scan = {
@@ -492,12 +489,9 @@ local function collectOne(s, z, id)
     elseif kind == SCAN_CLUSTER then
         -- Group by outfit alone, across all tiles; position rides along for
         -- the bounding-box gate in the judge phase.
-        local sq
-        pcall(function() sq = z:getSquare() end)
+        local sq = z:getSquare()
         if not sq then return end
-        local x, y, zc
-        pcall(function() x = sq:getX(); y = sq:getY(); zc = sq:getZ() end)
-        if not (x and y and zc) then return end
+        local x, y, zc = sq:getX(), sq:getY(), sq:getZ()
         local b = bucketFor(s, safeOutfit(z))
         b[#b + 1] = { id = id, z = z, x = x, y = y, zc = zc }
 
@@ -911,18 +905,13 @@ function RPCore.snapshot(opts)
     local zombies = {}
 
     forEachLoadedZombie(function(z, id)
-        local sq
-        pcall(function() sq = z:getSquare() end)
+        local sq = z:getSquare()
         if not sq then return end
-        local x, y, zc
-        pcall(function() x = sq:getX(); y = sq:getY(); zc = sq:getZ() end)
-        if not (x and y and zc) then return end
+        local x, y, zc = sq:getX(), sq:getY(), sq:getZ()
 
+        local md = z:getModData()
         local dirgeType
-        pcall(function()
-            local md = z:getModData()
-            if md and md.RQType then dirgeType = tostring(md.RQType) end
-        end)
+        if md and md.RQType then dirgeType = tostring(md.RQType) end
 
         local entry = {
             id        = id,

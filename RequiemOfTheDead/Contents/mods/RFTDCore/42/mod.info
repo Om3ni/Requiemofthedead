@@ -1,5 +1,5 @@
 name=Requiem of the Dead: Season One
 id=RFTDCore
-modversion=1.1.0
+modversion=1.2.0
 description=Shared core library for the Requiem of the Dead mod family. Provides the family's common infrastructure: unified server-side logging, season bookkeeping, networking helpers, rate limiting, and capability-based staff access gates. Newer releases of the RFTD mods (Dragonfly, Reclamation, Dirge, Reaper, Husbandry, Last Rites) require this mod. It has no gameplay content of its own. Designed for dedicated multiplayer servers.
 pzversion=42

@@ -40,6 +40,8 @@ Events.OnServerCommand.Add(function(module, command, args)
     if module ~= RDShared.MODULE or command ~= "cmdRelay" then return end
     if not DFLog or not args then return end
 
+    -- args are wire-controlled; a malformed relay row must not take the
+    -- OnServerCommand listener down with it
     pcall(function()
         for _, row in ipairs(args.rows or {}) do
             DFLog.push{

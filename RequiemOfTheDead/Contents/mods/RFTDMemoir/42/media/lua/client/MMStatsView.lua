@@ -58,7 +58,7 @@ function MMStatsView:buildHeader()
     add("Forename", desc and desc:getForename() or "")
     add("Surname", desc and desc:getSurname() or "")
     local prof = desc and desc:getCharacterProfession()
-    add("Profession", MMShared.professionUIName(prof and (MMShared.fqid(prof) or prof:getName())))
+    add("Profession", MMShared.professionUIName(prof and MMShared.labelOf(prof)))
     add("Survived", math.floor(p:getHoursSurvived() or 0) .. " hours")
     local nut = p:getNutrition()
     add("Weight", nut and math.floor(nut:getWeight() or 0) or "?")
@@ -71,7 +71,7 @@ function MMStatsView:buildHeader()
         local trait = known:get(i)
         -- Fallback label is the full registry id, not getName(): this only shows for a
         -- trait with no definition, and that is exactly when you want the namespace.
-        local label, tex = (MMShared.fqid(trait) or trait:getName()), nil
+        local label, tex = MMShared.labelOf(trait), nil
         local ok, def = pcall(CharacterTraitDefinition.getCharacterTraitDefinition, trait)
         if ok and def then
             local okl, l = pcall(function() return def:getLabel() end)

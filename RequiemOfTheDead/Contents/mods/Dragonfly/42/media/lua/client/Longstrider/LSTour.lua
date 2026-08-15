@@ -37,13 +37,14 @@ LSTour.state = LSTour.state or {
 
 local function nowMs()
     -- getTimestampMs (ms since launch) is the primary clock; getTimeInMillis is a
-    -- fallback. We deliberately return nil (NOT 0) on total failure: a 0 here makes
-    -- "nowMs() < nextAtMs" always true, which would wedge the tour at cell 1 with
-    -- protection stuck on. _onTick treats nil as a dead clock and aborts cleanly.
-    local ok, v = pcall(getTimestampMs)
-    if ok and type(v) == "number" then return v end
-    ok, v = pcall(getTimeInMillis)
-    if ok and type(v) == "number" then return v end
+    -- fallback. Both are System.currentTimeMillis in 42.20.2 (LuaManager:7470/:3512)
+    -- and cannot throw; the type() checks cover a build where the GLOBAL is absent,
+    -- which indexing never throws on. We deliberately return nil (NOT 0) on total
+    -- failure: a 0 here makes "nowMs() < nextAtMs" always true, which would wedge
+    -- the tour at cell 1 with protection stuck on. _onTick treats nil as a dead
+    -- clock and aborts cleanly.
+    if type(getTimestampMs) == "function" then return getTimestampMs() end
+    if type(getTimeInMillis) == "function" then return getTimeInMillis() end
     return nil
 end
 
@@ -107,22 +108,26 @@ local function teleportTo(x, y, z)
     RDTeleport.toCoords(x, y, z)
 end
 
+-- Direct calls, no guards: the cheat accessors are EnumSet flag ops on a
+-- field-initialised PlayerCheats behind null-checked capability reads
+-- (IsoGameCharacter:10943-11068, IsoPlayer:1055-1064, Role.hasCapability:176)
+-- - they cannot throw on a non-nil player, and both callers check that.
 local function applyProtection(player)
     local snap = {}
-    pcall(function() snap.god   = player:isGodMod()    end)
-    pcall(function() snap.invis = player:isInvisible() end)
-    pcall(function() snap.ghost = player:isGhostMode() end)
-    pcall(function() player:setGodMod(true)    end)
-    pcall(function() player:setInvisible(true) end)
-    pcall(function() player:setGhostMode(true) end)
+    snap.god   = player:isGodMod()
+    snap.invis = player:isInvisible()
+    snap.ghost = player:isGhostMode()
+    player:setGodMod(true)
+    player:setInvisible(true)
+    player:setGhostMode(true)
     return snap
 end
 
 local function restoreProtection(player, snap)
     if not player or not snap then return end
-    pcall(function() player:setGodMod(snap.god == true)      end)
-    pcall(function() player:setInvisible(snap.invis == true) end)
-    pcall(function() player:setGhostMode(snap.ghost == true) end)
+    player:setGodMod(snap.god == true)
+    player:setInvisible(snap.invis == true)
+    player:setGhostMode(snap.ghost == true)
 end
 
 -- ---------------------------------------------------------------------------
@@ -141,13 +146,15 @@ end
 
 local function finish(reason)
     local s = LSTour.state
-    -- Best-effort cleanup, each step guarded so a failure (disconnected player,
-    -- SendCommandToServer unavailable) can NEVER skip the teardown below -
-    -- otherwise the tour stays "running" with the tick handler live and the
-    -- admin stuck in god/invisible. restoreProtection is already internally
-    -- guarded; the teleport-back is the one that could throw, so wrap it.
+    -- Best-effort cleanup, guarded so a failure can NEVER skip the teardown
+    -- below - otherwise the tour stays "running" with the tick handler live and
+    -- the admin stuck in god/invisible. The teleport-back goes through Core's
+    -- RDTeleport (foreign Lua, capability-gated) and audit reaches family
+    -- plumbing; either throwing must not stop Events.OnTick.Remove.
+    -- restoreProtection nil-checks its inputs and its setters cannot throw
+    -- (see applyProtection), so it runs bare.
     pcall(function() if s.start then teleportTo(s.start.x, s.start.y, s.start.z) end end)
-    pcall(restoreProtection, s.player, s.protect)
+    restoreProtection(s.player, s.protect)
     pcall(function()
         DFCore.audit("Longstrider tour " .. tostring(reason), s.player,
             string.format("(%d/%d cells)", s.idx, s.total))
@@ -201,6 +208,8 @@ function LSTour.start(jobs, cellSize, opts)
     s.protect = applyProtection(player)
     s.running = true
 
+    -- Guarded: audit is family plumbing (log fan-out toward the wire); a
+    -- failure there must not abort a tour that is already marked running.
     pcall(function()
         DFCore.audit("Longstrider tour started", player,
             string.format("(%d cells, %d region(s))", s.total, #jobs))

@@ -90,7 +90,9 @@ local function notify(action, target)
     DFLog.push{ source = "Admin", level = "audit",
         text = string.format("%s by %s (target=%s)",
             action, getPlayer():getUsername(), tostring(target or "?")) }
-    pcall(sendClientCommand, getPlayer(), "RFTDDragonfly", "auditOnly",   -- Dragonfly-optional: handler lives in DFServer; without the panel mod the send is a no-op
+    -- Dragonfly-optional: the handler lives in DFServer, and a command nobody
+    -- handles is dropped by the engine, not an error - so the send needs no guard.
+    sendClientCommand(getPlayer(), "RFTDDragonfly", "auditOnly",
         { action = action, target = target })
 end
 

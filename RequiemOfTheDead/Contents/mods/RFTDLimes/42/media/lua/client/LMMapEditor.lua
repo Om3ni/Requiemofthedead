@@ -129,6 +129,10 @@ function LMMapEditor:_seedSpan()
     local api = self:_api()
     local w = self.host and self.host.map and self.host.map:getWidth() or 0
     if not api or w <= 0 then return 64 end
+    -- pcall: uiToWorldX is the engine world-map API projecting through a
+    -- transform that is not populated until the widget has rendered a frame,
+    -- so this throws when called before the map is on screen. 64 is the seed
+    -- that keeps in that case.
     local ok, span = pcall(function()
         return math.abs(api:uiToWorldX(w, 0) - api:uiToWorldX(0, 0))
     end)
@@ -153,6 +157,8 @@ function LMMapEditor:addRectAtView(name)
     local mw = self.host.map:getWidth()
     local mh = self.host.map:getHeight()
     local cx, cy
+    -- pcall: same unrendered-transform failure as _seedSpan. No centre means no
+    -- rectangle, which is the nil return below.
     local ok = pcall(function()
         cx = math.floor(api:uiToWorldX(mw / 2, mh / 2))
         cy = math.floor(api:uiToWorldY(mw / 2, mh / 2))

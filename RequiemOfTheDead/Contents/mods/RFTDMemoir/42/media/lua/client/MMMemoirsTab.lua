@@ -43,6 +43,16 @@ MMMemoirsTab = MMMemoirsTab or {}
 local T = MMMemoirsTab
 
 local PAD = 8
+local FIELD_LINES = 4    -- both cards ship exactly four header fields
+local MIN_LIST_ROWS = 4  -- skill rows the cards may never eat into
+
+-- Click rects for the "+N more" / "show less" trait tails, refreshed by
+-- drawCard every frame and read by Sheet:onMouseDown. Kept across a file
+-- reload with the expansion state so a hot-reload does not snap the card shut.
+T.moreRects = T.moreRects or {}
+T.traitsExpanded = T.traitsExpanded or false
+
+local layout -- forward decl: populate() and the tail click both re-run it
 
 local function fS() return DFKit.font.small or UIFont.Small end
 local function fh() return getTextManager():getFontHeight(fS()) end
@@ -121,8 +131,10 @@ local function playerTraitNames(player)
     local out = {}
     local known = player:getCharacterTraits():getKnownTraits()
     for i = 0, (known and known:size() or 0) - 1 do
-        local t = known:get(i)
-        out[#out + 1] = MMShared.fqid(t) or t:getName()
+        -- labelOf, not requireId: these become chips on a read-only card, and a
+        -- view must not be the thing that refuses. Anything unverified arrives
+        -- "?"-prefixed so it cannot be mistaken for a real id.
+        out[#out + 1] = MMShared.labelOf(known:get(i))
     end
     return out
 end
@@ -225,9 +237,12 @@ local function skillRows(player, snap, mode, xpMode)
             local target
             if mode == "project" then
                 local pct = MMShared.xpRestoreFraction(d.id)
+                local rawSaved = (snap.perks and snap.perks[d.id]) or 0
                 local savedGrantXP = d.perk:getTotalXpForLevel(savedGrant[d.id] or 0) or 0
-                local savedEarned = ((snap.perks and snap.perks[d.id]) or 0) - savedGrantXP
-                if savedEarned < 0 then savedEarned = 0 end
+                -- Floor clamped to the book's own XP, mirroring applyEarnables: an
+                -- evolved trait's phantom spawn floor must not project free levels.
+                if savedGrantXP > rawSaved then savedGrantXP = rawSaved end
+                local savedEarned = rawSaved - savedGrantXP
                 if xpMode == "overwrite" then
                     local preGrantXP = d.perk:getTotalXpForLevel(preGrant[d.id] or 0) or 0
                     local newEarned = cur - preGrantXP
@@ -271,7 +286,7 @@ function T.populate()
         fields = {
             { k = "Profession", v = MMShared.professionUIName((function()
                 local p = player:getDescriptor() and player:getDescriptor():getCharacterProfession()
-                return p and (MMShared.fqid(p) or p:getName()) or nil -- id, so a shadowed path resolves right
+                return p and MMShared.labelOf(p) or nil -- id, so a shadowed path resolves right
             end)()) },
             { k = "Weight",   v = nut and fmtNum(nut:getWeight()) or "?" },
             { k = "Kills",    v = fmtNum(player:getZombieKills()) },
@@ -294,8 +309,20 @@ function T.populate()
         end
         T.statusSev = "textDim"
     else
+        -- classify compares identities, so it runs the STRICT resolver and can
+        -- raise on a character whose registry went stale. A read-only tab must
+        -- not be the thing that refuses: fall back to showing what the book
+        -- holds, and say why in the banner the tab already owns.
         local sev, txt
-        mode, xpMode, txt, sev = classify(player, snap)
+        local okC, m, xm, tx, sv = pcall(classify, player, snap)
+        if okC then
+            mode, xpMode, txt, sev = m, xm, tx, sv
+        else
+            mode, xpMode = "contents", nil
+            txt = "Your character's traits cannot be verified against the registry"
+                .. " (scripts reloaded under a live character?) - showing the memoir's contents."
+            sev = "danger"
+        end
         T.mode = mode
         local name = book.item:getName() or "Memoir"
         T.bookLine = name .. "  -  written " .. agoStr(snap.writtenAt)
@@ -332,6 +359,9 @@ function T.populate()
     end
 
     T.rows = skillRows(player, snap, mode or "project", xpMode)
+    -- An expanded card is sized to the trait set it was showing; Refresh (or
+    -- a first populate after build) can change that set, so re-measure.
+    if T.traitsExpanded and T.sheet then layout(T.sheet:getWidth(), T.sheet:getHeight()) end
     if T.list then
         DFKit.refillList(T.list, function(box)
             for _, row in ipairs(T.rows) do box:addItem(row.name, row) end
@@ -369,12 +399,46 @@ end
 -- ---------------------------------------------------------------------------
 local Sheet = ISPanel:derive("MMMemoirsSheet")
 
-local function drawCard(el, x, y, w, h, card, emptyText)
+-- Wrap trait chips into rows for a card of usable width `availW`. PURE
+-- MEASUREMENT, no drawing: the height math (layout) and the paint (drawCard)
+-- both run it, so what a card reserves and what it puts on screen can never
+-- disagree. Each entry carries its x offset inside the row and its index in
+-- the original list - the tail needs that index to count what it is hiding.
+local function wrapTraits(traits, availW)
+    local f, lh = fS(), fh()
+    local rows, cur, cx = {}, {}, 0
+    for i, t in ipairs(traits or {}) do
+        local tw = getTextManager():MeasureStringX(f, t.label) + (t.tex and (lh + 4) or 0) + 14
+        if cx > 0 and cx + tw > availW then
+            rows[#rows + 1] = cur
+            cur, cx = {}, 0
+        end
+        cur[#cur + 1] = { chip = t, x = cx, w = tw, i = i }
+        cx = cx + tw
+    end
+    if #cur > 0 then rows[#rows + 1] = cur end
+    return rows
+end
+
+-- Card height <-> trait row count, one formula read both ways: title line,
+-- field lines, the pre-trait gap and the top/bottom padding are the chrome;
+-- everything else is trait rows.
+local function cardChromeH()
+    local lh = fh()
+    return 10 + (lh + 4) + FIELD_LINES * (lh + 3)
+end
+local function cardHeightFor(rows) return cardChromeH() + rows * (fh() + 4) end
+local function rowsForCardHeight(hh)
+    return math.floor((hh - cardChromeH()) / (fh() + 4))
+end
+
+local function drawCard(el, x, y, w, h, card, emptyText, side)
     local C = DFKit.col
     el:drawRect(x, y, w, h, DFKit.alpha.inset, C.bg.r, C.bg.g, C.bg.b)
     el:drawRectBorder(x, y, w, h, 0.45, C.line.r, C.line.g, C.line.b)
     local f, lh = fS(), fh()
     if not card then
+        T.moreRects[side] = nil
         DFKit.drawEmpty(el, x, y, w, h, emptyText or "-")
         return
     end
@@ -386,29 +450,75 @@ local function drawCard(el, x, y, w, h, card, emptyText)
         el:drawText(tostring(fld.v), tx + 88, ty, C.text.r, C.text.g, C.text.b, 1, f)
         ty = ty + lh + 3
     end
-    -- traits: icon chips wrapped over two rows, then a "+N more" tail - the
-    -- card is fixed-height so a 12-trait build must summarise, not overflow.
+    -- traits: icon chips wrapped into T.traitRows rows, then a tail. The tail
+    -- is a CLICK TARGET, not decoration (Sheet:onMouseDown): "+N more" grows
+    -- both cards to fit the whole build and pushes the skill list down,
+    -- "show less" puts it back. Collapsed is two rows, so the common build
+    -- still reads at a glance without the list losing half its height.
     ty = ty + 2
-    local cx, rowsUsed, shown = tx, 1, 0
-    for i, t in ipairs(card.traits) do
-        local tw = getTextManager():MeasureStringX(f, t.label) + (t.tex and (lh + 4) or 0) + 14
-        if cx + tw > x + w - PAD - 52 then
-            if rowsUsed >= 2 then
-                el:drawText("+" .. (#card.traits - shown) .. " more", cx, ty,
-                    C.textDim.r, C.textDim.g, C.textDim.b, 1, f)
-                break
-            end
-            rowsUsed = rowsUsed + 1
-            cx, ty = tx, ty + lh + 4
+    local availW = w - PAD * 2
+    local rows = wrapTraits(card.traits, availW)
+    local maxRows = T.traitRows or 2
+    local tail, tailInline = nil, false
+    if #rows > maxRows then
+        while #rows > maxRows do table.remove(rows) end
+        -- Shave chips off the last visible row until the label fits beside
+        -- them - the count in the label changes as chips leave, so this loops.
+        local last = rows[#rows]
+        while true do
+            tail = "+" .. (#card.traits - last[#last].i) .. " more"
+            local need = last[#last].x + last[#last].w + getTextManager():MeasureStringX(f, tail)
+            if need <= availW or #last == 1 then break end
+            table.remove(last)
         end
-        if t.tex then
-            el:drawTextureScaled(t.tex, cx, ty - 1, lh + 2, lh + 2, 1, 1, 1, 1)
-            cx = cx + lh + 4
-        end
-        el:drawText(t.label, cx, ty, 0.9, 0.9, 0.9, 1, f)
-        cx = cx + getTextManager():MeasureStringX(f, t.label) + 14
-        shown = i
+        -- Already expanded and STILL clipped: the panel is too short to hold
+        -- the build. Say so, and keep the click honest about what it does.
+        if T.traitsExpanded then tail = tail .. " (show less)" end
+        tailInline = true
+    elseif T.traitsExpanded and #card.traits > 0 then
+        tail = "show less" -- own row - layout() reserved it
     end
+
+    for r = 1, #rows do
+        for _, e in ipairs(rows[r]) do
+            local cx = tx + e.x
+            if e.chip.tex then
+                el:drawTextureScaled(e.chip.tex, cx, ty - 1, lh + 2, lh + 2, 1, 1, 1, 1)
+                cx = cx + lh + 4
+            end
+            el:drawText(e.chip.label, cx, ty, 0.9, 0.9, 0.9, 1, f)
+        end
+        if r < #rows or not tailInline then ty = ty + lh + 4 end
+    end
+
+    if tail then
+        local last = tailInline and rows[#rows] and rows[#rows][#rows[#rows]] or nil
+        local tailX = tx + (last and (last.x + last.w) or 0)
+        local tw = getTextManager():MeasureStringX(f, tail)
+        local hot = el:isMouseOver()
+            and el:getMouseX() >= tailX - 3 and el:getMouseX() < tailX + tw + 3
+            and el:getMouseY() >= ty - 2 and el:getMouseY() < ty + lh + 2
+        local tc = hot and C.accent or C.textDim
+        el:drawText(tail, tailX, ty, tc.r, tc.g, tc.b, 1, f)
+        T.moreRects[side] = { x = tailX, y = ty, w = tw, h = lh }
+    else
+        T.moreRects[side] = nil
+    end
+end
+
+-- The tail is drawn text with a remembered rect, not a widget. Returning
+-- false for everything else matters: UIElement.onMouseDown treats a false
+-- return as "not consumed" and walks on to the deck, which is what keeps the
+-- panel's own drag/resize/tab clicks alive underneath this sheet.
+function Sheet:onMouseDown(x, y)
+    for _, r in pairs(T.moreRects) do
+        if x >= r.x - 3 and x < r.x + r.w + 3 and y >= r.y - 2 and y < r.y + r.h + 2 then
+            T.traitsExpanded = not T.traitsExpanded
+            layout(self.width, self.height)
+            return true
+        end
+    end
+    return false
 end
 
 function Sheet:prerender()
@@ -426,10 +536,10 @@ function Sheet:prerender()
 
     -- cards
     local cy = T.bannerH + PAD
-    drawCard(self, PAD, cy, halfW, T.cardH, T.left)
+    drawCard(self, PAD, cy, halfW, T.cardH, T.left, nil, "left")
     drawCard(self, PAD * 2 + halfW, cy, halfW, T.cardH, T.right,
         (T.bookLine and T.bookLine:find("blank")) and "The pages are empty."
-        or "No memoir to compare against.")
+        or "No memoir to compare against.", "right")
 
     -- column headers + centre divider down through the list
     local c = cols(w)
@@ -476,10 +586,29 @@ end
 -- ---------------------------------------------------------------------------
 -- Build / resize
 -- ---------------------------------------------------------------------------
-local function layout(w, h)
+function layout(w, h)
     local lh = fh()
     T.bannerH = lh * 2 + 12
-    T.cardH   = lh * 7 + 26
+
+    -- Card height follows the trait tail's state: two rows collapsed; when
+    -- expanded, as many rows as the fuller of the two cards needs, plus the
+    -- "show less" row. Clamped so the skill list keeps MIN_LIST_ROWS - a
+    -- 20-trait build on a short panel stays clipped (with the tail still
+    -- saying "+N more") rather than swallowing the thing you came to read.
+    local halfW = math.floor((w - PAD * 3) / 2)
+    local rows = 2
+    if T.traitsExpanded then
+        for _, card in ipairs({ T.left, T.right }) do
+            if card then rows = math.max(rows, #wrapTraits(card.traits, halfW - PAD * 2)) end
+        end
+        rows = rows + 1
+    end
+    T.cardH = cardHeightFor(rows)
+    local chrome  = T.bannerH + PAD + 4 + lh + 4 + PAD
+    local maxCard = h - chrome - (fh() + 6) * MIN_LIST_ROWS
+    if T.cardH > maxCard then T.cardH = math.max(cardHeightFor(2), maxCard) end
+    T.traitRows = math.max(2, rowsForCardHeight(T.cardH))
+
     T.sheet:setWidth(w); T.sheet:setHeight(h)
     local listY = T.bannerH + PAD + T.cardH + 4 + lh + 4
     DFKit.sizeList(T.list, 0, listY, w, h - listY - PAD)

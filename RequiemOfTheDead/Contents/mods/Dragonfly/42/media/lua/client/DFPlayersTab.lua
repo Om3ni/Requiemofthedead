@@ -373,7 +373,10 @@ local function notify(action, target)
     DFLog.push{ source = "Admin", level = "audit",
         text = string.format("%s by %s (target=%s)",
             action, getPlayer():getUsername(), tostring(target or "?")) }
-    pcall(sendClientCommand, getPlayer(), MODULE, "auditOnly",
+    -- direct call: the sendClientCommand global (LuaManager:7220) nil-checks
+    -- the player and gates on client/ingame itself; getPlayer() is proven
+    -- non-nil by the getUsername() deref above
+    sendClientCommand(getPlayer(), MODULE, "auditOnly",
         { action = action, target = target })
 end
 
@@ -623,6 +626,8 @@ local function buildDetail(panel, x, y, w, h)
             if DFFeedback then DFFeedback.bad("Stats target is not loaded.") end
             return
         end
+        -- vanilla ISPlayerStatsUI Lua: a stale instance whose close() throws
+        -- must not block opening a fresh stats window
         pcall(function()
             if ISPlayerStatsUI.instance then ISPlayerStatsUI.instance:close() end
         end)
@@ -791,6 +796,8 @@ print("[Dragonfly] DFPlayersTab body loaded; deferring registration to OnGameSta
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
+    -- DFRegistry is Core's: containment for a foreign-mod API whose contract
+    -- may change; a refusal must not kill this OnGameStart listener.
     local ok, err = pcall(function()
         DFRegistry.registerTab{
             id         = "players",

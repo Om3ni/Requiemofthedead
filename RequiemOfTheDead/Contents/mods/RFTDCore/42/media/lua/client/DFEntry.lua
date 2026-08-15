@@ -52,6 +52,9 @@ local PAD = 12
 local function fontBody()  return DFKit.font.small or UIFont.Small end
 local function fontTitle() return DFKit.font.label or UIFont.Small end
 
+-- getFontHeight/MeasureStringX (TextManager:127) deref the font enum lookup
+-- with no null check - a font this build lacks is an NPE, so each measure
+-- keeps its fallback behind the guard.
 local function lineH()
     local fh = 14
     pcall(function() fh = getTextManager():getFontHeight(fontBody()) end)
@@ -109,6 +112,9 @@ function DFEntry:createChildren()
     box:instantiate()
     -- setMaxTextLength before any text arrives, so a caller's cap applies to
     -- the seeded value too rather than only to what is typed after it.
+    -- These three ride ISTextEntryBox (vanilla ISUI Lua, unverifiable here)
+    -- and setPlaceholderText is missing on some builds - degrade to an
+    -- uncapped/unplaceheld box rather than no box.
     if self.opts.maxLen then pcall(function() box:setMaxTextLength(self.opts.maxLen) end) end
     if self.opts.placeholder then
         pcall(function() box:setPlaceholderText(self.opts.placeholder) end)
@@ -140,6 +146,8 @@ function DFEntry:onCancel() DFEntry.close() end
 function DFEntry:text()
     local s = ""
     if self.entry then
+        -- getInternalText/getText availability differs across builds of the
+        -- UITextBox2 wrapper - fall through the pair rather than assume one
         local ok = pcall(function() s = self.entry:getInternalText() end)
         if not ok or s == nil then pcall(function() s = self.entry:getText() end) end
     end
@@ -168,6 +176,7 @@ function DFEntry:commit()
     -- underneath, and a window still on the UIManager while its host is being
     -- torn down is how an orphan ends up painting over the new one.
     DFEntry.close()
+    -- foreign callback: the caller's onCommit must not orphan the dialog flow
     if fn then pcall(fn, s) end
 end
 
@@ -259,6 +268,8 @@ function DFEntry.close()
         -- that is removed while still focused keeps eating keystrokes, which
         -- reads as the game ignoring movement keys after closing a dialog -
         -- and there is then nothing on screen to click to give the focus back.
+        -- vanilla ISUI Lua teardown; a fault here must still null the
+        -- instance below or the dialog can never be reopened
         if w.entry then pcall(function() w.entry:unfocus() end) end
         pcall(function() w:removeFromUIManager() end)
         DFEntryState.instance = nil

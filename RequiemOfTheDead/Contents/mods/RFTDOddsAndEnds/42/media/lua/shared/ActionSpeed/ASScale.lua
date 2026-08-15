@@ -145,12 +145,15 @@ local RECIPE_VAR = {
 }
 
 -- Recipe name off a handcraft action, or nil. pcall because craftRecipe is a
--- Java object reached through a field a future build may rename, and a throw
--- here would take out adjustMaxTime for EVERY action in the game.
+-- Java object reached through a field a future build may rename - and any
+-- action (foreign mods included) can carry a craftRecipe field of some other
+-- shape whose getName is not CraftRecipe's - and a throw here would take out
+-- adjustMaxTime for EVERY action in the game. Allocation-free direct form:
+-- this runs once per action create.
 local function recipeVarFor(action)
     local r = action and action.craftRecipe
     if not r or not r.getName then return nil end
-    local ok, name = pcall(function() return r:getName() end)
+    local ok, name = pcall(r.getName, r)
     if not ok or type(name) ~= "string" then return nil end
     return RECIPE_VAR[name]
 end

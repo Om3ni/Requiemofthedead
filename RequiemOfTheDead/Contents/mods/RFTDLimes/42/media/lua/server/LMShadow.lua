@@ -31,11 +31,14 @@ require "LMCore"
 
 LMShadow = LMShadow or {}
 
+-- No guard: getActivatedMods (LuaManager:6054) returns ZomboidFileSystem's own
+-- mod-id list, and contains is java.util.ArrayList's. Only the nil case needs
+-- saying, and it says it.
 local active = false
-pcall(function()
-    local mods = getActivatedMods()
+local mods = getActivatedMods()
+if mods then
     active = mods:contains("phunzones2") or mods:contains("phunzones2test")
-end)
+end
 if not active then
     print("[Limes] shadow: PhunZones2 not active, nothing to diverge from")
     return LMShadow
@@ -95,12 +98,15 @@ local function sweep()
         local p = players:get(i)
         if p then
             local x, y = math.floor(p:getX()), math.floor(p:getY())
+            -- pcall stays: PhunZones' lookup is a foreign mod's code, and this
+            -- watch must never break on the store it is only observing.
             local okPz, pz = pcall(PhunZones.getLocation, x, y)
             if okPz then
                 local d = diff(pz, Limes.getLocation(x, y))
                 if d then
-                    local who = "?"
-                    pcall(function() who = p:getUsername() end)
+                    -- getUsername is a field return; p came from
+                    -- getOnlinePlayers and is checked non-nil above.
+                    local who = p:getUsername() or "?"
                     local sig = who .. "|" .. d
                     if not seen[sig] and seenCount < SEEN_CAP then
                         seen[sig] = true
@@ -117,6 +123,8 @@ local function sweep()
     end
 end
 
+-- pcall: a read-only diagnostic reaching into a foreign store must not take
+-- EveryTenMinutes - and every other mod's listener on it - down with it.
 Events.EveryTenMinutes.Add(function() pcall(sweep) end)
 
 if Events.OnServerStarted then

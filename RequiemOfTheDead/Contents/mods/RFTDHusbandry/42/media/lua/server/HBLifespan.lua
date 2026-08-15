@@ -54,23 +54,36 @@ local SCAN_RANGE = 20  -- +/- squares around each player (matches HBKeepAlive)
 -- index: iterator of non-table: []" because HashMap.values() returns an
 -- unexposed java.util.HashMap$Values view. getAnimal(pos) is def-free
 -- (`animalInside.get(index)`) and view-free. (Full rationale in HBKeepAlive.)
--- The flag is kept as a guard against a genuine (catchable) future API change.
-local hutchScanOK = true
+-- The flag is kept as a guard against a genuine (catchable) future API change:
+-- in 42.20.2 getAnimalInside (IsoHutch:898) is a field return and getAnimal
+-- (IsoHutch:902) a HashMap.get on a map initialised at the declaration
+-- (IsoHutch:61), so neither can throw HERE - the guard exists because the B42
+-- animal API is still moving and a rename in a later 42.x would. That makes it
+-- a cross-build PROBE, so it runs ONCE and the verdict is cached:
+-- nil = not yet probed, true = usable, false = disabled for the session.
+local hutchScanOK = nil
 local MAX_HUTCH_SLOTS = 64
 local function visitHutchAnimals(hutch, visit)
-    if not hutchScanOK then return end
-    local ok, err = pcall(function()
-        local inside = hutch:getAnimalInside()
-        if not inside then return end
-        for pos = 0, MAX_HUTCH_SLOTS - 1 do
-            local animal = hutch:getAnimal(pos)
-            if animal then visit(animal) end
+    if hutchScanOK == false then return end
+    if hutchScanOK == nil then
+        -- One-shot cross-build probe: the IsoHutch animal API either exists on
+        -- this build or it does not, so re-probing per hutch buys nothing.
+        local ok, err = pcall(function()
+            if hutch:getAnimalInside() then hutch:getAnimal(0) end
+        end)
+        if not ok then
+            hutchScanOK = false
+            print("[HB] HBLifespan hutch enumeration disabled - IsoHutch animal API "
+                .. "unavailable (logged once): " .. tostring(err))
+            return
         end
-    end)
-    if not ok then
-        hutchScanOK = false
-        print("[HB] HBLifespan hutch enumeration disabled - IsoHutch animal API "
-            .. "unavailable (logged once): " .. tostring(err))
+        hutchScanOK = true
+    end
+    local inside = hutch:getAnimalInside()
+    if not inside then return end
+    for pos = 0, MAX_HUTCH_SLOTS - 1 do
+        local animal = hutch:getAnimal(pos)
+        if animal then visit(animal) end
     end
 end
 
@@ -82,19 +95,24 @@ local matureAge = {}   -- oid -> age first seen as a grown adult (freeze point /
 -- ─── age write: lower age/daysSurvived without the initSize() shrink bug ───
 local function setAgeSafe(animal, data, target)
     target = math.floor(target)
-    local size, weight
-    pcall(function() size   = data:getSize()   end)
-    pcall(function() weight = data:getWeight() end)
-    pcall(function() animal:setAgeDebug(target) end)
-    if size   then pcall(function() data:setSize(size)     end) end
-    if weight then pcall(function() data:setWeight(weight) end) end
+    -- getSize/getWeight are field returns (AnimalData:1389/1409) - no guard.
+    local size   = data:getSize()
+    local weight = data:getWeight()
+    -- setAgeDebug (IsoAnimal:1500) reads this.adef.minAge and calls
+    -- AnimalData.init(); setSize/setWeight (AnimalData:1380/1598) clamp through
+    -- getMinSize/getMaxSize, which read parent.adef too. A constructor that
+    -- bailed early (IsoAnimal:259-275) leaves adef null, so all three can NPE.
+    pcall(animal.setAgeDebug, animal, target)
+    if size   then pcall(data.setSize,   data, size)   end
+    if weight then pcall(data.setWeight, data, weight) end
 end
 
 -- An adult age guaranteed below the geriatric threshold (~0.8 * maxAge).
 local function safeAdultAge(animal, data, floorAge)
-    local maxAge
-    pcall(function() maxAge = data:getMaxAgeGeriatric() end)
-    if type(maxAge) == "number" and maxAge > 0 then
+    -- getMaxAgeGeriatric (AnimalData:1533) reads parent.adef.maxAgeGeriatric
+    -- and walks getUsedGene - NPEs on an animal whose adef never resolved.
+    local ok, maxAge = pcall(data.getMaxAgeGeriatric, data)
+    if ok and type(maxAge) == "number" and maxAge > 0 then
         return math.max(floorAge or 1, math.floor(maxAge * 0.6))
     end
     return math.max(floorAge or 1, 1)
@@ -102,19 +120,19 @@ end
 
 -- ─── per-animal policy ─────────────────────────────────────────────────────
 local function manageAnimal(animal, mode, mult)
-    local oid
-    pcall(function() oid = animal:getOnlineID() end)
+    local oid = animal:getOnlineID()
     if not oid or oid == 0 then return end
 
-    local wild = false
-    pcall(function() wild = animal:isWild() end)
-    if wild then return end  -- only manage tame livestock
+    if animal:isWild() then return end  -- only manage tame livestock
 
-    local baby = true
-    pcall(function() baby = animal:isBaby() end)
-    local age
-    pcall(function() age = animal:getAge() end)
-    if type(age) ~= "number" then return end
+    -- isBaby (IsoAnimal:1657) dereferences getData().currentStage and getAge
+    -- (IsoAnimal:2101) dereferences getData(); data is null on an animal whose
+    -- constructor bailed early. Failure keeps the old defaults: treat it as a
+    -- baby (leave it alone) and bail when the age is unreadable.
+    local okBaby, baby = pcall(animal.isBaby, animal)
+    if not okBaby then baby = true end
+    local okAge, age = pcall(animal.getAge, animal)
+    if not okAge or type(age) ~= "number" then return end
 
     if baby then
         lastAge[oid] = age   -- let babies grow untouched
@@ -125,8 +143,7 @@ local function manageAnimal(animal, mode, mult)
     if not matureAge[oid] then matureAge[oid] = age end
     local floorAge = matureAge[oid]
 
-    local data
-    pcall(function() data = animal:getData() end)
+    local data = animal:getData()   -- IsoAnimal:1185, `return this.data` (may be nil)
     if not data then return end
 
     if mode == MODE_FROZEN then
@@ -136,9 +153,10 @@ local function manageAnimal(animal, mode, mult)
         end
         -- Safety: a reloaded already-old animal can be past geriatric even at
         -- its recorded maturity age; pull it firmly below the threshold.
-        local ger = false
-        pcall(function() ger = animal:isGeriatric() end)
-        if ger then
+        -- isGeriatric (IsoAnimal:1809) reads this.adef.maxAgeGeriatric with no
+        -- null guard - NPEs on an animal whose adef never resolved.
+        local okGer, ger = pcall(animal.isGeriatric, animal)
+        if okGer and ger then
             local t = safeAdultAge(animal, data, floorAge)
             setAgeSafe(animal, data, t)
             age = t
@@ -168,10 +186,14 @@ end
 -- ─── enumeration (mirror of HBKeepAlive: loose + trailer + hutch) ───────────
 local function gatherPlayers()
     local out = {}
-    local ok, op = pcall(getOnlinePlayers)
-    if ok and op and op.size then
-        local n = 0; pcall(function() n = op:size() or 0 end)
-        for i = 0, n - 1 do local p = op:get(i); if p then out[#out + 1] = p end end
+    -- getOnlinePlayers is an unconditional engine global (LuaManager:3823): it
+    -- returns GameServer.getPlayers() on a dedi and an empty list otherwise,
+    -- never null and never throwing. SP falls through to getSpecificPlayer(0).
+    local op = getOnlinePlayers()
+    if op then
+        for i = 0, (op:size() or 0) - 1 do
+            local p = op:get(i); if p then out[#out + 1] = p end
+        end
     end
     if #out == 0 then local p = getSpecificPlayer(0); if p then out[#out + 1] = p end end
     return out
@@ -183,33 +205,38 @@ local function walk(apply, present)
 
     local function visit(animal)
         if not animal then return end
-        local oid; pcall(function() oid = animal:getOnlineID() end)
+        local oid = animal:getOnlineID()
         if not oid or oid == 0 or seen[oid] then return end
         seen[oid] = true
         present[oid] = true
         apply(animal)
     end
 
-    -- Loose animals via the cell object list.
-    pcall(function()
-        local objs = cell:getObjectListForLua()
-        if objs and type(objs) ~= "boolean" then
-            local n = objs:size() or 0
-            for i = 0, n - 1 do
-                local o = objs:get(i)
-                if o and instanceof(o, "IsoAnimal") then visit(o) end
-            end
+    -- Loose animals via the cell object list. getObjectListForLua (IsoCell:2315)
+    -- snapshots a final, declaration-initialised HashSet (IsoCell:165), so the
+    -- read cannot throw on the nil-checked cell above.
+    local objs = cell:getObjectListForLua()
+    if objs and type(objs) ~= "boolean" then
+        local n = objs:size() or 0
+        for i = 0, n - 1 do
+            local o = objs:get(i)
+            if o and instanceof(o, "IsoAnimal") then visit(o) end
         end
-    end)
+    end
 
     -- Trailer + hutch animals around each connected player.
     local seenV, seenH = {}, {}
     for _, p in ipairs(gatherPlayers()) do
-        local sq; pcall(function() sq = p:getCurrentSquare() end)
+        local sq = p:getCurrentSquare()   -- IsoMovingObject:1819, `return this.current`
         if sq then
             local px, py, pz = sq:getX(), sq:getY(), sq:getZ()
             for dx = -SCAN_RANGE, SCAN_RANGE do
                 for dy = -SCAN_RANGE, SCAN_RANGE do
+                    -- KEEP: getGridSquare (IsoCell:2791) and getVehicleContainer
+                    -- (IsoGridSquare:8602) both dereference the ServerMap.instance
+                    -- / IsoWorld.instance singletons and walk chunk lists - not
+                    -- field returns, and a square on an unloaded chunk edge is
+                    -- exactly when this scan runs.
                     pcall(function()
                         local s = cell:getGridSquare(px + dx, py + dy, pz)
                         if not s then return end
@@ -253,6 +280,9 @@ local function tick()
     local mult = sv.AnimalLifespanMultiplier or 4
 
     local present = {}
+    -- KEEP: containment. manageAnimal writes ages through setAgeDebug/setSize/
+    -- setWeight, all of which read the animal's adef; one malformed animal must
+    -- not take the rest of the herd's pass down with it.
     walk(function(animal) pcall(manageAnimal, animal, mode, mult) end, present)
 
     -- Prune state for animals no longer loaded (keeps the tables bounded).

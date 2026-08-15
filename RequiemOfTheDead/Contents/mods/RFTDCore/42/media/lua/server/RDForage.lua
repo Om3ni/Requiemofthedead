@@ -58,9 +58,9 @@ end
 -- record without a location cannot be cross-referenced against anything.
 local function recordAt(player)
     local x, y, z = -1, -1, -1
-    pcall(function()
+    if player then
         x = math.floor(player:getX()); y = math.floor(player:getY()); z = math.floor(player:getZ())
-    end)
+    end
     return x, y, z
 end
 

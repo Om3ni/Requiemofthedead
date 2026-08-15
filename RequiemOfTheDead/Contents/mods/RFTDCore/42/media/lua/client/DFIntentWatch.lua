@@ -54,12 +54,12 @@ local function lacks(capabilityName)
     local player = getPlayer()
     if not player then return false end
 
-    local has = true
-    local ok = pcall(function()
-        has = player:getRole():hasCapability(Capability[capabilityName])
-    end)
-    if not ok then return false end
-    return has ~= true
+    -- getRole (IsoPlayer:6987) is a field return and may be nil early;
+    -- hasCapability (Role:187) is HashSet.contains on a final set. A broken
+    -- lookup still reads as "authorised" - stay silent, per the note above.
+    local role = player.getRole and player:getRole()
+    if not role then return false end
+    return role:hasCapability(Capability[capabilityName]) ~= true
 end
 
 local function trip(code, what)
@@ -94,6 +94,7 @@ local function wrap(holder, holderName, method, code, label, capabilityName)
     DFIntentWatch.wrapped[sentinel] = orig
 
     holder[method] = function(...)
+        -- a watch fault must never break the wrapped admin tool itself
         pcall(function()
             if lacks(capabilityName) then trip(code, label) end
         end)
@@ -122,9 +123,9 @@ end
 -- whose tools just stopped working. That has to be a sandbox toggle, never a
 -- code edit.
 local function armed()
-    local v
-    local ok = pcall(function() v = SandboxVars.RFTDCore and SandboxVars.RFTDCore.IntentWatchEnabled end)
-    if not ok or v == nil then return true end   -- absent option = on
+    -- SandboxVars is nil until options load; the chain replaces the guard
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore.IntentWatchEnabled
+    if v == nil then return true end   -- absent option = on
     return v == true
 end
 
@@ -165,6 +166,8 @@ local function install()
         .. " staff-only surfaces instrumented (records intent, never blocks)")
 end
 
+-- install touches vanilla admin-UI constructor tables that may be absent or
+-- reshaped on some builds; a failed install must cost the watch, not the boot
 Events.OnGameStart.Add(function() pcall(install) end)
 
 return DFIntentWatch

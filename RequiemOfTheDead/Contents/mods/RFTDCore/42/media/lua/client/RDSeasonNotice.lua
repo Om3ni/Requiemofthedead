@@ -42,6 +42,8 @@ local function show(season)
         "Set a new name and restart the server before players join.\n\n" ..
         "Nothing has been changed automatically."
 
+    -- vanilla ISUI Lua construction (ISModalDialog), unverifiable here; the
+    -- console fallback below carries the warning when the modal cannot
     local ok = pcall(function()
         local w, h = 460, 260
         local sw = getCore():getScreenWidth()

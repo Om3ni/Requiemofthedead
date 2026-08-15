@@ -52,17 +52,19 @@ end
 
 -- Push the engine flag. hidden == true -> debug context options suppressed.
 local function setHidden(hidden)
-    local ok, opts = pcall(getDebugOptions)
-    if ok and opts then
+    -- getDebugOptions returns the static-final DebugOptions.instance
+    -- (LuaManager:5934, DebugOptions:51). Cannot throw.
+    local opts = getDebugOptions()
+    if opts then
         opts:setBoolean("UI.HideDebugContextMenuOptions", hidden == true)
     end
 end
 
 local function shiftDown()
-    local ok, held = pcall(function()
-        return isKeyDown(Keyboard.KEY_LSHIFT) or isKeyDown(Keyboard.KEY_RSHIFT)
-    end)
-    return ok and held == true
+    -- isKeyDown (GameKeyboard:113) null-checks its key array and these two
+    -- constant keycodes are always in bounds. (Computed keycodes are NOT safe
+    -- there - the array index is unchecked.)
+    return isKeyDown(Keyboard.KEY_LSHIFT) or isKeyDown(Keyboard.KEY_RSHIFT)
 end
 
 -- Apply the starting state: hidden when enabled, vanilla (visible) when disabled.

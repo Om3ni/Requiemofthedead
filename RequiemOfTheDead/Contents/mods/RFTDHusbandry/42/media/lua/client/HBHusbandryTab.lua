@@ -83,6 +83,9 @@ end
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
+    -- KEEP: DFRegistry.registerTab is another mod's callback (Dragonfly), and a
+    -- host that has changed its contract must not take the OnGameStart chain
+    -- down with it - the error is logged, not swallowed.
     local ok, err = pcall(function()
         DFRegistry.registerTab{
             id     = "husbandry",

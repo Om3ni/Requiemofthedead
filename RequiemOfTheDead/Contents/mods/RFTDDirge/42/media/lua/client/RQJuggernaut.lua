@@ -44,8 +44,7 @@ Events.OnRenderTick.Add(function()
             local lz = pos and pos.z or 0
             local jugg = RQCore.findZombieByID(onlineID, lx, ly, lz)
             if jugg then
-                local ok, dead = pcall(jugg.isDead, jugg)
-                if ok and not dead then
+                if not jugg:isDead() then
                     local jx = math.floor(jugg:getX())
                     local jy = math.floor(jugg:getY())
                     local jz = math.floor(jugg:getZ())
@@ -80,8 +79,8 @@ Events.OnRenderTick.Add(function()
                                                 then
                                                     local ooid = obj:getOnlineID()
                                                     if not RQRegistry.isSpecial(ooid) then
-                                                        pcall(obj.setOutlineHighlight, obj, playerNum, true)
-                                                        pcall(obj.setOutlineHighlightCol, obj, playerNum,
+                                                        obj:setOutlineHighlight(playerNum, true)
+                                                        obj:setOutlineHighlightCol(playerNum,
                                                             BUFF_COLOR.r, BUFF_COLOR.g, BUFF_COLOR.b, BUFF_COLOR.a)
                                                     end
                                                 end
@@ -101,8 +100,8 @@ Events.OnRenderTick.Add(function()
 end)
 
 function RQJuggernaut.onDead(zombie)
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if ok and oid and oid ~= 0 then
+    local oid = zombie and zombie:getOnlineID()
+    if oid and oid ~= 0 then
         RQRing.clear("jugg_" .. oid)
     end
 end

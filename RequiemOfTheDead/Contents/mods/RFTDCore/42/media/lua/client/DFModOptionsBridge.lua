@@ -106,6 +106,8 @@ function DFModOptionsBridge.ensureLoaded()
     if DFModOptionsBridge.loaded then return true end
     local a = api()
     if not a or type(a.load) ~= "function" then return false end
+    -- foreign code: ModOptions' own loader; a fault refuses the bridge
+    -- (see header - refusing to write ungated is the point)
     local ok, err = pcall(a.load, a)
     if not ok then
         print("[Dragonfly] mod options load failed: " .. tostring(err))
@@ -304,6 +306,8 @@ function DFModOptionsBridge.get(k)
 
     elseif o.type == "keybind" then
         local code = tonumber(o.key) or 0
+        -- getKeyName on an out-of-range code is engine-dependent; the raw
+        -- code is an acceptable label when the lookup fails
         local ok, name = pcall(getKeyName, code)
         return (ok and name) or tostring(code)
 

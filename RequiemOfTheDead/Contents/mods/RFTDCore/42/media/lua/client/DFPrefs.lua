@@ -116,6 +116,7 @@ end
 function DFPrefs.load()
     for k, v in pairs(DEFAULTS) do DFPrefs.state[k] = v end
 
+    -- file I/O: a failed or partial read leaves the defaults standing
     pcall(function()
         local r = getFileReader(DFPrefs.FILE, false)
         if not r then return end
@@ -136,6 +137,7 @@ end
 
 function DFPrefs.save()
     clampState()
+    -- getFileWriter allowlist I/O: a failed save keeps the in-memory state
     pcall(function()
         -- create = true, append = false: this file is a complete snapshot
         -- every time, so appending would grow it forever with stale lines that

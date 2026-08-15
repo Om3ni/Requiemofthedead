@@ -65,6 +65,9 @@ local function onPlayerUpdate(playerObj)
     if acc < REFILL_TICKS then return end
     acc = 0
     if not RCShared.isAdmin(playerObj) then return end
+    -- guarded: a BLOW_TORCH-tagged item that is not Drainable has no
+    -- getCurrentUses - a nil-method throw on someone's modded torch must not
+    -- error every half second of the admin's session
     pcall(refillTorches, playerObj)
 end
 Events.OnPlayerUpdate.Add(onPlayerUpdate)
@@ -80,6 +83,7 @@ local function setCheat(playerObj, selected)
         -- failed silently - never again)
         if selected then
             RCShared.halo(playerObj, "Eternal Torch ON - your blowtorches will not drain.", false)
+            -- guarded: same modded-torch nil-method risk as the update loop
             pcall(refillTorches, playerObj)   -- top up right now, not in 0.5s
         else
             RCShared.halo(playerObj, "Eternal Torch OFF.", true)
@@ -107,6 +111,8 @@ local function onGameStart()
     local p = getPlayer()
     if p then RCEternalTorch.cheat = p:getModData()[KEY] == true end
 
+    -- guarded: registerOption error()s by design when the Admin Powers panel
+    -- API is missing; the failure is printed, not fatal
     local ok, err = pcall(registerOption)
     if ok then
         print("[RC] Eternal Torch registered on the Admin Powers panel (cheat="

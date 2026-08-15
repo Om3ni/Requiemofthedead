@@ -197,35 +197,33 @@ local function forEachClientVehicle(fn)
     if not cell then return end
     local vs = cell:getVehicles()
     if not vs then return end
-    local ok, it = pcall(function() return vs:iterator() end)
-    if not ok or not it then return end
+    local it = vs:iterator()
+    if not it then return end
     while it:hasNext() do
+        -- guarded: one car that throws mid-row must not lose the rest of the
+        -- nearby list
         local v = it:next()
         if v then pcall(fn, v) end
     end
 end
 
+-- Row reads are all field returns / null-checked chains verified in the
+-- decompile (BaseVehicle getters, VehicleParts.java:125, VehicleScript.java:1917).
 local function nearbyRows()
     local rows = {}
     forEachClientVehicle(function(v)
         local r = { vid = v:getId(), loaded = true, occupied = 0 }
         r.script = v:getScriptName() or "?"
-        pcall(function()
-            r.x, r.y, r.z = math.floor(v:getX()), math.floor(v:getY()), math.floor(v:getZ())
-        end)
+        r.x, r.y, r.z = math.floor(v:getX()), math.floor(v:getY()), math.floor(v:getZ())
         r.kind = RCShared.isWreck(v) and "wreck"
             or (RCShared.isTrailer(v) and "trailer" or "car")
-        pcall(function()
-            local eng = v:getPartById("Engine")
-            if eng then r.engine = math.floor(eng:getCondition()) end
-        end)
-        pcall(function()
-            local script = v:getScript()
-            local seats = script and script:getPassengerCount() or 0
-            for s = 0, seats - 1 do
-                if v:isSeatOccupied(s) then r.occupied = r.occupied + 1 end
-            end
-        end)
+        local eng = v:getPartById("Engine")
+        if eng then r.engine = math.floor(eng:getCondition()) end
+        local script = v:getScript()
+        local seats = script and script:getPassengerCount() or 0
+        for s = 0, seats - 1 do
+            if v:isSeatOccupied(s) then r.occupied = r.occupied + 1 end
+        end
         r.owner   = RCClaim.getOwner(v)
         r.claimId = RCClaim.getClaimId(v)
         -- No verdict: the janitor stamps are server-side and this path never
@@ -415,6 +413,8 @@ end
 function T.teleportTo(row)
     if not (row and row.x) then setStatus("That row has no position."); return end
     local me = getPlayer()
+    -- guarded: teleportTo exits any vehicle and fires OnExitVehicle (foreign
+    -- handlers) before ensureOnTile (IsoGameCharacter.java:14980) - not trivial
     pcall(function() me:teleportTo(row.x + 0.5, row.y + 0.5, math.floor(row.z or 0)) end)
 end
 local teleportToRow = T.teleportTo
@@ -457,6 +457,9 @@ local function deleteRows(rows)
             -- an unloaded registry row: there is no object anywhere to remove
             skipped = skipped + 1
         else
+            -- guarded: the SP branch runs getVehicleById on a stale row vid
+            -- plus permanentlyRemove's full teardown (BaseVehicle.java:7205);
+            -- one failed row is counted, not fatal
             local sent = pcall(function()
                 if isClient() then
                     sendClientCommand(me, "vehicle", "remove", { vehicle = row.vid })
@@ -470,9 +473,7 @@ local function deleteRows(rows)
     end
 
     if #reports > 0 then
-        pcall(function()
-            sendClientCommand(me, M, "dismantledMany", { reports = reports })
-        end)
+        sendClientCommand(me, M, "dismantledMany", { reports = reports })
     end
 
     -- Say what actually happened, including what was NOT done. A silent
@@ -738,6 +739,7 @@ local function drawBand(el)
     -- Two stacked lines in the band. The second used to sit at a fixed +20,
     -- which drew it through the first as soon as the glyphs got taller.
     local bfh = 12
+    -- guarded: getFontHeight NPEs on a missing font (TextManager.java:127)
     pcall(function() bfh = getTextManager():getFontHeight(fL) end)
     local line2 = 4 + bfh + 2
 
@@ -809,6 +811,7 @@ local function drawMeat(el)
     -- own glyphs the moment the text size went up, which is what turned this
     -- column into a smear rather than a list.
     local lh = 16
+    -- guarded: getFontHeight NPEs on a missing font (TextManager.java:127)
     pcall(function() lh = getTextManager():getFontHeight(fL) + 3 end)
     if lh < 14 then lh = 14 end
 
@@ -1266,11 +1269,13 @@ local function recomputeMetrics()
 
     if not baseCodeFH then
         baseCodeFH = 18
+        -- guarded: getFontHeight NPEs on a missing font (TextManager.java:127)
         pcall(function() baseCodeFH = getTextManager():getFontHeight(UIFont.Code) end)
         if not baseCodeFH or baseCodeFH < 1 then baseCodeFH = 18 end
     end
 
     local fh = baseCodeFH
+    -- guarded: getFontHeight NPEs on a missing font (TextManager.java:127)
     pcall(function() fh = getTextManager():getFontHeight(FONT) end)
     if not fh or fh < 1 then fh = baseCodeFH end
 
@@ -1292,6 +1297,8 @@ local function recomputeMetrics()
     -- is one character. Both get a real gap after them rather than a gap that
     -- happened to be big enough at one size.
     local gw, iw = 8, 40
+    -- guarded: MeasureStringX derefs getFontFromEnum unguarded
+    -- (TextManager.java:297) - a missing font falls back to fixed columns
     pcall(function()
         gw = getTextManager():MeasureStringX(FONT, "o")
         iw = getTextManager():MeasureStringX(FONT, "88888")
@@ -1322,6 +1329,8 @@ end
 -- order within a session is alphabetical - OnGameStart is the level ground.
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
+    -- guarded: registerTab is another mod's surface (Dragonfly); its failure
+    -- is printed, never allowed to kill our OnGameStart
     local ok, err = pcall(function()
         DFRegistry.registerTab{
             id         = "rcVehicles",

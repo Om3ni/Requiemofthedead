@@ -40,18 +40,27 @@ function HBAddHayAction:perform()
 end
 
 function HBAddHayAction:complete()
+    -- ORDER MATTERS, AND IT USED TO BE THE WRONG WAY ROUND. The tuft left the
+    -- inventory first and the command went second behind an `if sq`, so a coop
+    -- picked up or unloaded during a 120-tick pour ate the hay and reported it
+    -- to the server console alone - the one place the player who lost it will
+    -- never look. Resolve first; only spend the hay once there is something to
+    -- pour it into, and if there is not, say so where it can be read.
+    local hutch = self.hutch and self.hutch:getHutch()  -- master for either half
+    local sq = hutch and hutch:getSquare()              -- IsoObject:1126
+    if not sq then
+        HaloTextHelper.addBadText(self.character, "The hutch is gone.")
+        return true
+    end
+
     -- Consume one hay (client inventory; replicated the standard way).
     local inv = self.character:getInventory()
     sendRemoveItemFromContainer(inv, self.item)
     inv:Remove(self.item)
 
     -- Server tops up the hutch's bedding charge (server-authoritative write).
-    local sq
-    pcall(function() sq = self.hutch:getSquare() end)
-    if sq then
-        sendClientCommand(self.character, "RFTDHusbandry", HBCmd.ADD_BEDDING,
-            { x = sq:getX(), y = sq:getY(), z = sq:getZ() })
-    end
+    sendClientCommand(self.character, "RFTDHusbandry", HBCmd.ADD_BEDDING,
+        { x = sq:getX(), y = sq:getY(), z = sq:getZ() })
     return true
 end
 

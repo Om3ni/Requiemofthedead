@@ -51,7 +51,9 @@ RDNet = RDNet or {}
 
 if not isServer() then
     function RDNet.send(module, command, args)
-        pcall(function() sendClientCommand(tostring(module), tostring(command), args or {}) end)
+        -- LuaManager:7208 - client/SP branches only reachable here (the file is
+        -- side-gated); its server-side throw cannot be hit
+        sendClientCommand(tostring(module), tostring(command), args or {})
     end
 end
 
@@ -117,6 +119,8 @@ if isServer() then
             reject(module, command, player, "capability")
             return
         end
+        -- foreign code: the handler belongs to a satellite mod; containment
+        -- (RD.NET_ERROR below) is the feature
         local ok, err = pcall(cmd.handler, player, args)
         if not ok then
             RDLog.forensic("rdnet", "RD.NET_ERROR", player, {
@@ -129,12 +133,14 @@ if isServer() then
         end
     end)
 
+    -- sendServerCommand (GameServer:3256) returns early for an unmapped player
+    -- and a closed connection - disconnects need no guard (pcall-safe.json)
     function RDNet.reply(player, module, command, args)
-        pcall(function() sendServerCommand(player, tostring(module), tostring(command), args or {}) end)
+        sendServerCommand(player, tostring(module), tostring(command), args or {})
     end
 
     function RDNet.broadcast(module, command, args)
-        pcall(function() sendServerCommand(tostring(module), tostring(command), args or {}) end)
+        sendServerCommand(tostring(module), tostring(command), args or {})
     end
 
     -- Core's own token is adopted from the start; Core commands register onto

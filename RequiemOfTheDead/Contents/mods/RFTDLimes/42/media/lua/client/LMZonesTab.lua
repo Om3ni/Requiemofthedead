@@ -90,6 +90,9 @@ Events.OnGameStart.Add(function()
         print("[Limes] Dragonfly not present (or too old for DFViews) - Zones tab not registered")
         return
     end
+    -- pcall: registerTab belongs to Dragonfly. Its argument shape is a foreign
+    -- contract that can move between versions, and the failure is reported
+    -- below rather than left to surface as a Limes boot error.
     local ok, err = pcall(function()
         DFRegistry.registerTab{
             id     = "limes",

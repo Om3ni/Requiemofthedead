@@ -84,3 +84,6 @@ docs/*
 # file directly and os.exit(2) without it. It is test data, not documentation,
 # so it survives the purge and stays in git.
 !docs/dirge-phunzones.md
+
+# --- Native DLL decompiles: reference only, regenerate with Ghidra headless ---
+PZ_Natives_Decompiled_*/

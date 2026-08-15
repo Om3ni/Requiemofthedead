@@ -161,6 +161,8 @@ local function reset()
     LRDangerHUD.badges = {}
     LRDangerHUD.quip = { text = nil, expire = 0 }
     if hud and hud.javaObject then
+        -- Guard stays: removeFromUIManager is vanilla LUA, so the decompile
+        -- cannot vouch for it, and a teardown that throws would strand the HUD.
         pcall(hud.removeFromUIManager, hud)
     end
     hud = nil

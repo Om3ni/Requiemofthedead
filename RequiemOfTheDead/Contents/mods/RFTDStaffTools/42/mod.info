@@ -1,6 +1,6 @@
 name=Requiem of the Dead: Staffing Tools
 id=RFTDStaffTools
-modversion=1.1.0
+modversion=1.2.0
 require=RFTDCore
 description=Staff quality-of-life tooling: an extended ESC scoreboard with capability-gated per-row actions, and the unlocked built-in role editor so admins can grant or revoke individual capabilities directly on existing roles (User, Moderator, etc.) without creating custom roles and reassigning players. Shaken out of Dragonfly as its own mod. Requires Requiem of the Dead: Core; the Roles tab renders inside the Dragonfly admin panel when present. Designed for dedicated multiplayer servers.
 pzversion=42

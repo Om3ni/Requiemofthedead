@@ -108,6 +108,8 @@ local function tw(s)  return getTextManager():MeasureStringX(font(), s or "") en
 -- group gap is most of a row - so changing the font changes the size of the
 -- form without changing how it reads.
 -- ---------------------------------------------------------------------------
+-- getFontHeight (TextManager:127) NPEs on a font this build lacks; each
+-- measure below keeps its fallback behind the guard.
 local baseFH
 local function baseline()
     if not baseFH then

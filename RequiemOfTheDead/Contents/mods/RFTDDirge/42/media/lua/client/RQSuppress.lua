@@ -92,6 +92,9 @@ local function computeEffective(player, weapon, now)
     for _, g in pairs(groups) do
         local mult = nil
         for _, predicate in pairs(g.sources) do
+            -- guard stays: predicates are registered by other RotD modules (and
+            -- potentially other mods) through RQSuppress.register; one broken
+            -- source must not take the whole multiplier pass down.
             local ok, m = pcall(predicate, player, weapon)
             if ok and m then
                 m = tonumber(m)
@@ -198,9 +201,11 @@ end)
 -- knob. It joins the same "aura" group, so standing inside the ring while
 -- holding a gun does not double-apply.
 RQSuppress.register("aura", "ranged", function(player, weapon)
-    if not weapon then return end
-    local okF, firearm = pcall(weapon.isAimedFirearm, weapon)
-    if not okF or not firearm then return end
+    -- isAimedFirearm (HandWeapon:1080, a field return) exists only on
+    -- HandWeapon, and the equipped item can be anything, so the presence test
+    -- is the guard -- indexing an absent method is nil, only calling it throws.
+    if not weapon or not weapon.isAimedFirearm then return end
+    if not weapon:isAimedFirearm() then return end
 
     local cfg    = RQConfig.get()
     local radius = cfg.rangedProtectRadius

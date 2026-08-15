@@ -238,9 +238,8 @@ end
 
 local function scriptName(vehicle)
     if not vehicle then return nil end
-    local ok, name = pcall(function() return vehicle:getScriptName() end)
-    if ok then return name end
-    return nil
+    -- field return (BaseVehicle.java:1593); may be nil, never throws
+    return vehicle:getScriptName()
 end
 
 -- Burnt/Smashed hull. Wrecks are exempt from claiming (and dismantle later).
@@ -278,6 +277,8 @@ function RCShared.halo(character, text, isError)
     if not character or not text then return end
     local r, g, b = 100, 255, 100
     if isError then r, g, b = 255, 90, 90 end
+    -- guarded: HaloTextHelper is vanilla LUA (unverifiable against the
+    -- decompile) and absent server-side; setHaloNote is the degraded fallback
     local ok = pcall(function() HaloTextHelper.addText(character, text, "", r, g, b) end)
     if not ok then pcall(function() character:setHaloNote(text) end) end
 end
@@ -288,6 +289,7 @@ end
 -- character musing, not the system refusing.
 function RCShared.haloThought(character, text)
     if not character or not text then return end
+    -- guarded: same vanilla-LUA helper + fallback pair as halo() above
     local ok = pcall(function() HaloTextHelper.addText(character, text, "", 190, 205, 255) end)
     if not ok then pcall(function() character:setHaloNote(text) end) end
 end
@@ -354,6 +356,7 @@ end
 function RCShared.phunZoneBlocks(x, y)
     if not RCShared.cfg().respectPhunZones then return false end
     if not (PhunZones and PhunZones.getLocation) then return false end
+    -- guarded: foreign-mod callback - PhunZones' internals are not ours to trust
     local ok, zone = pcall(PhunZones.getLocation, x, y)
     if not ok or not zone then return false end
     local v = zone.reclamationNoDismantle
@@ -370,18 +373,16 @@ end
 function RCShared.engineBlocksDismantle(vehicle)
     if not vehicle then return false, nil end
     if RCShared.isWreck(vehicle) then return false, nil end
-    local cond
-    pcall(function()
-        local eng = vehicle:getPartById("Engine")
-        if eng then cond = eng:getCondition() end
-    end)
+    -- getPartById is a null-checked map read, getCondition a field return
+    -- (VehicleParts.java:125, VehiclePart.java:891)
+    local eng = vehicle:getPartById("Engine")
+    local cond = eng and eng:getCondition()
     if cond == nil then return false, nil end
     return cond >= RCShared.cfg().engineThreshold, cond
 end
 
 -- Empty every vehicle-part container onto the vehicle's square before
--- teardown - loot is NEVER vaporized. Per-part AND per-item pcall guarded:
--- modded (KI5) part layouts throw on vanilla assumptions and one bad part
+-- teardown - loot is NEVER vaporized. Per-item pcall guarded: one bad item
 -- must not abort the rest of the dump (the Nep lesson). The InventoryItem
 -- overload of AddWorldInventoryItem transmits each drop - that is the vanilla
 -- loot idiom (dedi-verified retrievable pre-scrape) and a one-shot burst on a
@@ -391,26 +392,28 @@ function RCShared.dumpVehicleContainers(vehicle)
     local square = vehicle:getSquare()
     if not square then return 0 end
     local dumped = 0
-    local count = 0
-    pcall(function() count = vehicle:getPartCount() end)
+    -- the part walk and container reads are bounds-checked field returns
+    -- (VehicleParts.java:111, VehiclePart.java:99); only the drop itself throws
+    local count = vehicle:getPartCount()
     for i = 0, count - 1 do
-        pcall(function()
-            local part = vehicle:getPartByIndex(i)
-            local container = part and part:getItemContainer()
-            if container then
-                -- snapshot first: never mutate the Java list while walking it
-                local items = container:getItems()
-                local grab = {}
-                for j = 0, items:size() - 1 do grab[#grab + 1] = items:get(j) end
-                for _, it in ipairs(grab) do
-                    pcall(function()
-                        container:Remove(it)
-                        square:AddWorldInventoryItem(it, ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9), 0)
-                        dumped = dumped + 1
-                    end)
-                end
+        local part = vehicle:getPartByIndex(i)
+        local container = part and part:getItemContainer()
+        if container then
+            -- snapshot first: never mutate the Java list while walking it
+            local items = container:getItems()
+            local grab = {}
+            for j = 0, items:size() - 1 do grab[#grab + 1] = items:get(j) end
+            for _, it in ipairs(grab) do
+                -- guarded: AddWorldInventoryItem builds and transmits a world
+                -- object (IsoGridSquare.java:5426, corpse path included) - one
+                -- modded item that throws must not abort the rest of the dump
+                pcall(function()
+                    container:Remove(it)
+                    square:AddWorldInventoryItem(it, ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9), 0)
+                    dumped = dumped + 1
+                end)
             end
-        end)
+        end
     end
     return dumped
 end

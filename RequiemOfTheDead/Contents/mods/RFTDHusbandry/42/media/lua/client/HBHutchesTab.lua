@@ -86,19 +86,18 @@ local function beddingMax()        return (HBBedding and HBBedding.MAX) or 100 e
 -- denominator, so we pcall for it and render a bare count when it is missing -
 -- an unknown capacity must never take the pane down with it.
 local function maxAnimals(hutch)
-    local n
-    pcall(function() n = hutch:getMaxAnimals() end)
-    if type(n) == "number" and n > 0 then return n end
+    local ok, n = pcall(hutch.getMaxAnimals, hutch)
+    if ok and type(n) == "number" and n > 0 then return n end
     return nil
 end
 
 -- Vanilla's own comment: "zero-based counting, max=3 means 4 boxes :-("
 -- (ISHutchUI.lua:238). getMaxNestBox() is a max INDEX, unlike getMaxAnimals()
--- which ISHutchMenu.lua:57 uses as an exclusive bound, i.e. a count.
+-- which ISHutchMenu.lua:57 uses as an exclusive bound, i.e. a count. Same
+-- def.rawgetInt hazard as maxAnimals above - the guard is why it is a pcall.
 local function nestBoxCount(hutch)
-    local n
-    pcall(function() n = hutch:getMaxNestBox() end)
-    if type(n) == "number" and n >= 0 then return n + 1 end
+    local ok, n = pcall(hutch.getMaxNestBox, hutch)
+    if ok and type(n) == "number" and n >= 0 then return n + 1 end
     return nil
 end
 
@@ -108,16 +107,12 @@ end
 -- (IsoHutch.java:688) so they are sparse, and a Java HashMap does not iterate
 -- cleanly through Kahlua. 0..63 is a safe superset of any real capacity.
 local function occupantCount(hutch)
-    local n
-    pcall(function() n = hutch:getAnimalInside():size() end)
-    if type(n) == "number" then return n end
-    return 0
+    return hutch:getAnimalInside():size() or 0
 end
 
 local function eachOccupant(hutch, fn)
     for pos = 0, 63 do
-        local a
-        pcall(function() a = hutch:getAnimal(pos) end)
+        local a = hutch:getAnimal(pos)
         if a then fn(a, pos) end
     end
 end
@@ -127,9 +122,7 @@ end
 local function deadCount(hutch)
     local n = 0
     for pos = 0, 63 do
-        local b
-        pcall(function() b = hutch:getDeadBody(pos) end)
-        if b then n = n + 1 end
+        if hutch:getDeadBody(pos) then n = n + 1 end
     end
     return n
 end
@@ -139,37 +132,39 @@ end
 -- is reachable; its `animal` is a public INSTANCE FIELD and is not, which is
 -- why the occupant comes from getAnimalInNestBox(i) - a method on the hutch
 -- that does the field read on the Java side.
+-- getNestBox (IsoHutch:961) and getAnimalInNestBox (:954) are HashMap.get on a
+-- final map created at its declaration (:71), and NestBox.getEggsNb (:1035) is
+-- eggs.size() on a list the NestBox constructor allocates - none of the three
+-- touches the hutch def, so none can throw. Only the CAPACITY read above can.
 local function nestSurvey(hutch)
     local boxes, eggs, sitting = nestBoxCount(hutch), 0, 0
     local used = 0
     for i = 0, (boxes and boxes - 1 or 15) do
-        local nb, n, a
-        pcall(function() nb = hutch:getNestBox(i) end)
+        local nb = hutch:getNestBox(i)
         if nb then
-            pcall(function() n = nb:getEggsNb() end)
+            local n = nb:getEggsNb()
             if type(n) == "number" and n > 0 then eggs = eggs + n; used = used + 1 end
         end
-        pcall(function() a = hutch:getAnimalInNestBox(i) end)
-        if a then sitting = sitting + 1 end
+        if hutch:getAnimalInNestBox(i) then sitting = sitting + 1 end
     end
     return { boxes = boxes, eggs = eggs, used = used, sitting = sitting }
 end
 
+-- isOpen (IsoHutch:616), isAllDoorClosed (:985) and isEggHatchDoorOpen (:942)
+-- are field reads. haveEggHatchDoor (:938) is NOT - it reads
+-- this.def.rawgetStr("openHatchSprite"), and def is null for any hutch the
+-- definitions do not cover, which is the engine-internal NPE this file's header
+-- describes. Treat an unreadable hatch the way the old code did: "none".
 local function doorState(hutch)
-    local open, allClosed
-    pcall(function() open = hutch:isOpen() end)
-    pcall(function() allClosed = hutch:isAllDoorClosed() end)
-    if open then return "open" end
-    if allClosed then return "closed" end
+    if hutch:isOpen() then return "open" end
+    if hutch:isAllDoorClosed() then return "closed" end
     return "?"
 end
 
 local function hatchState(hutch)
-    local have, open
-    pcall(function() have = hutch:haveEggHatchDoor() end)
-    if not have then return "none" end
-    pcall(function() open = hutch:isEggHatchDoorOpen() end)
-    return open and "open" or "closed"
+    local ok, have = pcall(hutch.haveEggHatchDoor, hutch)
+    if not ok or not have then return "none" end
+    return hutch:isEggHatchDoorOpen() and "open" or "closed"
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -241,11 +236,16 @@ local function collectParts(row)
     local h = row and row.hutch
     if not h then return parts end
 
+    -- KEEP: getAllHutchObjects (IsoHutch:858) walks this.square.getCell() with
+    -- no null guard, so a hutch whose square has been unloaded under us NPEs.
     pcall(function()
         local all = h:getAllHutchObjects()
         if not all then return end
         local n = all:size() or 0
         for i = 0, n - 1 do
+            -- KEEP: getTextureForCurrentFrame (IsoSprite:1544) is overloaded
+            -- three ways and dereferences this.def after initSpriteInstance();
+            -- one unresolvable tile must not lose the whole composite.
             pcall(function()
                 local o = all:get(i)
                 if not o then return end
@@ -393,6 +393,9 @@ local function drawCard(el, row, x, y, w, h)
         else
             el:drawText(f.label, x, cy, dim.r, dim.g, dim.b, 1, FONT)
 
+            -- KEEP x2: f.get / f.bar are the CARD table's own closures, run once
+            -- per field per frame. The card's contract is a fixed slot for every
+            -- field, so a bad accessor draws "-" rather than dropping the pane.
             local value = "-"
             if row then
                 local ok, v = pcall(f.get, row)
@@ -552,15 +555,13 @@ refillOccupants = function()
         b:addItem("", { kind = "head", text = "NEST BOXES" })
         if (n.boxes or 0) > 0 then
             for i = 0, n.boxes - 1 do
+                -- See nestSurvey: getNestBox / getEggsNb / getAnimalInNestBox are
+                -- all def-free map and list reads.
                 local eggs, sitter = 0, nil
-                pcall(function()
-                    local nb = h:getNestBox(i)
-                    if nb then eggs = nb:getEggsNb() or 0 end
-                end)
-                pcall(function()
-                    local a = h:getAnimalInNestBox(i)
-                    if a then sitter = HBVitals.nameOf(a) end
-                end)
+                local nb = h:getNestBox(i)
+                if nb then eggs = nb:getEggsNb() or 0 end
+                local a = h:getAnimalInNestBox(i)
+                if a then sitter = HBVitals.nameOf(a) end
                 b:addItem("", { kind = "note", text = string.format(
                     "%-2d  %d egg%s%s", i, eggs, eggs == 1 and "" or "s",
                     sitter and ("  <- " .. sitter) or "") })
@@ -619,6 +620,10 @@ local function scanHutches()
 
     for dx = -SCAN_RANGE, SCAN_RANGE do
         for dy = -SCAN_RANGE, SCAN_RANGE do
+            -- KEEP: getGridSquare (IsoCell:2791) walks the per-player chunk maps
+            -- off the IsoWorld/ServerMap singletons; a square beyond the loaded
+            -- edge is exactly what a 41x41 sweep runs into. The def-reading
+            -- capacity calls below (maxAnimals/nestBoxCount) sit inside it too.
             pcall(function()
                 local s = cell:getGridSquare(px + dx, py + dy, pz)
                 if not s then return end
@@ -629,9 +634,9 @@ local function scanHutches()
                     if obj and instanceof(obj, "IsoHutch") then
                         -- Skip slave halves of multi-tile coops; they share the
                         -- master's square (→ duplicate rows) and hold no real
-                        -- dirt/animals. isSlave = linkedX>0 && linkedY>0.
-                        local slave = false
-                        pcall(function() slave = obj:isSlave() end)
+                        -- dirt/animals. isSlave (IsoHutch:827) is
+                        -- `linkedX > 0 && linkedY > 0` - two field reads.
+                        local slave = obj:isSlave()
                         local key = tostring(obj)
                         if not slave and not seen[key] then
                             seen[key] = true
@@ -647,6 +652,9 @@ local function scanHutches()
                                 if lvl > worst then worst, why = lvl, w end
                             end)
 
+                            -- KEEP: getAllHutchObjects (IsoHutch:858) walks
+                            -- this.square.getCell() unguarded; tile count falls
+                            -- back to 1 rather than losing the row.
                             local tiles = 1
                             pcall(function()
                                 local all = obj:getAllHutchObjects()
@@ -751,7 +759,9 @@ local function teleportToSelected()
         return
     end
     local p = getPlayer()
-    pcall(function() p:setX(row.x + 0.5); p:setY(row.y + 0.5); p:setZ(row.z or 0) end)
+    if not p then return end
+    -- setX/setY/setZ (IsoMovingObject:478/495/512) are field sets.
+    p:setX(row.x + 0.5); p:setY(row.y + 0.5); p:setZ(row.z or 0)
     if DFFeedback then DFFeedback.good(string.format("Teleported to hutch %d,%d.", row.x, row.y)) end
 end
 

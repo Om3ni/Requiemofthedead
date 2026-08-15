@@ -110,6 +110,8 @@ end
 -- Borrowed from errorMagnifier's getZomboidSettingsHeader, and it is the single
 -- cheapest thing here: a pasted trace with no build, no mode and no checksum
 -- state costs a round trip to establish facts the reporter already had.
+-- Every probe in this header is best-effort: a field that cannot be read
+-- degrades to an absent line, never to a report that fails to build.
 function DFLog.contextHeader()
     local lines = { "=== Requiem of the Dead - console report ===" }
 
@@ -206,6 +208,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local function notify(entry, kind)
+    -- foreign listeners; a subscriber fault must not break the log push
     for _, fn in ipairs(DFLog.listeners) do
         pcall(fn, entry, kind)
     end
@@ -352,6 +355,8 @@ function DFLog.formatReport(e)
 end
 
 local function toClipboard(text, okMsg)
+    -- Clipboard is a static on a class that may be absent on some builds;
+    -- failure is surfaced through DFFeedback below
     local ok = pcall(function() Clipboard.setClipboard(text) end)
     if not DFFeedback then return ok end
     if ok then DFFeedback.good(okMsg) else DFFeedback.bad("Clipboard copy failed.") end
@@ -385,6 +390,7 @@ function DFLog.copyAllToClipboard(filter)
 
     local reports = nil
     if DFReports and DFReports.collect then
+        -- a collector fault costs its section, not the whole copy
         pcall(function() reports = DFReports.collect() end)
     end
     if reports then

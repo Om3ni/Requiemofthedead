@@ -293,6 +293,10 @@ local folderServer    = nil   -- basename -> true, seen ONLY under media/lua/ser
 local folderElsewhere = nil   -- basename -> true, seen anywhere else
 local folderCount     = -1    -- getLoadedLuaCount() the map was built from
 
+-- PROBE-BY-DESIGN, here and in poll() below: every engine touch in this file
+-- rides the same machinery that reports errors, so a poller fault must stay
+-- invisible - each guard degrades to "no data this pass", never to a new error
+-- for the poller to then report about itself.
 local function folderMapReady()
     if folderMP == nil then
         local mp = false
@@ -463,7 +467,7 @@ Events.OnTickEvenPaused.Add(poll)
 -- chain is alive, and for anything else that wants a forced re-scan.
 function DFErrorPoller.pollNow()
     DFErrorPoller.tick = POLL_INTERVAL - 1
-    pcall(poll)
+    pcall(poll)   -- probe-by-design: a forced scan must not throw at its caller
 end
 
 -- ---------------------------------------------------------------------------

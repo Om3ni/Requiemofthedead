@@ -126,6 +126,9 @@ local function show()
     if q.quip then text = text .. "\n- " .. q.quip end
     text = text .. "\n\n" .. q.author .. ", " .. q.work
 
+    -- guarded: ISModalDialog and the sizing chain are vanilla Lua running
+    -- while the HUD may still be settling (see header); failure falls back to
+    -- printing the quote below.
     local ok = pcall(function()
         local w = 460
         local modal = ISModalDialog:new(0, 0, w, 0, text, false)

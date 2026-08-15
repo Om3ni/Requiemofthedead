@@ -71,9 +71,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local function sb(key)
-    local ok, v = pcall(function() return SandboxVars.RFTDCore and SandboxVars.RFTDCore[key] end)
-    if ok then return v end
-    return nil
+    return SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore[key]
 end
 
 local function sbNum(key, default, lo, hi)
@@ -266,8 +264,8 @@ local function installWraps()
                 if serverReady then
                     local ok, players = pcall(getOnlinePlayers)
                     if ok and players then
-                        local ok2, sz = pcall(function() return players:size() end)
-                        if ok2 and type(sz) == "number" and sz > 0 then n = sz end
+                        local sz = players:size()
+                        if type(sz) == "number" and sz > 0 then n = sz end
                     end
                 end
                 RDMeter.record("MDATA", "ModData:" .. tostring(tag), est * n, partial)
@@ -294,8 +292,7 @@ Events.OnTick.Add(function()
         -- a world with no RFTDCore sandbox page at all). Whichever comes first
         -- is the moment the answer is real rather than merely early.
         waitedTicks = waitedTicks + 1
-        local haveSandbox = false
-        pcall(function() haveSandbox = type(SandboxVars.RFTDCore) == "table" end)
+        local haveSandbox = (SandboxVars ~= nil) and type(SandboxVars.RFTDCore) == "table"
         if not haveSandbox and not serverReady and waitedTicks < 600 then return end
 
         installed = true
@@ -339,6 +336,7 @@ Events.OnTick.Add(function()
     -- First pass only establishes the window start; there is no elapsed period
     -- to compute rates against yet.
     if prev == 0 then return end
+    -- dump writes through RDLog; a probe fault must not kill the tick
     pcall(RDMeter.dump, now, (now - prev) / 1000)
 end)
 

@@ -155,6 +155,8 @@ function LRDangerMoodle.clear(key)
     if not m then return end
     m.active = false
     if m.addedToUI then
+        -- Guard stays for the same reason as LRDangerHUD's teardown: vanilla
+        -- LUA, unverifiable against the decompile.
         if m.javaObject then pcall(m.removeFromUIManager, m) end
         m.addedToUI = false
     end

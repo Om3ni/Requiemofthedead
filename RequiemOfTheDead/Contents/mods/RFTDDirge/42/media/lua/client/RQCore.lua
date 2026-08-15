@@ -29,8 +29,8 @@ require "RQReflect"
 local function onZombieDead(zombie)
     if not zombie then return end
 
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    local validID = ok and oid and oid ~= 0
+    local oid = zombie:getOnlineID()
+    local validID = oid and oid ~= 0
 
     -- Look up type by onlineID first; fall back to modData so local
     -- death handlers (RQEMP.onDead, RQScreamer.onDead, etc.) still
@@ -163,6 +163,9 @@ function RQCore.playFalloffSound(name, x, y, z, baseGain)
     if falloff <= 0.05 then return end
     local vol = (baseGain or 1.0) * falloff
     if vol <= 0 then return end   -- volume knob at 0: nothing to play
+    -- guard stays: getWorld() is nil before a world exists, and getFreeEmitter
+    -- returns nothing when FMOD has no channel free -- a missing sound must
+    -- never take the caller's effect down with it.
     pcall(function()
         local emitter = getWorld():getFreeEmitter(x + 0.5, y + 0.5, z or 0)
         local handle  = emitter:playSound(name)
@@ -271,7 +274,7 @@ local function onServerCommand(module, command, args)
         local sz = tonumber(args.z) or 0
         local zombie = findZombieByID(onlineID, sx, sy, sz)
         if not zombie or zombie:isDead() then return end
-        pcall(function() zombie:setHealth(targetHP) end)
+        zombie:setHealth(targetHP)
 
     elseif command == "castStart" then
         local col    = { r = args.rR or 1, g = args.rG or 1, b = args.rB or 1, a = args.rA or 1 }
@@ -373,6 +376,9 @@ local function onServerCommand(module, command, args)
                 local cfg = RQConfig.get()
                 local bz  = args.fixedZ or 0
                 local radius = args.radius or cfg.empRadius
+                -- guards stay: playDetonationVFX/stumbleZombies drive particle
+                -- and knockdown work over a whole blast radius; either failing
+                -- must not stop the other, nor the rest of castDone.
                 pcall(function()
                     RQEMP.playDetonationVFX(bx, by, bz, radius)
                 end)
@@ -420,9 +426,9 @@ local function onServerCommand(module, command, args)
                         -- server confirmed devour: lock zombie and set the body target NOW.
                         -- do NOT call startEating here - it would reset arrivedSent=false and
                         -- cause a second eaterArrived, letting the server find corpseGone=true.
-                        pcall(zombie.clearAggroList, zombie)
-                        pcall(zombie.setTarget,      zombie, nil)
-                        pcall(zombie.setUseless,     zombie, true)
+                        zombie:clearAggroList()
+                        zombie:setTarget(nil)
+                        zombie:setUseless(true)
                         RQGlutton.confirmEating(onlineID, zombie, args.corpseX, args.corpseY, args.corpseZ)
                     elseif args.corpseX then
                         -- seeking phase: set up pathfinding entry on owning client
@@ -432,7 +438,7 @@ local function onServerCommand(module, command, args)
                     RQGlutton.stopEating(onlineID, zombie)
                 end
             elseif not eating and zombie.setForceEatingAnimation then
-                pcall(zombie.setForceEatingAnimation, zombie, false)
+                zombie:setForceEatingAnimation(false)
             end
         end
 
@@ -484,8 +490,7 @@ Events.OnRenderTick.Add(function()
     for ringId, tracker in pairs(mpCastTrackers) do
         local zombie = tracker.zombie
         if zombie then
-            local ok, dead = pcall(zombie.isDead, zombie)
-            if ok and not dead then
+            if not zombie:isDead() then
                 local x = math.floor(zombie:getX())
                 local y = math.floor(zombie:getY())
                 local z = math.floor(zombie:getZ())

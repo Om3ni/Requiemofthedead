@@ -49,16 +49,17 @@ end
 -- and deliberately a function rather than something click() reads for itself -
 -- that keeps the model pure, and the test suite simply never calls it. Each tab
 -- used to roll its own isCtrlDown(); there is no engine global for it, only
--- isKeyDown() plus the Keyboard constants. pcall'd per modifier so a keycode
--- missing on some build degrades to "not held" rather than breaking clicking.
+-- isKeyDown() plus the Keyboard constants. Nil-checked per constant so a
+-- keycode missing on some build degrades to "not held" rather than breaking
+-- clicking; isKeyDown itself (LuaManager:5812 -> GameKeyboard:113) null-checks
+-- its own state and cannot throw on a valid keycode.
 function RDSelect.modifiers()
-    local ctrl, shift = false, false
-    pcall(function()
-        ctrl = isKeyDown(Keyboard.KEY_LCONTROL) or isKeyDown(Keyboard.KEY_RCONTROL)
-    end)
-    pcall(function()
-        shift = isKeyDown(Keyboard.KEY_LSHIFT) or isKeyDown(Keyboard.KEY_RSHIFT)
-    end)
+    local kb = Keyboard
+    if type(isKeyDown) ~= "function" or not kb then return false, false end
+    local ctrl = (kb.KEY_LCONTROL ~= nil and isKeyDown(kb.KEY_LCONTROL))
+        or (kb.KEY_RCONTROL ~= nil and isKeyDown(kb.KEY_RCONTROL))
+    local shift = (kb.KEY_LSHIFT ~= nil and isKeyDown(kb.KEY_LSHIFT))
+        or (kb.KEY_RSHIFT ~= nil and isKeyDown(kb.KEY_RSHIFT))
     return ctrl == true, shift == true
 end
 

@@ -30,11 +30,10 @@ local function lockedHalo(playerObj)
 end
 
 -- Radial slice icons live in media/ui (64x64, to match the vanilla car radial).
--- Guarded: a missing texture renders a blank slice, never a crash.
+-- getTexture catches its own load failures and returns nil for a missing file
+-- (Texture.java:406-416), so a blank slice needs no guard.
 local function rcTex(name)
-    local ok, t = pcall(getTexture, "media/ui/" .. name .. ".png")
-    if ok then return t end
-    return nil
+    return getTexture("media/ui/" .. name .. ".png")
 end
 
 function RCClaimMenu.sendClaim(vehicle, playerObj)
@@ -108,12 +107,19 @@ local function applyMenuWraps()
             local wasVisible = menu and menu:isReallyVisible()
             orig(playerObj)
             if v and menu and not wasVisible and not menu:isEmpty() then
+                -- guarded: addSlice here is the vanilla LUA radial wrapper
+                -- (unverifiable against the decompile); a throw must leave the
+                -- wheel usable, just without our slices
                 pcall(RCClaimMenu.addRadialSlices, menu, v, playerObj)
                 for _, provider in ipairs(RCClaimMenu.sliceProviders) do
+                    -- guarded: registered provider callbacks (other files,
+                    -- potentially other mods) are contained, not propagated
                     pcall(provider, menu, v, playerObj)
                 end
                 -- re-center: added slices may have changed the wheel size
                 -- (mirrors vanilla's own positioning at the end of orig).
+                -- guarded: menu is the vanilla LUA wrapper, its geometry
+                -- methods are not the Java UIElement's to verify
                 pcall(function()
                     menu:setX(getPlayerScreenLeft(pi) + getPlayerScreenWidth(pi) / 2 - menu:getWidth() / 2)
                     menu:setY(getPlayerScreenTop(pi) + getPlayerScreenHeight(pi) / 2 - menu:getHeight() / 2)

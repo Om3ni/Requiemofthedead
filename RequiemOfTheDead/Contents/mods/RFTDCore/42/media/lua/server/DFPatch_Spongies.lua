@@ -24,6 +24,8 @@ local applied = false
 local function apply()
     if applied then return end
 
+    -- require THROWS on a missing file and Lua has no existence check for it;
+    -- the pcall is the only way to probe a foreign mod's module
     local ok, FM = pcall(require, "CharacterCustomisation/FaceManager_Server")
     if not ok or type(FM) ~= "table" or type(FM.CheckData) ~= "function" then
         return -- Spongies not present

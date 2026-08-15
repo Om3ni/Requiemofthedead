@@ -100,10 +100,7 @@ end
 local function isTaggedWood(item)
     for _, name in ipairs(LJ.WOOD_TAGS) do
         local tag = tagFor(name)
-        if tag then
-            local ok, has = pcall(function() return item:hasTag(tag) end)
-            if ok and has then return true end
-        end
+        if tag and item:hasTag(tag) then return true end
     end
     return false
 end
@@ -118,19 +115,19 @@ local function targets()
 
     local bulkSet = {}
     for _, full in ipairs(LJ.BULK) do
-        local ok, item = pcall(function() return sm:getItem(full) end)
-        if ok and item then
+        local item = sm:getItem(full)
+        if item then
             table.insert(bulk, item)
             bulkSet[full] = true
         end
     end
 
-    local ok, all = pcall(function() return sm:getAllItems() end)
-    if ok and all then
+    local all = sm:getAllItems()
+    if all then
         for i = 0, all:size() - 1 do
             local item = all:get(i)
-            local okName, full = pcall(function() return item:getFullName() end)
-            if okName and full and not bulkSet[full] and isTaggedWood(item) then
+            local full = item and item:getFullName()
+            if full and not bulkSet[full] and isTaggedWood(item) then
                 table.insert(other, item)
             end
         end
@@ -139,16 +136,17 @@ local function targets()
 end
 
 local function scale(item, factor)
-    local okName, full = pcall(function() return item:getFullName() end)
-    if not okName or not full then return end
+    local full = item:getFullName()
+    if not full then return end
 
     if LJ.original[full] == nil then
-        local okW, w = pcall(function() return item:getActualWeight() end)
-        if not okW or type(w) ~= "number" then return end
+        local w = item:getActualWeight()
+        if type(w) ~= "number" then return end
         LJ.original[full] = w
     end
 
     local target = round2(LJ.original[full] * factor)
+    -- guarded: DoParam rethrows InvalidParameterException on any parse hiccup
     pcall(function()
         item:setActualWeight(target)
         -- Both paths: setActualWeight moves the field the instance copies,

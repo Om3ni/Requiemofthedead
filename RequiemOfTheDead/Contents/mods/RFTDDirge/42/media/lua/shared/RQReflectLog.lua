@@ -35,6 +35,9 @@ end
 
 function RQReflectLog.writeAll(lines)
     if not lines or #lines == 0 then return end
+    -- guard stays: getFileWriter is the allowlisted (and case-sensitive) write
+    -- path -- a rejected extension or a locked handle throws, and forensic
+    -- logging must never take the caller down with it.
     local ok, err = pcall(function()
         local writer = getFileWriter(FILE, true, true)
         if not writer then return end

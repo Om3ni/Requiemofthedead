@@ -32,6 +32,9 @@ Events.OnClientCommand.Add(function(module, command, player, args)
     local line
     local a = getAnimal(oid)
     if a then
+        -- KEEP: isFemale (IsoGameCharacter:9312) resolves through
+        -- getCharacterGender() -> this.descriptor, and an animal whose
+        -- constructor bailed early (IsoAnimal:259-275) has no descriptor.
         local sex = "?"
         pcall(function() sex = a:isFemale() and "FEMALE" or "MALE" end)
         line = string.format("[HBSexCheck] server view: oid=%d sex=%s", oid, sex)
@@ -39,7 +42,9 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         line = "[HBSexCheck] server: animal " .. tostring(oid) .. " not resolvable"
     end
     print(line)
-    pcall(function() sendServerCommand(player, "RFTDHusbandry", "hbDebugProbeResult", { line = line }) end)
+    -- GameServer.sendServerCommand:3256 returns early for an unmapped player and
+    -- for a closed connection, so a disconnect mid-probe needs no guard.
+    sendServerCommand(player, "RFTDHusbandry", "hbDebugProbeResult", { line = line })
 end)
 
 print("[HB] HBSexCheck_Server loaded")

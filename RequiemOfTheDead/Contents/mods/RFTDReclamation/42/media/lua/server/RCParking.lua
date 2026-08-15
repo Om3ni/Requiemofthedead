@@ -103,13 +103,16 @@ RCParking.last = { probes = 0, found = false, dist = 0 }
 -- ---------------------------------------------------------------------------
 
 -- THE never-in-grass gate. A tile is parkable only if a VehicleZone covers it.
+-- getVehicleZoneAt is fully null-checked (IsoMetaGrid.java:248); only the world
+-- itself can be missing, and that is a nil-check, not a guard.
 function RCParking.isParkable(x, y, z)
-    local zone
-    local ok = pcall(function()
-        zone = getWorld():getMetaGrid():getVehicleZoneAt(
-            math.floor(x), math.floor(y), math.floor(z or 0))
-    end)
-    return ok and zone ~= nil
+    local world = getWorld()
+    if not world then return false end
+    local mg = world:getMetaGrid()
+    if not mg then return false end
+    local zone = mg:getVehicleZoneAt(
+        math.floor(x), math.floor(y), math.floor(z or 0))
+    return zone ~= nil
 end
 
 -- Is this square free of vehicles, right now? Checked over a small footprint
@@ -124,16 +127,16 @@ end
 -- isIntersectingSquare test - so the pair was one answer computed twice, nine
 -- times per probe. The distinction was never in the engine; it was in the
 -- comment describing it.
+-- getGridSquare returns nil for anything unloaded (ServerMap.java:627) and
+-- isVehicleIntersecting null-checks each chunk (IsoGridSquare.java:8622), so
+-- with a world present neither needs a guard.
 local function footprintClear(x, y, z)
+    local cell = getWorld() and getCell()
+    if not cell then return true end
     for dx = -1, 1 do
         for dy = -1, 1 do
-            local sq
-            pcall(function() sq = getCell():getGridSquare(x + dx, y + dy, z) end)
-            if sq then
-                local busy = false
-                pcall(function() busy = sq:isVehicleIntersecting() end)
-                if busy then return false end
-            end
+            local sq = cell:getGridSquare(x + dx, y + dy, z)
+            if sq and sq:isVehicleIntersecting() then return false end
         end
     end
     return true
@@ -149,8 +152,8 @@ end
 function RCParking.canPlace(x, y, z)
     x, y, z = math.floor(x), math.floor(y), math.floor(z or 0)
     if not RCParking.isParkable(x, y, z) then return false end
-    local sq
-    pcall(function() sq = getCell():getGridSquare(x, y, z) end)
+    -- isParkable proved the world exists; getGridSquare is nil for unloaded
+    local sq = getCell():getGridSquare(x, y, z)
     if not sq then return false end                       -- unloaded: nothing to place on
 
     -- INDOOR STALLS ARE LEGAL (owner's call, 2026-08-04, replacing a blanket
@@ -166,9 +169,9 @@ function RCParking.canPlace(x, y, z)
     if RCNoPark and RCNoPark.blocks(x, y, z) then return false end
 
     if not footprintClear(x, y, z) then return false end
-    local sheltered = false
-    pcall(function() sheltered = SafeHouse.getSafeHouse(sq) ~= nil end)
-    if sheltered then return false end
+    -- getSafeHouse null-checks the square and walks a static list with the
+    -- username==null short-circuit (SafeHouse.java:148->184); cannot throw
+    if SafeHouse.getSafeHouse(sq) ~= nil then return false end
     return true
 end
 
@@ -199,12 +202,13 @@ local DIR_W, DIR_E, DIR_N, DIR_S = 1, 2, 3, 4
 -- that suits where it is parking. getName is a method (Zone.java:486) and so is
 -- reachable, unlike the zone's dir field.
 function RCParking.zoneNameAt(x, y, z)
-    local name
-    pcall(function()
-        local zone = getWorld():getMetaGrid():getVehicleZoneAt(
-            math.floor(x), math.floor(y), math.floor(z or 0))
-        if zone then name = zone:getName() end
-    end)
+    local world = getWorld()
+    local mg = world and world:getMetaGrid()
+    if not mg then return nil end
+    local zone = mg:getVehicleZoneAt(
+        math.floor(x), math.floor(y), math.floor(z or 0))
+    -- Zone.getName is a field return (Zone.java:486)
+    local name = zone and zone:getName()
     if type(name) ~= "string" or name == "" then return nil end
     return name
 end
@@ -212,15 +216,14 @@ end
 -- Which way should a car in this zone point? Returns 1-4, or nil when the tile
 -- is in no vehicle zone (the caller then leaves RCSpawn to roll, as before).
 function RCParking.zoneDirection(x, y, z)
-    local zone
-    local ok = pcall(function()
-        zone = getWorld():getMetaGrid():getVehicleZoneAt(
-            math.floor(x), math.floor(y), math.floor(z or 0))
-    end)
-    if not ok or not zone then return nil end
+    local world = getWorld()
+    local mg = world and world:getMetaGrid()
+    local zone = mg and mg:getVehicleZoneAt(
+        math.floor(x), math.floor(y), math.floor(z or 0))
+    if not zone then return nil end
 
-    local w, h
-    pcall(function() w, h = zone:getWidth(), zone:getHeight() end)
+    -- field returns (Zone.java:534/530)
+    local w, h = zone:getWidth(), zone:getHeight()
     if not (w and h) then return nil end
 
     -- Vanilla's test (IsoChunk.java:980) with its double negative resolved.
@@ -262,20 +265,18 @@ local function vehiclePoints(x, y, maxDist)
     if not cell then return out end
     local vs = cell:getVehicles()
     if not vs then return out end
-    local ok, it = pcall(function() return vs:iterator() end)
-    if not ok or not it then return out end
+    local it = vs:iterator()
+    if not it then return out end
     while it:hasNext() do
         local v = it:next()
         if v then
-            pcall(function()
-                local vx, vy = v:getX(), v:getY()
-                -- Cheap box reject before anything is stored: a search band is
-                -- a few hundred tiles across and the cell can hold cars far
-                -- outside it.
-                if math.abs(vx - x) <= reach and math.abs(vy - y) <= reach then
-                    out[#out + 1] = { x = vx, y = vy }
-                end
-            end)
+            local vx, vy = v:getX(), v:getY()
+            -- Cheap box reject before anything is stored: a search band is
+            -- a few hundred tiles across and the cell can hold cars far
+            -- outside it.
+            if math.abs(vx - x) <= reach and math.abs(vy - y) <= reach then
+                out[#out + 1] = { x = vx, y = vy }
+            end
         end
     end
     return out

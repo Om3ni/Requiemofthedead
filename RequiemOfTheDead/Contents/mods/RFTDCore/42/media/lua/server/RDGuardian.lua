@@ -126,9 +126,9 @@ if not RDGuardian._hooked then
     Events.OnClientCommand.Add(function(module, command, player, args)
         pcall(function()   -- a sensor fault must never disturb the real command path
             local x, y, z = -1, -1, -1
-            pcall(function()
+            if player then
                 x = math.floor(player:getX()); y = math.floor(player:getY()); z = math.floor(player:getZ())
-            end)
+            end
             local est, partial = RDWire.commandEstimate(module, command, args)
             RDLog.forensic("guardian", "RD.CMD", player, {
                 access   = (player and player:getAccessLevel()) or "",

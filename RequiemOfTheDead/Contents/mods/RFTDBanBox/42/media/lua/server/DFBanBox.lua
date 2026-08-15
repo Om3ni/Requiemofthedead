@@ -25,7 +25,7 @@
 require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
 
 DFBanBox = DFBanBox or {}
-RDShared.registerMod("RFTDBanBox", "1.0.0")   -- keep in sync with mod.info
+RDShared.registerMod("RFTDBanBox", "1.2.0")   -- keep in sync with mod.info
 DFBanBox._bans = DFBanBox._bans or {}   -- fullType -> true
 
 local function cfg() return SandboxVars.RFTDBanBox or {} end
@@ -130,18 +130,14 @@ local function scrubPlayer(player)
     for _, entry in ipairs(DFInventory.listAddressableItems(player)) do
         scanned = scanned + 1
         local it = entry.item
-        local ft
-        pcall(function() ft = it:getFullType() end)
+        local ft = it:getFullType()
         if ft and DFBanBox._bans[ft] then
-            local nm = ft
-            pcall(function() nm = it:getName() or ft end)
-            local container
-            pcall(function() container = it:getContainer() end)
-            container = container or player:getInventory()
+            local nm = it:getName() or ft
+            local container = it:getContainer() or player:getInventory()
             -- Unequip from hands first so removal can't leave a dangling ref.
-            pcall(function() if player:isEquipped(it) then player:removeFromHands(it) end end)
-            pcall(function() container:Remove(it) end)
-            pcall(function() sendRemoveItemFromContainer(container, it) end)
+            if player:isEquipped(it) then player:removeFromHands(it) end
+            container:Remove(it)
+            sendRemoveItemFromContainer(container, it)
             local r = removed[ft] or { count = 0, name = nm }
             r.count = r.count + 1
             removed[ft] = r
@@ -153,7 +149,7 @@ local function scrubPlayer(player)
         any = true
         -- Tell the player (server formats so BBLibrary's override is honoured).
         local msg = string.format(DFBanBox.removalMessage or "%s has been removed.", r.name)
-        pcall(function() sendServerCommand(player, "DFBanBox", "removed", { message = msg }) end)
+        sendServerCommand(player, "DFBanBox", "removed", { message = msg })
         -- Audit for staff - input to the two-owner process, never an auto-action.
         if DFCore and DFCore.audit then
             DFCore.audit("BanBox confiscate", player, string.format("item=%s x%d", ft, r.count))
@@ -162,7 +158,7 @@ local function scrubPlayer(player)
                 tostring(player:getUsername()), ft, r.count))
         end
     end
-    if any then pcall(function() player:resetModelNextFrame() end) end  -- refresh if a worn item went
+    if any then player:resetModelNextFrame() end  -- refresh if a worn item went
     dbg("scrub %s: scanned=%d, removed=%s",
         tostring(who), scanned, any and "yes" or "none banned")
 end

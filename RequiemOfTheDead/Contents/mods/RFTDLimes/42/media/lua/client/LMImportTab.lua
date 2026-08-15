@@ -93,8 +93,10 @@ local function readClipboard()
     if ui and ui.importBtn then ui.importBtn.enable = false end
     showWarnings(nil)
 
-    local text = nil
-    pcall(function() text = Clipboard.getClipboard() end)
+    -- No guard: Clipboard.getClipboard (Clipboard:36) wraps the GLFW read in
+    -- catch(Throwable) and returns the cached value off the main thread, so it
+    -- cannot throw. Only the class being absent needs saying.
+    local text = Clipboard and Clipboard.getClipboard()
     if type(text) ~= "string" or text == "" then
         setStatus("Clipboard is empty - copy the export text first.")
         return

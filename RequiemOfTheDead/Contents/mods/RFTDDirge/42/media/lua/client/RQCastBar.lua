@@ -23,20 +23,14 @@ local BAR_Y_OFFSET = -10   -- Vertical offset above head position
 
 -- Detect if zombie is in stagger/knockdown state
 -- Cast bar should be interrupted when staggered or knocked down
+-- isKnockedDown (IsoGameCharacter:13361) and isOnFloor (IsoMovingObject:2020)
+-- are plain field reads. isFallingDown does not exist in 42.20.2 at all, so the
+-- presence test is what keeps it from throwing on a build that adds it back.
 local function isZombieStaggered(zombie)
     if not zombie then return false end
-    if zombie.isKnockedDown then
-        local ok, val = pcall(zombie.isKnockedDown, zombie)
-        if ok and val then return true end
-    end
-    if zombie.isOnFloor then
-        local ok, val = pcall(zombie.isOnFloor, zombie)
-        if ok and val then return true end
-    end
-    if zombie.isFallingDown then
-        local ok, val = pcall(zombie.isFallingDown, zombie)
-        if ok and val then return true end
-    end
+    if zombie:isKnockedDown() then return true end
+    if zombie:isOnFloor() then return true end
+    if zombie.isFallingDown and zombie:isFallingDown() then return true end
     return false
 end
 
@@ -86,25 +80,17 @@ function RQCastBarHUD:render()
             local wx, wy, wz
             local zombieAlive = false
             if bar.zombie then
-                local ok, dead = pcall(bar.zombie.isDead, bar.zombie)
-                zombieAlive = ok and not dead
+                zombieAlive = not bar.zombie:isDead()
                 -- Double check: HP <= 0 means zombie is dying, treat as dead
                 if zombieAlive then
-                    local ok2, hp = pcall(bar.zombie.getHealth, bar.zombie)
-                    if not ok2 or (hp and hp <= 0) then
+                    local hp = bar.zombie:getHealth()
+                    if hp and hp <= 0 then
                         zombieAlive = false
                     end
                 end
             end
             if zombieAlive then
-                local ok, x = pcall(bar.zombie.getX, bar.zombie)
-                if ok then
-                    local ok2, y = pcall(bar.zombie.getY, bar.zombie)
-                    local ok3, z = pcall(bar.zombie.getZ, bar.zombie)
-                    if ok2 and ok3 then
-                        wx, wy, wz = x, y, z
-                    end
-                end
+                wx, wy, wz = bar.zombie:getX(), bar.zombie:getY(), bar.zombie:getZ()
             elseif bar.fixedX then
                 wx = bar.fixedX
                 wy = bar.fixedY
@@ -174,6 +160,9 @@ local function detachHUDIfEmpty()
     if hudPanel and hudActive and activeBarCount == 0 then
         hudActive = false
         if hudPanel.javaObject then
+            -- guard stays: removeFromUIManager is vanilla ISUIElement Lua, not in
+            -- the Java decompile; hudActive is already cleared above so a throw
+            -- cannot leave the panel stuck "attached".
             pcall(hudPanel.removeFromUIManager, hudPanel)
         end
     end
@@ -212,6 +201,8 @@ function RQCastBar.cancel(id)
     if bar then
         activeBars[id] = nil
         activeBarCount = math.max(0, activeBarCount - 1)
+        -- guard stays: onCancel/onComplete are caller-supplied callbacks from
+        -- the ability modules; a bad one must not strand the bar or the HUD.
         if bar.onCancel then pcall(bar.onCancel) end
         detachHUDIfEmpty()
     end
@@ -235,16 +226,17 @@ local function onTick()
         -- Follow mode: zombie died -> cancel cast bar
         local zombieDied = false
         if bar.zombie then
-            local ok, dead = pcall(bar.zombie.isDead, bar.zombie)
-            zombieDied = not ok or dead
+            zombieDied = bar.zombie:isDead()
             -- Double check: HP <= 0 also treated as dead
             if not zombieDied then
-                local ok2, hp = pcall(bar.zombie.getHealth, bar.zombie)
-                if not ok2 or (hp and hp <= 0) then
+                local hp = bar.zombie:getHealth()
+                if hp and hp <= 0 then
                     zombieDied = true
                 end
             end
         end
+        -- onCancel/onComplete guards stay: caller-supplied callbacks from the
+        -- ability modules; one bad callback must not strand every other bar.
         if zombieDied then
             if bar.onCancel then pcall(bar.onCancel) end
             removeCount = removeCount + 1
@@ -284,6 +276,9 @@ local function onGameStart()
     -- If panel from previous session is still in UIManager, remove it first
     hudActive = false
     if hudPanel and hudPanel.javaObject then
+        -- guard stays: removeFromUIManager is vanilla ISUIElement Lua, not in the
+        -- Java decompile, and a stale panel from the previous session must not
+        -- stop the new one being built below.
         pcall(hudPanel.removeFromUIManager, hudPanel)
     end
 

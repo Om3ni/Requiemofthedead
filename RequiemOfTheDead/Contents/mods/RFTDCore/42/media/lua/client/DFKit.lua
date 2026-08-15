@@ -324,6 +324,7 @@ end
 -- old spacing around bigger text.
 function DFKit.rowHeight()
     local fh = 12
+    -- getFontHeight (TextManager:127) NPEs on a font this build lacks
     pcall(function() fh = getTextManager():getFontHeight(DFKit.font.small) end)
     if not fh or fh < 1 then fh = 12 end
     return math.max(DFKit.metrics.rowH, fh + 8)
@@ -341,7 +342,8 @@ function DFKit.sizeList(box, x, y, w, h)
     if w then box:setWidth(w) end
     if h then box:setHeight(h) end
     -- Order matters: bars first so they take the new geometry, then re-clamp
-    -- yScroll against the scroll area the new size implies.
+    -- yScroll against the scroll area the new size implies. Both are vanilla
+    -- ISUI Lua (unverifiable here); a fault costs the bars, not the resize.
     pcall(function() box:addScrollBars() end)
     pcall(function() box:updateScrollbars() end)
     return box

@@ -45,13 +45,15 @@ end
 -- owning client. Returns the new notebook (or nil).
 local function consumeAndReplace(player, item)
     local inv = player:getInventory()
-    local container = inv
-    pcall(function() container = item:getContainer() or inv end)
-    pcall(function() container:Remove(item) end)
-    pcall(function() sendRemoveItemFromContainer(container, item) end)
+    local container = item:getContainer() or inv
+    container:Remove(item)
+    sendRemoveItemFromContainer(container, item)
+    -- AddItem keeps its guard: it resolves a script item by name and returns
+    -- null for an unknown type, and the container can refuse on capacity - the
+    -- one call here that has a failure mode rather than a reassuring name.
     local nb
     pcall(function() nb = container:AddItem("Base.Notebook") end)
-    if nb then pcall(function() sendAddItemToContainer(container, nb) end) end
+    if nb then sendAddItemToContainer(container, nb) end
     MMlog("consumed memoir -> Base.Notebook for " .. MMname(player) .. " (notebook=" .. tostring(nb ~= nil) .. ")")
     return nb
 end
@@ -105,7 +107,20 @@ function MMServer.onWrite(player, args)
         if player.transmitModData then pcall(function() player:transmitModData() end) end
     end
 
-    local snap = MMSnapshotCodec.capture(player)
+    -- Same contract every other failure in this handler already honours: deny,
+    -- audit, keep the book. capture() runs the STRICT resolver, so it refuses
+    -- rather than bank a snapshot keyed on a name it had to guess - and without
+    -- this boundary that refusal would reach the player as nothing at all,
+    -- which is the "walks away believing the save landed" failure above.
+    local okCap, snap = pcall(MMSnapshotCodec.capture, player)
+    if not okCap then
+        MMwarn("WRITE capture FAILED for " .. MMname(player) .. ": " .. tostring(snap))
+        if MMAudit then MMAudit.log(player, "WRITE_UNRESOLVED",
+            { itemId = args.itemID, err = tostring(snap) }) end
+        return reply(player, false, "unresolved",
+            "The words will not hold their shape (identity could not be verified"
+            .. " - the memoir is unchanged, please tell an admin).")
+    end
     snap.owner = {
         username = player:getUsername(),
         steamID = (player.getSteamID and player:getSteamID()) or 0,

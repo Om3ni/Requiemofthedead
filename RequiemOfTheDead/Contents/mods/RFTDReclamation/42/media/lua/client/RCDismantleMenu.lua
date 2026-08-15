@@ -110,11 +110,10 @@ RCClaimMenu.sliceProviders = RCClaimMenu.sliceProviders or {}
 table.insert(RCClaimMenu.sliceProviders, function(menu, vehicle, playerObj)
     if not RCDismantleMenu.visible(vehicle, playerObj) then return end
     -- owner's torch art (64x64, matches the RC_claim/release/manage set);
-    -- vanilla item icon as fallback. A nil texture renders a blank slice,
-    -- never a crash.
-    local tex
-    pcall(function() tex = getTexture("media/ui/RC_dismantle.png") end)
-    if not tex then pcall(function() tex = getTexture("Item_BlowTorch") end) end
+    -- vanilla item icon as fallback. getTexture catches its own load failures
+    -- and returns nil (Texture.java:406-416) - a nil renders a blank slice.
+    local tex = getTexture("media/ui/RC_dismantle.png")
+    if not tex then tex = getTexture("Item_BlowTorch") end
     menu:addSlice(RCDismantleMenu.label(vehicle), tex, RCDismantleMenu.onRadialDismantle, playerObj, vehicle)
 end)
 
@@ -142,6 +141,8 @@ local function applyContextWrap()
         -- the loot dump + the ledger line); drop the duplicate ONLY when we
         -- are actually adding ours - if dismantle is staff-only, players
         -- keep the vanilla option (guard above already returned).
+        -- guarded: removeOptionByName is vanilla LUA (ISContextMenu),
+        -- unverifiable against the decompile and reshaped across builds
         pcall(function() context:removeOptionByName(getText("ContextMenu_RemoveBurntVehicle")) end)
 
         local option = context:addOption(RCDismantleMenu.label(vehicle), playerObj, RCDismantleMenu.onMenuDismantle, vehicle)

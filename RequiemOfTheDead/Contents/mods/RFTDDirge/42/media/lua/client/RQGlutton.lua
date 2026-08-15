@@ -68,10 +68,10 @@ function RQGlutton.confirmEating(onlineID, zombie, corpseX, corpseY, corpseZ)
     end
     if corpse and zombie.setEatBodyTarget then
         if zombie.setForceEatingAnimation then
-            pcall(zombie.setForceEatingAnimation, zombie, true)
+            zombie:setForceEatingAnimation(true)
         end
         RQDirgeLog.write("Glutton","[RQEat:Cl] confirmEating oid=" .. tostring(onlineID) .. " -> setForceEatingAnimation+setEatBodyTarget")
-        pcall(zombie.setEatBodyTarget, zombie, corpse, true, ZombRandFloat(0.6, 1.6))
+        zombie:setEatBodyTarget(corpse, true, ZombRandFloat(0.6, 1.6))
     else
         RQDirgeLog.write("Glutton","[RQEat:Cl] confirmEating oid=" .. tostring(onlineID)
             .. " WARN: no body target set (corpse=" .. tostring(corpse ~= nil)
@@ -84,20 +84,20 @@ function RQGlutton.stopEating(onlineID, zombie)
     clActiveEaters[onlineID] = nil
     if zombie then
         if zombie.setForceEatingAnimation then
-            pcall(zombie.setForceEatingAnimation, zombie, false)
+            zombie:setForceEatingAnimation(false)
         end
         if zombie.setEatBodyTarget then
-            pcall(zombie.setEatBodyTarget, zombie, nil, false, 1.0)
+            zombie:setEatBodyTarget(nil, false, 1.0)
         end
-        pcall(zombie.setUseless,    zombie, false)
-        pcall(zombie.setVariable,   zombie, "bPathfind", true)
-        pcall(zombie.setVariable,   zombie, "bMoving",   false)
+        zombie:setUseless(false)
+        zombie:setVariable("bPathfind", true)
+        zombie:setVariable("bMoving",   false)
     end
 end
 
 local function onZombieUpdate(zombie)
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if not ok or not oid or oid == 0 then return end
+    local oid = zombie and zombie:getOnlineID()
+    if not oid or oid == 0 then return end
 
     -- animation sync: driven by modData so every client sees it, not just the owner
     local md      = zombie:getModData()
@@ -108,7 +108,7 @@ local function onZombieUpdate(zombie)
         RQDirgeLog.write("Glutton","[RQEat:Cl] animSync oid=" .. oid .. " setForceEatingAnimation=" .. tostring(eating)
             .. " (was=" .. tostring(wasEat) .. ")")
         if zombie.setForceEatingAnimation then
-            pcall(zombie.setForceEatingAnimation, zombie, eating)
+            zombie:setForceEatingAnimation(eating)
         else
             RQDirgeLog.write("Glutton","[RQEat:Cl] animSync oid=" .. oid .. " WARN: setForceEatingAnimation not available")
         end
@@ -119,8 +119,7 @@ local function onZombieUpdate(zombie)
     local entry = clActiveEaters[oid]
     if not entry then return end
 
-    local ok2, dead = pcall(zombie.isDead, zombie)
-    if not ok2 or dead then
+    if zombie:isDead() then
         RQDirgeLog.write("Glutton","[RQEat:Cl] navCleanup oid=" .. oid .. " zombie dead, clearing entry")
         clActiveEaters[oid] = nil
         return
@@ -128,8 +127,8 @@ local function onZombieUpdate(zombie)
 
     -- keep it from re-aggroing players mid-walk, but dont call setUseless yet
     -- setUseless(true) prevents pathToSound from moving the zombie in B42
-    pcall(zombie.clearAggroList, zombie)
-    pcall(zombie.setTarget,      zombie, nil)
+    zombie:clearAggroList()
+    zombie:setTarget(nil)
 
     local zx   = zombie:getX()
     local zy   = zombie:getY()
@@ -139,9 +138,9 @@ local function onZombieUpdate(zombie)
 
     if dist <= EAT_DIST then
         -- arrived: now its safe to lock movement
-        pcall(zombie.setUseless,  zombie, true)
-        pcall(zombie.setVariable, zombie, "bPathfind", false)
-        pcall(zombie.setVariable, zombie, "bMoving",   false)
+        zombie:setUseless(true)
+        zombie:setVariable("bPathfind", false)
+        zombie:setVariable("bMoving",   false)
         -- do NOT call setEatBodyTarget here - the engine consumes the body immediately,
         -- which causes the server to see corpseGone=true and cancel the devour timer before
         -- the eating animation ever plays. setEatBodyTarget is called later in confirmEating()
@@ -166,9 +165,12 @@ local function onZombieUpdate(zombie)
             RQDirgeLog.write("Glutton","[RQEat:Cl] seeking oid=" .. oid
                 .. " dist=" .. string.format("%.2f", dist)
                 .. " -> pathToSound (" .. entry.corpseX .. "," .. entry.corpseY .. "," .. entry.corpseZ .. ")")
+            -- guard stays: IsoGameCharacter.pathToSound:5964 -> pathToAux:5912
+            -- dereferences IsoWorld.instance.currentCell and PolygonalMap2.instance
+            -- unguarded, so it throws across a cell swap.
             pcall(zombie.pathToSound, zombie, entry.corpseX, entry.corpseY, entry.corpseZ)
             if zombie:getZ() ~= entry.corpseZ then
-                pcall(zombie.setVariable, zombie, "bPathfind", true)
+                zombie:setVariable("bPathfind", true)
             end
         end
     end
@@ -177,8 +179,8 @@ end
 Events.OnZombieUpdate.Add(onZombieUpdate)
 
 function RQGlutton.onDead(zombie)
-    local ok, oid = pcall(zombie.getOnlineID, zombie)
-    if ok and oid and oid ~= 0 then
+    local oid = zombie and zombie:getOnlineID()
+    if oid and oid ~= 0 then
         RQDirgeLog.write("Glutton","[RQEat:Cl] onDead oid=" .. oid)
         RQRing.clear("glutton_" .. oid)
         RQGlutton.stopEating(oid, zombie)

@@ -69,6 +69,9 @@ end
 function RDWire.estimate(args)
     if type(args) ~= "table" then return 0, false end
     local budget = { n = RDWire.NODE_BUDGET, partial = false }
+    -- cost walks WIRE-CONTROLLED foreign tables: a pathological payload
+    -- (metatable tricks, extreme depth) must degrade to 0, not throw into
+    -- the meter; already the allocation-free direct form
     local ok, n = pcall(cost, args, 0, {}, budget)
     if not ok then return 0, false end
     return n or 0, budget.partial

@@ -38,17 +38,17 @@ end
 local function reportPull(character, part)
     if not (character and sendClientCommand) then return end
     local args = {}
-    pcall(function()
-        local vehicle = part and part.getVehicle and part:getVehicle()
-        if vehicle then
-            args.vehicle = vehicle:getScriptName()
-            args.vid = vehicle:getId()
-            args.x = math.floor(vehicle:getX())
-            args.y = math.floor(vehicle:getY())
-            args.z = math.floor(vehicle:getZ())
-        end
-    end)
-    pcall(sendClientCommand, character, RCShared.MODULE, "enginePull", args)
+    -- getVehicle is a null-safe cast (VehiclePart.java:87); the rest are
+    -- field returns on a non-nil vehicle
+    local vehicle = part and part.getVehicle and part:getVehicle()
+    if vehicle then
+        args.vehicle = vehicle:getScriptName()
+        args.vid = vehicle:getId()
+        args.x = math.floor(vehicle:getX())
+        args.y = math.floor(vehicle:getY())
+        args.z = math.floor(vehicle:getZ())
+    end
+    sendClientCommand(character, RCShared.MODULE, "enginePull", args)
 end
 
 -- Wrapped at OnGameStart, never file-load: a wrap on a class that isn't
@@ -81,6 +81,8 @@ local function applyWraps()
         ISTakeEngineParts.RC_pullWrapped = true
         local origComplete = ISTakeEngineParts.complete
         ISTakeEngineParts.complete = function(self, ...)
+            -- guarded: we are inside vanilla's action chain - telemetry must
+            -- never be able to abort the player's completed action
             pcall(reportPull, self.character, self.part)
             return origComplete(self, ...)
         end

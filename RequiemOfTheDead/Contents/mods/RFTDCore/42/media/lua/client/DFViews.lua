@@ -135,7 +135,8 @@ function DFViews:set(id)
 
     -- Relayout BEFORE onShow. onShow usually fires a server request whose reply
     -- paints into rects the switch just changed; doing it the other way round
-    -- can land a reply against the outgoing view's geometry.
+    -- can land a reply against the outgoing view's geometry. Both are tab-owned
+    -- callbacks: one view's fault must not leave the switch half-done.
     if self.relayout then pcall(self.relayout) end
 
     local v = self.views[id]
@@ -147,12 +148,14 @@ end
 -- of its views happens to have a draw method.
 function DFViews:draw(el)
     local v = self.views[self.activeId]
+    -- tab-owned callback; a draw fault must not kill the host's render pass
     if v and v.view and v.view.draw then pcall(v.view.draw, el) end
 end
 
 -- Layout the active view into the body rect the host has left after its strip.
 function DFViews:layoutActive(panel, x, y, w, h)
     local v = self.views[self.activeId]
+    -- tab-owned callback; a layout fault must not break the host's resize
     if v and v.view and v.view.layout then
         pcall(v.view.layout, panel, x, y, w, h)
     end

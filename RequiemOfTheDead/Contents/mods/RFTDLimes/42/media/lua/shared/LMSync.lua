@@ -204,6 +204,9 @@ if isServer() then
     end
 
     if Events and Events.OnTick then
+        -- pcall: this is OnTick. A send that throws - a dropped connection
+        -- inside RDNet.reply, a slice that will not serialise - would fire
+        -- every tick forever and take every other listener with it.
         Events.OnTick.Add(function() pcall(pumpChunkSends) end)
     end
 
@@ -262,9 +265,9 @@ if isServer() then
             RDNet.reply(player, TOKEN, "notice", { msg = "import is admin-only" })
             return nil
         end
-        local who = "?"
-        pcall(function() who = player:getUsername() end)
-        return who
+        -- getUsername is a field return; RDAccess.isTopAdmin has already
+        -- resolved `player` above, so it is an IsoPlayer and non-nil.
+        return player:getUsername() or "?"
     end
 
     -- Shared tail: parse AUTHORITATIVELY (the tab's preview is UX, not
@@ -686,7 +689,7 @@ if isServer() then
     local function dropAssembly(p)
         local name
         if type(p) == "string" then name = p
-        elseif p and p.getUsername then pcall(function() name = p:getUsername() end) end
+        elseif p and p.getUsername then name = p:getUsername() end
         if name then assembly[name] = nil end
     end
     if Events.OnDisconnect then Events.OnDisconnect.Add(dropAssembly) end

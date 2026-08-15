@@ -103,8 +103,8 @@ local DIR = RDShared.DIR
 -- ---------------------------------------------------------------------------
 
 local function cfgNum(key, default)
-    local ok, v = pcall(function() return SandboxVars.RFTDCore and SandboxVars.RFTDCore[key] end)
-    if ok and type(v) == "number" and v > 0 then return v end
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore[key]
+    if type(v) == "number" and v > 0 then return v end
     return default
 end
 
@@ -251,20 +251,20 @@ end
 
 local function usernameOf(subj)
     if type(subj) == "string" then return subj end
-    if subj ~= nil then
-        local ok, name = pcall(function() return subj:getUsername() end)
-        if ok and name then return tostring(name) end
+    if type(subj) ~= "table" and type(subj) ~= "userdata" then return nil end
+    if subj.getUsername then
+        local name = subj:getUsername()
+        if name then return tostring(name) end
     end
     return nil
 end
 
 local function lifeIdOf(subj)
     if type(subj) ~= "table" and type(subj) ~= "userdata" then return nil end
-    local ok, id = pcall(function()
-        local md = subj:getModData()
-        return md and md.RFTD_LifeId
-    end)
-    if ok and id then return tostring(id) end
+    if not subj.getModData then return nil end
+    local md = subj:getModData()
+    local id = md and md.RFTD_LifeId
+    if id then return tostring(id) end
     return nil
 end
 
@@ -398,6 +398,8 @@ end
 -- comparing strings has no such failure mode and cannot match head.txt or a
 -- legacy ".jsonl" orphan by accident.
 local function reclaimOutsideRing(name, ring)
+    -- directory-listing I/O; reclaim is best-effort and must never take the
+    -- ring's write path down with it
     pcall(function()
         local files = listFilesInZomboidLuaDirectory(DIR .. "forensic/" .. name)
         if not files then return end
@@ -566,7 +568,8 @@ function RDLog.forensic(streamName, evt, subj, payload, modId)
     -- listener, which is the whole reason this call lives inside this function.
     -- Delete RDTally.lua and this is a nil check.
     if RDTally then
-        pcall(function() RDTally.note(streamName, evt, payload) end)
+        -- a tally fault must never disturb the forensic push it rides on
+        pcall(RDTally.note, streamName, evt, payload)
     end
 end
 
@@ -636,6 +639,7 @@ function RDLog.selfTest()
 end
 
 if Events.OnServerStarted then
+    -- selfTest does real file I/O; a probe fault must not mark boot as failed
     Events.OnServerStarted.Add(function() pcall(RDLog.selfTest) end)
 end
 

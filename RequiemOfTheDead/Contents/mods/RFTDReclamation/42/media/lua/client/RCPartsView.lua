@@ -69,39 +69,36 @@ local RECHECK_MS = 1500
 local function readLocalParts(vid)
     if not vid then return nil end
     local v
+    -- guarded: vid rode in on a server row - a malformed value would blow the
+    -- (short) cast inside getVehicleById
     if not pcall(function() v = getVehicleById(vid) end) or not v then return nil end
-    local out, n = {}, 0
-    pcall(function() n = v:getPartCount() end)
+    -- Part walk and reads are bounds-checked field returns (VehicleParts.java:111,
+    -- VehiclePart.java:130/891/166/155/352/398/359/148) - no guards needed.
+    local out = {}
+    local n = v:getPartCount()
     for i = 0, n - 1 do
-        pcall(function()
-            local p = v:getPartByIndex(i)
-            if not p then return end
+        local p = v:getPartByIndex(i)
+        if p then
             local rec = { id = p:getId() }
-            pcall(function() rec.cond = math.floor(p:getCondition() or 0) end)
+            rec.cond = math.floor(p:getCondition() or 0)
             -- "installable but no item present" is vanilla's own test for a
             -- part that has been removed rather than merely worn out
-            pcall(function()
-                rec.missing = (p:getInventoryItem() == nil) and (p:getTable("install") ~= nil) or false
-            end)
-            pcall(function()
-                if p:isContainer() then
-                    rec.amount   = p:getContainerContentAmount()
-                    rec.capacity = p:getContainerCapacity()
-                end
-            end)
+            rec.missing = (p:getInventoryItem() == nil) and (p:getTable("install") ~= nil) or false
+            if p:isContainer() then
+                rec.amount   = p:getContainerContentAmount()
+                rec.capacity = p:getContainerCapacity()
+            end
             -- Accepted item types, same field the server snapshot carries
             -- (RCFleet.parts) - the Workshop tab's recipe filter reads it and
             -- must not care which side answered.
-            pcall(function()
-                local it = p:getItemType()
-                if it and it:size() > 0 then
-                    local list = {}
-                    for j = 0, it:size() - 1 do list[#list + 1] = tostring(it:get(j)) end
-                    rec.items = list
-                end
-            end)
+            local it = p:getItemType()
+            if it and it:size() > 0 then
+                local list = {}
+                for j = 0, it:size() - 1 do list[#list + 1] = tostring(it:get(j)) end
+                rec.items = list
+            end
             out[#out + 1] = rec
-        end)
+        end
     end
     if #out == 0 then return nil end
     return out
@@ -149,20 +146,18 @@ function RCPartsView.partsFor(row)
 
     if not requested[vid] then
         requested[vid] = true
-        pcall(function()
-            -- Two doors, one reply. The admin inspector asks by vid, behind
-            -- the admin gate. The player panel's My Vehicles tab marks its
-            -- rows `mine` and asks by CLAIM id - the server resolves that
-            -- through the registry, so ownership is the proof and the vid the
-            -- answer is keyed by never came from the client. Both replies
-            -- land on "VehicleParts" keyed by vid; the cache neither knows
-            -- nor cares which door was used.
-            if row.mine and row.claimId then
-                sendClientCommand(getPlayer(), M, "myvehicleparts", { claimId = row.claimId })
-            else
-                sendClientCommand(getPlayer(), M, "vehicleparts", { vid = vid })
-            end
-        end)
+        -- Two doors, one reply. The admin inspector asks by vid, behind
+        -- the admin gate. The player panel's My Vehicles tab marks its
+        -- rows `mine` and asks by CLAIM id - the server resolves that
+        -- through the registry, so ownership is the proof and the vid the
+        -- answer is keyed by never came from the client. Both replies
+        -- land on "VehicleParts" keyed by vid; the cache neither knows
+        -- nor cares which door was used.
+        if row.mine and row.claimId then
+            sendClientCommand(getPlayer(), M, "myvehicleparts", { claimId = row.claimId })
+        else
+            sendClientCommand(getPlayer(), M, "vehicleparts", { vid = vid })
+        end
     end
     return nil
 end
@@ -379,6 +374,8 @@ function RCPartsView.draw(el, rect, row, noHit)
     end
 
     local bw, bh = 0, 0
+    -- guarded: a not-yet-loaded texture lazily reads its size off disk
+    -- (Texture.java:715 -> syncReadSize:1315); a bad file skips this frame
     pcall(function() bw, bh = base:getWidth(), base:getHeight() end)
     if bw <= 0 or bh <= 0 then return end
 
@@ -569,6 +566,8 @@ function RCPartsView.drawBreakdown(el, rect, row, scroll)
     -- 20px glyph overlaps the row beneath it, and this grid is dense enough
     -- that the overlap compounds down the whole column.
     local gfh = 12
+    -- guarded: getFontHeight NPEs on a font this build lacks
+    -- (TextManager.java:127); 12px is the fallback rhythm
     pcall(function() gfh = getTextManager():getFontHeight(fL) end)
     local ROW_H2 = math.max(15, gfh + 3)
     local HEAD_H = math.max(16, gfh + 4)

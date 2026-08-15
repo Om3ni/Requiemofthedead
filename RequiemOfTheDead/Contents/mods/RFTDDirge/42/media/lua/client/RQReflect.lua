@@ -92,8 +92,7 @@ local function dumpLocalView(reason, detail)
     local vehicle = player:getVehicle()
     local speed = 0
     if vehicle then
-        local ok, s = pcall(vehicle.getCurrentSpeedKmHour, vehicle)
-        speed = (ok and s) or -1
+        speed = vehicle:getCurrentSpeedKmHour() or -1
     end
     -- Our own overlays can hide the world: an active EMP blackout or screamer
     -- darkness at hit time is an answer, not background noise.
@@ -106,25 +105,23 @@ local function dumpLocalView(reason, detail)
         px, py, pz, tostring(vehicle ~= nil), speed, tostring(blind), tostring(dazed))
 
     local seen = 0
+    -- guard stays: getCell() is nil before a world exists, and the failure is
+    -- what selects the "SEEN unavailable" line below.
     local okList, zl = pcall(function() return getCell():getZombieList() end)
     if okList and zl then
         for i = 0, zl:size() - 1 do
             local zombie = zl:get(i)
             if zombie then
-                local okC, zx, zy, zz = pcall(function()
-                    return zombie:getX(), zombie:getY(), zombie:getZ()
-                end)
-                if okC and dist2(px, py, zx, zy) <= DUMP_RADIUS * DUMP_RADIUS then
+                local zx, zy, zz = zombie:getX(), zombie:getY(), zombie:getZ()
+                if dist2(px, py, zx, zy) <= DUMP_RADIUS * DUMP_RADIUS then
                     seen = seen + 1
                     if seen <= SEEN_CAP then
-                        local okId, oid = pcall(zombie.getOnlineID, zombie)
-                        local reg = (okId and oid) and RQRegistry.getType(oid) or nil
-                        local okT, target = pcall(zombie.getTarget, zombie)
-                        local okD, dead   = pcall(zombie.isDead, zombie)
+                        local oid = zombie:getOnlineID()
+                        local reg = oid and RQRegistry.getType(oid) or nil
                         lines[#lines + 1] = fmt(" SEEN id=%s type=%s dist=%.1f pos=(%.1f,%.1f,%.0f) targetingMe=%s dead=%s",
-                            tostring(okId and oid or "?"), reg or "-",
+                            tostring(oid or "?"), reg or "-",
                             math.sqrt(dist2(px, py, zx, zy)), zx, zy, zz,
-                            tostring(okT and target == player), tostring(okD and dead))
+                            tostring(zombie:getTarget() == player), tostring(zombie:isDead()))
                     end
                 end
             end
@@ -189,9 +186,10 @@ Events.OnKeyPressed.Add(function(key)
     lastManualDump = t
     RQReflect.mark("manual")
     -- on-screen ack so the tester knows the marker registered
-    pcall(function()
-        getPlayer():setHaloNote("Dirge marker logged (" .. MARKER_KEY_NAME .. ")", 180, 255, 180, 300)
-    end)
+    local marker = getPlayer()
+    if marker then
+        marker:setHaloNote("Dirge marker logged (" .. MARKER_KEY_NAME .. ")", 180, 255, 180, 300)
+    end
 end)
 
 -- ========================

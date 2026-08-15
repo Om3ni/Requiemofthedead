@@ -74,9 +74,8 @@ local armed = nil
 
 local function enabled()
     if armed ~= nil then return armed end
-    local v
-    local ok = pcall(function() v = SandboxVars.RFTDCore and SandboxVars.RFTDCore.TripwireEnabled end)
-    if not ok or v == nil then return true end   -- absent option = on, don't latch
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore.TripwireEnabled
+    if v == nil then return true end   -- absent option = on, don't latch
     armed = (v == true)
     return armed
 end
@@ -101,15 +100,11 @@ RDTripwire.registerPrivileged("RFTDDirge", "adminReroll")
 
 local function isStaff(player)
     if not RDAccess then return false end
-    local ok, v = pcall(function()
-        return RDAccess.isTopAdmin(player) or RDAccess.hasAnyCapability(player)
-    end)
-    return ok and v == true
+    return (RDAccess.isTopAdmin(player) or RDAccess.hasAnyCapability(player)) == true
 end
 
 local function usernameOf(player)
-    local u
-    pcall(function() u = player:getUsername() end)
+    local u = player and player:getUsername()
     return u or "?"
 end
 
@@ -129,16 +124,17 @@ end
 -- other way round.
 
 local function broadcast(payload)
-    local ok, players = pcall(getOnlinePlayers)
-    if not ok or not players then return end
-    pcall(function()
-        for i = 0, players:size() - 1 do
-            local p = players:get(i)
-            if p and isStaff(p) then
-                sendServerCommand(p, RDShared.MODULE, "tripwire", payload)
-            end
+    local players = getOnlinePlayers()
+    if not players then return end
+    -- size/get are bounds-safe in the loop; isStaff routes through RDAccess
+    -- (non-throwing); sendServerCommand (GameServer:3256) early-returns for
+    -- unmapped/closed connections - the record already exists either way
+    for i = 0, players:size() - 1 do
+        local p = players:get(i)
+        if p and isStaff(p) then
+            sendServerCommand(p, RDShared.MODULE, "tripwire", payload)
         end
-    end)
+    end
 end
 
 -- severity: "impossible" (server-observed) | "reported" (client-reported)
@@ -148,8 +144,7 @@ function RDTripwire.raise(severity, code, player, text, extra)
     text     = clip(text)
 
     local user   = usernameOf(player)
-    local access = ""
-    pcall(function() access = player:getAccessLevel() or "" end)
+    local access = (player and player:getAccessLevel()) or ""
 
     local fields = {
         severity = severity,
@@ -158,14 +153,15 @@ function RDTripwire.raise(severity, code, player, text, extra)
         text     = text,
     }
     if RDIdentity then
-        pcall(function() fields.sid = RDIdentity.sidApprox(player) or "0" end)
+        -- sidApprox probes for getSteamID itself and cannot throw
+        fields.sid = RDIdentity.sidApprox(player) or "0"
     end
-    pcall(function() fields.onlineid = player:getOnlineID() or -1 end)
-    pcall(function()
+    if player then
+        fields.onlineid = player:getOnlineID() or -1
         fields.x = math.floor(player:getX())
         fields.y = math.floor(player:getY())
         fields.z = math.floor(player:getZ())
-    end)
+    end
     if type(extra) == "table" then
         for k, v in pairs(extra) do
             if fields[k] == nil and (type(v) == "string" or type(v) == "number" or type(v) == "boolean") then
@@ -175,6 +171,7 @@ function RDTripwire.raise(severity, code, player, text, extra)
     end
 
     if RDLog and RDLog.forensic then
+        -- a logging fault must never disturb the tripwire path
         pcall(function()
             RDLog.forensic("tripwire", "RD.TRIP", player, fields, RDShared.MODULE)
         end)
@@ -277,15 +274,12 @@ function RDTripwire.receiveLifecycle(player, args)
     if throttled(user, "lifecycle") then return end
 
     if RDLog and RDLog.forensic then
+        -- a logging fault must never disturb the lifecycle path
         pcall(function()
             RDLog.forensic("lifecycle", "RD.LIFE", player, {
                 act    = tostring(args.act or "?"),
                 text   = text,
-                access = (function()
-                    local a = ""
-                    pcall(function() a = player:getAccessLevel() or "" end)
-                    return a
-                end)(),
+                access = (player and player:getAccessLevel()) or "",
             }, RDShared.MODULE)
         end)
     end
@@ -294,6 +288,8 @@ end
 Events.OnClientCommand.Add(function(module, command, player, args)
     if module ~= RDShared.MODULE then return end
     if not enabled() then return end
+    -- args are wire-controlled; a malformed report must not take the
+    -- listener down with it
     if command == "tripwireReport" then
         pcall(function() RDTripwire.receiveReport(player, args) end)
     elseif command == "lifecycleReport" then

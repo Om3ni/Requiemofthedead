@@ -160,6 +160,8 @@ function LSTours.serialize()
 end
 
 function LSTours.save()
+    -- getFileWriter allowlist I/O (throws on a denied path); losing one save
+    -- must not break the mutator that triggered it
     pcall(function()
         local w = getFileWriter(FILE, true, false)
         if not w then return end
@@ -171,6 +173,8 @@ end
 function LSTours.load()
     if LSTours._loaded then return end
     LSTours._loaded = true
+    -- getFileReader allowlist I/O over a user-editable file; a bad file means
+    -- an empty tour list, never a dead tab
     pcall(function()
         local r = getFileReader(FILE, false)
         if not r then return end
@@ -182,6 +186,7 @@ function LSTours.load()
         local fn = loadstring(src)
         if not fn then return end
         setfenv(fn, {})
+        -- executing the loaded chunk; a hand-edited file may error at run time
         local ok, data = pcall(fn)
         if not ok or type(data) ~= "table" then return end
 

@@ -218,9 +218,7 @@ function MMRestore.run(admin, targetUsername, xpPercent)
     if not target then
         return { ok = false, reason = targetUsername .. " must be online to restore." }
     end
-    local dead = false
-    pcall(function() dead = target:isDead() end)
-    if dead then
+    if target:isDead() then
         return { ok = false, reason = targetUsername .. " is dead - restore after they respawn." }
     end
 

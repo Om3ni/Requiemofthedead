@@ -82,8 +82,8 @@ function RQSvGlutton.tick(zombie)
             end
 
         elseif state.phase == "eating" then
-            pcall(zombie.clearAggroList, zombie)
-            pcall(zombie.setTarget, zombie, nil)
+            zombie:clearAggroList()
+            zombie:setTarget(nil)
             local corpseGone = not RQSvEating.svCorpseStillThere(state.targetCorpse, state.targetSq)
             local timedOut   = state.castDue and now >= state.castDue
             if corpseGone or timedOut then

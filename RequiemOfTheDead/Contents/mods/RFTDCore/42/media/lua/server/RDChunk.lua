@@ -88,7 +88,7 @@ function RDChunk.declare(module, command, opts)
     s.rowBudget = s.budget - s.envelope
 
     RDChunk.streams[key] = s
-    pcall(function() RDWire.declareChunked(key, { budget = s.budget }) end)
+    RDWire.declareChunked(key, { budget = s.budget })
     return s
 end
 
@@ -115,7 +115,7 @@ local function split(s, rows, tail, each)
     local slice, sliceEst = {}, 0
     local eachEst = 0
     if type(each) == "table" then
-        pcall(function() eachEst = RDWire.estimate(each) end)
+        eachEst = RDWire.estimate(each)
     end
 
     -- Per-chunk fields come out of the ROW budget, not out of thin air. Charging
@@ -146,8 +146,7 @@ local function split(s, rows, tail, each)
         local row = rows[i]
         -- +8 for the row's own numeric index key, which costs a Double on the
         -- wire and is not part of the row's own estimate.
-        local rowEst = 8
-        pcall(function() rowEst = RDWire.estimate(row) + 8 end)
+        local rowEst = RDWire.estimate(row) + 8
         if #slice > 0 and (sliceEst + rowEst > rowBudget or #slice >= s.maxRows) then
             flush()
         end
@@ -216,8 +215,7 @@ function RDChunk.slice(module, command, rows)
     local out, slice, sliceEst = {}, {}, 0
     for i = 1, #rows do
         local row = rows[i]
-        local rowEst = 8
-        pcall(function() rowEst = RDWire.estimate(row) + 8 end)
+        local rowEst = RDWire.estimate(row) + 8
         if #slice > 0 and (sliceEst + rowEst > s.rowBudget or #slice >= s.maxRows) then
             out[#out + 1] = slice
             slice, sliceEst = {}, 0
@@ -235,7 +233,7 @@ end
 
 local function queueKey(player, s)
     local u = "*"
-    if player then pcall(function() u = player:getUsername() or "?" end) end
+    if player then u = player:getUsername() or "?" end
     return u .. "|" .. s.module .. ":" .. s.command
 end
 
@@ -296,11 +294,13 @@ end
 -- a stream is still strict, which is the only ordering a receiver depends on.
 
 local function sendChunk(entry, chunk)
+    -- sendServerCommand (GameServer:3256) returns early for an unmapped
+    -- player and a closed connection - no guard needed (pcall-safe.json)
     local s = entry.stream
     if entry.player then
-        pcall(sendServerCommand, entry.player, s.module, s.command, chunk)
+        sendServerCommand(entry.player, s.module, s.command, chunk)
     else
-        pcall(sendServerCommand, s.module, s.command, chunk)
+        sendServerCommand(s.module, s.command, chunk)
     end
 end
 
@@ -333,6 +333,8 @@ local function pump()
     end
 end
 
+-- containment, not a getter guard: a paging-state bug in pump must degrade to
+-- a stalled queue, never to a per-tick error storm on the wire pump
 Events.OnTick.Add(function() pcall(pump) end)
 
 -- Depth, for a diagnostic report. Cheap enough to call from one.

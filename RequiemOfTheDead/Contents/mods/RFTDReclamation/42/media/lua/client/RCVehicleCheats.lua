@@ -49,9 +49,10 @@ local function canCheat()
     return RDAccess.roleHas(getPlayer(), Capability.UseMechanicsCheat)
 end
 
--- Vanilla's channel, deliberately. See the header.
+-- Vanilla's channel, deliberately. See the header. sendClientCommand is
+-- verified safe (pcall-safe.json globals) - no guard.
 local function veh(cmd, args)
-    pcall(function() sendClientCommand(getPlayer(), "vehicle", cmd, args) end)
+    sendClientCommand(getPlayer(), "vehicle", cmd, args)
 end
 
 -- Anything that mutates a car invalidates the cached part list for it, or the
@@ -205,6 +206,8 @@ function T.showVehicleMenu(row)
                 enabled = RDAccess.roleHas(getPlayer(), spec.capability)
             end
             local opt = ctx:addOption(spec.label, row, function(rowData)
+                -- guarded: foreign-mod row-action callback - its errors are
+                -- contained, not ours to propagate
                 pcall(spec.handler, rowData)
             end)
             if not enabled then opt.notAvailable = true end

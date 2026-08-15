@@ -37,23 +37,21 @@ local function readState()
     local player = getPlayer()
     if not player then return nil end
 
-    local x, y, z = 0, 0, 0
-    pcall(function()
-        x = math.floor(player:getX() or 0)
-        y = math.floor(player:getY() or 0)
-        z = math.floor(player:getZ() or 0)
-    end)
+    local x = math.floor(player:getX() or 0)
+    local y = math.floor(player:getY() or 0)
+    local z = math.floor(player:getZ() or 0)
 
     local chunkX, chunkY = math.floor(x / 10), math.floor(y / 10)
 
-    local powerOn
-    pcall(function() powerOn = getSandboxOptions():getElecShutModifier() <= 0 end)
+    -- getSandboxOptions returns the static-final SandboxOptions.instance (:62);
+    -- getElecShutModifier:372 reads a final option field. Cannot throw.
+    local powerOn = getSandboxOptions():getElecShutModifier() <= 0
 
+    -- ClimateManager.getTemperature:474 is a field read on a value the ctor
+    -- builds (:311); only the manager itself can be absent.
     local tempC
-    pcall(function()
-        local cm = getClimateManager()
-        if cm then tempC = cm:getTemperature() end
-    end)
+    local cm = getClimateManager()
+    if cm then tempC = cm:getTemperature() end
 
     return {
         coord  = string.format("X:%d  Y:%d  Z:%d", x, y, z),

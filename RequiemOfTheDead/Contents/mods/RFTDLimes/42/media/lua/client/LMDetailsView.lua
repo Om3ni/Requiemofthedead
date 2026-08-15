@@ -325,6 +325,10 @@ refresh = function()
 
     -- Only the active mod's form is visible, and visibility is what stops the
     -- others' hotspots eating clicks (the reason DFViews switches this way too).
+    -- pcall on all three below: setVisible is vanilla Lua (ISUIElement), which
+    -- no decompile can vouch for, and it dereferences self.javaObject - null on
+    -- an element built but not yet added. A refresh must not die mid-pass and
+    -- leave two forms visible on top of each other.
     for id, f in pairs(forms) do
         if f._el then pcall(function() f._el:setVisible(id == activeId) end) end
     end
@@ -332,6 +336,7 @@ refresh = function()
     -- The profiles block exists only with a zone in hand; the picker never
     -- survives a refresh (a stale candidate list is worse than a second click).
     local showProf = zone ~= nil
+    -- pcall on both: the setVisible failure mode above.
     for _, el in ipairs({ ui.profHead, ui.profMoon, ui.profList, ui.applyBtn, ui.newBtn }) do
         if el then pcall(function() el:setVisible(showProf) end) end
     end
@@ -471,6 +476,9 @@ function LMDetailsView.layout(panel, x, y, w, h)
     -- the font it was tuned against; at a larger text-size preference the
     -- description drew into the heading and the note into the form.
     local lh = 20
+    -- pcall: getFontHeight (TextManager:127) hands its argument to
+    -- getFontFromEnum and dereferences the result unguarded, so a font this
+    -- build does not carry is an NPE. The 20 above is the fallback that keeps.
     pcall(function()
         lh = getTextManager():getFontHeight(DFKit.font.small or UIFont.Small) + 4
     end)

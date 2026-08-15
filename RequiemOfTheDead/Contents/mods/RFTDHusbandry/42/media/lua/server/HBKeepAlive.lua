@@ -51,33 +51,64 @@ HBKeepAlive.verbose              = false  -- set true to log per-tick refill cou
 
 -- Core primitive: zero hunger/thirst, reset elapsed-time clock.
 -- Same write path the debug panel's Refill button uses.
+-- KEEP: Stats.set (Stats.java:80) clamps through the CharacterStat argument, so
+-- a build where CharacterStat.HUNGER/THIRST is absent passes null and NPEs
+-- inside the engine; updateLastTimeSinceUpdate (IsoAnimal:1561) dereferences the
+-- GameTime.getInstance() singleton. Neither is a field access.
+-- What a refilled animal is mended TO. Animal health is 0..1, NOT the 0..100
+-- players use (HBVitals:40 says the same thing to the other side of the mod),
+-- so 1.0 is "unhurt". Module-level for now; promote to SandboxVars later if
+-- the flock ever wants a dial. Below 1.0 the pass mends partway instead.
+local REFILL_HEALTH_TARGET = 1.0
+
+-- Zero the needs, mend the body, reset the elapsed-time clock.
+--
+-- HEALTH IS HERE BECAUSE THE ENGINE'S OWN REGEN WILL NOT COVER FOR US.
+-- AnimalData.updateHealth (:347) does mend a hurt animal an hour at a time,
+-- but it refuses while hunger or thirst is above 0.8, refuses outright for a
+-- geriatric - which it bleeds by getHealthLoss(30) an hour instead - and for a
+-- housed animal it wants hutch dirt at 40 or under as well. A keep-alive that
+-- zeroes the need and leaves the animal dying of any of the rest is half a
+-- keep-alive, and the half it skipped is the half nobody can see from the tab.
+--
+-- Wild animals are passed over exactly where the engine passes them over
+-- (updateHealth returns early on isWild): deer are scenery, not livestock.
+--
+-- No pcall, because nothing in here can throw: getStats is a final field built
+-- at its own declaration (IsoGameCharacter:572), Stats.set is a clamp and a map
+-- put (:80), CharacterStat is an exposed global (LuaManager:1766), getHealth
+-- and setHealth are a field read and an isInvincible test plus a field write
+-- (IsoAnimal:1110), and updateLastTimeSinceUpdate is one field write (:1561).
 local function refillAnimal(animal)
-    pcall(function()
-        animal:getStats():set(CharacterStat.HUNGER, 0)
-        animal:getStats():set(CharacterStat.THIRST, 0)
-        animal:updateLastTimeSinceUpdate()
-    end)
+    local stats = animal:getStats()
+    stats:set(CharacterStat.HUNGER, 0)
+    stats:set(CharacterStat.THIRST, 0)
+    if not animal:isWild() and animal:getHealth() < REFILL_HEALTH_TARGET then
+        animal:setHealth(REFILL_HEALTH_TARGET)
+    end
+    animal:updateLastTimeSinceUpdate()
 end
 
 -- Pass 1: loose animals via cell object list. Returns count refilled.
+-- getObjectListForLua (IsoCell:2315) snapshots a final, declaration-initialised
+-- HashSet (IsoCell:165) and getOnlineID is a field read, so the walk itself
+-- needs no guard - only refillAnimal's engine writes do.
 local function refillLoose(cell, seen)
-    local ok, objs = pcall(function() return cell:getObjectListForLua() end)
-    if not ok or not objs or type(objs) == "boolean" then return 0 end
-    local count = 0
-    pcall(function() count = objs:size() or 0 end)
+    local objs = cell:getObjectListForLua()
+    if not objs or type(objs) == "boolean" then return 0 end
+    local count = objs:size() or 0
     local refilled = 0
     for i = 0, count - 1 do
-        pcall(function()
-            local obj = objs:get(i)
-            if not obj then return end
-            if not instanceof(obj, "IsoAnimal") then return end
+        local obj = objs:get(i)
+        if obj and instanceof(obj, "IsoAnimal") then
             local oid = obj:getOnlineID()
-            if not oid or oid == 0 or seen[oid] then return end
-            seen[oid] = true
-            if HBData and HBData.seen then HBData.seen[oid] = true end
-            refillAnimal(obj)
-            refilled = refilled + 1
-        end)
+            if oid and oid ~= 0 and not seen[oid] then
+                seen[oid] = true
+                if HBData and HBData.seen then HBData.seen[oid] = true end
+                refillAnimal(obj)
+                refilled = refilled + 1
+            end
+        end
     end
     return refilled
 end
@@ -110,38 +141,50 @@ end
 -- (HashMap.get is O(1)). Hutch animals do drain (IsoHutch.update →
 -- updateHungerAndThirst), so this refill is load-bearing, not cosmetic.
 --
--- The capability flag is kept as a genuine guard: getAnimal()/getAnimalInside()
--- won't NPE, so a failure here would be a real, catchable Lua error (e.g. the
--- method renamed in a future build) - the first one disables hutch scanning and
--- logs once instead of per-square.
-local hutchScanOK = true
+-- The capability flag is kept as a genuine guard, and it is a CROSS-BUILD PROBE
+-- rather than an error path: in 42.20.2 getAnimalInside is `return
+-- this.animalInside` (IsoHutch:898) and getAnimal is `animalInside.get(index)`
+-- (IsoHutch:902) over a map initialised at its declaration (IsoHutch:61), so
+-- neither can NPE here. What a failure WOULD mean is the method renamed in a
+-- future build - a real, catchable Lua error. That verdict cannot change inside
+-- a session, so it is taken ONCE and cached: nil = not yet probed, true =
+-- usable, false = disabled and logged.
+local hutchScanOK = nil
 local MAX_HUTCH_SLOTS = 64
 
 -- Caller owns per-hutch dedup (see the hutch loop below), so this just
 -- refills the occupants of one hutch and returns the count.
 local function refillHutch(hutch, seen)
+    if hutchScanOK == false then return 0 end
+    if hutchScanOK == nil then
+        -- One-shot probe; re-running it per hutch per tick buys nothing.
+        local ok, err = pcall(function()
+            if hutch:getAnimalInside() then hutch:getAnimal(0) end
+        end)
+        if not ok then
+            hutchScanOK = false
+            HBKeepAlive.hutchScanOK = false
+            print("[HB] hutch keep-alive disabled - IsoHutch animal API unavailable "
+                .. "(logged once): " .. tostring(err))
+            return 0
+        end
+        hutchScanOK = true
+    end
+
+    local inside = hutch:getAnimalInside()
+    if not inside then return 0 end
     local count = 0
-    local ok, err = pcall(function()
-        local inside = hutch:getAnimalInside()
-        if not inside then return end
-        for pos = 0, MAX_HUTCH_SLOTS - 1 do
-            local animal = hutch:getAnimal(pos)
-            if animal then
-                local oid = animal:getOnlineID()
-                if oid and oid ~= 0 and not seen[oid] then
-                    seen[oid] = true
-                    if HBData and HBData.seen then HBData.seen[oid] = true end
-                    refillAnimal(animal)
-                    count = count + 1
-                end
+    for pos = 0, MAX_HUTCH_SLOTS - 1 do
+        local animal = hutch:getAnimal(pos)
+        if animal then
+            local oid = animal:getOnlineID()
+            if oid and oid ~= 0 and not seen[oid] then
+                seen[oid] = true
+                if HBData and HBData.seen then HBData.seen[oid] = true end
+                refillAnimal(animal)
+                count = count + 1
             end
         end
-    end)
-    if not ok then
-        hutchScanOK = false
-        HBKeepAlive.hutchScanOK = false
-        print("[HB] hutch keep-alive disabled - IsoHutch animal API unavailable "
-            .. "(logged once): " .. tostring(err))
     end
     return count
 end
@@ -180,6 +223,10 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
 
     for dx = -TRAILER_SCAN_RANGE, TRAILER_SCAN_RANGE do
         for dy = -TRAILER_SCAN_RANGE, TRAILER_SCAN_RANGE do
+            -- KEEP: getGridSquare (IsoCell:2791) and getVehicleContainer
+            -- (IsoGridSquare:8602) dereference the ServerMap.instance /
+            -- IsoWorld.instance singletons and walk chunk lists; a square on an
+            -- unloaded chunk edge is precisely what this scan sweeps over.
             pcall(function()
                 local s = cell:getGridSquare(px + dx, py + dy, pz)
                 if not s then return end
@@ -209,7 +256,9 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
                             if not seenHutches[hkey] then
                                 seenHutches[hkey] = true
                                 if HBBedding then HBBedding.applyBedding(obj) end
-                                if hutchScanOK then
+                                -- ~= false, not truthiness: nil means the probe
+                                -- inside refillHutch has not run yet.
+                                if hutchScanOK ~= false then
                                     hutchRefilled = hutchRefilled + refillHutch(obj, seen)
                                 end
                             end
@@ -225,13 +274,14 @@ end
 
 -- Resolve the player set to scan around. SP: getSpecificPlayer(0). MP: walk
 -- getOnlinePlayers().
+-- getOnlinePlayers is an unconditional engine global (LuaManager:3823): it
+-- returns GameServer.getPlayers() on a dedi and an empty list otherwise, never
+-- null and never throwing, so SP simply falls through to the fallback below.
 local function gatherPlayers()
     local out = {}
-    local ok, op = pcall(function() return getOnlinePlayers() end)
-    if ok and op and op.size then
-        local n = 0
-        pcall(function() n = op:size() or 0 end)
-        for i = 0, n - 1 do
+    local op = getOnlinePlayers()
+    if op then
+        for i = 0, (op:size() or 0) - 1 do
             local p = op:get(i)
             if p then out[#out + 1] = p end
         end
@@ -309,6 +359,10 @@ if Vehicles and Vehicles.Update then
 
         HBKeepAlive.trailerOverrideCalls = (HBKeepAlive.trailerOverrideCalls or 0) + 1
 
+        -- KEEP: foreign-callback containment. Vanilla LUA calls this from its
+        -- meta-time chunk-reload sweep (Vehicles.lua:444) and hands us whatever
+        -- it has; an error escaping here would abort the vanilla update, not
+        -- just our refill. Vanilla Lua is not verifiable against the decompile.
         pcall(function()
             if not vehicle then return end
             local animals = vehicle:getAnimals()

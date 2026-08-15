@@ -49,8 +49,7 @@ RQSvEating.svCorpseCast = {}  -- corpse -> { castDue, eaters, completed, shareEa
 function RQSvEating.svCleanReservations()
     local toRemove, count = {}, 0
     for corpse, _ in pairs(RQSvEating.svCorpseCast) do
-        local ok, skel = pcall(corpse.isSkeleton, corpse)
-        if not ok or skel then
+        if corpse:isSkeleton() then
             count = count + 1
             toRemove[count] = corpse
         end
@@ -116,8 +115,8 @@ end
 -- verify the corpse is still sitting on that square (world state can change fast)
 function RQSvEating.svCorpseStillThere(corpse, sq)
     if not corpse or not sq then return false end
-    local ok, bodies = pcall(sq.getDeadBodys, sq)
-    if not ok or not bodies then return false end
+    local bodies = sq:getDeadBodys()
+    if not bodies then return false end
     for i = 0, bodies:size() - 1 do
         if bodies:get(i) == corpse then return true end
     end
@@ -128,6 +127,10 @@ end
 function RQSvEating.svRemoveCorpse(targetCorpse, targetSq)
     if not targetCorpse or not targetSq then return end
     RQDirgeLog.write("System","[RQEat:Sv] svRemoveCorpse at (" .. targetSq:getX() .. "," .. targetSq:getY() .. "," .. targetSq:getZ() .. ")")
+    -- guards stay: IsoGridSquare.removeCorpse:2610 sends a RemoveCorpseFromMap
+    -- packet and then calls body.removeFromWorld(), which reaches
+    -- getCell().isSafeToAdd() unguarded -- the corpse can already be gone from
+    -- an unloading chunk by the time the eater finalizes.
     if instanceof(targetCorpse, "IsoDeadBody") then
         pcall(targetSq.removeCorpse, targetSq, targetCorpse, false)
     elseif instanceof(targetCorpse, "IsoZombie") then
@@ -147,12 +150,10 @@ end
 -- kick the zombie back into normal AI mode after eating is done or cancelled
 function RQSvEating.svRestoreAI(zombie)
     if not zombie then return end
-    pcall(zombie.setUseless,  zombie, false)
-    pcall(zombie.setVariable, zombie, "bPathfind", true)
-    pcall(zombie.setVariable, zombie, "bMoving",   false)
-    if zombie.setEatBodyTarget then
-        pcall(zombie.setEatBodyTarget, zombie, nil, false, 1.0)
-    end
+    zombie:setUseless(false)
+    zombie:setVariable("bPathfind", true)
+    zombie:setVariable("bMoving",   false)
+    zombie:setEatBodyTarget(nil, false, 1.0)
 end
 
 -- stamp the zombie's modData so clients know it's eating and where

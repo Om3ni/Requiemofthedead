@@ -12,10 +12,10 @@ RCAudit = RCAudit or {}
 
 local FILE = "RFTDReclamation_Dismantle.txt"
 
+-- os.date with a fixed all-numeric format is plain Calendar reads in Kahlua
+-- (OsLib.java:110/149) and cannot throw.
 local function stamp()
-    local ok, s = pcall(function() return os.date("%Y-%m-%d %H:%M:%S") end)
-    if ok and s then return s end
-    return tostring(os.time())
+    return os.date("%Y-%m-%d %H:%M:%S")
 end
 
 -- DUAL-WRITE (RFTDCore adoption, transition state): every event still writes
@@ -55,8 +55,8 @@ local CHRONICLE = {
 -- EXPIRE still has no object to offer - those keep the string, by design.
 local function usernameOf(player)
     if not (player and player.getUsername) then return nil end
-    local ok, name = pcall(function() return player:getUsername() end)
-    if ok and name ~= nil then return tostring(name) end
+    local name = player:getUsername()
+    if name ~= nil then return tostring(name) end
     return nil
 end
 
@@ -88,8 +88,11 @@ end
 --   player : the actor (nil for system events like expiry)
 --   kv     : table of extra fields (sorted for stable output) or a string
 function RCAudit.log(action, player, kv)
+    -- guarded: Core's forensic ring is a foreign module doing file I/O; a
+    -- failed mirror write must never break the claim mutation being logged
     pcall(coreWrite, action, player, kv)
 
+    -- guarded: file I/O through the getFileWriter allowlist can throw
     local ok, writer = pcall(getFileWriter, FILE, true, true) -- createIfNull, append (never truncate)
     if not ok or not writer then return end
 
@@ -107,6 +110,8 @@ function RCAudit.log(action, player, kv)
         parts[#parts + 1] = tostring(kv)
     end
 
+    -- guarded: LuaFileWriter write/close is disk I/O; a full disk or closed
+    -- handle must not take the caller down with it
     pcall(function()
         writer:write(table.concat(parts, " ") .. "\n")
         writer:close()

@@ -136,17 +136,21 @@ refreshArmed()
 -- version stays as a fallback, because a removal that half-happens is worse
 -- than either outcome and this must not depend on one symbol resolving.
 local function cull(z)
-    local ok = false
-    pcall(function()
-        if VirtualZombieManager and VirtualZombieManager.instance then
-            VirtualZombieManager.instance:removeZombieFromWorld(z)
-            ok = true
-        end
-    end)
-    if ok then return end
+    if VirtualZombieManager and VirtualZombieManager.instance then
+        local vm = VirtualZombieManager.instance
+        -- pcall: engine removal mutates world state and must not half-happen
+        -- unguarded; direct form, this runs per suppressed birth.
+        if pcall(vm.removeZombieFromWorld, vm, z) then return end
+    end
+    -- pcall: getEmitter() is a field read (IsoGameCharacter:1348) but the
+    -- emitter may be null, and unregister() is not in the decompile at all.
     pcall(function() z:getEmitter():unregister() end)
-    pcall(function() z:removeFromWorld() end)
-    pcall(function() z:removeFromSquare() end)
+    -- pcall: IsoZombie.removeFromWorld:3550 chains into IsoMovingObject:688,
+    -- which calls getCell().isSafeToAdd() with no guard.
+    pcall(z.removeFromWorld, z)
+    -- No guard: IsoMovingObject.removeFromSquare:702 null-checks every field
+    -- it touches, and it is the last step so nothing follows it to skip.
+    z:removeFromSquare()
 end
 
 local function record(name)
@@ -166,14 +170,13 @@ end
 
 local function onZombieCreate(z)
     if not armed or not z then return end
-    local ok, x, y = pcall(function() return z:getX(), z:getY() end)
-    if not ok or not x then return end
-    local mode, name = modeAt(math.floor(x), math.floor(y))
+    local mode, name = modeAt(math.floor(z:getX()), math.floor(z:getY()))
     if not mode then return end
     cull(z)
     record(name)
 end
 
+-- pcall: a throw in the birth hook would surface per zombie, every spawn.
 Events.OnZombieCreate.Add(function(z) pcall(onZombieCreate, z) end)
 
 -- ---------------------------------------------------------------------------
@@ -186,9 +189,12 @@ Events.OnZombieCreate.Add(function(z) pcall(onZombieCreate, z) end)
 -- ---------------------------------------------------------------------------
 
 local function zombieList()
-    local list = nil
-    pcall(function() list = getCell():getZombieList() end)
-    return list
+    -- Stepped through IsoWorld.instance rather than getCell(): the global
+    -- dereferences the instance unconditionally, so it throws before the
+    -- world is up; this form just returns nil then.
+    local world = IsoWorld and IsoWorld.instance
+    local cell = world and world:getCell()
+    return cell and cell:getZombieList() or nil
 end
 
 -- Returns how many it removed.
@@ -197,17 +203,12 @@ function LMZeds.sweep()
     local list = zombieList()
     if not list then return 0 end
     local hits = {}
-    local n = 0
-    pcall(function() n = list:size() end)
+    local n = list:size()
     for i = 0, n - 1 do
-        local z = nil
-        pcall(function() z = list:get(i) end)
+        local z = list:get(i)
         if z then
-            local ok, x, y = pcall(function() return z:getX(), z:getY() end)
-            if ok and x then
-                local mode, name = modeAt(math.floor(x), math.floor(y))
-                if mode == MODE_REMOVE then hits[#hits + 1] = { z = z, name = name } end
-            end
+            local mode, name = modeAt(math.floor(z:getX()), math.floor(z:getY()))
+            if mode == MODE_REMOVE then hits[#hits + 1] = { z = z, name = name } end
         end
     end
     -- Collected first, culled second: cull() mutates the very list being walked
@@ -256,8 +257,8 @@ Limes.onZoneEvent(function(event, name)
     -- Broadcast even when the server removed nothing. The server sweeps only
     -- what IT has loaded; a client can be standing in loaded ground the server
     -- is not simulating in this cell, and that client is exactly the one with a
-    -- ghost to clear.
-    pcall(function() RDNet.broadcast("RFTDLimes", "zedsSweep", { name = name }) end)
+    -- ghost to clear. pcall: a wire failure must not unwind the sweep's books.
+    pcall(RDNet.broadcast, "RFTDLimes", "zedsSweep", { name = name })
 end)
 
 -- ---------------------------------------------------------------------------
@@ -303,22 +304,16 @@ end)
 -- and a spread of samples beats three fixed corners.
 
 local function anyPlayerInside(rects)
-    local players = nil
-    pcall(function() players = getOnlinePlayers() end)
+    local players = getOnlinePlayers()
     if not players then return false end
-    local n = 0
-    pcall(function() n = players:size() end)
+    local n = players:size()
     for i = 0, n - 1 do
-        local p = nil
-        pcall(function() p = players:get(i) end)
+        local p = players:get(i)
         if p then
-            local ok, px, py = pcall(function() return p:getX(), p:getY() end)
-            if ok and px then
-                px, py = math.floor(px), math.floor(py)
-                for j = 1, #rects do
-                    local r = rects[j]
-                    if px >= r[1] and px <= r[3] and py >= r[2] and py <= r[4] then return true end
-                end
+            local px, py = math.floor(p:getX()), math.floor(p:getY())
+            for j = 1, #rects do
+                local r = rects[j]
+                if px >= r[1] and px <= r[3] and py >= r[2] and py <= r[4] then return true end
             end
         end
     end
@@ -331,6 +326,9 @@ local PROBE_SIDE = 6      -- up to 6x6 per rect
 local PROBE_CAP  = 96     -- total getGridSquare calls per zone, hard stop
 
 local function gridProbe(rects)
+    local world = IsoWorld and IsoWorld.instance
+    local cell = world and world:getCell()
+    if not cell then return false end
     local budget = PROBE_CAP
     for i = 1, #rects do
         local r = rects[i]
@@ -341,10 +339,12 @@ local function gridProbe(rects)
         while x <= r[3] and budget > 0 do
             local y = r[2]
             while y <= r[4] and budget > 0 do
-                local sq = nil
                 budget = budget - 1
-                pcall(function() sq = getCell():getGridSquare(x, y, 0) end)
-                if sq then return true end
+                -- pcall stays: the server route walks ServerMap's cell arrays,
+                -- whose bounds handling is not verified throw-free. Direct form
+                -- because this loop runs up to PROBE_CAP times.
+                local okSq, sq = pcall(cell.getGridSquare, cell, x, y, 0)
+                if okSq and sq then return true end
                 y = y + stepY
             end
             x = x + stepX
@@ -471,20 +471,16 @@ function LMZeds.report()
     local list = zombieList()
     local total, inZone = 0, 0
     if list then
-        pcall(function() total = list:size() end)
+        total = list:size()
         for i = 0, total - 1 do
-            local z = nil
-            pcall(function() z = list:get(i) end)
+            local z = list:get(i)
             if z then
-                local ok, x, y = pcall(function() return z:getX(), z:getY() end)
-                if ok and x then
-                    local zone = Limes.getLocation(math.floor(x), math.floor(y))
-                    local row = zone and byName[zone.name]
-                    if row then
-                        row.zombies = row.zombies + 1
-                        inZone = inZone + 1
-                        if special[z] then row.specials = row.specials + 1 end
-                    end
+                local zone = Limes.getLocation(math.floor(z:getX()), math.floor(z:getY()))
+                local row = zone and byName[zone.name]
+                if row then
+                    row.zombies = row.zombies + 1
+                    inZone = inZone + 1
+                    if special[z] then row.specials = row.specials + 1 end
                 end
             end
         end
@@ -629,6 +625,7 @@ end
 
 function LMZeds.censusEnabled() return censusOn end
 
+-- pcall: a diagnostic that throws must not take the event loop with it.
 Events.EveryTenMinutes.Add(function()
     if censusOn then pcall(LMZeds.census, false) end
 end)

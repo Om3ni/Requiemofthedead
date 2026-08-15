@@ -97,8 +97,10 @@ function RCMyVehicles:createChildren()
     local rx = PAD * 2 + LIST_W
     local rw = self.width - rx - PAD
 
-    -- Right-top: 3D preview (guarded - if the scene element is unavailable we
-    -- just skip it; the rest of the panel still works).
+    -- Right-top: 3D preview (guarded - ISUI3DScene is vanilla LUA over
+    -- UI3DScene's verb-string dispatch, which throws on any verb this build
+    -- lacks; if the scene element is unavailable we just skip it and the rest
+    -- of the panel still works).
     self.previewY = top
     local ok = pcall(function()
         self.preview = ISUI3DScene:new(rx, top, rw, PREVIEW_H)
@@ -168,6 +170,8 @@ function RCMyVehicles:updateSelection()
     -- swap the previewed model (or clear it)
     if self.preview then
         local script = self.selRec and self.selRec.name or ""
+        -- guarded: UI3DScene verb dispatch throws on a script name the scene
+        -- cannot resolve; a bad name must just leave the old preview
         pcall(function() self.preview.javaObject:fromLua2("setVehicleScript", "rcPreview", script or "") end)
     end
     self.btnRelease:setEnable(self.selRec ~= nil)
@@ -269,6 +273,8 @@ function RCMyVehicles:onReleaseConfirm(button, claimId)
 end
 
 function RCMyVehicles:close()
+    -- guarded: removeFromUIManager is vanilla LUA (ISUIElement); a preview
+    -- that never fully instantiated must not wedge the window's close
     if self.preview then pcall(function() self.preview:removeFromUIManager() end) end
     RCMyVehicles.instance = nil
     ISCollapsableWindow.close(self)

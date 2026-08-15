@@ -95,6 +95,8 @@ Events.OnServerCommand.Add(function(module, command, args)
     if module ~= RDShared.MODULE or command ~= "tripwire" then return end
     if not DFLog or not args then return end
 
+    -- args are wire-controlled; a malformed record must not take the
+    -- OnServerCommand listener down with it
     pcall(function()
         local impossible = (args.sev == "impossible")
 

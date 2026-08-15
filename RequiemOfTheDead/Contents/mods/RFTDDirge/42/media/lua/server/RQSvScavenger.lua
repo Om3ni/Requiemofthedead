@@ -145,12 +145,10 @@ function RQSvScavenger.onPlayerHit(zombie, attackerName)
     state.targetCorpse = nil
     state.targetSq     = nil
     state.castDue      = nil
-    pcall(zombie.setUseless,  zombie, false)
-    pcall(zombie.setVariable, zombie, "bPathfind", true)
-    pcall(zombie.setVariable, zombie, "bMoving",   false)
-    if zombie.setEatBodyTarget then
-        pcall(zombie.setEatBodyTarget, zombie, nil, false, 1.0)
-    end
+    zombie:setUseless(false)
+    zombie:setVariable("bPathfind", true)
+    zombie:setVariable("bMoving",   false)
+    zombie:setEatBodyTarget(nil, false, 1.0)
     RQSvShared.broadcast("castDone", { ringId = "scav_" .. scavID })
     RQSvShared.broadcast("gluttonAnimate", {
         onlineID = scavID, eating = false, phase = "idle",
@@ -222,8 +220,8 @@ function RQSvScavenger.tick(zombie)
 
     repeat
         if state.phase == "eating" then
-            pcall(zombie.clearAggroList, zombie)
-            pcall(zombie.setTarget, zombie, nil)
+            zombie:clearAggroList()
+            zombie:setTarget(nil)
             local corpseGone = not RQSvEating.svCorpseStillThere(state.targetCorpse, state.targetSq)
             local timedOut   = state.castDue and now >= state.castDue
             if corpseGone or timedOut then
@@ -284,9 +282,7 @@ Events.OnHitZombie.Add(function(zombie, wielder, bodyPart, weapon)
     if not instanceof(wielder, "IsoPlayer") then return end
     local zType = _activeZombies[zombie] or zombie:getModData()["RQType"]
     if zType ~= "Scavenger" then return end
-    local attackerName = "unknown"
-    local ok, name = pcall(wielder.getUsername, wielder)
-    if ok and name then attackerName = name end
+    local attackerName = wielder:getUsername() or "unknown"
     RQSvScavenger.onPlayerHit(zombie, attackerName)
 end)
 

@@ -93,13 +93,16 @@ end
 
 -- Resolve names to CraftRecipe objects once per menu build. A name that no
 -- longer exists is skipped rather than fatal, so a vanilla recipe rename
--- costs that one recipe instead of the whole option.
+-- costs that one recipe instead of the whole option. The guard is load-bearing:
+-- getCraftRecipe resolves through ScriptBucketCollection.getScript:86, which
+-- derefs a bucket the module map may not hold - an unknown name can NPE, not
+-- just return nil.
 local function resolve(names)
     local out = {}
     local sm = getScriptManager()
     if not sm then return out end
     for _, name in ipairs(names) do
-        local ok, recipe = pcall(function() return sm:getCraftRecipe(name) end)
+        local ok, recipe = pcall(sm.getCraftRecipe, sm, name)
         if ok and recipe then table.insert(out, recipe) end
     end
     return out
@@ -138,18 +141,21 @@ end
 -- open several seconds ago".
 local function inOpenContainers(item, containers)
     if not item or not containers then return false end
-    local ok, found = pcall(function()
-        local owner = item:getContainer()
-        if not owner then return false end
-        for i = 0, containers:size() - 1 do
-            if containers:get(i) == owner then return true end
-        end
-        return false
-    end)
-    return ok and found == true
+    -- getContainer is a field return (safe-listed) and the walk is a
+    -- bounds-checked ArrayList scan - nothing here can throw.
+    local owner = item:getContainer()
+    if not owner then return false end
+    for i = 0, containers:size() - 1 do
+        if containers:get(i) == owner then return true end
+    end
+    return false
 end
 
 -- Can this exact item feed this exact recipe, as a CONSUMED input?
+-- guarded: both statics resolve through consumeInputItem
+-- (CraftRecipeManager.java:299 -> 304), which runs the recipe's input scripts
+-- and mappers - malformed modded recipes can throw in there, and one bad
+-- recipe must cost its own answer, not the menu.
 local function feeds(recipe, item, playerObj)
     local ok, valid = pcall(function()
         if not CraftRecipeManager.isItemValidForRecipe(recipe, item, playerObj) then return false end
@@ -202,6 +208,8 @@ end
 -- are declared (`tags[base:scissors;base:sharpknife] mode:keep`) - and keeps
 -- Normal and Destroy alike. That is the consumed set, tools excluded, which is
 -- exactly the question this gate is asking.
+-- guarded: CraftRecipeData accessors on an engine-resolved set - nullability
+-- varies by recipe, and a throw must read as "not safe", never as a crash.
 local function resolvedSetIsSafe(logic, item, playerObj)
     local ok, safe = pcall(function()
         local data = logic:getRecipeData()
@@ -243,6 +251,9 @@ end
 -- Both the engine's own equivalent (CraftRecipeManager.getUniqueRecipeItems,
 -- line 1113) and RI.run below set it. Add one AnySurfaceCraft recipe above and
 -- this line is the difference between working and silently absent.
+-- guarded: the whole HandcraftLogic build/resolve chain is engine crafting
+-- internals (surface hunt, container walk, recipe pin) whose failure on one
+-- candidate must cost that candidate, not the menu.
 local function canRun(playerObj, recipe, item, containers)
     local ok, result = pcall(function()
         local logic = HandcraftLogic.new(playerObj, nil, nil)
@@ -322,6 +333,9 @@ function RI.run(playerObj, entries)
         -- are repeated precisely because the answer can have changed since.
         if item and recipe and isRippable(item, playerObj)
            and inOpenContainers(item, containers) then
+            -- guarded: same HandcraftLogic engine chain as canRun, plus the
+            -- transfer/queue calls - one item failing mid-batch must not
+            -- abandon the rest of the queue.
             pcall(function()
                 local logic = HandcraftLogic.new(playerObj, nil, nil)
                 logic:setIsoObject(logic:findCraftSurface(playerObj, 2))

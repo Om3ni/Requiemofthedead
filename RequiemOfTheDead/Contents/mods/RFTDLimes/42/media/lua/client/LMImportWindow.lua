@@ -68,7 +68,10 @@ function LMImportWindow:createChildren()
     self.body.borderColor     = { r = 0, g = 0, b = 0, a = 0 }
     self.body:initialise(); self.body:instantiate()
     self:addChild(self.body)
-    pcall(function() LMImportTab.attach(self.body) end)
+    -- pcall: attach builds LMImportTab's whole control set, including widgets
+    -- from Dragonfly's DFKit. A tab that fails to build must still leave this
+    -- window with its log pane, which is the half that explains the failure.
+    pcall(LMImportTab.attach, self.body)
 
     self.log = LogList:new(4, self.height - CONSOLE_H, self.width - 8, CONSOLE_H - 6)
     self.log:initialise(); self.log:instantiate()
@@ -93,6 +96,9 @@ function LMImportWindow:refreshLog()
     end)
     if #self.log.items > 0 then
         self.log.selected = #self.log.items
+        -- pcall: ensureVisible is vanilla Lua (ISScrollingListBox) and reads
+        -- scroll geometry that does not exist until the list has been drawn
+        -- once. Failing to scroll must not lose the lines it was scrolling to.
         pcall(function() self.log:ensureVisible(#self.log.items) end)
     end
 end
@@ -104,7 +110,10 @@ function LMImportWindow:onResize()
     if self.body then
         self.body:setWidth(self.width)
         self.body:setHeight(bodyH)
-        pcall(function() LMImportTab.layout(self.body, 0, 0, self.width, bodyH) end)
+        -- pcall: onResize fires on every drag frame, and layout touches widgets
+        -- attach() may have failed to build (see createChildren) - the log pane
+        -- below still has to be resized either way.
+        pcall(LMImportTab.layout, self.body, 0, 0, self.width, bodyH)
     end
     if self.copyBtn then
         self.copyBtn:setX(self.width - 116)

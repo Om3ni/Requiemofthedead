@@ -56,24 +56,26 @@ function RCDismantleAction:complete()
     if not v then return false end
 
     -- Snapshot everything the ledger needs BEFORE removal destroys it.
+    -- All field returns / null-checked reads (BaseVehicle.java:1593,
+    -- IsoMovingObject getters, VehicleParts.java:125) - no guard needed.
     local report = { via = self.rcVia or "field" }
-    pcall(function()
-        report.vehicle = v:getScriptName()
-        report.wreck = RCShared.isWreck(v)
-        report.x = math.floor(v:getX())
-        report.y = math.floor(v:getY())
-        report.z = math.floor(v:getZ())
-        local _, cond = RCShared.engineBlocksDismantle(v)
-        report.engine = cond
-        if RCClaim.isClaimed(v) then
-            report.owner   = RCClaim.getOwner(v)
-            report.claimId = RCClaim.getClaimId(v)
-        end
-    end)
+    report.vehicle = v:getScriptName()
+    report.wreck = RCShared.isWreck(v)
+    report.x = math.floor(v:getX())
+    report.y = math.floor(v:getY())
+    report.z = math.floor(v:getZ())
+    local _, cond = RCShared.engineBlocksDismantle(v)
+    report.engine = cond
+    if RCClaim.isClaimed(v) then
+        report.owner   = RCClaim.getOwner(v)
+        report.claimId = RCClaim.getClaimId(v)
+    end
 
-    pcall(RCShared.dumpVehicleContainers, v)
+    RCShared.dumpVehicleContainers(v)   -- guards its own per-item drops
 
     local totalXp = 5
+    -- guarded: checkAddItem is vanilla LUA (ISBaseTimedAction), unverifiable
+    -- against the decompile; a throw must not cost the player the teardown
     pcall(function()
         for _ = 1, math.max(5, self.character:getPerkLevel(Perks.MetalWelding)) do
             for _, e in ipairs(SCRAP) do
@@ -82,6 +84,8 @@ function RCDismantleAction:complete()
             end
         end
     end)
+    -- guarded: InventoryItem.Use drains/deletes through engine item state and
+    -- addXp is vanilla-LUA-adjacent; wear+XP must not block the removal below
     pcall(function()
         -- Eternal Torch admin cheat (client/RCEternalTorch): staff dismantles
         -- skip torch wear. Guarded existence check - this file is shared/,
@@ -103,6 +107,9 @@ function RCDismantleAction:complete()
     -- server's built-in 'vehicle'/'remove' command; the server-side removal
     -- then propagates to every client. SP/host removes directly. (Vanilla's
     -- ISRemoveBurntVehicle:complete() has this same MP bug - ours doesn't.)
+    -- guarded: permanentlyRemove cascades through exit/physics/world teardown
+    -- (BaseVehicle.java:7205); a throw means the car still stands - report
+    -- failure, write no ledger line
     local removed = pcall(function()
         if isClient() then
             sendClientCommand(self.character, "vehicle", "remove", { vehicle = v:getId() })
@@ -115,7 +122,7 @@ function RCDismantleAction:complete()
         return false
     end
 
-    pcall(function() sendClientCommand(self.character, RCShared.MODULE, "dismantled", report) end)
+    sendClientCommand(self.character, RCShared.MODULE, "dismantled", report)
     return true
 end
 

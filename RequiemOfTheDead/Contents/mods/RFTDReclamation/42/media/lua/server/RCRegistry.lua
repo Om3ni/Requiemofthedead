@@ -256,14 +256,16 @@ function RCRegistry.loadedClaimMap()
     if not cell then return map end
     local vs = cell:getVehicles()
     if not vs then return map end
-    local ok, it = pcall(function() return vs:iterator() end)
-    if not ok or not it then return map end
+    local it = vs:iterator()
+    if not it then return map end
     while it:hasNext() do
         local v = it:next()
         if v then
+            -- guarded: the self-heal can transmit modData and finish deferred
+            -- releases; one bad car must not abort the whole index build
             pcall(RCRegistry.syncFromVehicle, v)
-            local ok2, id = pcall(function() return v:getModData()[RCClaim.KEY_ID] end)
-            if ok2 and id and id ~= "" then map[id] = v end
+            local id = v:getModData()[RCClaim.KEY_ID]
+            if id and id ~= "" then map[id] = v end
         end
     end
     return map

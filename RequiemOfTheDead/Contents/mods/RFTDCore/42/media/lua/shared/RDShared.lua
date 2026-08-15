@@ -55,23 +55,22 @@ RDShared.EXT_DOC_LEGACY    = ".json"
 -- ---------------------------------------------------------------------------
 
 function RDShared.nowSec()
-    local ok, t = pcall(getTimestamp)
-    if ok and type(t) == "number" then return t end
-    return 0
+    -- LuaManager:7466 - System.currentTimeMillis()/1000, cannot throw
+    return getTimestamp()
 end
 
 function RDShared.nowMs()
-    local ok, t = pcall(getTimestampMs)
-    if ok and type(t) == "number" then return t end
-    local ok2, t2 = pcall(function() return getTimeInMillis() end)
-    if ok2 and type(t2) == "number" then return t2 end
-    return 0
+    -- LuaManager:7471 - System.currentTimeMillis(), cannot throw
+    return getTimestampMs()
 end
 
 function RDShared.worldAgeHours()
-    local ok, h = pcall(function() return getGameTime():getWorldAgeHours() end)
-    if ok and type(h) == "number" then return h end
-    return nil
+    -- getGameTime() is a bare read of GameTime.instance (LuaManager:4733) -
+    -- nil before a world exists; getWorldAgeHours (GameTime:829) is
+    -- arithmetic over field reads once the instance is there
+    local gt = getGameTime()
+    if not gt then return nil end
+    return gt:getWorldAgeHours()
 end
 
 function RDShared.gameDay()
@@ -101,8 +100,8 @@ RDShared.registerMod(RDShared.MODULE, RDShared.VERSION)
 -- ---------------------------------------------------------------------------
 
 function RDShared.debugOn()
-    local ok, v = pcall(function() return SandboxVars.RFTDCore and SandboxVars.RFTDCore.Debug end)
-    return ok and v == true
+    -- SandboxVars is nil until options load; the chain replaces the guard
+    return (SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore.Debug) == true
 end
 
 function RDShared.dbg(msg)

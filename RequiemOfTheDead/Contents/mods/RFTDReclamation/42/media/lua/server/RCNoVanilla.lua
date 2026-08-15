@@ -269,11 +269,10 @@ end
 
 -- Body zero of a script is (modId, body) pair zero - who defined it first.
 local function scriptIsVanilla(script)
-    local ok, vanilla = pcall(function()
-        local bodies = script:getLoadedScriptBodies()
-        return bodies ~= nil and bodies:size() >= 1 and bodies:get(0) == "pz-vanilla"
-    end)
-    return ok and vanilla == true
+    -- getLoadedScriptBodies is a field return (BaseScriptObject.java:134) and
+    -- get(0) is guarded by the size() test; callers pass a non-nil script.
+    local bodies = script:getLoadedScriptBodies()
+    return bodies ~= nil and bodies:size() >= 1 and bodies:get(0) == "pz-vanilla"
 end
 
 -- Zone keys are script names. The lookup is getVehicle (ScriptManager.java:831)
@@ -285,9 +284,11 @@ end
 -- Unresolvable entries are left alone - they can never spawn anyway.
 function RCNoVanilla.isVanillaScriptName(name)
     if type(name) ~= "string" then return false end
-    local script
-    pcall(function() script = getScriptManager():getVehicle(name) end)
-    if not script then return false end
+    -- getVehicle can NPE on a null bucket (ScriptBucketCollection.java:86-87),
+    -- so the guard stays; allocation-free form since this runs per zone key.
+    local sm = getScriptManager()
+    local ok, script = pcall(sm.getVehicle, sm, name)
+    if not ok or not script then return false end
     return scriptIsVanilla(script)
 end
 
@@ -338,16 +339,18 @@ end
 
 local function rosterFromScripts()
     local out = {}
-    pcall(function()
-        local list = getScriptManager():getAllVehicleScripts()
-        if not list then return end
-        for i = 0, list:size() - 1 do
-            local s = list:get(i)
-            local full
-            if s then pcall(function() full = s:getFullName() end) end
-            if type(full) == "string" then out[#out + 1] = full end
+    -- getAllVehicleScripts is a cached-list return (ScriptManager.java:835 ->
+    -- ScriptBucketCollection.getAllScripts:90); size/get are ArrayList reads.
+    local list = getScriptManager():getAllVehicleScripts()
+    if not list then return nil end
+    for i = 0, list:size() - 1 do
+        local s = list:get(i)
+        if s then
+            -- getFullName derefs the module (VehicleScript.java:1675) - guarded.
+            local okf, full = pcall(s.getFullName, s)
+            if okf and type(full) == "string" then out[#out + 1] = full end
         end
-    end)
+    end
     if #out == 0 then return nil end
     return out
 end
@@ -372,10 +375,11 @@ function RCNoVanilla.roster(moddedOnly)
                 if not (moddedOnly and RCNoVanilla.isVanillaScriptName(n)) then
                     -- Must actually resolve: a distribution key for a mod that
                     -- is no longer installed would otherwise reach RCSpawn as a
-                    -- "badmodel" failure on every attempt.
-                    local script
-                    pcall(function() script = getScriptManager():getVehicle(n) end)
-                    if script then out[#out + 1] = n end
+                    -- "badmodel" failure on every attempt. getVehicle can NPE
+                    -- on a null bucket, so the guard stays.
+                    local sm = getScriptManager()
+                    local okv, script = pcall(sm.getVehicle, sm, n)
+                    if okv and script then out[#out + 1] = n end
                 end
             end
         end
@@ -441,9 +445,10 @@ function RCNoVanilla.rosterForZone(zoneName, moddedOnly)
         -- optionally no vanilla, and it must actually resolve.
         if type(name) == "string" and not RCNoVanilla.isExemptName(name) then
             if not (moddedOnly and RCNoVanilla.isVanillaScriptName(name)) then
-                local script
-                pcall(function() script = getScriptManager():getVehicle(name) end)
-                if script then out[#out + 1] = name end
+                -- getVehicle can NPE on a null bucket, so the guard stays.
+                local sm = getScriptManager()
+                local okv, script = pcall(sm.getVehicle, sm, name)
+                if okv and script then out[#out + 1] = name end
             end
         end
     end
@@ -554,34 +559,30 @@ Events.OnLoadedTileDefinitions.Add(applyZoneStrip)
 --   "notvanilla" | "exempt" | "claimed" | "occupied" | "safehouse" | "held"
 --   | "purge"
 local function retrofitVerdict(vehicle)
-    local script, full
-    if not pcall(function() script = vehicle:getScript() end) or not script then
-        return "notvanilla"
-    end
-    pcall(function() full = script:getFullName() end)
-    if type(full) ~= "string" then return "notvanilla" end
+    -- getScript is a field return (BaseVehicle.java:1403); getFullName derefs
+    -- the module and keeps its guard.
+    local script = vehicle:getScript()
+    if not script then return "notvanilla" end
+    local okf, full = pcall(script.getFullName, script)
+    if not okf or type(full) ~= "string" then return "notvanilla" end
     if not scriptIsVanilla(script) then return "notvanilla" end
     if RCNoVanilla.isExemptName(full) then return "exempt" end
 
     if RCClaim and RCClaim.isClaimed(vehicle) then return "claimed" end
 
-    local occupied = false
-    pcall(function()
-        local seats = vehicle:getScript():getPassengerCount() or 0
-        for s = 0, seats - 1 do
-            if vehicle:isSeatOccupied(s) then occupied = true; return end
-        end
-    end)
-    if occupied then return "occupied" end
+    -- script proven non-nil above; getPassengerCount/isSeatOccupied are
+    -- size()/null-checked reads (VehicleScript.java:1917, BaseVehicle.java:2217)
+    local seats = script:getPassengerCount() or 0
+    for s = 0, seats - 1 do
+        if vehicle:isSeatOccupied(s) then return "occupied" end
+    end
 
-    local sheltered = false
-    pcall(function() sheltered = SafeHouse.getSafeHouse(vehicle:getSquare()) ~= nil end)
-    if sheltered then return "safehouse" end
+    -- getSafeHouse handles a nil square itself (SafeHouse.java:186).
+    if SafeHouse.getSafeHouse(vehicle:getSquare()) ~= nil then return "safehouse" end
 
     -- The Presence Law, borrowed from the Janitor: a car attributed to someone
     -- who still logs in is their car, whatever script it happens to run.
-    local user
-    pcall(function() user = vehicle:getModData()["RC_LastUser"] end)
+    local user = vehicle:getModData()["RC_LastUser"]
     if user then
         local days = RCShared.cfg().janitorDays
         local seen = RCRegistry and RCRegistry.lastSeenAny(user)
@@ -599,9 +600,11 @@ local function forEachLoadedVehicle(fn)
     local vs = cell:getVehicles()
     if not vs then return end
     -- Set, not List: get(i) crashes, :iterator() is the supported path.
-    local ok, it = pcall(function() return vs:iterator() end)
-    if not ok or not it then return end
+    local it = vs:iterator()
+    if not it then return end
     while it:hasNext() do
+        -- guarded: one vehicle that throws mid-classification (foreign script,
+        -- half-streamed state) must not abort the whole census/purge walk
         local v = it:next()
         if v then pcall(fn, v) end
     end
@@ -661,19 +664,21 @@ function RCNoVanilla.purge(budget)
     local removed, dumped, minted = 0, 0, 0
     for i = 1, #doomed do
         local v = doomed[i]
-        local name, x, y = "?", 0, 0
-        pcall(function()
-            name = v:getScriptName()
-            x, y = math.floor(v:getX()), math.floor(v:getY())
-        end)
+        local name = v:getScriptName() or "?"
+        local x, y = math.floor(v:getX()), math.floor(v:getY())
+        -- guarded: the dump spills loot onto squares that can be unloading; a
+        -- failed dump must still allow the removal
         local okDump, n = pcall(RCShared.dumpVehicleContainers, v)
         if okDump and type(n) == "number" then dumped = dumped + n end
-        if pcall(function() v:permanentlyRemove() end) then
+        -- guarded: removal cascades through exit/physics/world teardown
+        -- (BaseVehicle.java:7205), unverifiable-trivial; a throw skips this car
+        if pcall(v.permanentlyRemove, v) then
             removed = removed + 1
             -- Minted only on a CONFIRMED removal, inside the same branch as the
             -- count. A token for a car still standing would inflate the fleet.
             if RCRegistry and RCRegistry.addToken then
-                if pcall(RCRegistry.addToken, "vehicle") then minted = minted + 1 end
+                RCRegistry.addToken("vehicle")
+                minted = minted + 1
             end
             RCAudit.log("NOVANILLA-PURGE", nil, { vehicle = name, x = x, y = y })
         end
@@ -693,8 +698,8 @@ local function onSpawnVehicleStart(vehicle)
     if not (c.enabled and c.noVanillaStories) then return end
     if not vehicle then return end
     -- created is persisted: true here means loaded-from-disk, never touch.
-    local ok, created = pcall(function() return vehicle:isCreated() end)
-    if not ok or created then return end
+    -- isCreated is a field return (BaseVehicle.java:9937).
+    if vehicle:isCreated() then return end
 
     -- THE STORY TEST - and the bug this file shipped without it (2026-08-03).
     --
@@ -718,22 +723,24 @@ local function onSpawnVehicleStart(vehicle)
     -- So "no zone" means the spawn bypassed the distribution, which is exactly
     -- the population this layer exists for. Staff spawns also have no zone and
     -- are covered separately by the exemptDepth latch above.
-    local zone
-    pcall(function() zone = vehicle:getZone() end)
+    -- getZone/getScript are field returns (BaseVehicle.java:7389/1403);
+    -- getFullName derefs the module and keeps its guard.
+    local zone = vehicle:getZone()
     if zone ~= nil and zone ~= "" then return end   -- map spawn: not ours
 
-    local script
-    pcall(function() script = vehicle:getScript() end)
+    local script = vehicle:getScript()
     if not script then return end
-    local full
-    pcall(function() full = script:getFullName() end)
-    if type(full) ~= "string" then return end
+    local okf, full = pcall(script.getFullName, script)
+    if not okf or type(full) ~= "string" then return end
     if RCNoVanilla.isExemptName(full) then return end
     if not scriptIsVanilla(script) then return end
     local swap = RCNoVanilla.burntFor(full)
     if not swap or swap == full then return end
     -- The CheckSwap idiom: rename, then rebuild physics/model/parts with
     -- spawnSwap=true so this event does not re-fire.
+    -- guarded: scriptReloaded tears down and rebuilds physics/model/parts
+    -- (BaseVehicle.java:1610), unverifiable-trivial; a throw leaves the
+    -- vanilla car standing, which is the safe outcome
     local swapped = pcall(function()
         vehicle:setScriptName(swap)
         vehicle:scriptReloaded(true)
@@ -780,48 +787,45 @@ Events.OnSpawnVehicleStart.Add(onSpawnVehicleStart)
 
 -- Is every container on this vehicle empty? Cheap: most vehicles have two or
 -- three container parts and we stop at the first item found.
+-- Part walk and container reads are all null-checked field returns
+-- (VehiclePartOwner.java:42-59, VehiclePart.java:99/352, ItemContainer getItems).
 local function holdsNothing(vehicle)
-    local empty = true
-    pcall(function()
-        for i = 0, vehicle:getPartCount() - 1 do
-            local part = vehicle:getPartByIndex(i)
-            if part and part:isContainer() then
-                local cont = part:getItemContainer()
-                if cont and cont:getItems() and cont:getItems():size() > 0 then
-                    empty = false
-                    return
-                end
+    for i = 0, vehicle:getPartCount() - 1 do
+        local part = vehicle:getPartByIndex(i)
+        if part and part:isContainer() then
+            local cont = part:getItemContainer()
+            if cont and cont:getItems() and cont:getItems():size() > 0 then
+                return false
             end
         end
-    end)
-    return empty
+    end
+    return true
 end
 
 -- Per-part condition, keyed by part id, plus the body-wide cosmetics. Captured
 -- BEFORE the swap because scriptReloaded rebuilds the parts.
 local function captureState(vehicle)
     local s = { parts = {}, n = 0, total = 0 }
-    pcall(function()
-        for i = 0, vehicle:getPartCount() - 1 do
-            local part = vehicle:getPartByIndex(i)
-            if part then
-                local cond = part:getCondition()
-                if cond then
-                    s.parts[part:getId()] = cond
-                    s.n, s.total = s.n + 1, s.total + cond
-                end
+    -- part walk is bounds-checked (VehicleParts.java:111); getCondition/getId
+    -- are field returns (VehiclePart.java:891/130)
+    for i = 0, vehicle:getPartCount() - 1 do
+        local part = vehicle:getPartByIndex(i)
+        if part then
+            local cond = part:getCondition()
+            if cond then
+                s.parts[part:getId()] = cond
+                s.n, s.total = s.n + 1, s.total + cond
             end
         end
-    end)
-    pcall(function() s.rust = vehicle:getRust() end)
-    pcall(function()
-        s.blood = {
-            Front = vehicle:getBloodIntensity("Front"),
-            Rear  = vehicle:getBloodIntensity("Rear"),
-            Left  = vehicle:getBloodIntensity("Left"),
-            Right = vehicle:getBloodIntensity("Right"),
-        }
-    end)
+    end
+    s.rust = vehicle:getRust()   -- field return (BaseVehicle.java:8256)
+    -- getBloodIntensity is a getOrDefault on a final map (BaseVehicle.java:5758)
+    s.blood = {
+        Front = vehicle:getBloodIntensity("Front"),
+        Rear  = vehicle:getBloodIntensity("Rear"),
+        Left  = vehicle:getBloodIntensity("Left"),
+        Right = vehicle:getBloodIntensity("Right"),
+    }
     return s
 end
 
@@ -831,6 +835,9 @@ end
 -- players right now. Without them clients keep the pre-swap appearance.
 local function restoreState(vehicle, s)
     local avg = (s.n > 0) and (s.total / s.n) or nil
+    -- guarded: VehiclePart.setCondition (VehiclePart.java:895) fires the
+    -- OnVehicleDamageTexture Lua event (foreign handlers) and NPEs on a
+    -- TrailerTrunk part whose container is nil - not verifiable safe
     pcall(function()
         for i = 0, vehicle:getPartCount() - 1 do
             local part = vehicle:getPartByIndex(i)
@@ -843,8 +850,11 @@ local function restoreState(vehicle, s)
             end
         end
     end)
-    if s.rust then pcall(function() vehicle:setRust(s.rust); vehicle:transmitRust() end) end
+    -- setRust is clamp+field set, transmitRust a flag set (BaseVehicle.java:8252/8260)
+    if s.rust then vehicle:setRust(s.rust); vehicle:transmitRust() end
     if s.blood then
+        -- guarded: setBloodIntensity -> doBloodOverlay derefs this.sprite
+        -- unguarded (BaseVehicle.java:5780), not proven non-nil on a dedi
         pcall(function()
             for side, amount in pairs(s.blood) do
                 if amount then vehicle:setBloodIntensity(side, amount) end
@@ -854,6 +864,7 @@ local function restoreState(vehicle, s)
     end
     -- A modded script has its own skin list, so the old index means nothing.
     -- Roll a valid one rather than leaving every converted car on skin 0.
+    -- guarded: getVehicle can NPE on a null bucket (ScriptBucketCollection.java:86-87)
     pcall(function()
         local script = getScriptManager():getVehicle(vehicle:getScriptName())
         local count = script and script:getSkinCount() or 0
@@ -873,22 +884,22 @@ local function retrofitLoaded(vehicle)
     if not vehicle then return end
 
     -- Loaded-from-disk only. Brand-new vehicles are Layers 1 and 2' business.
-    local ok, created = pcall(function() return vehicle:isCreated() end)
-    if not ok or not created then return end
+    if not vehicle:isCreated() then return end
 
     -- One implementation of "may this vanilla car be replaced", shared with the
     -- admin purge (see retrofitVerdict's header).
     if retrofitVerdict(vehicle) ~= "purge" then return end
     if not holdsNothing(vehicle) then return end
 
-    local full
-    pcall(function() full = vehicle:getScript():getFullName() end)
-    if type(full) ~= "string" then return end
+    -- retrofitVerdict returned "purge", so getScript() is non-nil here.
+    local script = vehicle:getScript()
+    if not script then return end
+    local okf, full = pcall(script.getFullName, script)
+    if not okf or type(full) ~= "string" then return end
 
     -- Prefer the zone's own list so a police car becomes a modded police car,
     -- exactly as the placer does.
-    local zoneName
-    pcall(function() zoneName = vehicle:getZone() end)
+    local zoneName = vehicle:getZone()
     local pick = (zoneName and RCNoVanilla.rosterForZone(zoneName, true))
         or RCNoVanilla.roster(true)
     if not pick or #pick == 0 then return end
@@ -896,6 +907,9 @@ local function retrofitLoaded(vehicle)
     if not swap or swap == full then return end
 
     local state = captureState(vehicle)
+    -- guarded: scriptReloaded tears down and rebuilds physics/model/parts
+    -- (BaseVehicle.java:1610), unverifiable-trivial; a throw aborts the
+    -- conversion and the car streams in unchanged
     local done = pcall(function()
         vehicle:setScriptName(swap)
         vehicle:scriptReloaded(true)   -- true: do not re-enter this event

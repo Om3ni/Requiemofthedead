@@ -52,17 +52,21 @@ local MODE_REMOVE = "remove"
 -- (VirtualZombieManager:80-86, ZombieDeleteOnClientPacket:42). Doing it by hand
 -- and forgetting the emitter leaves a zombie you can hear but not see.
 local function cull(z)
-    local ok = false
-    pcall(function()
-        if VirtualZombieManager and VirtualZombieManager.instance then
-            VirtualZombieManager.instance:removeZombieFromWorld(z)
-            ok = true
-        end
-    end)
-    if ok then return end
+    if VirtualZombieManager and VirtualZombieManager.instance then
+        local vm = VirtualZombieManager.instance
+        -- pcall: engine removal mutates world state and must not half-happen
+        -- unguarded; direct form, this runs per swept zombie.
+        if pcall(vm.removeZombieFromWorld, vm, z) then return end
+    end
+    -- pcall: getEmitter() is a field read (IsoGameCharacter:1348) but the
+    -- emitter may be null, and unregister() is not in the decompile at all.
     pcall(function() z:getEmitter():unregister() end)
-    pcall(function() z:removeFromWorld() end)
-    pcall(function() z:removeFromSquare() end)
+    -- pcall: IsoZombie.removeFromWorld:3550 chains into IsoMovingObject:688,
+    -- which calls getCell().isSafeToAdd() with no guard.
+    pcall(z.removeFromWorld, z)
+    -- No guard: IsoMovingObject.removeFromSquare:702 null-checks every field
+    -- it touches, and it is the last step so nothing follows it to skip.
+    z:removeFromSquare()
 end
 
 local function modeAt(x, y)
@@ -76,18 +80,22 @@ end
 -- the very list being walked, and an index walk would skip one entry per
 -- removal - the same trap as the server's sweep.
 function LMZedsCl.sweep()
-    local list = nil
-    pcall(function() list = getCell():getZombieList() end)
+    -- Stepped through IsoWorld.instance rather than getCell(): the global
+    -- dereferences the instance unconditionally, so it throws before the world
+    -- is up; this form just yields nil then. getZombieList is a field return
+    -- (IsoCell:2339) and the rest is java.util.ArrayList walked in bounds.
+    local world = IsoWorld and IsoWorld.instance
+    local cell = world and world:getCell()
+    local list = cell and cell:getZombieList() or nil
     if not list then return 0 end
 
-    local hits, n = {}, 0
-    pcall(function() n = list:size() end)
+    local hits = {}
+    local n = list:size()
     for i = 0, n - 1 do
-        local z = nil
-        pcall(function() z = list:get(i) end)
+        local z = list:get(i)
         if z then
-            local ok, x, y = pcall(function() return z:getX(), z:getY() end)
-            if ok and x and modeAt(math.floor(x), math.floor(y)) == MODE_REMOVE then
+            local x, y = z:getX(), z:getY()
+            if modeAt(math.floor(x), math.floor(y)) == MODE_REMOVE then
                 hits[#hits + 1] = z
             end
         end

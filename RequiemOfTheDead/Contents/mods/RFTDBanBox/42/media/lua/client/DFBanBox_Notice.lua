@@ -15,9 +15,11 @@ local function onServerCommand(module, command, args)
     local p = getPlayer()
     if not p then return end
     if HaloTextHelper and HaloTextHelper.addBadText then
-        pcall(function() HaloTextHelper.addBadText(p, msg) end)
+        HaloTextHelper.addBadText(p, msg)
     end
-    -- Persist in chat too (best-effort; chat API varies by build).
+    -- Persist in chat too. The guard stays because addLineInChat is vanilla
+    -- LUA, not Java: its signature cannot be checked against the decompile, so
+    -- a build that changes it must not take the ban notice down with it.
     pcall(function()
         if ISChat and ISChat.instance and ISChat.instance.addLineInChat then
             ISChat.instance:addLineInChat(msg, 0)

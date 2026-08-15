@@ -16,24 +16,24 @@
 RDAccess = RDAccess or {}
 
 -- Resolve a capability given as either the engine enum value or its name.
+-- Capability is a plain KahluaTable of enum constants (rawset by the exposer,
+-- LuaJavaClassExposer:301) - an unknown name indexes to nil, never a throw.
 local function resolveCap(capability)
     if type(capability) ~= "string" then return capability end
-    local ok, cap = pcall(function() return Capability[capability] end)
-    if ok and cap then return cap end
-    return nil
+    return Capability and Capability[capability] or nil
 end
 
--- Safe capability check. Roles can be nil during early load and in single
--- player; pcall keeps a bad role lookup from killing the whole gate.
+-- Roles can be nil during early load and in single player - nil-checked.
+-- getRole (IsoPlayer:6987) is a field return; hasCapability (Role:187) is
+-- HashSet.contains on a final set (:31). The method probe keeps a non-player
+-- receiver at false instead of a throw that would lock the whole gate.
 function RDAccess.roleHas(player, capability)
     if not player or not capability then return false end
     local cap = resolveCap(capability)
     if not cap then return false end
-    local ok, result = pcall(function()
-        local role = player:getRole()
-        return role and role:hasCapability(cap)
-    end)
-    return ok and result == true
+    if not player.getRole then return false end
+    local role = player:getRole()
+    return role ~= nil and role:hasCapability(cap) == true
 end
 
 -- True if the player's role grants at least one capability of any kind -
@@ -41,18 +41,17 @@ end
 -- trigger but no ordinary player should. Iterates the capability list; cheap,
 -- and only runs on gated paths, never per tick.
 function RDAccess.hasAnyCapability(player)
-    if not player then return false end
-    local ok, result = pcall(function()
-        local role = player:getRole()
-        if not role then return false end
-        local caps = getCapabilities()
-        if not caps then return false end
-        for i = 0, caps:size() - 1 do
-            if role:hasCapability(caps:get(i)) then return true end
-        end
-        return false
-    end)
-    return ok and result == true
+    -- getCapabilities (LuaManager:3115) allocates a fresh ArrayList of the enum
+    -- values; size/get are bounds-safe inside the loop; hasCapability as above
+    if not player or not player.getRole then return false end
+    local role = player:getRole()
+    if not role then return false end
+    local caps = getCapabilities()
+    if not caps then return false end
+    for i = 0, caps:size() - 1 do
+        if role:hasCapability(caps:get(i)) then return true end
+    end
+    return false
 end
 
 -- The one gate everything routes through. `requirement` is:
@@ -67,12 +66,13 @@ end
 
 -- The highest tier: access level "admin", nothing less. For surfaces with
 -- too much power for general staff (zombie conversion, the admin panel,
--- debug menus). pcall because getAccessLevel has been crash-prone on ghost
--- player objects.
+-- debug menus). getAccessLevel is IsoPlayer-only (:6983, role null-checked
+-- then a field read) - the probe keeps the ghost/non-player receivers that
+-- used to crash here at false instead of a throw.
 function RDAccess.isTopAdmin(player)
-    if not player then return false end
-    local ok, access = pcall(function() return player:getAccessLevel() end)
-    if not ok or type(access) ~= "string" then return false end
+    if not player or not player.getAccessLevel then return false end
+    local access = player:getAccessLevel()
+    if type(access) ~= "string" then return false end
     return string.lower(access) == "admin"
 end
 

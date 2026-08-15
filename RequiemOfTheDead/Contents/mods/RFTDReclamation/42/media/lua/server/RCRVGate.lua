@@ -50,9 +50,9 @@ local function applyGate()
         -- no-access player on a claimed RV is denied.
         if vehicle and player and not RCClaim.canDo(vehicle, player, ENTER_PERM) then
             notify(player, "IGUI_RC_RVLocked", true)
-            pcall(function()
-                RCAudit.log("RV-DENY", player, { vehicle = vehicle:getScriptName() })
-            end)
+            -- RCAudit.log guards its own I/O and getScriptName is a field
+            -- return (BaseVehicle.java:1593) - nothing here can throw
+            RCAudit.log("RV-DENY", player, { vehicle = vehicle:getScriptName() })
             return  -- blocked: no teleport into the interior
         end
         return orig(player, vehicle, ...)
