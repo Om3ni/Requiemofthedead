@@ -86,8 +86,10 @@ end
 local counts = {}   -- flag -> refusals since boot, for the report
 
 -- pcall: evidence-writing must never break the refusal it records.
-local function forensic(event, data)
-    if RDLog and RDLog.forensic then pcall(RDLog.forensic, event, data) end
+local function forensic(event, data, subject)
+    if RDLog and RDLog.forensic then
+        pcall(RDLog.forensic, "limes", event, subject, data, "RFTDLimes")
+    end
 end
 
 -- Tell the player, and say which zone and which rule. A refusal nobody explains
@@ -106,7 +108,7 @@ local function refuse(character, flag, zoneName, what)
     -- one is not. getUsername itself is a field return (IsoGameCharacter).
     local who = "?"
     if character and character.getUsername then who = character:getUsername() end
-    forensic("LM.RESTRICT", { flag = flag, zone = zoneName, user = who, what = what })
+    forensic("LM.RESTRICT", { flag = flag, zone = zoneName, user = who, what = what }, character)
 end
 
 function LMRestrict.counts() return counts end
@@ -291,7 +293,7 @@ local function onSafehousesChanged()
                 pcall(SafeHouse.removeSafeHouse, sh)
                 counts.nosafehouse = (counts.nosafehouse or 0) + 1
                 forensic("LM.RESTRICT",
-                    { flag = "nosafehouse", zone = zone, user = owner, what = "unclaim" })
+                    { flag = "nosafehouse", zone = zone, user = owner, what = "unclaim" }, owner)
                 print("[Limes] restrict: removed a safehouse claim by " .. tostring(owner)
                     .. " inside " .. tostring(zone))
             end

@@ -24,7 +24,7 @@ migration turn.
   **Default off** - arming it wraps engine send functions every mod on the server calls,
   so it is a `RFTDCore.WireProbeEnabled` decision, not a standing posture.
 - **Partly adopted.** Two-tier server logging (permanent per-player *chronicle* streams +
-  a bounded *forensic* ring) works, but only Reclamation and a single Dirge event write to
+  permanent, immutable *forensic* archive segments) works, but only Reclamation and a single Dirge event write to
   it, and Reclamation's writes are transitional dual-writes kept alongside the legacy path
   until a season has proven the new one. `RDRate` backs Reclamation's dispatcher and
   RDNet's.

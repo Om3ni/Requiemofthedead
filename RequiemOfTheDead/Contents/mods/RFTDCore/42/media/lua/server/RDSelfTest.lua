@@ -6,9 +6,9 @@
 -- Optional: { forensic = <count> } to override the synthetic record count.
 --
 -- In about a minute on the target box this proves:
---   * the forensic ring wraps (default 50k records > 2 segments)
---   * truncation-as-reclaim actually reclaims bytes
---   * head.txt tracks the segment/line counter
+--   * the forensic archive rolls 50k records into multiple immutable parts
+--   * line/size thresholds preserve overflow instead of dropping it
+--   * head.txt names the current part and its advisory counters
 --   * slugs.tsv.log disambiguates colliding usernames (Bob.Smith vs Bob_Smith)
 --   * the encoder survives a hostile payload: raw control bytes, \b, \f,
 --     large floats, an empty map, an empty array
@@ -62,7 +62,9 @@ function RDSelfTest.run(player, args)
         })
     end
 
-    -- 3) Forensic volume: enough to wrap segments and exercise head.txt.
+    -- 3) Forensic volume: enough to roll across default line thresholds and
+    -- exercise the current-part pointer. The dedicated selftest stream makes
+    -- this deliberate permanent evidence easy to distinguish from live data.
     for i = 1, count do
         RDLog.forensic("selftest", "RD.TEST", "Bob.Smith", {
             n = i, filler = "synthetic-forensic-record", hostile = (i == 1) and hostile or nil,

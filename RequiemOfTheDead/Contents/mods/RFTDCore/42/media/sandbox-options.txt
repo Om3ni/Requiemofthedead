@@ -34,16 +34,6 @@ option RFTDCore.ForensicSegmentHours
     translation = RD_ForensicSegmentHours,
 }
 
-option RFTDCore.ForensicRingSegments
-{
-    type = integer,
-    min = 2,
-    max = 96,
-    default = 42,
-    page = RFTDCore,
-    translation = RD_ForensicRingSegments,
-}
-
 option RFTDCore.ForensicSegmentLines
 {
     type = integer,

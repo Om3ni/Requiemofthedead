@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""forensic-report.py - turn forensic ring segments into one readable HTML page.
+"""forensic-report.py - turn forensic archive segments into one readable HTML page.
 
-WHY THIS EXISTS: the ring is deliberately unfiltered at the WRITE side, because a
+WHY THIS EXISTS: the archive is deliberately unfiltered at the WRITE side, because a
 sensor that decides what matters before it records has already thrown away the
 thing you will want later. The consequence is that reading it raw is hopeless -
 in a real 19-hour Guardian sample, 74% of records were one third-party vehicle
@@ -12,14 +12,16 @@ Output is a single self-contained .html file - no CDN, no server, no build step.
 Open it, un-tick the noise, read the meat. Filters are live in the page, so the
 same file answers different questions without regenerating it.
 
-RING ORDER IS NOT FILE ORDER. Segments are a wrap-around ring: 003 can be older
-than 000. Everything is sorted by envelope "t" (epoch seconds), so feeding the
+FILE ORDER IS NOT EVENT ORDER. Old wrap-around ring segments, immutable dated
+archive parts, and records from separate server sessions can all be supplied
+together. Everything is sorted by envelope "t" (epoch seconds), so feeding the
 whole directory in any order produces one correct timeline.
 
-TWO NAMING ERAS, same reason validate_jsonl.py handles both. Current segments are
-"000.<stream>.jsonl.log"; before that "000.jsonl.log"; before 42.20 a bare
-".jsonl". Lua can neither rename nor delete, so a live cache holds all three and
-matching is on the NAME, not Path.suffix.
+THREE NAMING ERAS, same reason validate_jsonl.py handles all of them. Current
+archives live under <stream>/<UTC-date>/ with self-describing names. The former
+ring used "000.<stream>.jsonl.log" and, before that, "000.jsonl.log"; pre-42.20
+files used bare ".jsonl". Historical files remain evidence, so matching is on
+the NAME rather than Path.suffix and collection is recursive.
 
 THE sid FIELD IS APPROXIMATE and the page says so. RDIdentity.sidApprox is
 string.format("%.0f", getSteamID()); Kahlua hands that Java long over as a double,
@@ -79,10 +81,20 @@ def collect(paths):
     return out
 
 
+def stream_of(path: Path) -> str:
+    """Recover the stream from an archive tree or a self-describing filename."""
+    parts = path.parts
+    for i, part in enumerate(parts[:-1]):
+        if part == "forensic" and i + 1 < len(parts):
+            return parts[i + 1]
+    match = re.search(r"(?:^|_)\d{3}\.([^.]+)\.jsonl\.log$", path.name)
+    return match.group(1) if match else path.parent.name
+
+
 def load(files):
     recs, bad = [], 0
     for f in files:
-        stream = f.parent.name
+        stream = stream_of(f)
         with f.open(encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 line = line.strip()

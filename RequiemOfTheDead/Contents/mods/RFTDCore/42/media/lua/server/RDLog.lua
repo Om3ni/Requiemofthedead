@@ -9,14 +9,12 @@
 --              permanent stream. Open-append-close per line: rare and
 --              irreplaceable, so every line is flushed the moment it exists.
 --
---   FORENSIC   bounded ring for high-volume telemetry ("what happened last
---              Tuesday"). Rotates ON THE WALL CLOCK - one segment per period,
---              4 h by default - so the ring holds `ring x period` of history
---              (42 x 4 h = one week at the defaults) regardless of traffic
---              shape. Buffered (<=25 lines or ~1s) because the traffic is
---              continuous and replaceable. Size settings are per-segment
---              CEILINGS, not triggers; see the segment clock below for why
---              accumulated counters could not do this job.
+--   FORENSIC   permanent high-volume telemetry, split into immutable archive
+--              segments. The wall clock starts one segment window per period
+--              (4 h by default); line/size thresholds start another PART in
+--              that window. A closed part is never reopened, truncated, or
+--              reclaimed by RFTD. Buffered (<=25 lines or ~1s) to keep the
+--              continuous traffic affordable.
 --
 -- Durability model: nothing here may depend on a graceful exit. The restart
 -- scripts force-kill java (documented data-loss history), and while the
@@ -25,19 +23,12 @@
 -- and these files never rely on it. Chronicle lines are durable per line.
 -- Forensic loses at most one buffer (<=25 lines / <=1s).
 --
--- A force-kill CANNOT move a segment boundary or lose the ring's place: the
--- segment is a pure function of the clock (see the segment clock below), so it
--- survives by being recomputed rather than by being saved. Only the advisory
--- lines/bytes counters can go stale (<=500 lines), which slightly softens the
--- ceilings and nothing else. Do NOT "fix" that with a boot-time full-file line
--- count; that is an O(20k) Kahlua read per stream on the tick thread.
---
--- Rotation without a delete primitive: PZ Lua cannot delete files, but
--- getFileWriter(path, createIfNull, false) truncates to zero bytes - that IS
--- the reclaim, and it happens exactly once per segment, at the moment the ring
--- wraps back onto it. Ring of RING segments, one per time period. Existence
--- probing would use cacheFileExists (roots at cacheDir/Lua/); fileExists and
--- serverFileExists root elsewhere.
+-- A force-kill cannot damage an older segment: every process chooses a fresh,
+-- collision-checked session name and only appends to files it created. The
+-- current buffer is the only vulnerable tail. Rotation needs no delete or
+-- rename primitive; when a boundary is crossed, the old path is simply closed
+-- forever and a new one is created. cacheFileExists and getFileWriter both root
+-- at cacheDir/Lua (LuaManager.java:4617-4623, 5523-5555).
 --
 -- 42.20 WRITE-EXTENSION ALLOWLIST - why these files are named ".jsonl.log":
 -- getFileWriter returns nil unless the extension is in the allowlist
@@ -59,10 +50,10 @@
 -- Extensionless names fail too. Only the final path segment is inspected, so
 -- the dots in a "<SafeName>.<SteamID>" DIRECTORY are irrelevant.
 -- Reads are NOT gated - getFileReader still opens the pre-42.20 ".jsonl"
--- files, which is why nothing here migrates them: they stay on disk as
--- immutable history and a reader concatenates legacy-then-current. Lua cannot
--- rename or delete, and truncating them is impossible anyway now that their
--- extension is refused.
+-- files. Those files and every numbered ring segment from the superseded
+-- retention design stay on disk as immutable history. This writer never opens
+-- them, so restoring permanent retention cannot destroy the evidence that
+-- predates it.
 --
 -- Layout (under <cacheDir>/Lua/). Every player owns ONE directory per season
 -- (<SafeName>.<SteamID>, see RDIdentity) holding their permanent record and
@@ -70,10 +61,12 @@
 --   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/events.jsonl.log  permanent
 --   RFTD/season/<SeasonName>/chronicle/p/<Name.SID>/index.json.txt    rewritten
 --   RFTD/season/<SeasonName>/chronicle/world.jsonl.log                server scope
---   RFTD/forensic/<stream>/head.txt        "<segment> <lines> <bytes> <bucket>"
---   RFTD/forensic/<stream>/000.<stream>.jsonl.log ..         ring segments
---     e.g. forensic/guardian/000.guardian.jsonl.log - the name repeats the
---     stream so a segment stays identifiable once copied out of its folder.
+--   RFTD/forensic/<stream>/head.txt          rewritten current-path pointer
+--   RFTD/forensic/<stream>/<UTC-date>/
+--     <UTC-window>_<session-ms>_<part>.<stream>.jsonl.log     immutable
+--     e.g. guardian/2026-08-16/2026-08-16_12-00-00Z_
+--          1786896000123_000.guardian.jsonl.log
+-- Old 000.<stream>.jsonl.log ring files remain beside these dated folders.
 --
 -- The trailing ".log"/".txt" is forced by the 42.20 allowlist (see below).
 -- ".log" marks an append-only stream, ".txt" a file rewritten in place.
@@ -111,8 +104,7 @@ end
 local HEAD_SYNC_LINES = 500
 
 -- ---------------------------------------------------------------------------
--- THE SEGMENT CLOCK - why rotation is a function of the wall clock and nothing
--- else (2026-08-05).
+-- THE ARCHIVE CLOCK
 --
 -- Rotation used to trigger on accumulated lines/bytes. Both counters live in
 -- the `streams` table, which is a file-scope Lua local, so BOTH RESET TO ZERO
@@ -124,33 +116,31 @@ local HEAD_SYNC_LINES = 500
 -- reachable, head.txt was never written on any stream on any server, and the
 -- segment grew without bound. The ring had never rotated once, anywhere.
 --
--- So the segment index is now DERIVED, not accumulated:
+-- The time window remains derived rather than accumulated:
 --
 --     bucket = floor(epochSeconds / periodSeconds)
---     seg    = bucket % ring
 --
--- Nothing carries across a restart, because nothing needs to: two processes
--- asking the same question at the same moment get the same answer. A crash, a
--- force-kill, a counter reset - none of them can move the boundary. "A new log
--- every four hours" is then true by construction rather than by bookkeeping,
--- and any timestamp can be mapped straight to the file that holds it.
+-- Nothing must carry across a restart. Each process has a fresh session token,
+-- collision-checked against the cache before its first append. Two processes in
+-- the same four-hour window therefore create two immutable parts rather than
+-- reopening one another's files or depending on counters that died with them.
 --
 -- Boundaries are ABSOLUTE, not relative to boot: with the 4 h default they
 -- land on 00:00, 04:00, 08:00, ... UTC, so segments line up across streams and
 -- across servers instead of drifting with each restart.
 --
--- head.txt survives as bookkeeping only - it says which BUCKET the segment on
--- disk holds, which is what distinguishes "same period, resume appending" from
--- "a full ring ago, truncate first". Position no longer depends on it.
+-- head.txt is advisory bookkeeping only: it names the current archive path and
+-- its approximate counters. Recovery never trusts it and evidence never depends
+-- on it. It may be stale by <=500 lines after a force-kill.
 local function periodSec()
     local h = cfgNum("ForensicSegmentHours", 4)
     if h < 1 then h = 1 elseif h > 24 then h = 24 end
     return math.floor(h * 3600)
 end
 
--- nil when the clock is unavailable - callers then leave the segment alone
--- rather than guessing. Fail-safe: an unreadable clock must not rotate, and
--- must never truncate.
+-- nil when the clock is unavailable. A stream already writing keeps its path;
+-- a new stream uses an "undated" session path. When the clock recovers, the
+-- dated boundary starts normally. No clock state can cause data destruction.
 local function bucketNow()
     local now = RDShared.nowSec()
     if type(now) ~= "number" or now <= 0 then return nil end
@@ -335,209 +325,110 @@ function RDLog.state(subj, tbl)
 end
 
 -- ---------------------------------------------------------------------------
--- FORENSIC ring
+-- FORENSIC immutable archive
 -- ---------------------------------------------------------------------------
 
-local streams = {}   -- name -> { seg, lines, buf, lastMs, headDirty, loaded }
-
--- "000.guardian.jsonl.log", not the old bare "000.jsonl.log". The stream name was
--- only ever carried by the parent DIRECTORY, so a segment copied out of its folder
--- - dragged into a ticket, mailed to someone, opened in an editor - was an
--- anonymous "000". Self-describing filenames cost nothing and survive being moved.
---
--- THE EXTENSION IS NOT NEGOTIABLE: ".jsonl" alone is REFUSED since 42.20, which
--- allows only ini/cfg/txt/log and reads the substring after the LAST dot. So the
--- name declares its real format in the middle and presents "log" at the end.
--- "000.guardian.jsonl" would silently return nil from getFileWriter and write
--- nothing at all.
---
--- MIGRATION, which needs no code: existing streams have a head.txt naming an
--- OLD-style segment. The boot probe below (cacheFileExists on this path) will not
--- find it, so the ring resets to 0/0 and rewrites head - exactly the self-healing
--- path already built for the 42.20 outage. Old "000.jsonl.log" files stay on disk
--- as immutable history; Lua cannot delete or rename them, and the ring will never
--- reclaim them, so they are a one-time orphan per stream. Readers wanting full
--- history concatenate old-then-new.
-local function segPath(name, seg)
-    return DIR .. "forensic/" .. name .. "/"
-        .. string.format("%03d", seg) .. "." .. name .. RDShared.EXT_STREAM
-end
+local streams = {}
+local sessionId = string.format("%.0f", RDShared.nowMs() or 0)
 
 local function headPath(name)
     return DIR .. "forensic/" .. name .. "/head.txt"
 end
 
--- "<seg> <lines> <bytes> <bucket>". Fields have only ever been APPENDED, and
--- every historical shape still loads: two-field heads (pre-2026-08-02) resume
--- with bytes=0, three-field heads (pre-2026-08-05) resume with no bucket, which
--- reads as "unknown period" and costs one truncation of the current partial
--- segment. Parsed by scanning for integers rather than by a positional pattern,
--- so a missing trailing field cannot silently shift the others.
---
--- The BUCKET is the load-bearing field now. lines/bytes are advisory: they feed
--- the ceilings below and may be up to HEAD_SYNC_LINES stale after a force-kill.
--- Do not "fix" that staleness by measuring the file; there is no stat and a read
--- is O(segment) on the tick thread.
-local function writeHead(st, name)
-    rewrite(headPath(name),
-        tostring(st.seg) .. " " .. tostring(st.lines) .. " " .. tostring(st.bytes)
-        .. " " .. tostring(st.bucket or 0) .. "\n")
-    st.headDirty = 0
+-- Kahlua registers os.date directly (OsLib.java:44-50, 87-103), including
+-- Lua's leading "!" UTC form (:109-121). Naming from the bucket's START keeps
+-- every stream aligned and makes a copied file understandable without its
+-- parent directory.
+local function windowNames(bucket)
+    if not bucket then return "undated", "undated" end
+    local start = bucket * periodSec()
+    return os.date("!%Y-%m-%d", start), os.date("!%Y-%m-%d_%H-%M-%SZ", start)
 end
 
--- Reclaim segments that fell OUTSIDE the ring, which nothing else can do.
--- `seg = (seg + 1) % ring` only ever visits 0..ring-1, so lowering
--- ForensicRingSegments (8 -> 4) strands 004..007 holding their bytes forever -
--- the ring silently stops bounding the thing it exists to bound. Truncation is
--- the only reclaim Lua has, so walk the directory once per stream per boot and
--- zero anything at or above the current ring size.
---
--- Filenames are matched by EXACT reconstruction rather than a pattern: safePath
--- allows "-", which is a magic character in a Lua pattern class, so a stream
--- named "a-b" would build a broken matcher. Rebuilding the expected name and
--- comparing strings has no such failure mode and cannot match head.txt or a
--- legacy ".jsonl" orphan by accident.
-local function reclaimOutsideRing(name, ring)
-    -- directory-listing I/O; reclaim is best-effort and must never take the
-    -- ring's write path down with it
-    pcall(function()
-        local files = listFilesInZomboidLuaDirectory(DIR .. "forensic/" .. name)
-        if not files then return end
-        local n = files:size()
-        for i = 0, n - 1 do
-            local f = files:get(i)
-            if f then
-                f = tostring(f)
-                local num = f:match("^(%d+)%.")
-                local seg = tonumber(num)
-                if seg and seg >= ring
-                   and f == string.format("%03d", seg) .. "." .. name .. RDShared.EXT_STREAM then
-                    rewrite(DIR .. "forensic/" .. name .. "/" .. f, "")
-                end
-            end
-        end
-    end)
+local function archivePath(name, day, stamp, run, part)
+    return DIR .. "forensic/" .. name .. "/" .. day .. "/"
+        .. stamp .. "_" .. run .. "_" .. string.format("%03d", part)
+        .. "." .. name .. RDShared.EXT_STREAM
+end
+
+local function writeHead(st, name)
+    -- v2<TAB>path<TAB>lines<TAB>bytes<TAB>bucket<TAB>part. This file is an
+    -- operational pointer, never evidence and never recovery state.
+    rewrite(headPath(name), table.concat({
+        "v2", st.path or "", tostring(st.lines), tostring(st.bytes),
+        tostring(st.bucket or 0), tostring(st.part or 0),
+    }, "\t") .. "\n")
+    st.headDirty = 0
+    st.headWritten = true
+end
+
+local function startWindow(st, name, bucket)
+    local day, stamp = windowNames(bucket)
+    local collision = 0
+    local run = sessionId
+    local path = archivePath(name, day, stamp, run, 0)
+    while cacheFileExists(path) do
+        collision = collision + 1
+        run = sessionId .. "-" .. tostring(collision)
+        path = archivePath(name, day, stamp, run, 0)
+    end
+    st.bucket, st.day, st.stamp, st.run = bucket, day, stamp, run
+    st.part, st.path = 0, path
+    st.lines, st.bytes, st.headDirty = 0, 0, 0
+    st.headWritten = false
+end
+
+local function rollPart(st, name)
+    local part = st.part + 1
+    local path = archivePath(name, st.day, st.stamp, st.run, part)
+    while cacheFileExists(path) do
+        part = part + 1
+        path = archivePath(name, st.day, st.stamp, st.run, part)
+    end
+    st.part, st.path = part, path
+    st.lines, st.bytes, st.headDirty = 0, 0, 0
+    st.headWritten = false
 end
 
 local function stream(name)
-    name = safePath(name)
+    name = safePath(name):gsub("/", "_")
     local st = streams[name]
     if st then return st, name end
-    st = { seg = 0, lines = 0, bytes = 0, bucket = nil,
-           buf = {}, lastMs = 0, headDirty = 0, over = false, fresh = false }
-
-    local head = readFirstLine(headPath(name))
-    if head then
-        -- Scan for integers rather than matching positionally, so a two-, three-
-        -- or four-field head all load correctly and a missing trailing field
-        -- cannot shift the ones before it.
-        local n = {}
-        for d in head:gmatch("%d+") do n[#n + 1] = tonumber(d) end
-        st.seg    = n[1] or 0
-        st.lines  = n[2] or 0
-        st.bytes  = n[3] or 0
-        st.bucket = n[4]          -- nil for a pre-2026-08-05 head
-    end
-
-    local ring = cfgNum("ForensicRingSegments", 42)
-    local b    = bucketNow()
-    if b then
-        -- THE CLOCK DECIDES, not the head. The head is consulted only to answer
-        -- "does the file already hold THIS period?" - if it does, resume
-        -- appending with its counters; if it does not (a different period, a
-        -- head from before buckets existed, or no head at all) the file on disk
-        -- is from an earlier turn of the ring and must be reclaimed before the
-        -- first write, or a wrap would silently splice new records onto records
-        -- up to `ring` periods old.
-        local want = b % ring
-        if st.bucket ~= b or st.seg ~= want then
-            st.seg, st.lines, st.bytes = want, 0, 0
-            st.bucket = b
-            st.fresh  = true      -- truncate on first write; see flushStream
-        end
-    else
-        -- No clock. Keep whatever the head named and never truncate - a broken
-        -- clock must not be able to erase a segment. `seg` can still be outside
-        -- a shrunken ring here (the modulo above never ran), so clamp it.
-        if st.seg >= ring then
-            st.seg, st.lines, st.bytes = 0, 0, 0
-            st.headDirty = HEAD_SYNC_LINES
-        end
-    end
-
-    reclaimOutsideRing(name, ring)
+    st = { buf = {}, lastMs = 0 }
+    startWindow(st, name, bucketNow())
     streams[name] = st
     return st, name
 end
 
--- TIME ROTATES; SIZE ONLY CAPS.
---
--- The period boundary is the only thing that moves the segment, so every
--- segment is exactly one wall-clock window and the ring holds
--- `ring x period` of history no matter how the traffic is shaped. Lines and
--- bytes stay as CEILINGS on a single segment - a flood inside one window is
--- dropped rather than allowed to spend the whole ring's disk in twenty
--- minutes. They no longer rotate anything, because a size-triggered rotation
--- would break the property that makes this reliable: that the segment holding
--- a given moment can be computed from that moment alone.
---
--- Dropping is the correct response to a flood on THIS tier and only this tier.
--- Forensic is explicitly the bounded, replaceable stream; the chronicle is the
--- permanent one and is never rotated, never capped, and never dropped. A flood
--- that would blow the ceiling is itself the interesting event, so it is
--- announced once per segment rather than silently discarded.
---
--- Counted, not measured: `#s` is bytes in Lua 5.1 (and Kahlua), so the buffer is
--- summed as it is written. There is no stat call and reading the file back to
--- size it would be O(segment) on the tick thread.
+-- Time starts a new window; line/byte thresholds start another immutable part
+-- in that window. A batch larger than a threshold is written whole to an empty
+-- part, so a configuration limit can make a file larger but can never discard
+-- evidence. `#s` is the encoded byte count in Lua 5.1/Kahlua; reading a file to
+-- measure it would be O(segment) work on the tick thread.
 local function flushStream(st, name)
     if #st.buf == 0 then return end
-    local ring  = cfgNum("ForensicRingSegments", 42)
     local segLn = cfgNum("ForensicSegmentLines", 20000)
     local segBy = cfgNum("ForensicSegmentKB", 2048) * 1024
-
-    -- The period boundary. Crossing it reclaims the segment being entered,
-    -- which is what bounds the ring: that file holds records from `ring`
-    -- periods ago and this is the only moment anything can reclaim them.
     local b = bucketNow()
-    if b and st.bucket ~= b then
-        st.seg    = b % ring
-        st.bucket = b
-        st.lines, st.bytes, st.over = 0, 0, false
-        st.fresh  = true
-    end
-
-    -- Deferred to the first actual write so an idle stream never truncates a
-    -- segment it is not going to use.
-    if st.fresh then
-        rewrite(segPath(name, st.seg), "")   -- truncate-to-zero IS the reclaim
-        st.fresh = false
-        writeHead(st, name)                  -- head exists from the first flush on
-    end
+    if b and st.bucket ~= b then startWindow(st, name, b) end
 
     local added = 0
-    for i = 1, #st.buf do added = added + #st.buf[i] + 1 end   -- +1 = the newline
-
-    if st.lines + #st.buf > segLn or st.bytes + added > segBy then
-        if not st.over then
-            st.over = true
-            print("[RFTDCore] RDLog: forensic stream '" .. name .. "' hit its segment"
-                .. " ceiling (" .. st.lines .. " lines / " .. st.bytes .. " B); further"
-                .. " records are dropped until the next period")
-            writeHead(st, name)
-        end
-        st.buf = {}
-        return
+    for i = 1, #st.buf do added = added + #st.buf[i] + 1 end
+    if st.lines > 0
+       and (st.lines + #st.buf > segLn or st.bytes + added > segBy) then
+        rollPart(st, name)
     end
 
-    appendMany(segPath(name, st.seg), st.buf)
-    st.lines     = st.lines + #st.buf
-    st.bytes     = st.bytes + added
-    st.headDirty = st.headDirty + #st.buf
-    st.buf       = {}
-    st.lastMs    = RDShared.nowMs()
+    local count = #st.buf
+    local wrote = appendMany(st.path, st.buf)
+    st.buf = {}
+    if not wrote then return end
 
-    if st.headDirty >= HEAD_SYNC_LINES then
+    st.lines     = st.lines + count
+    st.bytes     = st.bytes + added
+    st.headDirty = st.headDirty + count
+    st.lastMs    = RDShared.nowMs()
+    if not st.headWritten or st.headDirty >= HEAD_SYNC_LINES then
         writeHead(st, name)
     end
 end
@@ -551,7 +442,8 @@ local function push(name, line)
 end
 
 -- High-volume telemetry. evt is free-form (namespaced "NS.NAME" by
--- convention); no enum gate - the ring bounds the volume instead.
+-- convention); producers own their enable/rate policy while this boundary owns
+-- durable, immutable segmentation.
 -- modId names the PRODUCING mod, the envelope's "m". Chronicle gets it free from
 -- RDEvents.get(evt) because that enum is closed and knows who registered each
 -- event; forensic events are deliberately outside it, so the producer has to say.
@@ -562,8 +454,8 @@ function RDLog.forensic(streamName, evt, subj, payload, modId)
     push(streamName, envelope(evt, modId or "?", subj, payload))
 
     -- Fingerprint tally, same removable-file idiom as the rest of the family.
-    -- The ring records every event; RDTally answers which handful of them account
-    -- for the volume - the question a rolled ring can no longer be asked. It gets
+    -- The archive records every event; RDTally answers which handful account for
+    -- the current boot's volume without scanning permanent history. It gets
     -- the payload already in hand here rather than re-deriving it from a second
     -- listener, which is the whole reason this call lives inside this function.
     -- Delete RDTally.lua and this is a nil check.
@@ -574,7 +466,7 @@ function RDLog.forensic(streamName, evt, subj, payload, modId)
 end
 
 -- Escape hatch for consolidating pre-Core writers incrementally: reroute an
--- existing logger's already-formatted line into a ring stream in one call,
+-- existing logger's already-formatted line into an archive stream in one call,
 -- keeping its current format. Reformatting to envelopes is a later,
 -- separately verifiable step.
 function RDLog.legacyLine(streamName, str)
@@ -582,7 +474,7 @@ function RDLog.legacyLine(streamName, str)
 end
 
 -- Drain every stream buffer to disk. Called on the 1s tick throttle, every
--- minute, before any chronicle write, and by anything about to read the ring.
+-- minute, before any chronicle write, and by anything about to read the archive.
 function RDLog.flush()
     for name, st in pairs(streams) do
         flushStream(st, name)
@@ -618,12 +510,13 @@ end)
 --
 -- Round-trip, not just open: getFileWriter returning non-nil proves the gate
 -- passed, but only reading the line back proves the bytes landed where the
--- reader roots. The canary is truncate-mode so it never grows, and it doubles
--- as a boot marker - its one line records when this server last verified.
+-- reader roots. The canary lives under health/, outside every evidence stream;
+-- it is truncate-mode so it never grows and doubles as a boot marker. No file
+-- under forensic/<stream>/<date>/ is ever used for this destructive probe.
 -- ---------------------------------------------------------------------------
 
 function RDLog.selfTest()
-    local path  = DIR .. "forensic/selftest" .. RDShared.EXT_STREAM
+    local path  = DIR .. "health/write-canary.log"
     local stamp = "verified " .. tostring(RDShared.nowSec())
     local wrote = rewrite(path, stamp .. "\n")
     local back  = wrote and readFirstLine(path) or nil

@@ -172,7 +172,7 @@ end
 
 -- Top-N by total bytes over the window, then reset. Structured rows, not a
 -- formatted table: OSN wrote human-readable text because it owned its own log
--- file, but this lands in the forensic ring as a JSONL envelope, so it stays
+-- file, but this lands in the forensic archive as a JSONL envelope, so it stays
 -- queryable. `est`/`estPerSec` are named to keep the approximation honest.
 -- windowSec is passed in, not derived from lastDump: the caller has already
 -- advanced lastDump to now, so reading it here would always measure zero and

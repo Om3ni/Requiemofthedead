@@ -1,32 +1,15 @@
--- test_rdlog.lua - behavioural tests for RDLog's forensic ring under real Lua 5.1.
+-- test_rdlog.lua - behavioural tests for RDLog's immutable forensic archive.
 --
--- Runs against an in-memory filesystem standing in for getFileWriter /
--- getFileReader / cacheFileExists / listFilesInZomboidLuaDirectory, so the ring
--- arithmetic is exercised without a game. Only the FORENSIC path is covered;
--- chronicle needs RDEvents/RDSeasonServer/RDIdentity and is a separate concern.
--- RDLog.legacyLine is the entry point used throughout because it pushes a raw
--- string - no envelope machinery, so a rotation test stays a rotation test.
+-- Runs against an in-memory filesystem standing in for the engine's cache-dir
+-- file APIs. The contract pinned here is the forensic one that matters:
 --
--- WHAT THIS PINS, and why:
---
---   CLOCK  (2026-08-05, the big one) rotation is a pure function of the wall
---          clock: seg = floor(now/period) % ring. The previous design rotated
---          on ACCUMULATED lines/bytes, and those counters live in a file-scope
---          Lua local that resets on every boot while the file keeps appending -
---          so on the live remote server the largest single run contributed 414
---          lines / 0.62 MB against gates of 20000 lines / 4 MB. The ring had
---          never rotated once, on any stream, on any server, and head.txt had
---          never been written. The tests below therefore drive the clock, not
---          the volume, and the RESTART cases matter most: a stream that is
---          torn down and rebuilt mid-period must resume its segment, and one
---          rebuilt in a later period must roll.
---   CEILING  lines/bytes are per-segment caps now, NOT triggers. Hitting one
---          drops records until the next period; it must never advance the
---          segment, because that would break "the file holding a moment can be
---          computed from that moment".
---   ORPHANS  seg = (seg+1) % ring only ever visits 0..ring-1, so lowering the
---          ring stranded the segments above it holding their bytes forever.
---   HEADS  every historical head shape (2, 3 and 4 field) still loads.
+--   * a closed archive file is never reopened, truncated, or reclaimed;
+--   * UTC time windows start fresh files without depending on saved counters;
+--   * restarts and same-millisecond filename collisions preserve both copies;
+--   * line/byte thresholds roll to a new part instead of dropping evidence;
+--   * pre-archive ring and legacy files remain byte-for-byte untouched;
+--   * a missing clock can only create an undated file, never erase one;
+--   * refused writers remain visible through the failure counter/self-test.
 --
 -- Usage (normally via tools\run-tests.bat):
 --   lua5.1.exe tools/tests/test_rdlog.lua <repo-root>
@@ -38,12 +21,16 @@ local BASE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua"
 -- In-memory filesystem + engine stubs
 -- --------------------------------------------------------------------------
 
-local FS = {}   -- path -> content string
+local FS = {}
+local TRUNCATES = {}
 
 function isServer() return true end
 
 function getFileWriter(path, _, append)
-    if not append then FS[path] = "" end
+    if not append then
+        FS[path] = ""
+        TRUNCATES[path] = (TRUNCATES[path] or 0) + 1
+    end
     if FS[path] == nil then FS[path] = "" end
     return {
         write = function(_, s) FS[path] = FS[path] .. s end,
@@ -70,24 +57,6 @@ end
 
 function cacheFileExists(path) return FS[path] ~= nil end
 
--- Mirrors the engine: bare filenames, non-recursive, directories skipped,
--- and a Java list (size()/get(i), 0-indexed) rather than a Lua table.
-function listFilesInZomboidLuaDirectory(dir)
-    local prefix = dir .. "/"
-    local names = {}
-    for path in pairs(FS) do
-        if path:sub(1, #prefix) == prefix then
-            local rest = path:sub(#prefix + 1)
-            if not rest:find("/", 1, true) then names[#names + 1] = rest end
-        end
-    end
-    table.sort(names)
-    return {
-        size = function() return #names end,
-        get  = function(_, i) return names[i + 1] end,
-    }
-end
-
 Events = {
     OnTick         = { Add = function() end },
     EveryOneMinute = { Add = function() end },
@@ -95,23 +64,11 @@ Events = {
 
 SandboxVars = { RFTDCore = {} }
 
--- The test clock. RDLog derives its segment from nowSec(), so driving this is
--- how a rotation is provoked - never by writing more data.
---
--- EPOCH0 is a real epoch (2026-08-07 00:00 UTC) chosen so that its 4 h bucket
--- number is divisible by 96 - the largest ring the sandbox allows. That makes
--- `seg` equal `hours/4 % ring` for EVERY ring size a test might use, so the
--- expectations below read as plain arithmetic instead of carrying an offset.
--- It must also be non-zero: nowSec() == 0 is RDShared's "no clock" signal, and
--- RDLog treats that as "do not rotate, do not truncate" - which setClock(0)
--- below deliberately exercises.
-local EPOCH0 = 124032 * 4 * 3600      -- 1786060800
+-- 2026-08-07 00:00 UTC, aligned to the default four-hour window.
+local EPOCH0 = 1786060800
 local CLOCK  = EPOCH0
 local function setClock(sec) CLOCK = sec end
-local function setHours(h)   CLOCK = EPOCH0 + math.floor(h * 3600) end
--- The absolute bucket number at hour h - what head.txt actually stores. It is
--- absolute on purpose: two processes must agree on it without sharing state.
-local function bucketAt(h)   return math.floor((EPOCH0 + h * 3600) / (4 * 3600)) end
+local function setHours(h) CLOCK = EPOCH0 + math.floor(h * 3600) end
 
 local RDShared = {
     DIR        = "RFTD/",
@@ -124,17 +81,21 @@ local RDShared = {
 _G.RDShared = RDShared
 
 local realRequire = require
-require = function(name)
-    if name == "RDShared" then return RDShared end
-    return realRequire(name)
+local function loadRDLog()
+    require = function(name)
+        if name == "RDShared" then return RDShared end
+        return realRequire(name)
+    end
+    local loaded, err = pcall(dofile, BASE .. "/server/RDLog.lua")
+    require = realRequire
+    if not loaded then
+        print("FATAL: could not load RDLog.lua")
+        print("  " .. tostring(err))
+        os.exit(2)
+    end
 end
-local okLoad, err = pcall(dofile, BASE .. "/server/RDLog.lua")
-require = realRequire
-if not okLoad then
-    print("FATAL: could not load RDLog.lua")
-    print("  " .. tostring(err))
-    os.exit(2)
-end
+
+loadRDLog()
 
 local pass, fail = 0, 0
 local function eq(name, got, want)
@@ -146,325 +107,221 @@ local function eq(name, got, want)
         print("  want: " .. tostring(want))
     end
 end
-local function isTrue(name, cond, detail)
-    if cond then pass = pass + 1
-    else fail = fail + 1; print("FAIL " .. name .. ": " .. tostring(detail)) end
-end
-
-local function segPath(name, seg)
-    return "RFTD/forensic/" .. name .. "/" .. string.format("%03d", seg) .. "." .. name .. ".jsonl.log"
-end
-local function headPath(name) return "RFTD/forensic/" .. name .. "/head.txt" end
-local function headNums(name)
-    local out = {}
-    for d in (FS[headPath(name)] or ""):gmatch("%d+") do out[#out + 1] = tonumber(d) end
-    return out
-end
-local function headSeg(name)    return headNums(name)[1] end
-local function headBucket(name) return headNums(name)[4] end
-
--- A SERVER RESTART. RDLog's `streams` table is a file-scope local, so
--- re-executing the file is exactly what a reboot does to it: in-memory
--- counters gone, the filesystem untouched. This is the scenario the old
--- design could not survive, so most of what follows is built on it.
-local function reboot()
-    require = function(name)
-        if name == "RDShared" then return RDShared end
-        return realRequire(name)
-    end
-    local ok, e = pcall(dofile, BASE .. "/server/RDLog.lua")
-    require = realRequire
-    if not ok then print("FATAL: reload failed: " .. tostring(e)); os.exit(2) end
-end
-
-local LINE100 = string.rep("x", 99)   -- 99 chars + newline = 100 bytes on disk
-
-
--- --------------------------------------------------------------------------
--- The head is written on the FIRST flush, not after 500 lines
---
--- This is the 2026-08-05 defect in one assertion. head.txt had never existed on
--- any stream on any server, because the only thing that wrote it was a
--- 500-line-per-boot counter that real traffic never reached.
--- --------------------------------------------------------------------------
-
-SandboxVars.RFTDCore.ForensicSegmentHours = 4
-SandboxVars.RFTDCore.ForensicRingSegments = 4
-SandboxVars.RFTDCore.ForensicSegmentLines = 100000
-SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
-
-setHours(0)
-RDLog.legacyLine("head", "first line ever")
-RDLog.flush()
-isTrue("head.txt exists after a single flush", FS[headPath("head")] ~= nil,
-       "no head written")
-eq("head names segment 0 in period 0", headSeg("head"), 0)
-eq("head records the bucket", headBucket("head"), bucketAt(0))
-
--- --------------------------------------------------------------------------
--- Time rotates; volume does not
--- --------------------------------------------------------------------------
-
-setHours(0)
-for _ = 1, 50 do RDLog.legacyLine("time", LINE100) end
-RDLog.flush()
-eq("50 lines inside one period stay on segment 0", headSeg("time"), 0)
-eq("segment 0 holds all 50", #FS[segPath("time", 0)], 5000)
-
-setHours(3.9)                      -- still inside the first 4h window
-RDLog.legacyLine("time", LINE100)
-RDLog.flush()
-eq("still segment 0 at 3.9h", headSeg("time"), 0)
-eq("and it appended", #FS[segPath("time", 0)], 5100)
-
-setHours(4)                        -- the boundary
-RDLog.legacyLine("time", "period two")
-RDLog.flush()
-eq("crossing 4h rolls to segment 1", headSeg("time"), 1)
-eq("the new bucket is recorded", headBucket("time"), bucketAt(4))
-eq("the filled segment is left intact", #FS[segPath("time", 0)], 5100)
-eq("segment 1 holds only the new period", FS[segPath("time", 1)], "period two\n")
-
--- --------------------------------------------------------------------------
--- RESTART SURVIVAL - the property the old design could not hold
--- --------------------------------------------------------------------------
-
-setHours(8)
-RDLog.legacyLine("boot", "before the crash")
-RDLog.flush()
-eq("segment 2 in period 2", headSeg("boot"), 2)
-
-reboot()                           -- counters wiped, same period
-setHours(9)
-RDLog.legacyLine("boot", "after the crash")
-RDLog.flush()
-eq("a restart mid-period resumes the same segment", headSeg("boot"), 2)
-isTrue("and APPENDS rather than truncating",
-       FS[segPath("boot", 2)] == "before the crash\nafter the crash\n",
-       FS[segPath("boot", 2)])
-
-reboot()                           -- now a later period
-setHours(12)
-RDLog.legacyLine("boot", "new period")
-RDLog.flush()
-eq("a restart in a later period rolls", headSeg("boot"), 3)
-eq("the previous segment is untouched by the roll",
-   FS[segPath("boot", 2)], "before the crash\nafter the crash\n")
-
--- Many restarts inside one period must still produce exactly one segment.
-for i = 1, 5 do
-    reboot()
-    setHours(12 + i * 0.1)
-    RDLog.legacyLine("boot", "r" .. i)
-    RDLog.flush()
-end
-eq("five restarts in one period do not advance the segment", headSeg("boot"), 3)
-eq("every restart appended to the same file",
-   select(2, FS[segPath("boot", 3)]:gsub("\n", "")), 6)
-
--- --------------------------------------------------------------------------
--- The segment is a pure function of the clock
---
--- Any moment maps to a known file without consulting any stored state, which is
--- what makes the scheme restart-proof in the first place.
--- --------------------------------------------------------------------------
-
-SandboxVars.RFTDCore.ForensicRingSegments = 4
-for _, case in ipairs({ {0,0}, {4,1}, {8,2}, {12,3}, {16,0}, {20,1}, {36,1} }) do
-    reboot()
-    setHours(case[1])
-    RDLog.legacyLine("pure", "x")
-    RDLog.flush()
-    eq("hour " .. case[1] .. " maps to segment " .. case[2], headSeg("pure"), case[2])
-end
-
--- --------------------------------------------------------------------------
--- The ring wraps and RECLAIMS - a full turn later, the file is reused, not
--- appended to. This is the only moment anything reclaims disk.
--- --------------------------------------------------------------------------
-
-reboot()
-setHours(0)
-RDLog.legacyLine("wrap", "oldest")
-RDLog.flush()
-eq("wrap: segment 0 in period 0", headSeg("wrap"), 0)
-
-reboot()
-setHours(16)                       -- exactly one full ring (4 x 4h) later
-RDLog.legacyLine("wrap", "newest")
-RDLog.flush()
-eq("a full turn returns to segment 0", headSeg("wrap"), 0)
-eq("and the stale content was reclaimed, not appended to",
-   FS[segPath("wrap", 0)], "newest\n")
-isTrue("no segment outside the ring was ever created",
-       FS[segPath("wrap", 4)] == nil, "segment 004 exists in a 4-ring")
-
--- --------------------------------------------------------------------------
--- Size settings are CEILINGS, not triggers
---
--- Hitting one must drop records and leave the segment where it is. Advancing
--- here would break the clock mapping proved above.
--- --------------------------------------------------------------------------
-
-reboot()
-SandboxVars.RFTDCore.ForensicSegmentKB    = 1        -- 1024 bytes
-SandboxVars.RFTDCore.ForensicSegmentLines = 100000
-setHours(0)
-for _ = 1, 10 do RDLog.legacyLine("cap", LINE100) end
-RDLog.flush()
-eq("under the ceiling everything lands", #FS[segPath("cap", 0)], 1000)
-
-RDLog.legacyLine("cap", LINE100)                     -- would exceed 1024
-RDLog.flush()
-eq("the over-ceiling flush is DROPPED, not written", #FS[segPath("cap", 0)], 1000)
-eq("and the segment did NOT advance", headSeg("cap"), 0)
-
-setHours(4)                                          -- next period clears it
-RDLog.legacyLine("cap", "fresh period")
-RDLog.flush()
-eq("the next period rolls normally after a ceiling hit", headSeg("cap"), 1)
-eq("and accepts records again", FS[segPath("cap", 1)], "fresh period\n")
-
--- The line ceiling behaves identically.
-reboot()
-SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
-SandboxVars.RFTDCore.ForensicSegmentLines = 5
-setHours(0)
-for _ = 1, 5 do RDLog.legacyLine("lcap", "tiny") end
-RDLog.flush()
-RDLog.legacyLine("lcap", "one too many")
-RDLog.flush()
-eq("the line ceiling does not advance the segment", headSeg("lcap"), 0)
-eq("and drops the overflow", select(2, FS[segPath("lcap", 0)]:gsub("\n", "")), 5)
-
--- --------------------------------------------------------------------------
--- A broken clock must not rotate and must NEVER truncate
--- --------------------------------------------------------------------------
-
-reboot()
-SandboxVars.RFTDCore.ForensicSegmentLines = 100000
-SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
-FS[headPath("noclock")]   = "2 10 500 7\n"
-FS[segPath("noclock", 2)] = "precious\n"
-setClock(0)                                          -- nowSec() == 0: unavailable
-RDLog.legacyLine("noclock", "appended blind")
-RDLog.flush()
-eq("with no clock the head's segment is kept", headSeg("noclock"), 2)
-isTrue("and the existing content is never truncated",
-       FS[segPath("noclock", 2)]:sub(1, 8) == "precious",
-       FS[segPath("noclock", 2)])
-
--- --------------------------------------------------------------------------
--- Orphan reclaim after the ring is lowered
--- --------------------------------------------------------------------------
-
-reboot()
-setHours(0)
-
--- Segments left by a previous, larger ring, plus files that must NOT be touched.
-for s = 0, 7 do FS[segPath("shrunk", s)] = "stale" end
-FS[headPath("shrunk")] = "0 0 0\n"
-FS["RFTD/forensic/shrunk/notes.txt"]           = "keep me"
-FS["RFTD/forensic/shrunk/004.shrunk.jsonl"]    = "legacy, keep"
-
-SandboxVars.RFTDCore.ForensicRingSegments = 4
-SandboxVars.RFTDCore.ForensicSegmentLines = 100000
-SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
-RDLog.legacyLine("shrunk", "trigger the load")
-RDLog.flush()
-
-eq("segment inside the ring is left alone", FS[segPath("shrunk", 3)], "stale")
-eq("segment 4 outside the ring is reclaimed", FS[segPath("shrunk", 4)], "")
-eq("segment 7 outside the ring is reclaimed", FS[segPath("shrunk", 7)], "")
-eq("head.txt is not mistaken for a segment", FS["RFTD/forensic/shrunk/notes.txt"], "keep me")
-eq("a legacy .jsonl orphan is not touched",
-   FS["RFTD/forensic/shrunk/004.shrunk.jsonl"], "legacy, keep")
-
--- --------------------------------------------------------------------------
--- An out-of-ring head is clamped - only reachable without a clock now, since
--- bucket % ring can never name a segment outside the ring.
--- --------------------------------------------------------------------------
-
-reboot()
-setClock(0)                                   -- no clock: the head is trusted
-FS[headPath("clamp")]      = "6 10 500 3\n"
-FS[segPath("clamp", 6)]    = "orphaned by a shrunken ring"
-SandboxVars.RFTDCore.ForensicRingSegments = 4
-RDLog.legacyLine("clamp", "x")
-RDLog.flush()
-isTrue("out-of-ring head is clamped back inside the ring",
-       (headSeg("clamp") or 99) < 4, "seg=" .. tostring(headSeg("clamp")))
-
--- --------------------------------------------------------------------------
--- Every historical head shape still loads
---
--- Fields have only ever been appended, and the parser scans for integers rather
--- than matching positions, so a short head cannot shift the fields before it.
--- A head with NO bucket (two- or three-field, i.e. written before 2026-08-05)
--- cannot prove which period its segment holds, so the clock wins and the
--- segment is reclaimed - correct, and it costs at most one partial period.
--- --------------------------------------------------------------------------
-
-for _, case in ipairs({ { "twofield", "2 5\n" }, { "threefield", "2 5 500\n" } }) do
-    local nm, head = case[1], case[2]
-    reboot()
-    SandboxVars.RFTDCore.ForensicRingSegments = 8
-    SandboxVars.RFTDCore.ForensicSegmentLines = 100000
-    SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
-    FS[headPath(nm)]   = head
-    FS[segPath(nm, 2)] = "from an unknown period\n"
-    setHours(4)                                -- bucket 1 -> segment 1
-    RDLog.legacyLine(nm, "y")
-    RDLog.flush()
-    eq(nm .. " head loads and the clock places it", headSeg(nm), 1)
-    eq(nm .. " head gains a bucket on the next write", headBucket(nm), bucketAt(4))
-    eq("the unknown-period segment is left where it was",
-       FS[segPath(nm, 2)], "from an unknown period\n")
-end
-
--- A four-field head from THIS period resumes without truncating.
-reboot()
-SandboxVars.RFTDCore.ForensicRingSegments = 8
-FS[headPath("fourfield")]   = "1 3 30 " .. bucketAt(5) .. "\n"
-FS[segPath("fourfield", 1)] = "same period\n"
-setHours(5)                                    -- the bucket the head names
-RDLog.legacyLine("fourfield", "more")
-RDLog.flush()
-eq("a same-period head resumes its segment", headSeg("fourfield"), 1)
-eq("and appends to it", FS[segPath("fourfield", 1)], "same period\nmore\n")
-
--- --------------------------------------------------------------------------
--- Refused writers are counted and announced (2026-08-07)
---
--- The 42.20 allowlist outage shape: getFileWriter returns nil, the pcall
--- around it succeeds, and before this change the record simply ceased to
--- exist with `ok = true`. What these pin: the failure is COUNTED, the console
--- line fires ONCE PER EXTENSION rather than per write, and the self-test
--- answers false while the writer is refused and true again when it recovers.
--- --------------------------------------------------------------------------
-
-reboot()
-SandboxVars.RFTDCore.ForensicRingSegments = 4
-SandboxVars.RFTDCore.ForensicSegmentLines = 100000
-SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
-setHours(100)
 
 local function ok(name, cond, detail)
     if cond then pass = pass + 1
-    else fail = fail + 1; print("FAIL " .. name .. (detail and (": " .. detail) or "")) end
+    else
+        fail = fail + 1
+        print("FAIL " .. name .. (detail and (": " .. tostring(detail)) or ""))
+    end
 end
 
-eq("no failures on a healthy filesystem", RDLog.writeFailures(), 0)
+local function filesFor(name)
+    local prefix = "RFTD/forensic/" .. name .. "/"
+    local suffix = "." .. name .. ".jsonl.log"
+    local out = {}
+    for path in pairs(FS) do
+        if path:sub(1, #prefix) == prefix
+           and path:sub(-#suffix) == suffix
+           and path:sub(#prefix + 1):find("/", 1, true) then
+            out[#out + 1] = path
+        end
+    end
+    table.sort(out)
+    return out
+end
 
--- The healthy self-test round-trips through the stub FS.
+local function lineCount(content)
+    return select(2, (content or ""):gsub("\n", ""))
+end
+
+local function totalLines(paths)
+    local n = 0
+    for i = 1, #paths do n = n + lineCount(FS[paths[i]]) end
+    return n
+end
+
+local function headPath(name) return "RFTD/forensic/" .. name .. "/head.txt" end
+
+local function headFields(name)
+    local out = {}
+    for field in (FS[headPath(name)] or ""):gmatch("[^\t\r\n]+") do
+        out[#out + 1] = field
+    end
+    return out
+end
+
+local function reboot()
+    loadRDLog()
+end
+
+local LINE100 = string.rep("x", 99)
+
+SandboxVars.RFTDCore.ForensicSegmentHours = 4
+SandboxVars.RFTDCore.ForensicSegmentLines = 100000
+SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
+
+-- --------------------------------------------------------------------------
+-- First write: dated immutable path + advisory current pointer
+-- --------------------------------------------------------------------------
+
+setHours(0)
+RDLog.legacyLine("first", "one")
+RDLog.flush()
+local firstFiles = filesFor("first")
+eq("first write creates one archive part", #firstFiles, 1)
+ok("archive is sharded into a UTC date folder",
+   firstFiles[1] and firstFiles[1]:find("/2026%-08%-07/2026%-08%-07_00%-00%-00Z_"),
+   firstFiles[1])
+eq("first part is numbered 000",
+   firstFiles[1] and firstFiles[1]:match("_(%d%d%d)%.first%.jsonl%.log$"), "000")
+eq("first record landed", FS[firstFiles[1]], "one\n")
+local firstHead = headFields("first")
+eq("head uses the archive pointer schema", firstHead[1], "v2")
+eq("head names the actual current path", firstHead[2], firstFiles[1])
+eq("head records current line count", tonumber(firstHead[3]), 1)
+eq("archive data was never opened in truncate mode", TRUNCATES[firstFiles[1]], nil)
+
+RDLog.legacyLine("first", "two")
+RDLog.flush()
+eq("same process and window append to the active part", #filesFor("first"), 1)
+eq("the append preserves the first record", FS[firstFiles[1]], "one\ntwo\n")
+
+-- --------------------------------------------------------------------------
+-- Time rollover preserves the previous window
+-- --------------------------------------------------------------------------
+
+setHours(4)
+RDLog.legacyLine("first", "next window")
+RDLog.flush()
+local timeFiles = filesFor("first")
+eq("crossing the UTC boundary creates another file", #timeFiles, 2)
+eq("the old window remains byte-for-byte intact", FS[firstFiles[1]], "one\ntwo\n")
+eq("all records survive the time rollover", totalLines(timeFiles), 3)
+for i = 1, #timeFiles do
+    eq("time rollover never truncates archive part " .. i, TRUNCATES[timeFiles[i]], nil)
+end
+
+-- --------------------------------------------------------------------------
+-- Restart and collision survival
+-- --------------------------------------------------------------------------
+
+setHours(8)
+reboot() -- capture this exact millisecond as the process session token
+RDLog.legacyLine("restart", "before restart")
+RDLog.flush()
+local beforeRestart = filesFor("restart")[1]
+
+-- Reload at the exact same millisecond. A timestamp alone would collide; the
+-- cache probe must choose a suffix and preserve the original file.
+reboot()
+RDLog.legacyLine("restart", "after restart")
+RDLog.flush()
+local restartFiles = filesFor("restart")
+eq("same-millisecond restart creates a second file", #restartFiles, 2)
+eq("restart never appends to the prior process file", FS[beforeRestart], "before restart\n")
+eq("both restart records survive", totalLines(restartFiles), 2)
+ok("collision suffix is visible in one filename",
+   (restartFiles[1]:find("%-1_000%.restart%.jsonl%.log$")
+    or restartFiles[2]:find("%-1_000%.restart%.jsonl%.log$")) ~= nil,
+   table.concat(restartFiles, " | "))
+
+-- --------------------------------------------------------------------------
+-- Size and line thresholds roll; they never drop
+-- --------------------------------------------------------------------------
+
+reboot()
+SandboxVars.RFTDCore.ForensicSegmentKB = 1
+setHours(12)
+for _ = 1, 10 do RDLog.legacyLine("bytes", LINE100) end
+RDLog.flush()
+RDLog.legacyLine("bytes", LINE100)
+RDLog.flush()
+local byteFiles = filesFor("bytes")
+eq("byte threshold creates another part", #byteFiles, 2)
+eq("byte threshold preserves every line", totalLines(byteFiles), 11)
+eq("first byte part stays at its original content", #FS[byteFiles[1]], 1000)
+eq("overflow is written to the next part", #FS[byteFiles[2]], 100)
+
+reboot()
+SandboxVars.RFTDCore.ForensicSegmentKB    = 65536
+SandboxVars.RFTDCore.ForensicSegmentLines = 5
+setHours(16)
+for _ = 1, 5 do RDLog.legacyLine("lines", "tiny") end
+RDLog.flush()
+RDLog.legacyLine("lines", "one more")
+RDLog.flush()
+local lineFiles = filesFor("lines")
+eq("line threshold creates another part", #lineFiles, 2)
+eq("line threshold preserves every record", totalLines(lineFiles), 6)
+
+-- A single buffered batch larger than the target must land whole. The target
+-- controls handling size; it is never permission to discard a batch.
+reboot()
+SandboxVars.RFTDCore.ForensicSegmentLines = 5
+setHours(20)
+for i = 1, 10 do RDLog.legacyLine("batch", "b" .. i) end
+RDLog.flush()
+eq("oversized first batch is written whole", totalLines(filesFor("batch")), 10)
+RDLog.legacyLine("batch", "after batch")
+RDLog.flush()
+eq("the following record rolls instead of disappearing", #filesFor("batch"), 2)
+eq("oversized batch plus following record all survive", totalLines(filesFor("batch")), 11)
+
+-- --------------------------------------------------------------------------
+-- Migration: old ring/legacy files are immutable history
+-- --------------------------------------------------------------------------
+
+reboot()
+SandboxVars.RFTDCore.ForensicSegmentLines = 100000
+setHours(24)
+local oldRing = "RFTD/forensic/migrate/000.migrate.jsonl.log"
+local oldBare = "RFTD/forensic/migrate/000.jsonl.log"
+local legacy  = "RFTD/forensic/migrate/000.jsonl"
+FS[oldRing], FS[oldBare], FS[legacy] = "ring evidence\n", "bare evidence\n", "legacy evidence\n"
+FS[headPath("migrate")] = "0 99 999 1\n"
+RDLog.legacyLine("migrate", "new archive evidence")
+RDLog.flush()
+eq("named ring segment is untouched", FS[oldRing], "ring evidence\n")
+eq("bare ring segment is untouched", FS[oldBare], "bare evidence\n")
+eq("pre-42.20 legacy segment is untouched", FS[legacy], "legacy evidence\n")
+eq("new evidence uses one dated archive file", #filesFor("migrate"), 1)
+eq("archive writer never truncates an old ring path", TRUNCATES[oldRing], nil)
+
+-- --------------------------------------------------------------------------
+-- Missing clock: undated is safe, recovery rotates forward
+-- --------------------------------------------------------------------------
+
+reboot()
+setClock(0)
+RDLog.legacyLine("noclock", "undated evidence")
+RDLog.flush()
+local noClockFiles = filesFor("noclock")
+eq("missing clock still creates one archive file", #noClockFiles, 1)
+ok("missing clock uses an explicit undated folder",
+   noClockFiles[1] and noClockFiles[1]:find("/undated/undated_", 1, true), noClockFiles[1])
+setHours(28)
+RDLog.legacyLine("noclock", "dated evidence")
+RDLog.flush()
+local recoveredFiles = filesFor("noclock")
+eq("clock recovery starts a dated file", #recoveredFiles, 2)
+eq("clock recovery preserves both records", totalLines(recoveredFiles), 2)
+eq("undated evidence remains untouched", FS[noClockFiles[1]], "undated evidence\n")
+
+-- --------------------------------------------------------------------------
+-- Refused writers remain loud and measurable
+-- --------------------------------------------------------------------------
+
+reboot()
+setHours(32)
+eq("no failures on a healthy filesystem", RDLog.writeFailures(), 0)
 eq("self-test passes while writes work", RDLog.selfTest(), true)
 eq("a passing self-test is not a failure", RDLog.writeFailures(), 0)
 
--- Now the engine refuses everything - the allowlist outage, reproduced.
 local said = {}
 local realPrint = print
-print = function(s) said[#said + 1] = tostring(s) end
 local realWriter = getFileWriter
+print = function(s) said[#said + 1] = tostring(s) end
 getFileWriter = function() return nil end
 
 RDLog.legacyLine("refused", "line one")
@@ -473,36 +330,25 @@ local afterOne = RDLog.writeFailures()
 RDLog.legacyLine("refused", "line two")
 RDLog.flush()
 local afterTwo = RDLog.writeFailures()
+local broken = RDLog.selfTest()
 
 getFileWriter = realWriter
 print = realPrint
 
-ok("refused writes are counted", afterOne > 0, "count " .. afterOne)
-ok("and keep counting", afterTwo > afterOne,
-   "first " .. afterOne .. " second " .. afterTwo)
-eq("nothing landed in the file while refused", FS[segPath("refused", 0)], nil)
+ok("refused archive writes are counted", afterOne > 0, afterOne)
+ok("refused archive writes keep counting", afterTwo > afterOne,
+   tostring(afterOne) .. " -> " .. tostring(afterTwo))
+eq("self-test fails while the writer is refused", broken, false)
+eq("refused records do not fabricate archive files", #filesFor("refused"), 0)
 
--- Two writes to the .log segment failed but only ONE .log line printed; the
--- second CRITICAL is the head.txt rewrite - a different extension, its own
--- line. Counted per extension, which is the design.
-local logLines, txtLines = 0, 0
-for _, s in ipairs(said) do
-    if s:find("CRITICAL", 1, true) then
-        if s:find(".log file", 1, true) then logLines = logLines + 1 end
-        if s:find(".txt file", 1, true) then txtLines = txtLines + 1 end
+local criticalLogLines = 0
+for i = 1, #said do
+    if said[i]:find("CRITICAL", 1, true) and said[i]:find(".log file", 1, true) then
+        criticalLogLines = criticalLogLines + 1
     end
 end
-eq("the console line fires once per extension, not per write", logLines, 1)
-eq("the head's extension gets its own single line", txtLines, 1)
-
--- Self-test says BROKEN while refused, and recovers with the writer.
-print = function(s) said[#said + 1] = tostring(s) end
-getFileWriter = function() return nil end
-local broken = RDLog.selfTest()
-getFileWriter = realWriter
-print = realPrint
-eq("self-test fails while the writer is refused", broken, false)
-eq("self-test passes again once the writer recovers", RDLog.selfTest(), true)
+eq("refusal diagnostic is bounded once per extension", criticalLogLines, 1)
+eq("self-test recovers with the writer", RDLog.selfTest(), true)
 
 print(string.format("test_rdlog: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

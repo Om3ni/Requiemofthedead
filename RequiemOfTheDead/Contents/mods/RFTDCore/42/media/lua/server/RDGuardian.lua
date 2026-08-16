@@ -6,7 +6,7 @@
 -- command anyway - GameServer.receiveClientCommand fires OnClientCommand to
 -- every registered listener unconditionally and discards return values - so
 -- judgment is kept out of the sensor by design. Classification belongs to
--- whatever reads the ring (tools/cmdscan and its successors).
+-- whatever reads the archive (tools/forensic-report.py and its successors).
 --
 -- Why this sees what the engine's cmd.txt does not: cmd.txt drops the
 -- argument table and is gated by a CCFilter; the Lua OnClientCommand event
@@ -43,8 +43,9 @@
 -- reader of this file would otherwise assume client-command coverage is total.
 -- Closing it needs interception below Lua - the shelved Java agent - not a hook.
 --
--- Output: envelope JSONL into the "guardian" forensic ring stream (bounded,
--- rotating - volume control is the ring, not discipline).
+-- Output: envelope JSONL into immutable "guardian" archive parts. This is a
+-- deliberately comprehensive sensor; file-size thresholds split its evidence
+-- into manageable files but never discard it.
 --
 -- COST DIMENSION (absorbed from OmenSpyNetwork, which is where the rest of the
 -- traffic telemetry now lives - see RDMeter). OSN registered its OWN

@@ -20,7 +20,7 @@ end
 
 -- DUAL-WRITE (RFTDCore adoption, transition state): every event still writes
 -- the legacy line below - byte-identical format, same file - AND lands in
--- Core's forensic ring ("rc" stream, structured). Claim-lifecycle events
+-- Core's forensic archive ("rc" stream, structured). Claim-lifecycle events
 -- additionally become chronicle records in the owner's permanent per-player
 -- record. The legacy line retires as a separate, verifiable step once a real
 -- season has proven the new path; until then old and new are directly
@@ -88,7 +88,7 @@ end
 --   player : the actor (nil for system events like expiry)
 --   kv     : table of extra fields (sorted for stable output) or a string
 function RCAudit.log(action, player, kv)
-    -- guarded: Core's forensic ring is a foreign module doing file I/O; a
+    -- guarded: Core's forensic archive is a foreign module doing file I/O; a
     -- failed mirror write must never break the claim mutation being logged
     pcall(coreWrite, action, player, kv)
 

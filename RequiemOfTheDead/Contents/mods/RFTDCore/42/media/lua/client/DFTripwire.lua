@@ -87,37 +87,36 @@ local function detail(row)
             "not. Treat as telemetry, not as evidence."
     end
     parts[#parts + 1] = ""
-    parts[#parts + 1] = "Full record is in the forensic ring: forensic/tripwire/"
+    parts[#parts + 1] = "Full record is in the permanent archive: forensic/tripwire/"
     return table.concat(parts, "\n")
 end
 
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= RDShared.MODULE or command ~= "tripwire" then return end
-    if not DFLog or not args then return end
+    if not DFLog or type(args) ~= "table" then return end
 
-    -- args are wire-controlled; a malformed record must not take the
-    -- OnServerCommand listener down with it
-    pcall(function()
-        local impossible = (args.sev == "impossible")
+    -- The server emits one scalar record (RDTripwire.raise:180-185). Validate
+    -- the envelope before field reads; tostring below deliberately represents
+    -- a malformed scalar without widening this listener's error boundary.
+    local impossible = (args.sev == "impossible")
 
-        DFLog.push{
-            source = "Tripwire",
-            level  = impossible and "tripwire" or "warn",
-            text   = line(args),
-            detail = detail(args),
+    DFLog.push{
+        source = "Tripwire",
+        level  = impossible and "tripwire" or "warn",
+        text   = line(args),
+        detail = detail(args),
             -- Keyed on player+code so one account rattling the same door becomes
             -- a count rather than a wall, while a second account tripping the
             -- SAME wire stays a separate row - which is the distinction that
             -- matters when deciding whether it is one person or a pattern.
-            key    = "trip:" .. tostring(args.u or "?") .. ":" .. tostring(args.code or "?"),
-        }
+        key    = "trip:" .. tostring(args.u or "?") .. ":" .. tostring(args.code or "?"),
+    }
 
-        if impossible then
-            DFTripwire.pending  = true
-            DFTripwire.count    = (DFTripwire.count or 0) + 1
-            DFTripwire.lastCode = tostring(args.code or "?")
-        end
-    end)
+    if impossible then
+        DFTripwire.pending  = true
+        DFTripwire.count    = (DFTripwire.count or 0) + 1
+        DFTripwire.lastCode = tostring(args.code or "?")
+    end
 end)
 
 return DFTripwire

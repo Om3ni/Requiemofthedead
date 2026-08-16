@@ -5,7 +5,7 @@
 -- is not a gate - by the time Lua hears about a client command the server has
 -- already accepted it (RDCmdRelay's header sets out why, with the decompile line
 -- numbers). A tripwire makes an impossibility VISIBLE while someone is looking,
--- and puts it in the forensic ring for when nobody was.
+-- and puts it in the forensic archive for when nobody was.
 --
 -- ===========================================================================
 -- TWO SOURCES, AND THEY ARE NOT EQUALLY TRUSTWORTHY. Keeping them apart is the
@@ -118,7 +118,7 @@ end
 -- Raise
 -- ---------------------------------------------------------------------------
 --
--- Every tripwire lands in the forensic ring FIRST and is broadcast second. The
+-- Every tripwire lands in the forensic archive FIRST and is broadcast second. The
 -- ring is the record; the broadcast is a courtesy to whoever is online. If the
 -- broadcast fails or nobody is watching, the record still exists - never the
 -- other way round.
@@ -263,7 +263,7 @@ end
 
 -- Lifecycle telemetry that is not a tripwire at all - faction and safehouse acts
 -- that 42.20 moved onto INetworkPacket, where no server-side Lua hook exists.
--- Recorded in the forensic ring on its own stream, not broadcast and never
+-- Recorded in the forensic archive on its own stream, not broadcast and never
 -- flashed: it is a ledger, not an alarm.
 function RDTripwire.receiveLifecycle(player, args)
     if type(args) ~= "table" then return end

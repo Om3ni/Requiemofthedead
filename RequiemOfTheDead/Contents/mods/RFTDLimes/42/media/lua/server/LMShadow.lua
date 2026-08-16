@@ -21,7 +21,7 @@
 -- CADENCE AND BOUND: EveryTenMinutes (game time), online players' positions as
 -- the sample points - the places players actually are, which is the coverage
 -- that matters, accumulated over days of shadow uptime. Each distinct
--- (player, divergence) signature logs ONCE to the "limes" forensic ring
+-- (player, divergence) signature logs ONCE to the "limes" forensic archive
 -- (LM.SHADOW_DIVERGE), deduped in memory and capped, so a systematic mismatch
 -- is a handful of lines, not a firehose.
 

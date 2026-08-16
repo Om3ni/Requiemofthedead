@@ -14,7 +14,7 @@
 -- spec insists on - the offence is never the command name, it is who fired it -
 -- and it means an unauthorised probe arrives already coloured differently from the
 -- admin traffic around it. Classification beyond that belongs to whatever reads
--- the forensic ring, not to a UI.
+-- the forensic archive, not to a UI.
 --
 -- DFLog.push collapses consecutive identical (source, text) entries into one line
 -- with a count, which is exactly right for this: a client spamming one command
@@ -38,31 +38,33 @@ end
 
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= RDShared.MODULE or command ~= "cmdRelay" then return end
-    if not DFLog or not args then return end
+    if not DFLog or type(args) ~= "table" then return end
 
-    -- args are wire-controlled; a malformed relay row must not take the
-    -- OnServerCommand listener down with it
-    pcall(function()
-        for _, row in ipairs(args.rows or {}) do
+    -- The server emits a rows table plus scalar dropped count (RDCmdRelay.lua:
+    -- 116-120). Reject a malformed envelope, then skip only its bad row.
+    if type(args.rows) == "table" then
+        for _, row in ipairs(args.rows) do
+            if type(row) == "table" then
             DFLog.push{
                 source = "ClientCmd",
                 level  = (row.s == 1) and "audit" or "warn",
                 text   = line(row),
             }
+            end
         end
+    end
 
-        -- Never let a truncated feed look like a quiet server. The server counts
-        -- what it refused to buffer; say so in the same stream rather than in a
-        -- console print nobody is reading.
-        local d = tonumber(args.dropped) or 0
-        if d > 0 then
-            DFLog.push{
-                source = "ClientCmd",
-                level  = "error",
-                text   = string.format("(%d command(s) dropped this window - relay cap reached)", d),
-            }
-        end
-    end)
+    -- Never let a truncated feed look like a quiet server. The server counts
+    -- what it refused to buffer; say so in the same stream rather than in a
+    -- console print nobody is reading.
+    local d = tonumber(args.dropped) or 0
+    if d > 0 then
+        DFLog.push{
+            source = "ClientCmd",
+            level  = "error",
+            text   = string.format("(%d command(s) dropped this window - relay cap reached)", d),
+        }
+    end
 end)
 
 return RDCmdConsole

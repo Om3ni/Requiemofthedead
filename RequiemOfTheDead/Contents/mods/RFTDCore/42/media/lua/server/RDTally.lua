@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- RDTally.lua - fingerprint index over the forensic ring (server only).
+-- RDTally.lua - current-boot fingerprint index over the forensic archive (server only).
 --
 -- ===========================================================================
 -- THE RING ANSWERS "WHAT HAPPENED". THIS ANSWERS "WHAT DOMINATED".

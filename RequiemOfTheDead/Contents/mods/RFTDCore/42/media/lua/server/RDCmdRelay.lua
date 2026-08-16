@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RDCmdRelay.lua - live client-command feed to staff consoles (server only).
 --
--- Guardian records every inbound client command to the forensic ring, which is
+-- Guardian records every inbound client command to the forensic archive, which is
 -- perfect forensics and useless for watching. This relays a BOUNDED, FILTERED
 -- subset to staff clients so it lands in Dragonfly's Console tab as it happens.
 --
@@ -110,7 +110,7 @@ end
 -- ---------------------------------------------------------------------------
 --
 -- Args are deliberately NOT relayed. Guardian already puts the full serialised
--- arg table in the forensic ring, which is the right home for it: args are
+-- arg table in the forensic archive, which is the right home for it: args are
 -- unbounded client input, they are the bulk of a command's wire cost, and pushing
 -- them to every staff client turns a monitoring feature into an amplifier. The
 -- console answers "who is sending what, right now"; the ring answers "what
@@ -142,7 +142,7 @@ Events.OnTick.Add(function()
         if cfg.enabled then
             print("[RFTDCore] RDCmdRelay armed: scope=" .. tostring(cfg.scope)
                 .. ", <=" .. HARD_CAP .. " cmds per " .. (FLUSH_MS / 1000)
-                .. "s to staff consoles (args NOT relayed - see the forensic ring).")
+                .. "s to staff consoles (args NOT relayed - see the forensic archive).")
         end
         return
     end

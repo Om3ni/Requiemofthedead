@@ -32,7 +32,7 @@
 -- The same family rule as RDCmdRelay states it: tripwire, not gate.
 --
 -- REPORTS ARE CLIENT-REPORTED, the weaker of RDTripwire's two tiers. They land
--- in the console and the forensic ring; they never flash the deck badge. See
+-- in the console and the forensic archive; they never flash the deck badge. See
 -- RDTripwire's header for why the tiers are kept apart.
 
 if isServer() then return end

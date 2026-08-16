@@ -9,8 +9,8 @@
 -- Both paths are dead in B42 - the server sandbox silently blocks them (and
 -- that Lua<->Java surface is exactly what the March 2026 security patches
 -- hardened) - so every enabled call site was writing NOTHING. Server-side
--- lines now land in Core's rotating "dirge" forensic ring, which actually
--- writes, rotates, and shares the family's format. Client-side stays
+-- lines now land in Core's immutable "dirge" forensic archive, which actually
+-- writes, rolls to manageable parts, and shares the family's format. Client-side stays
 -- print-only (RDLog is server-only; the console has always been the client
 -- diagnostic surface).
 --

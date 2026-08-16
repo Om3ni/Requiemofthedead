@@ -116,7 +116,7 @@ local function onClientCommand(module, command, player, args)
         val(x), val(y), val(z), val(part), val(args.amount)))
 
     -- Dual-write (RFTDCore adoption): the same observation, structured, into
-    -- Core's forensic ring. claimId included when the vehicle carries one so a
+    -- Core's forensic archive. claimId included when the vehicle carries one so a
     -- reader can join damage rows onto the claim timeline.
     -- guarded: foreign module doing file I/O; its failure must not break ours
     pcall(function()

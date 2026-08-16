@@ -23,16 +23,17 @@
 -- AddEvent here first means we never lose that first record. AddEvent is idempotent
 -- (returns the existing Event if present), so this is safe regardless of load order.
 --
--- Why forensic and not chronicle: foraging is continuous, high-volume, replaceable
--- telemetry - "what was this player doing last Tuesday", not a permanent
--- irreplaceable fact. Chronicle's enum gate exists to stop exactly this kind of
--- chatty producer from reaching a never-rotated stream. The ring bounds the volume.
+-- Why forensic and not chronicle: foraging is continuous sensor telemetry, not
+-- a declared life/season fact. Chronicle's enum is a domain contract; forensic
+-- accepts the observation stream and preserves it in immutable archive parts.
+-- The two client-controlled strings are bounded below, and operators can disable
+-- this producer by removing the sensor if its value no longer justifies volume.
 --
 -- SECURITY NOTE for whatever classifies this stream: both payload fields are
 -- client-supplied Strings and processServer does NOT validate, gate on authority,
 -- or rate-limit them - it only triggers the event. A client can therefore send
 -- arbitrary and arbitrarily long `focus` / `iconID` values. They are capped below
--- before they reach the ring; treat them as untrusted input on read, too.
+-- before they reach the archive; treat them as untrusted input on read, too.
 
 if not isServer() then return end
 

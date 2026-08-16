@@ -4,8 +4,9 @@
 -- Chronicle streams are permanent: they are never rotated, so what is allowed
 -- into them must be finite and declared. RDLog.chronicle REJECTS any event not
 -- registered here - a chatty producer physically cannot write to a permanent
--- stream. Forensic streams are unconstrained (they rotate; volume is bounded
--- by the ring, not the enum).
+-- stream. Forensic events remain free-form because their producers are sensors,
+-- but their immutable archives are permanent too; each producer therefore owns
+-- an explicit enable/rate/payload bound rather than leaning on retention loss.
 --
 -- Namespacing: every chronicle event is "<NS>.<NAME>". Core owns only "RD.*".
 -- A consumer mod claims its prefix once at load:

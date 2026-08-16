@@ -54,6 +54,10 @@ where python >nul 2>nul
 if !errorlevel!==0 (
     python "%~dp0tests\test_deploy_workshop.py" "%ROOT%"
     if !errorlevel! gtr 0 set FAIL=1
+    python "%~dp0tests\test_deploy_workshop_testing.py" "%ROOT%"
+    if !errorlevel! gtr 0 set FAIL=1
+    python "%~dp0tests\test_forensic_report.py" "%ROOT%"
+    if !errorlevel! gtr 0 set FAIL=1
     python "%~dp0validate_jsonl.py" "%OUT%"
     if !errorlevel! gtr 0 set FAIL=1
 ) else (
