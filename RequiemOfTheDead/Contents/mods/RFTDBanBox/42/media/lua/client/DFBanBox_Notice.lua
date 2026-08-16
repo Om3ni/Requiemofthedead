@@ -3,8 +3,7 @@
 --
 -- The server (DFBanBox login scrub) formats the full message and sends it here;
 -- this side is a dumb display so the server's removalMessage (overridden by BBLibrary)
--- is the single source of the wording. HaloText for immediate visibility; we also
--- best-effort drop it in chat so a notice the player needs to act on persists.
+-- is the single source of the wording. HaloText gives the player immediate visibility.
 
 if isServer() then return end
 
@@ -17,14 +16,6 @@ local function onServerCommand(module, command, args)
     if HaloTextHelper and HaloTextHelper.addBadText then
         HaloTextHelper.addBadText(p, msg)
     end
-    -- Persist in chat too. The guard stays because addLineInChat is vanilla
-    -- LUA, not Java: its signature cannot be checked against the decompile, so
-    -- a build that changes it must not take the ban notice down with it.
-    pcall(function()
-        if ISChat and ISChat.instance and ISChat.instance.addLineInChat then
-            ISChat.instance:addLineInChat(msg, 0)
-        end
-    end)
 end
 
 Events.OnServerCommand.Add(onServerCommand)

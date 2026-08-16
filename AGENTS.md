@@ -7,6 +7,11 @@ boundaries, tests, observability, and reviewable changes—while respecting the 
 of Kahlua and the Project Zomboid engine. Do not import patterns from React, Tauri, Node,
 or another ecosystem merely because they are fashionable there.
 
+Current engine evidence lives at
+`C:\VSCodeProjects\RequiemoftheDead\PZ_Engine_Decompiled_42.20.2-ffe7a8a4b1`.
+It is intentionally ignored by Git; inspect it with an explicit path rather than a
+Git-aware file search that respects `.gitignore`.
+
 ## Read before changing code
 
 1. Read `README.md` for bundle architecture, naming, layout, release, and versioning
@@ -71,6 +76,20 @@ a compromise behind the user's back.
 - After changing code, report what changed, decisions made, evidence consulted, checks
   run, and any remaining uncertainty. Never describe a skipped or unavailable check as
   passing.
+
+### Sole-maintainer Git workflow
+
+- This is a sole-maintainer project designed, scoped, and built by the user. Do not
+  impose contributor-oriented process on it or imply that outside authorship or review
+  is expected.
+- Git is primarily a personal safety, history, and decision boundary: use it to preserve
+  known-good states, isolate intentional changes, and make recovery possible.
+- Pull requests, reviewer-facing ceremony, and detailed commit narratives are not
+  required. Do not create a branch, commit, push, or pull request unless the user asks.
+- When a commit is requested, keep its message concise and descriptive. Put essential
+  engine evidence, compatibility reasoning, and operational knowledge in the code or
+  repository documentation where future work can find it, rather than relying on an
+  elaborate commit message.
 
 ## Architecture and ownership
 
@@ -272,6 +291,17 @@ tools\run-tests.bat
 
 - The Workshop item is the release unit; suite versions move in lockstep. Do not bump a
   version for an ordinary code edit or commit. Versioning is an explicit release step.
+- Maintain a community-facing changelog for releases. Write for server owners, admins,
+  and players—not programmers or reviewers. Lead with what changed in play, what was
+  fixed, and whether anyone must change a sandbox option, server setting, load order, or
+  operating practice. Translate implementation details into their observable effect;
+  omit file names, function names, architectural jargon, refactor mechanics, and test
+  minutiae unless they directly affect users. Preserve the project's voice without
+  obscuring instructions or compatibility warnings.
+- Internal engineering notes are not a substitute for the community changelog, and the
+  changelog is not the place to preserve technical evidence. Keep engine findings,
+  invariants, migration reasoning, and maintenance details in code or repository
+  documentation.
 - Keep the two `mod.info` copies for each mod byte-identical.
 - Never rename an existing mod ID. Preserve established wire tokens and intentional
   human-facing spellings.

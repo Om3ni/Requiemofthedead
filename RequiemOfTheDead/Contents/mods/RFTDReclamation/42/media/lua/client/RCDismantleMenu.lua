@@ -141,9 +141,9 @@ local function applyContextWrap()
         -- the loot dump + the ledger line); drop the duplicate ONLY when we
         -- are actually adding ours - if dismantle is staff-only, players
         -- keep the vanilla option (guard above already returned).
-        -- guarded: removeOptionByName is vanilla LUA (ISContextMenu),
-        -- unverifiable against the decompile and reshaped across builds
-        pcall(function() context:removeOptionByName(getText("ContextMenu_RemoveBurntVehicle")) end)
+        -- Vanilla returns cleanly for an empty or absent option list
+        -- (ISContextMenu.lua:1016-1019).
+        context:removeOptionByName(getText("ContextMenu_RemoveBurntVehicle"))
 
         local option = context:addOption(RCDismantleMenu.label(vehicle), playerObj, RCDismantleMenu.onMenuDismantle, vehicle)
         local reason = RCDismantleMenu.blockReason(vehicle, playerObj)

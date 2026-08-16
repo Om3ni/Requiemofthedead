@@ -113,9 +113,7 @@ function T.openCraft(recs, label, extraLearnable)
         learnable = extraLearnable or 0,
     }
     if T.craft then
-        -- guarded: refreshRecipeList is the vanilla panel's Lua (via our
-        -- instance wrapper) - a refresh miss costs one stale list, not the door
-        pcall(function() T.craft:refreshRecipeList(true) end)
+        T.craft:refreshRecipeList(true)
     end
     T.showSub("craft")
 end
@@ -179,8 +177,7 @@ function T.clearTarget()
     T.target = nil
     T.filterList = nil
     if T.craft then
-        -- guarded: vanilla panel Lua, same as openCraft's refresh
-        pcall(function() T.craft:refreshRecipeList(true) end)
+        T.craft:refreshRecipeList(true)
     end
 end
 
@@ -258,9 +255,9 @@ local function layout(w, h)
     T.btnAll:setX(w - bw - PAD); T.btnAll:setY(3); T.btnAll:setWidth(bw)
     if T.craft then
         T.craft:setY(HEADER_H)
-        -- guarded: calculateLayout is the vanilla panel's Lua - a layout miss
-        -- costs one stale frame, not the whole deck resize
-        pcall(function() T.craft:calculateLayout(w, ch - HEADER_H) end)
+        -- Vanilla ISHandCraftPanel calculates its child geometry directly
+        -- (ISHandCraftPanel.lua:99-173); this is a valid built panel.
+        T.craft:calculateLayout(w, ch - HEADER_H)
     end
 
     if WSGear.root then
@@ -337,8 +334,9 @@ function T.build(spec, panel, x, y, w, h)
     T.showSub(T.sub or "craft")
 
     if T.craft then
-        -- guarded: vanilla panel Lua, same as openCraft's refresh
-        pcall(function() T.craft:refreshRecipeList(true) end)
+        -- Our wrapper delegates to the vanilla refresh implementation, whose
+        -- normal path is updateContainers then setRecipes (:176-183).
+        T.craft:refreshRecipeList(true)
         ISHandCraftPanel.drawDirty = true
     end
 end

@@ -273,9 +273,8 @@ function RCMyVehicles:onReleaseConfirm(button, claimId)
 end
 
 function RCMyVehicles:close()
-    -- guarded: removeFromUIManager is vanilla LUA (ISUIElement); a preview
-    -- that never fully instantiated must not wedge the window's close
-    if self.preview then pcall(function() self.preview:removeFromUIManager() end) end
+    -- Vanilla teardown is nil-safe (ISUIElement.lua:1373-1380).
+    if self.preview then self.preview:removeFromUIManager() end
     RCMyVehicles.instance = nil
     ISCollapsableWindow.close(self)
 end

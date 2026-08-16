@@ -163,13 +163,11 @@ local function bounce()
         return
     end
 
-    -- pcall stays and is load-bearing: setX/setY exist (IsoMovingObject:478,
-    -- :495) but setLx/setLy appear NOWHERE in 42.20.2, so this body throws
-    -- part-way through. The guard is what keeps that out of OnPlayerUpdate.
-    pcall(function()
-        p:setX(lastGood[1]); p:setLx(lastGood[1])
-        p:setY(lastGood[2]); p:setLy(lastGood[2])
-    end)
+    -- setX/setY update both the current and next coordinates
+    -- (IsoMovingObject.java:478-498). setLx/setLy are not engine methods and
+    -- previously made this throw after updating X but before updating Y.
+    p:setX(lastGood[1])
+    p:setY(lastGood[2])
     local now = getTimestampMs and getTimestampMs() or 0
     if now - lastSaid > 3000 then
         lastSaid = now
@@ -188,9 +186,7 @@ Events.OnGameStart.Add(function() wrapDestroy() end)
 -- checked once a second, a sprinting player is most of the way across a small
 -- zone before anything notices.
 Events.OnPlayerUpdate.Add(function(player)
-    -- pcall: per player per tick on an event every other mod listens to, and
-    -- bounce()'s teleport can throw (see setLx above).
-    if player and player == me() then pcall(bounce) end
+    if player and player == me() then bounce() end
 end)
 
 return LMRestrictCl

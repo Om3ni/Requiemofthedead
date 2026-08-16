@@ -112,17 +112,17 @@ function DFEntry:createChildren()
     box:instantiate()
     -- setMaxTextLength before any text arrives, so a caller's cap applies to
     -- the seeded value too rather than only to what is typed after it.
-    -- These three ride ISTextEntryBox (vanilla ISUI Lua, unverifiable here)
-    -- and setPlaceholderText is missing on some builds - degrade to an
-    -- uncapped/unplaceheld box rather than no box.
-    if self.opts.maxLen then pcall(function() box:setMaxTextLength(self.opts.maxLen) end) end
+    -- Build 42.20's setters operate on the instantiated local widget: max
+    -- length is a field write, placeholder is nil-safe, and focus is local
+    -- state (UITextBox2.java:542-545, 673-675, 739-741).
+    if self.opts.maxLen then box:setMaxTextLength(self.opts.maxLen) end
     if self.opts.placeholder then
-        pcall(function() box:setPlaceholderText(self.opts.placeholder) end)
+        box:setPlaceholderText(self.opts.placeholder)
     end
     box:setText(tostring(self.opts.value or ""))
     self:addChild(box)
     self.entry = box
-    pcall(function() box:focus() end)
+    box:focus()
 
     -- Enter commits. ISTextEntryBox:onCommandEntered is the engine's own hook
     -- for it (ISTextEntryBox.lua:16, assigned this way by ISMPEditAccount), and
@@ -268,10 +268,13 @@ function DFEntry.close()
         -- that is removed while still focused keeps eating keystrokes, which
         -- reads as the game ignoring movement keys after closing a dialog -
         -- and there is then nothing on screen to click to give the focus back.
-        -- vanilla ISUI Lua teardown; a fault here must still null the
-        -- instance below or the dialog can never be reopened
-        if w.entry then pcall(function() w.entry:unfocus() end) end
-        pcall(function() w:removeFromUIManager() end)
+        -- Vanilla teardown is nil-safe (ISUIElement.lua:1373-1380); the
+        -- instance still clears below so this dialog can be reopened.
+        -- The stored entry was initialised and instantiated before assignment;
+        -- vanilla unfocus directly forwards to that backing object
+        -- (ISTextEntryBox.lua:150-152).
+        if w.entry then w.entry:unfocus() end
+        w:removeFromUIManager()
         DFEntryState.instance = nil
     end
 end

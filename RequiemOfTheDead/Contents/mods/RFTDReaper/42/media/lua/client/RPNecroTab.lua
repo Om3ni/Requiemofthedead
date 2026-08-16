@@ -381,8 +381,14 @@ function NecroList:onRightMouseUp(x, y)
     for _, spec in ipairs(actions) do
         local enabled = true
         if spec.capability then enabled = DFCore.roleHas(getPlayer(), spec.capability) end
-        -- pcall: registered handler belongs to another mod; contain its faults
-        local opt = context:addOption(spec.label, row, function(rowData) pcall(spec.handler, rowData) end)
+        -- The registered handler belongs to another mod. One failed action
+        -- must not prevent the menu's independent options from running.
+        local opt = context:addOption(spec.label, row, function(rowData)
+            local ok, err = pcall(spec.handler, rowData)
+            if not ok then
+                print("[Reaper] row action '" .. tostring(spec.label) .. "' failed: " .. tostring(err))
+            end
+        end)
         if not enabled then opt.notAvailable = true end
     end
 end

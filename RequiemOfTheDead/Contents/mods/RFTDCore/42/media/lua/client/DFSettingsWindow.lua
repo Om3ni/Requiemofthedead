@@ -138,8 +138,8 @@ function DFSettingsWindow:onMouseUpOutside() self.dragging = false end
 function DFSettingsWindow.close()
     local w = DFSettingsState.instance
     if w then
-        -- vanilla ISUI Lua teardown; a fault must still null the instance
-        pcall(function() w:removeFromUIManager() end)
+        -- Vanilla teardown is nil-safe (ISUIElement.lua:1373-1380).
+        w:removeFromUIManager()
         DFSettingsState.instance = nil
     end
     DFHelp.close()
@@ -183,8 +183,7 @@ end
 -- rows are. Re-lay-out rather than leaving the footer overlapping the last row.
 DFPrefs.onChange(function()
     local w = DFSettingsState.instance
-    -- a relayout fault must not break the prefs listener chain
-    if w then pcall(function() w:layoutBody() end) end
+    if w then w:layoutBody() end
 end)
 
 -- ---------------------------------------------------------------------------

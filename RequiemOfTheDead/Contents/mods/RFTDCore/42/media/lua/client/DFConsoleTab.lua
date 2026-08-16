@@ -175,8 +175,9 @@ local function rebuildList()
         -- pinned anything.
         ui.list.selected     = #snap
         ui.selectedEntry     = snap[#snap]
-        -- vanilla ISUI Lua (ISScrollingListBox); unverifiable here
-        pcall(function() ui.list:ensureVisible(#snap) end)
+        -- Vanilla validates the list index before adjusting local scroll state
+        -- (ISScrollingListBox.lua:623-638); #snap is the just-built tail row.
+        ui.list:ensureVisible(#snap)
         rebuildDetail()
         return
     else
@@ -193,8 +194,7 @@ end
 function ConsoleList:prerender()
     if dirty then
         dirty = false
-        -- a rebuild fault must not take the render loop down with it
-        pcall(rebuildList)
+        rebuildList()
     end
     ISScrollingListBox.prerender(self)
 end
@@ -208,8 +208,7 @@ function ConsoleList:onMouseDown(x, y)
     local item = self.items[self.selected]
     if item then
         ui.selectedEntry = item.item
-        -- a detail-rebuild fault must not eat the click handler
-        pcall(rebuildDetail)
+        rebuildDetail()
     end
     return r
 end
@@ -245,8 +244,7 @@ local function layout(panel, x, y, w, h)
     ui.list.itemheight = DFKit.rowHeight()
 
     -- The wrap was measured against the old width and is wrong at the new one.
-    -- (guarded like the other rebuild calls: a fault must not break layout)
-    pcall(rebuildDetail)
+    rebuildDetail()
 end
 
 -- ---------------------------------------------------------------------------

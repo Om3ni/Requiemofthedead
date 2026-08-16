@@ -118,12 +118,11 @@ local function applyMenuWraps()
                 end
                 -- re-center: added slices may have changed the wheel size
                 -- (mirrors vanilla's own positioning at the end of orig).
-                -- guarded: menu is the vanilla LUA wrapper, its geometry
-                -- methods are not the Java UIElement's to verify
-                pcall(function()
-                    menu:setX(getPlayerScreenLeft(pi) + getPlayerScreenWidth(pi) / 2 - menu:getWidth() / 2)
-                    menu:setY(getPlayerScreenTop(pi) + getPlayerScreenHeight(pi) / 2 - menu:getHeight() / 2)
-                end)
+                -- Vanilla width/height instantiate their backing object when
+                -- needed; setX/setY then update normal UI geometry
+                -- (ISUIElement.lua:195-215, 259-271).
+                menu:setX(getPlayerScreenLeft(pi) + getPlayerScreenWidth(pi) / 2 - menu:getWidth() / 2)
+                menu:setY(getPlayerScreenTop(pi) + getPlayerScreenHeight(pi) / 2 - menu:getHeight() / 2)
             end
         end
     end

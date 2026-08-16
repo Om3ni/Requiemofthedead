@@ -82,10 +82,9 @@ local function build(spec, panel, x, y, w, h)
     -- ---- Map (cached, re-parented across tab rebuilds) ----
     local map = LSMap.acquire(player, mapW, midH)
     if map.parent and map.parent ~= panel then
-        -- vanilla ISUI Lua (removeChild -> UIElement internals, unverifiable
-        -- against the decompile); a stale parent from a torn-down tab must not
-        -- kill this rebuild
-        pcall(function() map.parent:removeChild(map) end)
+        -- Vanilla removeChild is nil-safe if the old parent has already lost
+        -- its backing UI object (ISUIElement.lua:1480-1485).
+        map.parent:removeChild(map)
     end
     map:setX(mapX); map:setY(midY); map:setMapSize(mapW, midH)
     panel:addChild(map)
@@ -155,26 +154,23 @@ local function build(spec, panel, x, y, w, h)
         rebuildList(); syncFields(); recompute()
         DFFeedback.good("Added " .. t.name .. " - drag its handles to size it.")
     end)
-    -- vanilla ISUI Lua (ISButton colour helper, unverifiable against the
-    -- decompile); losing the green tint must not lose the button
-    pcall(function() addBtn:enableAcceptColor() end)
+    -- Vanilla ISButton.lua:386-392 applies the normal accepted-action tint.
+    addBtn:enableAcceptColor()
 
     renameBtn = mkBtn("Rename", PAD + 62, 66, listBtnY, function()
         local t = LSTours.getSelected()
         if not t then DFFeedback.bad("Select a tour first."); return end
-        -- vanilla ISTextBox construction chain (ISUI Lua, unverifiable against
-        -- the decompile); a modal that fails to build must not break the tab
-        pcall(function()
-            local modal
-            modal = ISTextBox:new(getCore():getScreenWidth() / 2 - 150, getCore():getScreenHeight() / 2 - 60,
-                300, 120, "Rename tour:", t.name, nil, function(_, btn)
-                    if btn.internal == "OK" and modal and modal.entry then
-                        LSTours.rename(t.id, modal.entry:getText())
-                        rebuildList()
-                    end
-                end, player:getPlayerNum())
-            modal:initialise(); modal:addToUIManager()
-        end)
+        -- Vanilla callers construct, initialise, and show this modal directly
+        -- (ISTextBox.lua:280-283; ISInventoryPage.lua:1908-1910).
+        local modal
+        modal = ISTextBox:new(getCore():getScreenWidth() / 2 - 150, getCore():getScreenHeight() / 2 - 60,
+            300, 120, "Rename tour:", t.name, nil, function(_, btn)
+                if btn.internal == "OK" and modal and modal.entry then
+                    LSTours.rename(t.id, modal.entry:getText())
+                    rebuildList()
+                end
+            end, player:getPlayerNum())
+        modal:initialise(); modal:addToUIManager()
     end)
 
     deleteBtn = mkBtn("Delete", PAD + 132, 66, listBtnY, function()
@@ -186,9 +182,8 @@ local function build(spec, panel, x, y, w, h)
         rebuildList(); syncFields(); recompute()
         DFFeedback.good("Deleted " .. t.name .. ".")
     end)
-    -- vanilla ISUI Lua (ISButton colour helper, existence-checked because older
-    -- builds lack it; the body stays unverifiable against the decompile)
-    pcall(function() if deleteBtn.enableCancelColor then deleteBtn:enableCancelColor() end end)
+    -- Build 42.20 supplies this ordinary ISButton color helper (ISButton.lua:394-400).
+    deleteBtn:enableCancelColor()
 
     -- ---- Bottom row 1: Cell / Dwell / Grid / coords ----
     local r1y = midY + midH + PAD
@@ -203,9 +198,9 @@ local function build(spec, panel, x, y, w, h)
     local function addField(initText, width, rowY, onlyNums, onChange)
         local f = ISTextEntryBox:new(initText, cur, rowY, width, BTN_H)
         f:initialise(); f:instantiate()
-        -- vanilla ISTextEntryBox Lua (unverifiable against the decompile); a
-        -- field without the digit filter still works, just accepts junk
-        if onlyNums then pcall(function() f:setOnlyNumbers(true) end) end
+        -- The constructed entry has its Java backing object before this call;
+        -- vanilla forwards directly to it (ISTextEntryBox.lua:32-34).
+        if onlyNums then f:setOnlyNumbers(true) end
         if onChange then f.onTextChange = onChange end
         panel:addChild(f)
         cur = cur + width + PAD

@@ -272,9 +272,9 @@ function V.create(parent, w, h)
     V.btnCraft = DFKit.button(V.root, 0, 0, 110, "Open in Craft", V, function()
         local sel = V.list.items and V.list.items[V.list.selected]
         if sel and sel.item.known and WSTab and WSTab.openCraft then
-            -- guarded: a Workshop door (see WSTab's header) - a routing bug
-            -- costs one console line, never a stack trace out of a click
-            pcall(WSTab.openCraft, { sel.item.rec }, sel.item.rec.disp)
+            -- This row comes from the Journal's own indexed recipe data and
+            -- opens the local Craft helper; it is not a cross-mod route.
+            WSTab.openCraft({ sel.item.rec }, sel.item.rec.disp)
         end
     end, "primary")
     V.btnCraft:setVisible(false)

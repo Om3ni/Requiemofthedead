@@ -114,27 +114,21 @@ end
 
 local function applyPeak(v, why)
     v = math.max(0.0, math.min(4.0, v))   -- engine option range
-    -- Guard is load-bearing: SandboxOptions.set throws IllegalArgumentException
-    -- on an unknown option name, so an option renamed by a patch must degrade
-    -- to "governor does nothing" rather than kill the tick that called it.
-    local ok, err = pcall(function()
-        getSandboxOptions():set("ZombieConfig.PopulationPeakMultiplier", v)
-        -- Keep the Lua-side mirror honest so currentPeak() and other readers
-        -- of SandboxVars agree with the Java option we just set.
-        if SandboxVars.ZombieConfig then
-            SandboxVars.ZombieConfig.PopulationPeakMultiplier = v
-        end
-        -- The LZI port. 0/255 are the engine defaults for min/max per chunk
-        -- (ZombiePopulationManager fields); the call exists to fire the
-        -- patched Max setter, which pushes all zombie config to the native.
-        setMinMaxZombiesPerChunk(0, 255)
-    end)
-    if ok then
-        audit(string.format("peak -> %.2f (%s)", v, why))
-    else
-        audit("apply failed: " .. tostring(err))
+    -- This exact option is registered by Build 42.20's ZombieConfig with a
+    -- 0..4 range (SandboxOptions.java:1963). An unknown-option catch was an
+    -- unsupported cross-build probe that hid a required governor failure.
+    getSandboxOptions():set("ZombieConfig.PopulationPeakMultiplier", v)
+    -- Keep the Lua-side mirror honest so currentPeak() and other readers
+    -- of SandboxVars agree with the Java option we just set.
+    if SandboxVars.ZombieConfig then
+        SandboxVars.ZombieConfig.PopulationPeakMultiplier = v
     end
-    return ok
+    -- The LZI port. 0/255 are the engine defaults for min/max per chunk
+    -- (ZombiePopulationManager fields); the call exists to fire the
+    -- patched Max setter, which pushes all zombie config to the native.
+    setMinMaxZombiesPerChunk(0, 255)
+    audit(string.format("peak -> %.2f (%s)", v, why))
+    return true
 end
 
 -- -------------------------------------------------------------------------

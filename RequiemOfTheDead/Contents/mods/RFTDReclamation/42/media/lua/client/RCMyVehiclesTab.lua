@@ -399,9 +399,8 @@ function T.build(spec, panel, x, y, w, h)
     -- portrait, and a hot reload from that build can leave its scene alive.
     -- The portrait itself is retired (see header).
     if T.preview then
-        -- guarded: removeFromUIManager is vanilla LUA and the stale scene may
-        -- be from an older build (hot reload); failure just leaks the element
-        pcall(function() T.preview:removeFromUIManager() end)
+        -- Vanilla teardown is nil-safe (ISUIElement.lua:1373-1380).
+        T.preview:removeFromUIManager()
         T.preview = nil
     end
 

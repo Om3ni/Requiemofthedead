@@ -66,11 +66,9 @@ local function getResistance(player)
 end
 
 local function applyPanicBump(player)
-    -- guard stays: CharacterStat is a Java enum global; indexing it throws
-    -- outright if a future build drops or renames PANIC.
-    pcall(function()
-        player:getStats():add(CharacterStat.PANIC, 25)
-    end)
+    -- CharacterStat.PANIC is a current Lua-exported registry member; Stats:add
+    -- is the clamped local get/set operation (CharacterStat.java:27; Stats.java:87-89).
+    player:getStats():add(CharacterStat.PANIC, 25)
 end
 
 local function startDisorientation(player, fx, lingerMs)

@@ -575,10 +575,9 @@ if DFPrefs and DFPrefs.onChange and not DFPlayerDeckState.prefsHooked then
     DFPrefs.onChange(function()
         local inst = DFPlayerDeckState.instance
         if not inst then return end
-        local vis = false
-        -- getIsVisible is vanilla ISUI Lua reaching javaObject, which is nil
-        -- until instantiate - and this listener can fire in that window
-        pcall(function() vis = inst:getIsVisible() end)
+        -- Vanilla getIsVisible instantiates a missing backing object before
+        -- reading visibility (ISUIElement.lua:676-680).
+        local vis = inst:getIsVisible()
         if not vis then return end
         if inst.builtTier ~= DFKit.fontScale then
             inst:rebuild()
@@ -598,8 +597,7 @@ if DFPlayerRegistry and DFPlayerRegistry.onShowRequest and not DFPlayerDeckState
         if not DFPlayerDeck then return end
         local inst = DFPlayerDeckState.instance
         local vis = false
-        -- same javaObject-nil window as the prefs listener above
-        if inst then pcall(function() vis = inst:getIsVisible() end) end
+        if inst then vis = inst:getIsVisible() end
         if not vis then DFPlayerDeck.open() end
         inst = DFPlayerDeckState.instance
         if not inst then return end

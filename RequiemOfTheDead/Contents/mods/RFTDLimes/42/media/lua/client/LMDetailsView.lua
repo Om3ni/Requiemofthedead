@@ -325,22 +325,19 @@ refresh = function()
 
     -- Only the active mod's form is visible, and visibility is what stops the
     -- others' hotspots eating clicks (the reason DFViews switches this way too).
-    -- pcall on all three below: setVisible is vanilla Lua (ISUIElement), which
-    -- no decompile can vouch for, and it dereferences self.javaObject - null on
-    -- an element built but not yet added. A refresh must not die mid-pass and
-    -- leave two forms visible on top of each other.
+    -- Vanilla setVisible instantiates a missing backing widget before changing
+    -- visibility (ISUIElement.lua:657-660).
     for id, f in pairs(forms) do
-        if f._el then pcall(function() f._el:setVisible(id == activeId) end) end
+        if f._el then f._el:setVisible(id == activeId) end
     end
 
     -- The profiles block exists only with a zone in hand; the picker never
     -- survives a refresh (a stale candidate list is worse than a second click).
     local showProf = zone ~= nil
-    -- pcall on both: the setVisible failure mode above.
     for _, el in ipairs({ ui.profHead, ui.profMoon, ui.profList, ui.applyBtn, ui.newBtn }) do
-        if el then pcall(function() el:setVisible(showProf) end) end
+        if el then el:setVisible(showProf) end
     end
-    if ui.picker then pcall(function() ui.picker:setVisible(false) end) end
+    if ui.picker then ui.picker:setVisible(false) end
     if showProf then rebuildProfiles() end
 
     local info = activeId and Limes.mods.info(activeId)

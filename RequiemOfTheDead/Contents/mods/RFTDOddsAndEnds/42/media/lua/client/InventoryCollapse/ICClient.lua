@@ -280,10 +280,10 @@ function InventoryCollapse.applyToPane(pane)
 
     reindexSelection(pane, selectedItems)
 
-    -- guarded: updateScrollbars is vanilla ISUI Lua, unverifiable against the
-    -- Java decompile; a miss just leaves the scrollbar range one refresh stale.
+    -- ISInventoryPane.lua invokes updateScrollbars itself after normal pane
+    -- updates (:1787, :2196); a pane exposing this method is a valid UI pane.
     if pane.updateScrollbars then
-        pcall(function() pane:updateScrollbars() end)
+        pane:updateScrollbars()
     end
 end
 
@@ -356,10 +356,8 @@ local function defineHandler(group)
             not InventoryCollapse.isCollapsed(self.playerObj, group))
 
         local pane = self:pane()
-        -- guarded: refreshContainer is vanilla (or CleanUI's) pane Lua - a
-        -- throw here would eat the button click with the preference half-set.
         if pane and pane.refreshContainer then
-            pcall(function() pane:refreshContainer() end)
+            pane:refreshContainer()
         end
 
         -- Relabel in place, AFTER the refresh so the count is current. The page's
@@ -402,8 +400,9 @@ local function patchPane(cls)
     local orig = cls.refreshContainer
     cls.refreshContainer = function(self, ...)
         local r = orig(self, ...)
-        -- pcall so a failure here can never take down the inventory pane.
-        pcall(InventoryCollapse.applyToPane, self)
+        -- This is our own synchronous filter pass. If its preconditions drift,
+        -- surface that at the wrapper instead of silently showing unfiltered data.
+        InventoryCollapse.applyToPane(self)
         return r
     end
     return true

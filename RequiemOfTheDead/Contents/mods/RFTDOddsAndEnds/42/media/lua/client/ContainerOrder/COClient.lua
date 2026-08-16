@@ -316,12 +316,10 @@ function ContainerOrder.apply(page)
     end
 
     -- Vanilla set this before we moved anything; the bottom button changed.
-    -- guarded: setScrollHeight/getBottom are vanilla ISUI Lua, unverifiable
-    -- against the Java decompile; a miss just leaves vanilla's scroll height.
+    -- ISUIElement.lua:292-297 instantiates a missing backing object before
+    -- getBottom(), and setScrollHeight() is nil-safe at :1627-1633.
     if page.containerButtonPanel and page.backpacks[#page.backpacks] then
-        pcall(function()
-            page.containerButtonPanel:setScrollHeight(page.backpacks[#page.backpacks]:getBottom())
-        end)
+        page.containerButtonPanel:setScrollHeight(page.backpacks[#page.backpacks]:getBottom())
     end
 end
 
@@ -488,9 +486,7 @@ function ContainerOrder.finishDrag(button)
     end
 
     ContainerOrder.commit(page)
-    -- guarded: refreshBackpacks is vanilla (or a third-party override) Lua;
-    -- a throw here would leave the drag half-committed with no rebuild.
-    if page.refreshBackpacks then pcall(function() page:refreshBackpacks() end) end
+    if page.refreshBackpacks then page:refreshBackpacks() end
     return true
 end
 
@@ -544,13 +540,12 @@ local function install()
     local origRefresh = ISInventoryPage.refreshBackpacks
     function ISInventoryPage:refreshBackpacks(...)
         -- Engine order going in, player order coming out. Both halves matter - see
-        -- the header on vanilla's double dispatch. restoreEngineOrder is pure Lua
-        -- table work and cannot throw; apply stays guarded because it reaches
-        -- vanilla ISUI Lua (setY, scroll height) and a throw inside this wrapper
-        -- would take refreshBackpacks down for every mod.
+        -- the header on vanilla's double dispatch. restoreEngineOrder and apply
+        -- are our own synchronous operations; malformed UI state must surface at
+        -- its source instead of being silently retained in the refresh wrapper.
         ContainerOrder.restoreEngineOrder(self)
         local r = origRefresh(self, ...)
-        pcall(ContainerOrder.apply, self)
+        ContainerOrder.apply(self)
         return r
     end
 
@@ -570,11 +565,10 @@ local function install()
                 -- drawRect is (x, y, w, h, A, R, G, B) - ISUIElement.lua:1191, and
                 -- the alpha leads. Passed as (r, g, b, a) this drew pale blue at
                 -- 0.9 alpha instead of solid pink.
-                -- guarded: vanilla ISUI Lua on the per-frame render path - a
-                -- throw here would error the panel render every frame.
-                pcall(function()
-                    self:drawRect(1, y, self:getWidth() - 2, 2, 1.0, 0.9, 0.55, 0.75)
-                end)
+                -- ISUIElement.lua:1191-1198 makes drawRect a no-op before the
+                -- backing UI object exists; this normal render call needs no
+                -- exception boundary.
+                self:drawRect(1, y, self:getWidth() - 2, 2, 1.0, 0.9, 0.55, 0.75)
             end
             return r
         end

@@ -593,9 +593,10 @@ end
 
 function LMZeds.censusEnabled() return censusOn end
 
--- pcall: a diagnostic that throws must not take the event loop with it.
+-- Event.trigger isolates and logs each callback independently
+-- (Event.java:53-63), so this listener needs no second containment layer.
 Events.EveryTenMinutes.Add(function()
-    if censusOn then pcall(LMZeds.census, false) end
+    if censusOn then LMZeds.census(false) end
 end)
 
 if Events.OnServerStarted then

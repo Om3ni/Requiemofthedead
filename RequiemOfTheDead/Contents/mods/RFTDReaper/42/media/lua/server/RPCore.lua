@@ -122,15 +122,12 @@ local function cullZombie(z)
     -- IsoMovingObject.removeFromWorld, which calls getCell().isSafeToAdd()
     -- with no null check, and getCell() is null until a world exists.
     pcall(z.removeFromWorld, z)
-    -- Same getCell() hazard, plus getZombieList/remove are probed because the
-    -- cell's list API has moved between builds.
-    pcall(function()
-        local cell = z:getCell()
-        if cell and cell.getZombieList then
-            local list = cell:getZombieList()
-            if list and list.remove then list:remove(z) end
-        end
-    end)
+    -- IsoObject.getCell and IsoCell.getZombieList are field returns
+    -- (IsoObject.java:1842-1844, IsoCell.java:2339-2341). The fixed Build
+    -- 42.20 list API does not need a compatibility probe.
+    local cell = z:getCell()
+    local list = cell and cell:getZombieList() or nil
+    if list then list:remove(z) end
 end
 
 -- -------------------------------------------------------------------------
@@ -200,7 +197,10 @@ local function finishBatchEntry(batch, removed)
     batch.done = batch.done + 1
     if removed then batch.removed = batch.removed + 1 end
     if batch.done >= batch.requested and batch.onDone then
-        pcall(batch.onDone, batch.requested, batch.removed)
+        -- A caller-owned completion callback is independent of the completed
+        -- authoritative cull batch. Contain it, but make its failure visible.
+        local ok, err = pcall(batch.onDone, batch.requested, batch.removed)
+        if not ok then print("[Reaper:queue] completion callback failed: " .. tostring(err)) end
         batch.onDone = nil
     end
 end
@@ -261,10 +261,17 @@ end
 -- the old per-player walk visited the same list once per online player.
 -- -------------------------------------------------------------------------
 
+local function loadedZombieList()
+    -- LuaManager.getCell dereferences IsoWorld.instance (LuaManager.java:
+    -- 4771-4774), which is nil before world construction. Both scan entry
+    -- points share that lifecycle boundary; a missing world means no scan.
+    local ok, cell = pcall(getCell)
+    if not ok or not cell then return nil end
+    return cell:getZombieList() -- IsoCell.java:2339-2341 field return
+end
+
 local function forEachLoadedZombie(visitor)
-    -- getCell dereferences IsoWorld.instance, nil until a world exists.
-    local okCell, cell = pcall(getCell)
-    local zlist = okCell and cell and cell:getZombieList() or nil
+    local zlist = loadedZombieList()
     if not zlist then return end
     local zsize = zlist:size()
     for zi = 0, zsize - 1 do
@@ -427,9 +434,7 @@ local function startScan(kind, c)
     -- the wander scan and the Necro tab both read. The cull scans do not.
     if kind ~= SCAN_SWEEP and not c.cullEnabled then return false end
 
-    -- getCell dereferences IsoWorld.instance, nil until a world exists.
-    local okCell, cell = pcall(getCell)
-    local zlist = okCell and cell and cell:getZombieList() or nil
+    local zlist = loadedZombieList()
     if not zlist then return false end
 
     scan = {

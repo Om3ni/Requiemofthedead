@@ -693,8 +693,9 @@ if DFPrefs and DFPrefs.onChange and not DFDeckState.prefsHooked then
     DFPrefs.onChange(function()
         local inst = DFDeckState.instance
         if not inst then return end
-        local vis = false
-        pcall(function() vis = inst:getIsVisible() end)
+        -- Vanilla getIsVisible instantiates a missing backing object before
+        -- reading visibility (ISUIElement.lua:676-680).
+        local vis = inst:getIsVisible()
         if not vis then return end
         if inst.activeId and inst.builtTier ~= DFKit.fontScale then
             inst:showTab(inst.activeId)

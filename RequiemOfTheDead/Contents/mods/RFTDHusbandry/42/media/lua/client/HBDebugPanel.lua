@@ -600,8 +600,10 @@ function HBDebugPanel:refreshSelectedHighlight()
     local player = getPlayer()
     if not player then return end
     local pn = player:getPlayerNum()
-    pcall(function() animal:setOutlineHighlight(pn, true) end)
-    pcall(function() animal:setOutlineHighlightCol(pn, 0.95, 0.65, 0.45, 1) end)
+    -- Current engine methods directly set the local player's outline bit/color
+    -- (IsoObject.java:5115-5119, 5154-5158); both receivers are validated above.
+    animal:setOutlineHighlight(pn, true)
+    animal:setOutlineHighlightCol(pn, 0.95, 0.65, 0.45, 1)
 end
 
 function HBDebugPanel:clearSelectedHighlight()
@@ -609,7 +611,7 @@ function HBDebugPanel:clearSelectedHighlight()
     local prev = getAnimal(self._highlightedOid)
     local player = getPlayer()
     if prev and player then
-        pcall(function() prev:setOutlineHighlight(player:getPlayerNum(), false) end)
+        prev:setOutlineHighlight(player:getPlayerNum(), false)
     end
     self._highlightedOid = nil
 end

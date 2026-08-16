@@ -155,15 +155,14 @@ local function attachHUD()
 end
 
 -- Remove panel from UIManager (if added and no active cast bars)
--- Reset flag first to prevent residual panel if removeFromUIManager throws
+-- Reset the owner flag before detaching the panel.
 local function detachHUDIfEmpty()
     if hudPanel and hudActive and activeBarCount == 0 then
         hudActive = false
         if hudPanel.javaObject then
-            -- guard stays: removeFromUIManager is vanilla ISUIElement Lua, not in
-            -- the Java decompile; hudActive is already cleared above so a throw
-            -- cannot leave the panel stuck "attached".
-            pcall(hudPanel.removeFromUIManager, hudPanel)
+            -- Vanilla ISUIElement.removeFromUIManager() is nil-safe and only
+            -- removes the backing element (ISUIElement.lua:1373-1380).
+            hudPanel:removeFromUIManager()
         end
     end
 end
@@ -276,10 +275,7 @@ local function onGameStart()
     -- If panel from previous session is still in UIManager, remove it first
     hudActive = false
     if hudPanel and hudPanel.javaObject then
-        -- guard stays: removeFromUIManager is vanilla ISUIElement Lua, not in the
-        -- Java decompile, and a stale panel from the previous session must not
-        -- stop the new one being built below.
-        pcall(hudPanel.removeFromUIManager, hudPanel)
+        hudPanel:removeFromUIManager()
     end
 
     hudPanel = RQCastBarHUD:new()

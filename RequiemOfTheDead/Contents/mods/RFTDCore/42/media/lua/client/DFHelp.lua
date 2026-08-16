@@ -160,8 +160,8 @@ function DFHelp:onMouseUpOutside() self.dragging = false end
 function DFHelp.close()
     local w = DFHelpState.instance
     if w then
-        -- vanilla ISUI Lua teardown; a fault must still null the instance
-        pcall(function() w:removeFromUIManager() end)
+        -- Vanilla teardown is nil-safe (ISUIElement.lua:1373-1380).
+        w:removeFromUIManager()
         DFHelpState.instance = nil
     end
 end

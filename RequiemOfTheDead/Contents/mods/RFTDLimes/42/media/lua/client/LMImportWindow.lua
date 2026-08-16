@@ -96,10 +96,10 @@ function LMImportWindow:refreshLog()
     end)
     if #self.log.items > 0 then
         self.log.selected = #self.log.items
-        -- pcall: ensureVisible is vanilla Lua (ISScrollingListBox) and reads
-        -- scroll geometry that does not exist until the list has been drawn
-        -- once. Failing to scroll must not lose the lines it was scrolling to.
-        pcall(function() self.log:ensureVisible(#self.log.items) end)
+        -- Vanilla ensureVisible validates the index and uses only list rows,
+        -- scroll state, and height; it has no render prerequisite
+        -- (ISScrollingListBox.lua:623-638).
+        self.log:ensureVisible(#self.log.items)
     end
 end
 

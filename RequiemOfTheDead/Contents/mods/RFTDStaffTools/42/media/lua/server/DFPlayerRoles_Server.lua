@@ -111,18 +111,23 @@ local function applyToOnline(username, roleName)
 
     -- Cheap check first: if the live role already matches, do nothing. This
     -- avoids the mid-session setRole desync and skips the findRole scan below.
-    local currentName
-    pcall(function()
-        local cur = target:getRole()
-        if cur then currentName = cur:getName() end
-    end)
+    -- IsoPlayer.getRole() and Role.getName() are field returns
+    -- (IsoPlayer.java:6987-6989, Role.java:47-49). target came from the live
+    -- player registry, so an exception has no useful recovery here.
+    local cur = target:getRole()
+    local currentName = cur and cur:getName()
     if currentName == roleName then return false end  -- already correct: no-op
 
     local role = DFRoleShared.findRole(roleName)
     if not role then return false end
-    local ok = pcall(function() target:setRole(role) end)
-    pcall(function() target:transmitModData() end)
-    return ok
+    -- findRole established a real Role before this call. IsoPlayer.setRole
+    -- (IsoPlayer.java:8065-8089) clears incompatible flags then assigns it;
+    -- swallowing a failed authoritative assignment would report a false no-op.
+    target:setRole(role)
+    -- Do not transmit ModData here: roles are not ModData. IsoObject's
+    -- transmitModData sends ObjectModData (IsoObject.java:4470-4480), whose
+    -- server path only relays that packet (GameServer.java:2666-2671).
+    return true
 end
 
 -- ─────────────────────────────────────────────────────────────────────────

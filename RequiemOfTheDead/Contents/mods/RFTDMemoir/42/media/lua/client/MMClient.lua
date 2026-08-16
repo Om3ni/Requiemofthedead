@@ -41,10 +41,13 @@ local function refreshInventorySoon()
             local pd = getPlayerData and getPlayerData(0)
             if pd then
                 if pd.playerInventory and pd.playerInventory.inventoryPane then
-                    pcall(function() pd.playerInventory.inventoryPane:refreshContainer() end)
+                    -- Vanilla refreshContainer only rebuilds local pane state
+                    -- (ISInventoryPane.lua:2022); the explicit pane check above
+                    -- is its lifecycle precondition.
+                    pd.playerInventory.inventoryPane:refreshContainer()
                 end
                 if pd.lootInventory and pd.lootInventory.inventoryPane then
-                    pcall(function() pd.lootInventory.inventoryPane:refreshContainer() end)
+                    pd.lootInventory.inventoryPane:refreshContainer()
                 end
             end
         end

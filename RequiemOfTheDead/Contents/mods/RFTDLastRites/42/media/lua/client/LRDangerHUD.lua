@@ -161,9 +161,9 @@ local function reset()
     LRDangerHUD.badges = {}
     LRDangerHUD.quip = { text = nil, expire = 0 }
     if hud and hud.javaObject then
-        -- Guard stays: removeFromUIManager is vanilla LUA, so the decompile
-        -- cannot vouch for it, and a teardown that throws would strand the HUD.
-        pcall(hud.removeFromUIManager, hud)
+        -- Vanilla ISUIElement.lua:1373-1380 already handles a missing Java
+        -- object, removes the element, and marks it removed.
+        hud:removeFromUIManager()
     end
     hud = nil
     LRDangerHUD.ensure()

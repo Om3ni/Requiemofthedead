@@ -101,9 +101,9 @@ if not DFPlayerBtnState.wrapped then
         if not self.adminBtn then return end
 
         if self.dfPlayerBtn then
-            -- vanilla ISUI Lua (removeChild); a stale button from a previous
-            -- initialise must not kill the sidebar rebuild
-            pcall(function() self:removeChild(self.dfPlayerBtn) end)
+            -- Vanilla removeChild is nil-safe if a previous UI backing object
+            -- has already been torn down (ISUIElement.lua:1480-1485).
+            self:removeChild(self.dfPlayerBtn)
             self.dfPlayerBtn = nil
         end
 

@@ -468,10 +468,10 @@ function LMEditView.attach(panel)
     if LSMap and LSMap.acquire then
         map = LSMap.acquire(player, 400, 300, "limes")
         if map.parent and map.parent ~= panel then
-            -- pcall: removeChild is vanilla Lua (ISUIElement) and walks the old
-            -- parent's javaObject; that parent may already have been torn down,
-            -- and re-parenting must still proceed if it has.
-            pcall(function() map.parent:removeChild(map) end)
+            -- Vanilla ISUIElement.removeChild() is nil-safe when the old
+            -- parent's backing object has already been torn down
+            -- (ISUIElement.lua:1480-1485).
+            map.parent:removeChild(map)
         end
         panel:addChild(map)
         w[#w + 1] = map
@@ -578,10 +578,11 @@ function LMEditView.attach(panel)
     local censusAutoBtn = btn("Auto: off", 74, function()
             censusAuto = not censusAuto
             if LMSync and LMSync.setCensus then LMSync.setCensus(censusAuto) end
-            -- pcall: this closure outlives the tab. `ui` is nil once the panel
-            -- is torn down, and the census toggle itself has already landed -
-            -- a label that cannot be repainted must not undo it.
-            pcall(function() ui.censusAutoBtn:setTitle("Auto: " .. (censusAuto and "on" or "off")) end)
+            -- This closure can outlive the tab. The completed server toggle
+            -- does not require a label to remain, so make teardown explicit.
+            if ui and ui.censusAutoBtn then
+                ui.censusAutoBtn:setTitle("Auto: " .. (censusAuto and "on" or "off"))
+            end
         end, "action",
         "Repeat the census every ten GAME minutes. Off by default and never"
         .. " persisted: a diagnostic that survives a restart is one somebody"

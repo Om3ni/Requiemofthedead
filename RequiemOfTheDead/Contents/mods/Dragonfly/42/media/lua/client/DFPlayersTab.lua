@@ -626,11 +626,9 @@ local function buildDetail(panel, x, y, w, h)
             if DFFeedback then DFFeedback.bad("Stats target is not loaded.") end
             return
         end
-        -- vanilla ISPlayerStatsUI Lua: a stale instance whose close() throws
-        -- must not block opening a fresh stats window
-        pcall(function()
-            if ISPlayerStatsUI.instance then ISPlayerStatsUI.instance:close() end
-        end)
+        -- Vanilla's own opener closes the existing instance directly
+        -- (ISPlayerStatsUI.lua:854-857); ISPanel:close only hides it (:14-16).
+        if ISPlayerStatsUI.instance then ISPlayerStatsUI.instance:close() end
         local modal = ISPlayerStatsUI:new(50, 50,
             800 + (getCore():getOptionFontSizeReal() * 50), 800, target, getPlayer())
         modal:initialise(); modal:addToUIManager(); modal:setVisible(true)

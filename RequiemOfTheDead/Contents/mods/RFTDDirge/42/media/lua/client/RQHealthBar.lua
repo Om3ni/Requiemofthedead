@@ -167,10 +167,9 @@ end
 local function onGameStart()
     hudActive = false
     if hudPanel and hudPanel.javaObject then
-        -- guard stays: removeFromUIManager is vanilla ISUIElement Lua, not in the
-        -- Java decompile, and a half-torn-down panel from a previous session must
-        -- not stop the new HUD being created below.
-        pcall(hudPanel.removeFromUIManager, hudPanel)
+        -- Vanilla ISUIElement.removeFromUIManager() is nil-safe and only removes
+        -- the backing element (ISUIElement.lua:1373-1380).
+        hudPanel:removeFromUIManager()
     end
     hudPanel = RQHealthBarHUD:new()
     hudPanel:initialise()
