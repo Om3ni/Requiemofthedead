@@ -390,7 +390,7 @@
       "  FindItem and fluid-container lookups - too deep to certify; ICClient",
       "  keeps allocation-free guards.",
       "hasHorn (VehicleSoundOwner:73) derefs getScript() unguarded - NPEs on a",
-      "  scriptless vehicle; QHClient's start guard is load-bearing."
+      "  scriptless vehicle; NOClient establishes getScript before calling it."
     ]
   }
 }

@@ -41,33 +41,16 @@
 if isServer() then return end
 
 require "LMCore"
+require "LMZedsShared"
 
 LMZedsCl = LMZedsCl or {}
 
 local MODE_REMOVE = "remove"
 
--- The engine's own client-side removal, which is what the real delete packet
--- ends up calling: VirtualZombieManager.removeZombieFromWorld unregisters the
--- sound emitter first, then removes from world and square
--- (VirtualZombieManager:80-86, ZombieDeleteOnClientPacket:42). Doing it by hand
--- and forgetting the emitter leaves a zombie you can hear but not see.
-local function cull(z)
-    if VirtualZombieManager and VirtualZombieManager.instance then
-        local vm = VirtualZombieManager.instance
-        -- pcall: engine removal mutates world state and must not half-happen
-        -- unguarded; direct form, this runs per swept zombie.
-        if pcall(vm.removeZombieFromWorld, vm, z) then return end
-    end
-    -- pcall: getEmitter() is a field read (IsoGameCharacter:1348) but the
-    -- emitter may be null, and unregister() is not in the decompile at all.
-    pcall(function() z:getEmitter():unregister() end)
-    -- pcall: IsoZombie.removeFromWorld:3550 chains into IsoMovingObject:688,
-    -- which calls getCell().isSafeToAdd() with no guard.
-    pcall(z.removeFromWorld, z)
-    -- No guard: IsoMovingObject.removeFromSquare:702 null-checks every field
-    -- it touches, and it is the last step so nothing follows it to skip.
-    z:removeFromSquare()
-end
+-- Removal is shared with the server's birth hook - see shared/LMZedsShared.lua.
+-- Both sides must delete a zombie the same WAY; the emitter step is the one
+-- that bites if they drift.
+local cull = LMZedsShared.cull
 
 local function modeAt(x, y)
     if not x or not y then return nil end

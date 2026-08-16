@@ -167,8 +167,9 @@ local function install()
 end
 
 -- install touches vanilla admin-UI constructor tables that may be absent or
--- reshaped on some builds; a failed install must cost the watch, not the boot
-Events.OnGameStart.Add(function() pcall(install) end)
+-- reshaped on some builds. No guard: Event.trigger isolates listeners
+-- (Event.java:53-63), so a failed install already costs the watch, not the boot.
+Events.OnGameStart.Add(function() install() end)
 
 return DFIntentWatch
 

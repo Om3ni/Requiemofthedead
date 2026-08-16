@@ -19,41 +19,13 @@
 
 if isServer() then return end
 
+require "DFRoleShared"   -- explicit: the client walks lua tiers alphabetically
+                         -- across mods, so load order cannot be assumed (CLAUDE.md 4)
+
 local MODULE = "Dragonfly_RoleEdit"
 
-local capabilityByName
-local function getCapabilityByName(name)
-    if not capabilityByName then
-        capabilityByName = {}
-        local all = getCapabilities()
-        for i=0,all:size()-1 do
-            local c = all:get(i)
-            capabilityByName[c:name()] = c
-        end
-    end
-    return capabilityByName[name]
-end
-
-local function applyOverrideLocal(role, args)
-    if not role then return end
-    role:setDescription(args.description or "")
-    role:setColor(Color.new(args.r or 1, args.g or 1, args.b or 1, 1.0))
-    local caps = role:getCapabilities()
-    caps:clear()
-    for _, capName in ipairs(args.capabilities or {}) do
-        local cap = getCapabilityByName(capName)
-        if cap then caps:add(cap) end
-    end
-end
-
-local function findRole(name)
-    local list = getRoles()
-    for i=0,list:size()-1 do
-        local r = list:get(i)
-        if r:getName() == name then return r end
-    end
-    return nil
-end
+-- capability / findRole / applyOverride now live in shared/DFRoleShared.lua -
+-- this file and DFRoleEdit_Server ran identical copies of all three.
 
 local patched = false
 
@@ -88,7 +60,7 @@ local function applyPatches()
                 r = self.color.r, g = self.color.g, b = self.color.b,
                 capabilities = capList,
             }
-            applyOverrideLocal(self.role, args)
+            DFRoleShared.applyOverride(self.role, args)
             sendClientCommand(getPlayer(), MODULE, "save", args)
             ISModalEditRole.instance:closeModal()
             return
@@ -101,13 +73,15 @@ end
 -- overrides locally without monkey-patching their own copy.
 DFRoleEdit = DFRoleEdit or {}
 DFRoleEdit.MODULE = MODULE
-DFRoleEdit.applyOverrideLocal  = applyOverrideLocal
-DFRoleEdit.findRole            = findRole
-DFRoleEdit.getCapabilityByName = getCapabilityByName
+-- Public surface kept pointing at the shared module so anything holding these
+-- names keeps working.
+DFRoleEdit.applyOverrideLocal  = DFRoleShared.applyOverride
+DFRoleEdit.findRole            = DFRoleShared.findRole
+DFRoleEdit.getCapabilityByName = DFRoleShared.capability
 
 local function onServerCommand(module, command, args)
     if module ~= MODULE or command ~= "applied" then return end
-    applyOverrideLocal(findRole(args.roleName), args)
+    DFRoleShared.applyOverride(DFRoleShared.findRole(args.roleName), args)
 end
 
 Events.OnGameStart.Add(applyPatches)

@@ -52,10 +52,12 @@ rem accepts every record the encoder produced. Skipped without Python rather
 rem than failing - it is corroboration, not the gate.
 where python >nul 2>nul
 if !errorlevel!==0 (
+    python "%~dp0tests\test_deploy_workshop.py" "%ROOT%"
+    if !errorlevel! gtr 0 set FAIL=1
     python "%~dp0validate_jsonl.py" "%OUT%"
     if !errorlevel! gtr 0 set FAIL=1
 ) else (
-    echo [skip] python not on PATH - JSON re-validation not run.
+    echo [skip] python not on PATH - deploy regression and JSON re-validation not run.
 )
 
 if !FAIL!==0 echo All behavioural tests passed.

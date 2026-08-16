@@ -104,6 +104,9 @@ local function traitsOf(p)
         for i = 0, known:size() - 1 do
             local t = known:get(i)
             local id
+            -- guarded: tostring on a CharacterTrait resolves through
+            -- Registries.CHARACTER_TRAIT.getLocation(this).getPath() and NPEs on a stale
+            -- registry object. Falls through to getName below - see professionOf.
             if not pcall(function() id = tostring(t) end) or type(id) ~= "string" then id = nil end
             out[#out + 1] = id or ("?:" .. tostring(t:getName()))
         end
@@ -120,6 +123,7 @@ local function professionOf(p)
         local prof = p:getDescriptor() and p:getDescriptor():getCharacterProfession()
         if prof then
             local id
+            -- guarded: same registry landmine as the trait id above.
             if not pcall(function() id = tostring(prof) end) or type(id) ~= "string" then id = nil end
             name = id or prof:getName()
         end

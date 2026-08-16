@@ -100,11 +100,12 @@ eq("no actor and no kv yields nil",     RCAudit.chronicleSubject(nil, nil), nil)
 -- A non-string owner must not blow up the comparison; it is coerced, not trusted.
 eq("non-string owner is coerced", RCAudit.chronicleSubject(staff, { owner = 1234 }), "1234")
 
--- A player object whose getUsername throws must not take the ledger down with
--- it - the write still files under the holder rather than erroring.
-local hostile = { getUsername = function() error("engine says no") end }
-eq("throwing getUsername degrades to the holder string",
-    RCAudit.chronicleSubject(hostile, { owner = "Omen" }), "Omen")
+-- IsoPlayer.getUsername() may return nil when its username field has not been
+-- populated, but its zero-argument body cannot throw. That real absent-value
+-- case still files under the holder string.
+local unnamed = fakePlayer(nil)
+eq("nil username degrades to the holder string",
+    RCAudit.chronicleSubject(unnamed, { owner = "Omen" }), "Omen")
 
 print(string.format("RCAudit: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

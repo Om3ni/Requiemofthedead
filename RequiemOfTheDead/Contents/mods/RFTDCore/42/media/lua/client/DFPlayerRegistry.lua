@@ -143,6 +143,8 @@ function DFPlayerRegistry.sheetForm()
         local spec = sheets[i]
         local body = spec.schema
         if type(body) == "function" then
+            -- guarded: body is a schema function supplied by a CONSUMER mod, not ours -
+            -- unverifiable by construction. A bad sheet drops itself, not the registry.
             local ok, r = pcall(body)
             body = ok and r or nil
         end
@@ -207,6 +209,8 @@ end
 function DFPlayerRegistry.requestShow(id)
     if not id then return end
     for i = 1, #DFPlayerRegistry.showListeners do
+        -- guarded, and per-listener on purpose: these are foreign callbacks, so this is
+        -- granularity - one listener that throws must not cost the others their turn.
         pcall(DFPlayerRegistry.showListeners[i], id)
     end
 end

@@ -262,6 +262,8 @@ local function installWraps()
                 est = est + #tostring(tag) + 2
                 local n = 1
                 if serverReady then
+                    -- guarded: the result drives the divisor below - n stays 1 when the roster is
+                    -- not available yet, rather than the rate being computed against nil.
                     local ok, players = pcall(getOnlinePlayers)
                     if ok and players then
                         local sz = players:size()
@@ -336,8 +338,9 @@ Events.OnTick.Add(function()
     -- First pass only establishes the window start; there is no elapsed period
     -- to compute rates against yet.
     if prev == 0 then return end
-    -- dump writes through RDLog; a probe fault must not kill the tick
-    pcall(RDMeter.dump, now, (now - prev) / 1000)
+    -- No guard: tail of an engine-dispatched handler, and Event.trigger already
+    -- isolates each listener (Event.java:53-63). A dump fault costs this window.
+    RDMeter.dump(now, (now - prev) / 1000)
 end)
 
 return RDMeter

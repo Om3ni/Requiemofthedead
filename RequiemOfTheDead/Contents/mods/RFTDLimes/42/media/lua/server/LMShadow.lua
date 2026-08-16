@@ -123,9 +123,11 @@ local function sweep()
     end
 end
 
--- pcall: a read-only diagnostic reaching into a foreign store must not take
--- EveryTenMinutes - and every other mod's listener on it - down with it.
-Events.EveryTenMinutes.Add(function() pcall(sweep) end)
+-- No guard: the engine already gives us exactly that. Event.trigger runs every
+-- listener through protectedCallVoid inside a per-listener try/catch
+-- (Event.java:53-63), so a throw in this read-only diagnostic cannot reach
+-- EveryTenMinutes' other listeners, ours or any other mod's.
+Events.EveryTenMinutes.Add(function() sweep() end)
 
 if Events.OnServerStarted then
     Events.OnServerStarted.Add(function()

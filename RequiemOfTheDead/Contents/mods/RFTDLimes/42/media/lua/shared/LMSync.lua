@@ -204,10 +204,13 @@ if isServer() then
     end
 
     if Events and Events.OnTick then
-        -- pcall: this is OnTick. A send that throws - a dropped connection
-        -- inside RDNet.reply, a slice that will not serialise - would fire
-        -- every tick forever and take every other listener with it.
-        Events.OnTick.Add(function() pcall(pumpChunkSends) end)
+        -- No guard. A send that throws - a dropped connection inside RDNet.reply,
+        -- a slice that will not serialise - is contained by Event.trigger, which
+        -- runs every listener through protectedCallVoid inside a per-listener
+        -- try/catch (Event.java:53-63); it cannot reach another listener. It would
+        -- still log every tick, but a pcall never stopped that either: KahluaThread
+        -- logs at throw time (:865/:1100) before Lua pcall sees the error.
+        Events.OnTick.Add(function() pumpChunkSends() end)
     end
 
     -- Join baseline and gap recovery are the same request: "give me everything,

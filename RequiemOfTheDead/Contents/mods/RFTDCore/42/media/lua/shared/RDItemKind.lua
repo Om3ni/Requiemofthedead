@@ -151,6 +151,8 @@ local function readString(item, method)
     if not item then return nil end
     local fn = item[method]
     if type(fn) ~= "function" then return nil end
+    -- guarded: fn is looked up by NAME off the item, so the callee is unknown at
+    -- author time - the one case where the decompile cannot answer for us.
     local ok, val = pcall(fn, item)
     if not ok or type(val) ~= "string" or val == "" then return nil end
     return val

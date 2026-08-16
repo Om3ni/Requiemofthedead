@@ -333,9 +333,12 @@ local function pump()
     end
 end
 
--- containment, not a getter guard: a paging-state bug in pump must degrade to
--- a stalled queue, never to a per-tick error storm on the wire pump
-Events.OnTick.Add(function() pcall(pump) end)
+-- No guard: Event.trigger (Event.java:53-63) runs every listener through
+-- protectedCallVoid inside a per-listener try/catch, so a throw here cannot
+-- reach another mod's listener. It cannot buy quiet either - KahluaThread
+-- logs at throw time (:865/:1100), before any Lua pcall sees it.
+-- A paging-state bug in pump therefore degrades to a stalled queue on its own.
+Events.OnTick.Add(function() pump() end)
 
 -- Depth, for a diagnostic report. Cheap enough to call from one.
 function RDChunk.pending()

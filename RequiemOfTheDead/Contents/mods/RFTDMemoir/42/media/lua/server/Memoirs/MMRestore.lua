@@ -148,6 +148,8 @@ local function decode(s)
         end
         fail("unexpected character '" .. tostring(c) .. "'")
     end
+    -- guarded because error() IS this parser's control flow - fail() above raises on
+    -- malformed input, and this is where it is turned back into a return value.
     local ok, result = pcall(parseValue)
     if not ok then return nil, tostring(result) end
     return result

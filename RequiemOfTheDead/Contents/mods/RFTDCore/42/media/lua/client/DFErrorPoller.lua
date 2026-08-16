@@ -305,8 +305,9 @@ local function folderMapReady()
     end
     if not folderMP then return false end
 
-    local count
-    if not pcall(function() count = getLoadedLuaCount() end) then return false end
+    -- No guard: getLoadedLuaCount (LuaManager:3769) is loaded.size() on a static
+    -- list. The type check below still covers an empty or absent registry.
+    local count = getLoadedLuaCount()
     if type(count) ~= "number" or count <= 0 then return false end
     -- reloadLuaFile can append, so rebuild when the count moves.
     if folderServer and count == folderCount then return true end
@@ -314,6 +315,9 @@ local function folderMapReady()
     local srv, other = {}, {}
     for i = 0, count - 1 do
         local path
+        -- guarded: getLoadedLua (LuaManager:3774) is loaded.get(n) - an unchecked List
+        -- index. reloadLuaFile appends to that list, so the count read above can be
+        -- stale by the time we walk it. One racing index must not lose the whole scan.
         pcall(function() path = getLoadedLua(i) end)
         if path then
             path = string.lower(string.gsub(tostring(path), "\\", "/"))
@@ -394,9 +398,10 @@ local function poll()
     DFErrorPoller.tick = (DFErrorPoller.tick or 0) + 1
     if DFErrorPoller.tick % POLL_INTERVAL ~= 0 then return end
 
-    local errors
-    local ok = pcall(function() errors = getLuaDebuggerErrors() end)
-    if not ok or not errors then return end
+    -- No guard: getLuaDebuggerErrors (LuaManager:6432) copies KahluaThread's
+    -- static m_errors_list into a fresh ArrayList - there is no receiver to be nil.
+    local errors = getLuaDebuggerErrors()
+    if not errors then return end
 
     local size = 0
     pcall(function() size = errors:size() end)

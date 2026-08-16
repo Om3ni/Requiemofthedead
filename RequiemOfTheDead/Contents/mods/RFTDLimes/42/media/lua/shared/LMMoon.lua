@@ -173,9 +173,13 @@ end
 function LMMoon.poll() watch() end
 
 if Events and Events.EveryTenMinutes then
-    -- pcall: watch() calls Limes.refresh(), which fans out to every registered
-    -- listener; a throw from any of them must not take EveryTenMinutes down.
-    Events.EveryTenMinutes.Add(function() pcall(watch) end)
+    -- No guard here: it never protected the fan-out it claimed to. watch() calls
+    -- Limes.refresh(), and a listener that throws aborts the remaining listeners
+    -- either way - a guard at THIS boundary cannot resume a loop further in. The
+    -- event itself is already safe (Event.trigger, Event.java:53-63). If the
+    -- fan-out needs to survive one bad listener, the guard belongs inside
+    -- Limes.refresh's loop, where it would buy per-listener granularity.
+    Events.EveryTenMinutes.Add(function() watch() end)
 end
 
 return LMMoon

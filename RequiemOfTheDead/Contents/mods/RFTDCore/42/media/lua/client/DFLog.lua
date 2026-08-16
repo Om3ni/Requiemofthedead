@@ -117,13 +117,14 @@ function DFLog.contextHeader()
 
     local v
     if pcall(function() v = getCore():getVersion() end) and v then
-        local steam = false
-        pcall(function() steam = getSteamModeActive() == true end)
+        -- No guard: getSteamModeActive (LuaManager:7517) -> SteamUtils
+        -- .isSteamModeEnabled:128 is `return steamEnabled`, a static field.
+        local steam = getSteamModeActive() == true
         lines[#lines + 1] = "Version: " .. tostring(v) .. (steam and " (Steam)" or "")
     end
 
-    local mp = false
-    pcall(function() mp = isClient() == true end)
+    -- No guard: isClient (LuaManager:3789) is `return GameClient.client`.
+    local mp = isClient() == true
     lines[#lines + 1] = "Mode: " .. (mp and "MULTIPLAYER" or "SINGLE PLAYER")
 
     -- ORIGIN IS NOT MODE, AND READING ONE AS THE OTHER COSTS REAL HOURS. A

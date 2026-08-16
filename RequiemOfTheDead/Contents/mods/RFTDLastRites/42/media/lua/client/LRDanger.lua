@@ -137,6 +137,8 @@ Events.OnTick.Add(function()
     if now - lastPoll < POLL_MS then return end
     lastPoll = now
     LRDangerHUD.ensure()
+    -- guarded to REPORT, not to contain: the print below is the point. Without it a
+    -- poll fault is one more line in a log nobody reads.
     local ok, err = pcall(update)
     if not ok then print("[LRDanger] update error: " .. tostring(err)) end
 end)

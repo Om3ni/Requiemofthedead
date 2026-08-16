@@ -26,13 +26,12 @@
 --                                       containers you have open.
 --   StickyHeadwear (StickyHeadwear/SH*) pins worn headwear so a hit does not
 --                                       knock it off.
---   QuietHorn      (QuietHorn/QH*)      the vehicle horn still sounds but no
---                                       longer emits a world sound, so it
---                                       cannot be used to herd zombies. A full
---                                       replacement rather than a tweak: the
---                                       engine fuses the audible horn and the
---                                       herding sound into one method and
---                                       exposes no way to separate them.
+--   NoiseOrdinance (NoiseOrdinance/NO*) vehicle horns and sirens still sound
+--                                       but no longer herd zombies. Horns need
+--                                       a full replacement because the engine
+--                                       fuses their audio and world sound;
+--                                       sirens use the engine's separate native
+--                                       zombie-attraction gate.
 --   Lumberjack     (Lumberjack/LJ*)     forestry. LJWeight scales the weight
 --                                       of wooden items, reversibly, against
 --                                       their vanilla values; LJSweep fells a

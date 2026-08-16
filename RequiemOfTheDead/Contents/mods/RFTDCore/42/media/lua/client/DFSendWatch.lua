@@ -121,6 +121,9 @@ local function wrap(name, describe)
 
     _G[name] = function(...)
         local a1, a2, a3, a4, a5, a6 = ...
+        -- guarded: this wraps sixteen rewritten engine globals. The sensor must
+        -- never cost the real call - `return orig(...)` below is the continuation
+        -- it protects, which the engine's own boundary would skip.
         pcall(function()
             local text = describe(a1, a2, a3, a4, a5, a6)
             if text then report(name, text) end
@@ -254,9 +257,10 @@ local function install()
         .. " faction/safehouse call sites instrumented (lifecycle ledger; see header for what it is worth)")
 end
 
--- install rewrites sixteen engine globals; a failed install must cost the
--- ledger, not the boot
-Events.OnGameStart.Add(function() pcall(install) end)
+-- install rewrites sixteen engine globals. No guard: Event.trigger isolates
+-- listeners (Event.java:53-63), so a failed install already costs the ledger,
+-- not the boot.
+Events.OnGameStart.Add(function() install() end)
 
 return DFSendWatch
 

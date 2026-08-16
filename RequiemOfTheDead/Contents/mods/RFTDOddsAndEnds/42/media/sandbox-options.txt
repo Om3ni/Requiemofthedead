@@ -229,22 +229,26 @@ option RFTDOddsAndEnds.LumberjackSweepEnduranceFloor
 }
 
 /* ============================================================
-   Quiet Horn - the horn still sounds, it just stops herding.
+   Noise Ordinance - horns and sirens still sound, but stop herding.
 
    A world rule rather than a taste one, which is why it defaults
    ON here: leaning on the horn to drag a crowd off a street is
-   the exploit, and the noise is not. Turning it OFF restores
-   vanilla - the horn goes back to being a 150-radius world sound
-   that zombies walk toward - and takes effect immediately, with
-   no restart.
+   the exploit, and the noise is not. Sirens use the engine's own
+   SirenEffectsZombies gate; their sound and lights are separate.
+   Turning this OFF restores the horn and the native siren policy
+   that was in force before Noise Ordinance took ownership.
+
+   Renamed from QuietHornEnable on 2026-08-15 by owner decision.
+   There is deliberately no compatibility alias: the new option
+   is visible as Noise Ordinance and receives its declared default.
    ============================================================ */
 
-option RFTDOddsAndEnds.QuietHornEnable
+option RFTDOddsAndEnds.NoiseOrdinanceEnable
 {
     type = boolean,
     default = true,
-    page = OE_QuietHorn,
-    translation = OE_QuietHornEnable,
+    page = OE_NoiseOrdinance,
+    translation = OE_NoiseOrdinanceEnable,
 }
 
 /* ============================================================

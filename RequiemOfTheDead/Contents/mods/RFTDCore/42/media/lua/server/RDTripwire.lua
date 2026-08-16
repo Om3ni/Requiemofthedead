@@ -288,12 +288,14 @@ end
 Events.OnClientCommand.Add(function(module, command, player, args)
     if module ~= RDShared.MODULE then return end
     if not enabled() then return end
-    -- args are wire-controlled; a malformed report must not take the
-    -- listener down with it
+    -- args are wire-controlled, but no guard is needed at this boundary:
+    -- Event.trigger isolates each listener (Event.java:53-63), so a malformed
+    -- report costs this call and nothing else. Both branches are the tail of
+    -- the handler, so there is no continuation to protect either.
     if command == "tripwireReport" then
-        pcall(function() RDTripwire.receiveReport(player, args) end)
+        RDTripwire.receiveReport(player, args)
     elseif command == "lifecycleReport" then
-        pcall(function() RDTripwire.receiveLifecycle(player, args) end)
+        RDTripwire.receiveLifecycle(player, args)
     end
 end)
 

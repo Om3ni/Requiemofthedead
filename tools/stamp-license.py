@@ -36,19 +36,7 @@ import io
 import os
 import sys
 
-SPDX = "-- SPDX-License-Identifier: GPL-3.0-or-later"
-
-FOOT = [
-    "-- ---------------------------------------------------------------------------",
-    "-- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.",
-    "--",
-    "-- Free software under the GNU General Public License, version 3 or later.",
-    "-- You may use, study, modify and share it. If you share it - modified or not,",
-    "-- on the Workshop or anywhere else - keep this notice, license your version",
-    "-- under the GPL too, publish your source, and say what you changed.",
-    "-- Distributed in the hope it is useful, but WITHOUT ANY WARRANTY.",
-    "-- <https://www.gnu.org/licenses/gpl-3.0.html>",
-]
+from license_notice import FOOT, SPDX
 
 # The sign-off this replaces. Matched loosely because it has drifted a little
 # over the life of the tree.
@@ -84,7 +72,7 @@ def stamp(text):
         while lines and lines[-1].strip() == "":
             lines.pop()
 
-    out = [SPDX] + lines + [""] + FOOT + [""]
+    out = [SPDX] + lines + [""] + list(FOOT) + [""]
     return eol.join(out)
 
 

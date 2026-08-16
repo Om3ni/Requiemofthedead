@@ -109,6 +109,11 @@ Husbandry and Last Rites. Display names are free text; mod ids are frozen.
   reason and moved to `RFTDOddsAndEnds` in 0.8.0.
 - Test forks are retired. Testing happens on git branches, not folder copies.
 - Every Lua edit goes through `tools\check-lua.bat` before upload (silence = clean).
+- `tools\check-pcall.bat` and `tools\check-helpers.bat` are the debt ratchets: the
+  first fails a guard wrapping a call proven unable to throw, or an opaque guard with
+  no stated reason; the second fails a helper body that exists in two places. Both
+  carry a per-mod baseline that only ever goes down. Raising one is a deliberate act -
+  write the reason in the code, then `--update`.
 - `tools\run-tests.bat` runs behavioural tests under real Lua 5.1 for the modules that
   need no engine stubs - RDJson today. Lua 5.1 specifically: Kahlua is 5.1, and 5.3+ added
   an integer subtype that changes `math.floor` and `%.0f`, so a newer interpreter would

@@ -257,8 +257,11 @@ end
 -- anything that asks; the file exists so a reader who arrives after a restart, or
 -- who is not in the game at all, still gets the answer. Once a minute is far more
 -- often than anyone reads it and far less often than it changes.
--- a tally fault must not take the minute event down with it
-Events.EveryOneMinute.Add(function() pcall(RDTally.write) end)
+-- No guard: Event.trigger (Event.java:53-63) runs every listener through
+-- protectedCallVoid inside a per-listener try/catch, so a throw here cannot
+-- reach another mod's listener. It cannot buy quiet either - KahluaThread
+-- logs at throw time (:865/:1100), before any Lua pcall sees it.
+Events.EveryOneMinute.Add(function() RDTally.write() end)
 
 return RDTally
 

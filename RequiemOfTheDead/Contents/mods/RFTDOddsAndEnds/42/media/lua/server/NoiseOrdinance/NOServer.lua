@@ -1,9 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- QHServer.lua - Quiet Horn, server half: a relay and nothing else.
+-- NOServer.lua - Noise Ordinance horn relay and lease owner.
 --
--- The whole module is explained in client/QuietHorn/QHClient.lua. The short
+-- The horn replacement is explained in client/NoiseOrdinance/NOClient.lua. The short
 -- version: BaseVehicle.onHornStart() adds a 150/150 WorldSound in the same
--- breath as it sets the horn flag, so Quiet Horn never lets that method run and
+-- breath as it sets the horn flag, so Noise Ordinance never lets that method run and
 -- plays the horn on each client instead.
 --
 -- Which leaves one gap this file exists to close. With onHornStart never
@@ -30,7 +30,7 @@ if not isServer() then return end
 
 require "OEShared"
 
-QuietHornSv = QuietHornSv or {}
+NoiseOrdinanceSv = NoiseOrdinanceSv or {}
 
 -- The vehicle is taken from the player, never from the wire - the same shape
 -- vanilla's own onHorn uses, and it means a forged id cannot make somebody
@@ -44,30 +44,59 @@ QuietHornSv = QuietHornSv or {}
 -- from OUR memory of that player's start, so the forgery protection holds:
 -- the wire still names no vehicle, and a player can only ever stop the horn
 -- they started.
-local lastHorn = {}   -- username -> vehicle id, remembered at start
+local LEASE_MS = 10000
+local active = {}   -- username -> { vehicle, expiresAt }
 
 local function keyFor(player)
     return (player and player:getUsername()) or tostring(player)
 end
 
 local function onStart(player, _args)
-    if not OEShared.enabled("QuietHornEnable") then return end
+    if not OEShared.enabled("NoiseOrdinanceEnable") then return end
     local vehicle = player and player:getVehicle()
     if not vehicle then return end
     if not vehicle:isDriver(player) then return end
     if not vehicle:hasHorn() then return end
-    lastHorn[keyFor(player)] = vehicle:getId()
-    RDNet.broadcast(OEShared.MODULE, "hornStart", { vehicle = vehicle:getId() })
+    local key = keyFor(player)
+    local id = vehicle:getId()
+    local prior = active[key]
+    if prior and prior.vehicle ~= id then
+        RDNet.broadcast(OEShared.MODULE, "hornStop", { vehicle = prior.vehicle })
+    end
+    -- getTimestampMs is System.currentTimeMillis (LuaManager.java:7469-7472).
+    -- A repeated start refreshes the same lease instead of stacking state.
+    active[key] = { vehicle = id, expiresAt = getTimestampMs() + LEASE_MS }
+    RDNet.broadcast(OEShared.MODULE, "hornStart", { vehicle = id })
 end
 
 local function onStop(player, _args)
-    if not OEShared.enabled("QuietHornEnable") then return end
     local key = keyFor(player)
-    local vehicle = player and player:getVehicle()
-    local id = (vehicle and vehicle:isDriver(player) and vehicle:getId()) or lastHorn[key]
-    lastHorn[key] = nil
-    if not id then return end
-    RDNet.broadcast(OEShared.MODULE, "hornStop", { vehicle = id })
+    local rec = active[key]
+    active[key] = nil
+    if not rec then return end
+    RDNet.broadcast(OEShared.MODULE, "hornStop", { vehicle = rec.vehicle })
+end
+
+-- There is no server-side player-disconnect Lua event in 42.20.2. The lease
+-- makes disconnect cleanup independent of that missing surface and also bounds
+-- a dropped hornStop packet. OnTick is registered by LuaEventManager.java:636.
+local function reap()
+    local now = getTimestampMs()
+    local stale
+    for key, rec in pairs(active) do
+        if now >= rec.expiresAt then
+            stale = stale or {}
+            stale[#stale + 1] = key
+        end
+    end
+    if not stale then return end
+    for _, key in ipairs(stale) do
+        local rec = active[key]
+        if rec and now >= rec.expiresAt then
+            active[key] = nil
+            RDNet.broadcast(OEShared.MODULE, "hornStop", { vehicle = rec.vehicle })
+        end
+    end
 end
 
 -- Rate: one honk is a start and a stop, and the radial menu's ISHorn adds its
@@ -81,8 +110,9 @@ end
 -- unregistered command never runs.
 RDNet.register(OEShared.MODULE, "hornStart", { rate = 6 }, onStart)
 RDNet.register(OEShared.MODULE, "hornStop",  { rate = 6 }, onStop)
+Events.OnTick.Add(reap)
 
-return QuietHornSv
+return NoiseOrdinanceSv
 
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.

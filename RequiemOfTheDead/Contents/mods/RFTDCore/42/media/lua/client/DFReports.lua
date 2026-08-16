@@ -135,6 +135,9 @@ function DFReports.collect()
             out[#out + 1] = "  (report returned nothing)"
         else
             local body = {}
+            -- guarded: render walks an arbitrary value returned by a consumer's report -
+            -- cycles, userdata, metatables that throw on index. The empty-body branch below
+            -- is the fallback, so this guard is control flow, not containment.
             pcall(function() render(result, 1, { n = 0 }, body) end)
             if #body == 0 then
                 out[#out + 1] = "  (report produced no readable values)"

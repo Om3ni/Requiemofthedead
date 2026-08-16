@@ -61,6 +61,7 @@
 if not isServer() then return end
 
 require "LMCore"
+require "LMZedsShared"
 require "RDNet"
 
 LMZeds = LMZeds or {}
@@ -114,44 +115,9 @@ refreshArmed()
 -- Removal
 -- ---------------------------------------------------------------------------
 
--- THE ENGINE'S OWN REMOVAL, not a hand-rolled one (corrected 2026-08-06).
---
--- This first mirrored RPCore.cullZombie - removeFromSquare, removeFromWorld,
--- then prune the cell list by hand. Two things are wrong with that, both read
--- from the decompile rather than reasoned about:
---
---   * removeFromWorld ALREADY does the cell-list removal (IsoZombie:3573), so
---     the third step was never doing anything.
---   * it leaks the sound emitter. VirtualZombieManager.removeZombieFromWorld
---     (VirtualZombieManager:80-86) unregisters the emitter FIRST, then removes.
---     Skip that and the zombie is gone from the world while its emitter is
---     still registered - a zombie you can hear standing in an empty safe zone,
---     which for a feature whose selling point is silence is the worst possible
---     artefact.
---
--- The order also matters and is the engine's: emitter, world, square. So call
--- the engine's method and stop maintaining a copy of it. VirtualZombieManager
--- is Lua-exposed (LuaManager setExposed, and `instance` is a public static
--- field, which Kahlua does expose - unlike instance fields). The hand-rolled
--- version stays as a fallback, because a removal that half-happens is worse
--- than either outcome and this must not depend on one symbol resolving.
-local function cull(z)
-    if VirtualZombieManager and VirtualZombieManager.instance then
-        local vm = VirtualZombieManager.instance
-        -- pcall: engine removal mutates world state and must not half-happen
-        -- unguarded; direct form, this runs per suppressed birth.
-        if pcall(vm.removeZombieFromWorld, vm, z) then return end
-    end
-    -- pcall: getEmitter() is a field read (IsoGameCharacter:1348) but the
-    -- emitter may be null, and unregister() is not in the decompile at all.
-    pcall(function() z:getEmitter():unregister() end)
-    -- pcall: IsoZombie.removeFromWorld:3550 chains into IsoMovingObject:688,
-    -- which calls getCell().isSafeToAdd() with no guard.
-    pcall(z.removeFromWorld, z)
-    -- No guard: IsoMovingObject.removeFromSquare:702 null-checks every field
-    -- it touches, and it is the last step so nothing follows it to skip.
-    z:removeFromSquare()
-end
+-- Removal is shared with the client sweep - see shared/LMZedsShared.lua, which
+-- carries the reasoning (and the 2026-08-06 correction that produced it).
+local cull = LMZedsShared.cull
 
 local function record(name)
     removedByZone[name] = (removedByZone[name] or 0) + 1
@@ -176,8 +142,10 @@ local function onZombieCreate(z)
     record(name)
 end
 
--- pcall: a throw in the birth hook would surface per zombie, every spawn.
-Events.OnZombieCreate.Add(function(z) pcall(onZombieCreate, z) end)
+-- No guard: a throw in the birth hook would surface per zombie either way -
+-- KahluaThread logs at throw time (:865/:1100), before any Lua pcall sees it -
+-- and Event.trigger keeps it off every other listener (Event.java:53-63).
+Events.OnZombieCreate.Add(function(z) onZombieCreate(z) end)
 
 -- ---------------------------------------------------------------------------
 -- The standing sweep

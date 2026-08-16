@@ -25,6 +25,25 @@
 #      and the fix is a deliberate act: add the guard's reason to the code, then
 #      run --update to move the baseline with your eyes open.
 #
+#   3. AN OPAQUE GUARD MUST SAY WHY. Rule 1 matches on the engine methods inside
+#      the guard, so a pcall containing NO method call - pcall(someLocal), or a
+#      closure that only touches fields - can never be flagged by it, whatever it
+#      wraps. That was 22% of the suite sitting in a region rule 1 structurally
+#      cannot reach. Those guards now have to carry a comment (a line above, or
+#      trailing on the same line). Cheap for a real guard, which already has a
+#      reason worth writing; the ones that cannot produce a reason are the ones
+#      worth deleting.
+#
+# WHAT A GUARD IS FOR (read out of the 42.20.2 decompile, 2026-08-15): the engine
+# ALREADY contains a throw at every dispatch boundary - Event.trigger runs each
+# listener through protectedCallVoid inside a per-listener try/catch
+# (Event.java:53-63), and UIManager.render does the same per element. It also logs
+# at throw time (KahluaThread:865/:1100) BEFORE any Lua pcall sees the error, so a
+# guard buys no silence either. A guard therefore earns its place by GRANULARITY -
+# letting one bad row fail without costing the whole pass - never by containment.
+# Sixteen guards whose comments claimed otherwise were deleted the day this was
+# verified; do not write the seventeenth.
+#
 # Adding to the safe list is a decompile job, not a guess: read the Java body in
 # PZ_Engine_Decompiled_*/ and record where you read it. "It looks like a getter"
 # is how the 1,299 happened.
@@ -40,76 +59,14 @@ import os
 import re
 import sys
 
-def _find_repo():
-    d = os.path.dirname(os.path.abspath(__file__))
-    while True:
-        if os.path.isdir(os.path.join(d, "RequiemOfTheDead", "Contents")) \
-                and os.path.isdir(os.path.join(d, "tools")):
-            return d
-        parent = os.path.dirname(d)
-        if parent == d:
-            sys.exit("cannot locate the repo root above " + os.path.abspath(__file__))
-        d = parent
-
-REPO = _find_repo()
-MODS = os.path.join(REPO, "RequiemOfTheDead", "Contents", "mods")
+# The repo walk, the comment blanker and the mod-exempt list are shared with
+# check-helpers.py - see tools/luascan.py.
+from luascan import (REPO, blank_comments_and_strings, lua_files, mod_of,
+                     rel as relpath)
 SAFE_FILE = os.path.join(REPO, "tools", "pcall-safe.json")
 BASE_FILE = os.path.join(REPO, "tools", "pcall-baseline.json")
 
-# Files whose whole job is probing engine internals - guards there are the
-# feature, not the debt.
-EXEMPT_BASENAMES = {"HBDebugPanel.lua", "DFItemProbes.lua", "HBAPIProbe.lua"}
-
-LONG_OPEN = re.compile(r"\[(=*)\[")
 METHOD_CALL = re.compile(r"[:.]([A-Za-z_][A-Za-z0-9_]*)\s*[(,]")
-
-
-def blank_comments_and_strings(text):
-    """Return text with comment and string bodies replaced by spaces (newlines
-    kept), so scanning never trips over a ':method(' inside either."""
-    out = list(text)
-    i, n = 0, len(text)
-
-    def blank(a, b):
-        for k in range(a, b):
-            if out[k] != "\n":
-                out[k] = " "
-
-    while i < n:
-        c = text[i]
-        if c in "'\"":
-            start = i
-            i += 1
-            while i < n:
-                if text[i] == "\\":
-                    i += 2
-                elif text[i] == c or text[i] == "\n":
-                    i += 1
-                    break
-                else:
-                    i += 1
-            blank(start, i)
-        elif c == "[" and LONG_OPEN.match(text, i):
-            m = LONG_OPEN.match(text, i)
-            close = "]" + m.group(1) + "]"
-            end = text.find(close, m.end())
-            end = n if end == -1 else end + len(close)
-            blank(i, end)
-            i = end
-        elif c == "-" and text.startswith("--", i):
-            m = LONG_OPEN.match(text, i + 2)
-            if m:
-                close = "]" + m.group(1) + "]"
-                end = text.find(close, m.end())
-                end = n if end == -1 else end + len(close)
-            else:
-                end = text.find("\n", i)
-                end = n if end == -1 else end
-            blank(i, end)
-            i = end
-        else:
-            i += 1
-    return "".join(out)
 
 
 def pcall_extent(text, open_paren):
@@ -126,11 +83,18 @@ def pcall_extent(text, open_paren):
     return n
 
 
+# How far above a guard we look for its reason. Four lines covers a short prose
+# comment without reaching back into the previous statement's.
+COMMENT_LOOKBACK = 4
+
+
 def scan_file(path, safe):
-    """Yield (line_no, targets, all_safe) for each pcall site."""
+    """Yield (line_no, targets, all_safe, documented) for each pcall site."""
     with open(path, "rb") as f:
         text = f.read().decode("utf-8", "replace")
     clean = blank_comments_and_strings(text)
+    # Comments are blanked in `clean`, so the reason is read off the RAW text.
+    raw_lines = text.split(chr(10))
     for m in re.finditer(r"\bpcall\s*\(", clean):
         end = pcall_extent(clean, m.end() - 1)
         body = clean[m.end():end]
@@ -140,19 +104,11 @@ def scan_file(path, safe):
         # this guard is actually protecting.
         targets = [t for t in targets if t != "pcall"]
         all_safe = bool(targets) and all(t in safe for t in targets)
-        yield text.count("\n", 0, m.start()) + 1, targets, all_safe
-
-
-def lua_files():
-    for dirpath, _, filenames in os.walk(MODS):
-        for name in sorted(filenames):
-            if name.lower().endswith(".lua") and name not in EXEMPT_BASENAMES:
-                yield os.path.join(dirpath, name)
-
-
-def mod_of(path):
-    rel = os.path.relpath(path, MODS)
-    return rel.split(os.sep)[0]
+        line = text.count(chr(10), 0, m.start()) + 1
+        # A reason counts if it sits just above, or trails the guard itself.
+        above = raw_lines[max(0, line - 1 - COMMENT_LOOKBACK):line - 1]
+        documented = any("--" in t for t in above) or "--" in raw_lines[line - 1]
+        yield line, targets, all_safe, documented
 
 
 def main():
@@ -172,11 +128,11 @@ def main():
         with open(BASE_FILE, encoding="utf-8") as f:
             baseline = json.load(f)["mods"]
 
-    counts, violations = {}, []
+    counts, violations, undocumented = {}, [], []
     for path in lua_files():
         mod = mod_of(path)
-        rel = os.path.relpath(path, REPO).replace(os.sep, "/")
-        for line, targets, all_safe in scan_file(path, safe):
+        rel = relpath(path)
+        for line, targets, all_safe, documented in scan_file(path, safe):
             counts[mod] = counts.get(mod, 0) + 1
             if args.list:
                 print(f"{rel}:{line}  {','.join(targets) or '(no method call)'}")
@@ -184,6 +140,10 @@ def main():
                 violations.append(
                     f"{rel}:{line}  guards only verified-safe calls "
                     f"({', '.join(sorted(set(targets)))}) - call directly")
+            elif not targets and not documented:
+                undocumented.append(
+                    f"{rel}:{line}  opaque guard - no engine call rule 1 can see, "
+                    f"and no reason given: say why, or delete it")
 
     crept = []
     for mod in sorted(set(counts) | set(baseline)):
@@ -211,6 +171,8 @@ def main():
 
     for v in violations:
         print("REMOVABLE  " + v)
+    for u in undocumented:
+        print("UNDOCUMENTED  " + u)
     if crept:
         print()
         for c in crept:
@@ -218,9 +180,9 @@ def main():
         print("           new guards need a reason in the code, then --update")
 
     total = sum(counts.values())
-    if violations or crept:
-        print(f"\nFAIL  {len(violations)} removable, {len(crept)} mod(s) over baseline "
-              f"({total} pcalls total)")
+    if violations or crept or undocumented:
+        print(f"{chr(10)}FAIL  {len(violations)} removable, {len(undocumented)} undocumented, "
+              f"{len(crept)} mod(s) over baseline ({total} pcalls total)")
         return 1
     print(f"pcall check clean - {total} guard(s), all justified, no mod over baseline")
     return 0

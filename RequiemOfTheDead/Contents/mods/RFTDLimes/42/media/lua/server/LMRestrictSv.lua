@@ -50,6 +50,7 @@
 if not isServer() then return end
 
 require "LMCore"
+require "LMRestrictShared"
 require "RDNet"
 
 LMRestrict = LMRestrict or {}
@@ -66,15 +67,8 @@ local TOKEN = "RFTDLimes"
 --
 -- Reads the RESOLVED store, so a child zone inherits its parent's restrictions
 -- exactly the way every other field inherits.
-local function denied(x, y, flag)
-    if not x or not y then return false, nil end
-    -- pcall stays: this runs INSIDE wrapped vanilla globals, and a throw here
-    -- would break the wrapped action itself, not just the flag.
-    local ok, zone = pcall(Limes.getLocation, math.floor(x), math.floor(y))
-    if not ok or not zone or not zone.fields then return false, nil end
-    if zone.fields[flag] == true then return true, zone.name end
-    return false, nil
-end
+-- Shared with LMRestrictCl - see shared/LMRestrictShared.lua.
+local denied = LMRestrictShared.denied
 
 -- Where a character is standing, when the action carries no coordinates of its
 -- own. Second best and always noted as such: a player can stand outside a zone
@@ -330,13 +324,14 @@ if Events and Events.OnServerStarted then
     end)
 end
 
--- pcall on both: a throw in either handler would break every other listener
--- on the event.
+-- No guard on either: Event.trigger runs every listener through
+-- protectedCallVoid inside a per-listener try/catch (Event.java:53-63), so a
+-- throw in one handler cannot break another listener on the event.
 if Events and Events.OnNewFire then
-    Events.OnNewFire.Add(function(fire) pcall(onNewFire, fire) end)
+    Events.OnNewFire.Add(function(fire) onNewFire(fire) end)
 end
 if Events and Events.OnSafehousesChanged then
-    Events.OnSafehousesChanged.Add(function() pcall(onSafehousesChanged) end)
+    Events.OnSafehousesChanged.Add(function() onSafehousesChanged() end)
 end
 
 -- ---------------------------------------------------------------------------

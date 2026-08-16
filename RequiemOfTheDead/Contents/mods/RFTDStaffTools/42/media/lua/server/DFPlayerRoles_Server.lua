@@ -22,6 +22,7 @@
 if not isServer() then return end
 
 require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
+require "DFRoleShared"
 
 RDShared.registerMod("RFTDStaffTools", "1.2.0")   -- keep in sync with mod.info
 
@@ -95,15 +96,10 @@ end
 -- Role lookup + apply
 -- ─────────────────────────────────────────────────────────────────────────
 
-local function findRole(name)
-    local ok, roles = pcall(getRoles)
-    if not ok or not roles then return nil end
-    for i = 0, roles:size() - 1 do
-        local r = roles:get(i)
-        if r and r:getName() == name then return r end
-    end
-    return nil
-end
+-- findRole was a THIRD copy, and the only one that wrapped getRoles in a pcall.
+-- Settled against the decompile when the three were merged: getRoles
+-- (LuaManager:3109) returns Roles.roles, a `private static final ArrayList`
+-- (Roles:25). It cannot throw, so the guard was cargo. See DFRoleShared.
 
 -- Returns true only when it actually CHANGED the live role. If the player
 -- already has the right role we leave them alone: re-running setRole mid-
@@ -122,7 +118,7 @@ local function applyToOnline(username, roleName)
     end)
     if currentName == roleName then return false end  -- already correct: no-op
 
-    local role = findRole(roleName)
+    local role = DFRoleShared.findRole(roleName)
     if not role then return false end
     local ok = pcall(function() target:setRole(role) end)
     pcall(function() target:transmitModData() end)
@@ -137,7 +133,7 @@ function DFPlayerRoles.assign(username, roleName)
     if not username or username == "" then
         return { ok = false, reason = "missing username" }
     end
-    if not findRole(roleName) then
+    if not DFRoleShared.findRole(roleName) then
         return { ok = false, reason = "unknown role: " .. tostring(roleName) }
     end
     local overrides = getOverrides()

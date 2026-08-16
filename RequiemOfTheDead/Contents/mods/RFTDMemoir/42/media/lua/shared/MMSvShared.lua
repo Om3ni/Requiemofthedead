@@ -302,6 +302,7 @@ function MMShared.findTraitByName(name)
         local ok, defs = pcall(function() return CharacterTraitDefinition.getTraits() end)
         if (not ok or not defs or defs:size() == 0)
                 and BaseGameCharacterDetails and BaseGameCharacterDetails.DoTraits then
+            -- guarded: vanilla ISUI Lua, not in the decompile and so unverifiable here.
             pcall(BaseGameCharacterDetails.DoTraits)
             ok, defs = pcall(function() return CharacterTraitDefinition.getTraits() end)
         end
@@ -385,6 +386,7 @@ local profByName = nil
 function MMShared.findProfessionDefByName(name)
     if not profByName then
         if BaseGameCharacterDetails and BaseGameCharacterDetails.DoProfessions then
+            -- guarded: vanilla ISUI Lua, not in the decompile and so unverifiable here.
             pcall(BaseGameCharacterDetails.DoProfessions)
         end
         profByName = {}

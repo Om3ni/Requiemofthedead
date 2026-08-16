@@ -14,43 +14,15 @@
 
 if not isServer() then return end
 
+require "DFRoleShared"   -- explicit: the client walks lua tiers alphabetically
+                         -- across mods, so load order cannot be assumed (CLAUDE.md 4)
+
 local MODULE = "Dragonfly_RoleEdit"
 local OVERRIDES_FILE = "Dragonfly_RoleOverrides.txt"
 local FIELD_DELIM = "\t"
 
-local capabilityByName
-local function getCapabilityByName(name)
-    if not capabilityByName then
-        capabilityByName = {}
-        local all = getCapabilities()
-        for i=0,all:size()-1 do
-            local c = all:get(i)
-            capabilityByName[c:name()] = c
-        end
-    end
-    return capabilityByName[name]
-end
-
-local function findRole(name)
-    local list = getRoles()
-    for i=0,list:size()-1 do
-        local r = list:get(i)
-        if r:getName() == name then return r end
-    end
-    return nil
-end
-
-local function applyOverride(role, args)
-    if not role then return end
-    role:setDescription(args.description or "")
-    role:setColor(Color.new(args.r or 1, args.g or 1, args.b or 1, 1.0))
-    local caps = role:getCapabilities()
-    caps:clear()
-    for _, capName in ipairs(args.capabilities or {}) do
-        local cap = getCapabilityByName(capName)
-        if cap then caps:add(cap) end
-    end
-end
+-- capability / findRole / applyOverride live in shared/DFRoleShared.lua - the
+-- client half of this bypass ran identical copies of all three.
 
 local function split(s, sep)
     local out, i = {}, 1
@@ -113,7 +85,7 @@ local function applyAllOverrides()
     for _ in pairs(overrides) do hasAny = true; break end
     if not hasAny then return end
     for name, args in pairs(overrides) do
-        applyOverride(findRole(name), args)
+        DFRoleShared.applyOverride(DFRoleShared.findRole(name), args)
     end
 end
 
@@ -122,9 +94,9 @@ local function onClientCommand(module, command, player, args)
     if not player or not args or not args.roleName then return end
     if not player:getRole():hasCapability(Capability.RolesWrite) then return end
 
-    local role = findRole(args.roleName)
+    local role = DFRoleShared.findRole(args.roleName)
     if not role then return end
-    applyOverride(role, args)
+    DFRoleShared.applyOverride(role, args)
 
     local overrides = loadOverrides()
     overrides[args.roleName] = args

@@ -587,9 +587,10 @@ function DFDeck.loadSizes()
 end
 
 function DFDeck.canOpen()
-    local tier
-    pcall(function() tier = SandboxVars.RFTDDragonfly and SandboxVars.RFTDDragonfly.PanelAccess end)
-    return RDAccess.meetsTier(getPlayer(), tier)
+    -- No guard: the nil-check chain replaces it. Indexing SandboxVars before
+    -- options load was the only throw here, and meetsTier takes a nil tier.
+    local sv = SandboxVars and SandboxVars.RFTDDragonfly
+    return RDAccess.meetsTier(getPlayer(), sv and sv.PanelAccess)
 end
 
 function DFDeck.open()
@@ -646,6 +647,9 @@ function DFDeck.toggle()
 end
 
 local function shiftDown()
+    -- guarded: GameKeyboard.isKeyDown:113 is fully null-checked, but a build whose
+    -- Keyboard table lacks KEY_LSHIFT hands it nil, which Kahlua cannot coerce to
+    -- int. Degrade to 'shift is not held' rather than break the hotkey.
     local ok, held = pcall(function()
         return isKeyDown(Keyboard.KEY_LSHIFT) or isKeyDown(Keyboard.KEY_RSHIFT)
     end)

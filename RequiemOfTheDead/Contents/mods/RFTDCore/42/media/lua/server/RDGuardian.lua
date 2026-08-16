@@ -124,56 +124,59 @@ end
 if not RDGuardian._hooked then
     RDGuardian._hooked = true
     Events.OnClientCommand.Add(function(module, command, player, args)
-        pcall(function()   -- a sensor fault must never disturb the real command path
-            local x, y, z = -1, -1, -1
-            if player then
-                x = math.floor(player:getX()); y = math.floor(player:getY()); z = math.floor(player:getZ())
-            end
-            local est, partial = RDWire.commandEstimate(module, command, args)
-            RDLog.forensic("guardian", "RD.CMD", player, {
-                access   = (player and player:getAccessLevel()) or "",
-                sid      = RDIdentity.sidApprox(player) or "0",
-                onlineid = (player and player:getOnlineID()) or -1,
-                x = x, y = y, z = z,
-                module   = tostring(module),
-                command  = tostring(command),
-                args     = RDGuardian.serializeArgs(args),
-                est      = est,
-                partial  = partial or nil,   -- omitted unless the size walk ran out of budget
-            }, "RFTDCore")
-            -- args rides along so RDMeter can classify a chunked C2S stream
-            -- (seq/total) rather than seeing only its size. Already in hand here;
-            -- the alternative is a second walk or a second listener, and the
-            -- note above is about not adding either.
-            RDMeter.record("C2S", tostring(module) .. ":" .. tostring(command), est, partial, args)
+        -- No guard: this is the whole body of an engine-dispatched handler, and
+        -- Event.trigger runs every listener through protectedCallVoid inside a
+        -- per-listener try/catch (Event.java:53-63) - a sensor fault here already
+        -- cannot disturb the real command path. Nor would a guard buy quiet:
+        -- KahluaThread logs at throw time (:865/:1100) before Lua pcall sees it.
+        local x, y, z = -1, -1, -1
+        if player then
+            x = math.floor(player:getX()); y = math.floor(player:getY()); z = math.floor(player:getZ())
+        end
+        local est, partial = RDWire.commandEstimate(module, command, args)
+        RDLog.forensic("guardian", "RD.CMD", player, {
+            access   = (player and player:getAccessLevel()) or "",
+            sid      = RDIdentity.sidApprox(player) or "0",
+            onlineid = (player and player:getOnlineID()) or -1,
+            x = x, y = y, z = z,
+            module   = tostring(module),
+            command  = tostring(command),
+            args     = RDGuardian.serializeArgs(args),
+            est      = est,
+            partial  = partial or nil,   -- omitted unless the size walk ran out of budget
+        }, "RFTDCore")
+        -- args rides along so RDMeter can classify a chunked C2S stream
+        -- (seq/total) rather than seeing only its size. Already in hand here;
+        -- the alternative is a second walk or a second listener, and the
+        -- note above is about not adding either.
+        RDMeter.record("C2S", tostring(module) .. ":" .. tostring(command), est, partial, args)
 
-            -- Live staff console feed. Deliberately called from INSIDE this
-            -- handler rather than registering its own listener - see the "OSN
-            -- registered its OWN OnClientCommand listener" note above; that is the
-            -- mistake this guard exists to avoid repeating. Removable-file idiom
-            -- (as MMAudit): delete RDCmdRelay.lua and the feed is gone with no
-            -- other edit. It is default-OFF and returns on its first line when
-            -- disarmed, so the cost here is one table lookup and one call.
-            if RDCmdRelay then
-                RDCmdRelay.offer(module, command, player,
-                    (player and player:getAccessLevel()) or "", est)
-            end
+        -- Live staff console feed. Deliberately called from INSIDE this
+        -- handler rather than registering its own listener - see the "OSN
+        -- registered its OWN OnClientCommand listener" note above; that is the
+        -- mistake this guard exists to avoid repeating. Removable-file idiom
+        -- (as MMAudit): delete RDCmdRelay.lua and the feed is gone with no
+        -- other edit. It is default-OFF and returns on its first line when
+        -- disarmed, so the cost here is one table lookup and one call.
+        if RDCmdRelay then
+            RDCmdRelay.offer(module, command, player,
+                (player and player:getAccessLevel()) or "", est)
+        end
 
-            -- Tripwire inspection, same removable-file idiom and the same reason
-            -- for living inside this handler rather than beside it. Two table
-            -- lookups on the miss path, and the miss path is every command that
-            -- nobody registered as privileged - which is nearly all of them.
-            --
-            -- This is the only tripwire tier that is EVIDENCE: the access level
-            -- it judges against is read server-side from the connection, so a
-            -- client can neither suppress the check nor lie its way past it.
-            -- Everything reported from the client is a weaker claim and is
-            -- labelled as one; see RDTripwire's header.
-            if RDTripwire then
-                RDTripwire.inspect(module, command, player,
-                    (player and player:getAccessLevel()) or "")
-            end
-        end)
+        -- Tripwire inspection, same removable-file idiom and the same reason
+        -- for living inside this handler rather than beside it. Two table
+        -- lookups on the miss path, and the miss path is every command that
+        -- nobody registered as privileged - which is nearly all of them.
+        --
+        -- This is the only tripwire tier that is EVIDENCE: the access level
+        -- it judges against is read server-side from the connection, so a
+        -- client can neither suppress the check nor lie its way past it.
+        -- Everything reported from the client is a weaker claim and is
+        -- labelled as one; see RDTripwire's header.
+        if RDTripwire then
+            RDTripwire.inspect(module, command, player,
+                (player and player:getAccessLevel()) or "")
+        end
     end)
 end
 

@@ -15,9 +15,9 @@
 --     (and RFTD_LifeId with it) does not survive death
 -- The mock below reproduces exactly that: same onlineID, fresh modData table.
 --
--- Stubs are light because every helper in RDLife is pcall-wrapped and degrades to
--- a default, so the mock player only needs the handful of methods the poll and
--- handleReady actually branch on.
+-- The fixture mirrors every engine surface RDLife calls directly. Those calls
+-- were verified and deliberately unwrapped in the pcall sweep, so a missing mock
+-- method should fail loudly here instead of being mistaken for engine resilience.
 --
 -- Usage (normally via tools\run-tests.bat):
 --   lua5.1.exe tools/tests/test_rdlife.lua <repo-root>
@@ -54,6 +54,28 @@ RDShared = { mods = {}, nowMs = function() return clockMs end,
              gameDay = function() return gameDay end,
              debugOn = function() return false end }
 
+-- LuaManager.java:1757-1759 exposes PerkFactory, Perk and Perks. The production
+-- loop consumes the Java ArrayList through size/get, so preserve that shape.
+local perkNone   = { id = "None" }
+local perkAiming = { id = "Aiming" }
+local perkMax    = { id = "MAX" }
+for _, perk in ipairs({ perkNone, perkAiming, perkMax }) do
+    function perk:getType() return self end
+    function perk:getId() return self.id end
+end
+local perkList = { perkNone, perkAiming, perkMax }
+PerkFactory = {
+    Perks = { None = perkNone, MAX = perkMax },
+    PerkList = {
+        size = function() return #perkList end,
+        get  = function(_, i) return perkList[i + 1] end,
+    },
+}
+
+-- homePass owns the genuine SafeHouse failure boundary. No safehouse is the
+-- ordinary result for these players; the global itself always exists in-game.
+SafeHouse = { hasSafehouse = function() return nil end }
+
 local chronicled = {}   -- list of event names, in order
 local lastPayload = {}  -- event name -> the payload table it last carried
 RDLog = {
@@ -82,13 +104,25 @@ local function newPlayer(onlineId, username)
         _md = {},                -- modData; replaced wholesale on "respawn"
         _dead = false,
         _loaded = true,          -- has square + inventory
+        _hours = 0.25,
+        _x = 100.75, _y = 200.25, _z = 0,
+        _zombieKills = 3, _survivorKills = 1,
+        _perkLevels = { [perkAiming] = 2 },
     }
+    self._square = { getBuilding = function() return nil end }
     function self:getOnlineID()   return self._id end
     function self:getUsername()   return self._user end
     function self:getModData()    return self._md end
     function self:isDead()        return self._dead end
-    function self:getSquare()     return self._loaded and {} or nil end
+    function self:getSquare()     return self._loaded and self._square or nil end
     function self:getInventory()  return self._loaded and {} or nil end
+    function self:getHoursSurvived() return self._hours end
+    function self:getX() return self._x end
+    function self:getY() return self._y end
+    function self:getZ() return self._z end
+    function self:getZombieKills() return self._zombieKills end
+    function self:getSurvivorKills() return self._survivorKills end
+    function self:getPerkLevel(perk) return self._perkLevels[perk] or 0 end
     function self:transmitModData() end
     -- Traits/profession as the engine hands them over: getName() is the PATH with
     -- the namespace stripped, tostring() is the full "namespace:path" id. The
@@ -185,6 +219,14 @@ eq("a life id was minted", type(p._md.RFTD_LifeId), "string")
 -- answer "organized", so the record could not distinguish the character it
 -- described from the one it had lost. traitsOf sorts, so the order is stable.
 local build = lastPayload["RD.SPAWN"] and lastPayload["RD.SPAWN"].build or {}
+local firstSpawn = lastPayload["RD.SPAWN"] or {}
+eq("chronicled survival hours come from the player", firstSpawn.hours, 0.25)
+eq("chronicled x is floored", firstSpawn.x, 100)
+eq("chronicled y is floored", firstSpawn.y, 200)
+eq("chronicled z is floored", firstSpawn.z, 0)
+eq("chronicled zombie kills come from the player", firstSpawn.kills and firstSpawn.kills.zombies, 3)
+eq("chronicled survivor kills come from the player", firstSpawn.kills and firstSpawn.kills.survivors, 1)
+eq("chronicled perk levels come from PerkFactory", build.perks and build.perks.Aiming, 2)
 eq("chronicled traits are namespaced ids, not getName()",
     table.concat(build.traits or {}, ","), "base:organized,seinarextendedprofessions:slicer")
 eq("chronicled profession is a namespaced id", build.profession, "base:unemployed")

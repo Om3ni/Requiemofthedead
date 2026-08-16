@@ -27,18 +27,13 @@
 if isServer() then return end
 
 require "LMCore"
+require "LMRestrictShared"
 
 LMRestrictCl = LMRestrictCl or {}
 
-local function denied(x, y, flag)
-    if not x or not y then return false, nil end
-    -- pcall stays: this runs INSIDE a wrapped vanilla action, and a throw in
-    -- the store walk would break that action rather than just the flag.
-    local ok, zone = pcall(Limes.getLocation, math.floor(x), math.floor(y))
-    if not ok or not zone or not zone.fields then return false, nil end
-    if zone.fields[flag] == true then return true, zone.name end
-    return false, nil
-end
+-- Shared with LMRestrictSv - a restriction whose two halves can disagree is
+-- worse than none. See shared/LMRestrictShared.lua.
+local denied = LMRestrictShared.denied
 
 -- No guard: getSpecificPlayer (LuaManager:3617) is `IsoPlayer.players[player]`,
 -- and index 0 is always in bounds of that four-slot static array.
@@ -75,9 +70,10 @@ end
 Events.OnServerCommand.Add(function(module, command, args)
     if module ~= "RFTDLimes" or command ~= "restricted" then return end
     if type(args) ~= "table" then return end
-    -- pcall: OnServerCommand is shared with every other mod's handler, so a
-    -- throw here would cost them their turn on this event.
-    pcall(LMRestrictCl.explain, args.flag, args.zone)
+    -- No guard: OnServerCommand is shared with every other mod's handler, but
+    -- Event.trigger already gives each listener its own protectedCallVoid and
+    -- try/catch (Event.java:53-63), so a throw here cannot cost them their turn.
+    LMRestrictCl.explain(args.flag, args.zone)
 end)
 
 -- ---------------------------------------------------------------------------

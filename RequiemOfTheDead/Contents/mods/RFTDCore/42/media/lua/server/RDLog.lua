@@ -639,8 +639,9 @@ function RDLog.selfTest()
 end
 
 if Events.OnServerStarted then
-    -- selfTest does real file I/O; a probe fault must not mark boot as failed
-    Events.OnServerStarted.Add(function() pcall(RDLog.selfTest) end)
+    -- No guard: Event.trigger isolates listeners (Event.java:53-63), so a
+    -- selfTest I/O fault cannot mark boot as failed on its own.
+    Events.OnServerStarted.Add(function() RDLog.selfTest() end)
 end
 
 return RDLog
