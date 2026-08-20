@@ -34,6 +34,12 @@ local TRAILER_SCAN_RANGE = 20  -- ±squares around each player for trailer scan
 -- fields as a debug report with the third-party Error Magnifier mod, and was
 -- deleted when the console moved into Core. Nothing reads them today.
 --
+-- lastHutchRefilled was REMOVED 2026-08-20 rather than left reading 0. Hutch
+-- animals moved to HBFarmHand, so this scan stopped refilling them - and a
+-- counter pinned at zero is worse than no counter, because it reads as "hutch
+-- keep-alive is broken" to exactly the person who came here to check. The live
+-- numbers are HBFarmHand.stats (registered / lastServiced / lastSkipped).
+--
 -- They are kept rather than removed because the keep-alive is the module whose
 -- failures are hardest to see from outside - it either ticks or silently does
 -- not - and re-adding counters after the fact means re-deriving which ones
@@ -44,7 +50,6 @@ HBKeepAlive.tickCount            = 0
 HBKeepAlive.lastTickAt           = 0
 HBKeepAlive.lastLooseRefilled    = 0
 HBKeepAlive.lastTrailerRefilled  = 0
-HBKeepAlive.lastHutchRefilled    = 0
 HBKeepAlive.trailerOverrideCalls = 0
 HBKeepAlive.verbose              = false  -- set true to log per-tick refill counts
 
@@ -179,7 +184,7 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
     local sq = player:getCurrentSquare()
     if not sq then return 0, 0 end
     local px, py, pz = sq:getX(), sq:getY(), sq:getZ()
-    local trailerRefilled, hutchRefilled = 0, 0
+    local trailerRefilled = 0
 
     local function refillFromAnimalsList(animalsList, tracker)
         if not animalsList then return 0 end
@@ -244,7 +249,7 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
         end
     end
 
-    return trailerRefilled, hutchRefilled
+    return trailerRefilled
 end
 
 -- Resolve the player set to scan around. SP: getSpecificPlayer(0). MP: walk
@@ -291,24 +296,23 @@ local function tick()
     -- Loose animals: single cell-list walk.
     local nLoose = refillLoose(cell, seen)
 
-    -- Trailers + hutches: ±20 grid-square scan per player.
-    local nTrailer, nHutch = 0, 0
+    -- Trailers: ±20 grid-square scan per player. Hutches are seeded along the
+    -- way but serviced by HBFarmHand, which walks them by coordinate - see its
+    -- header for why proximity was the wrong condition.
+    local nTrailer = 0
     local seenVehicles, seenHutches = {}, {}
     for _, p in ipairs(gatherPlayers()) do
-        local t, h = refillContainersAround(cell, p, seen, seenVehicles, seenHutches)
-        nTrailer = nTrailer + t
-        nHutch   = nHutch + h
+        nTrailer = nTrailer + refillContainersAround(cell, p, seen, seenVehicles, seenHutches)
     end
 
     HBKeepAlive.lastLooseRefilled   = nLoose
     HBKeepAlive.lastTrailerRefilled = nTrailer
-    HBKeepAlive.lastHutchRefilled   = nHutch
 
     -- Logging is opt-in (HBKeepAlive.verbose) - the instrumentation fields
     -- above carry the same state without spamming the server log.
-    if HBKeepAlive.verbose and (nLoose + nTrailer + nHutch) > 0 then
-        print(string.format("[HB] keep-alive tick: refilled %d loose, %d trailer, %d hutch",
-            nLoose, nTrailer, nHutch))
+    if HBKeepAlive.verbose and (nLoose + nTrailer) > 0 then
+        print(string.format("[HB] keep-alive tick: refilled %d loose, %d trailer",
+            nLoose, nTrailer))
     end
 end
 

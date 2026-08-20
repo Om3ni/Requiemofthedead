@@ -51,19 +51,19 @@ HBFarmHand = HBFarmHand or {}
 -- CLAUDE.md sect. 13 makes a compatibility decision rather than an
 -- implementation one. The cost of that choice is stated honestly in
 -- HBFarmHand.coverage below.
-local known = {}
-local knownCount = 0
+local registry = {}
+local registryCount = 0
 
 -- Read-only counters. Hutch upkeep is the module whose failure is hardest to
 -- see from outside - it either runs or silently does not, and the symptom
 -- (slowly rising dirt) takes days to notice. These make a live answer possible
 -- without a debugger.
 HBFarmHand.stats = {
-    registered = 0,   -- hutches currently known
-    lastSeen   = 0,   -- resolved and serviced on the last pass
-    lastSkipped= 0,   -- known but unloaded on the last pass (normal)
-    pruned     = 0,   -- entries dropped because the hutch is gone (cumulative)
-    passes     = 0,
+    registered   = 0, -- hutches currently in the registry
+    lastServiced = 0, -- hutches resolved and serviced on the last pass
+    lastSkipped  = 0, -- registered but unreachable last pass (normal)
+    pruned       = 0, -- entries dropped, hutch confirmed gone (cumulative)
+    passes       = 0,
 }
 
 local function keyOf(x, y, z)
@@ -95,10 +95,10 @@ function HBFarmHand.remember(hutch)
     if not sq then return end
     local x, y, z = sq:getX(), sq:getY(), sq:getZ()
     local k = keyOf(x, y, z)
-    if known[k] then return end
-    known[k] = { x = x, y = y, z = z }
-    knownCount = knownCount + 1
-    HBFarmHand.stats.registered = knownCount
+    if registry[k] then return end
+    registry[k] = { x = x, y = y, z = z }
+    registryCount = registryCount + 1
+    HBFarmHand.stats.registered = registryCount
 end
 
 -- How complete the registry is, in words, for the admin panel and for anyone
@@ -109,7 +109,7 @@ end
 -- is not "complete", and saying so here is cheaper than someone re-deriving it.
 function HBFarmHand.coverage()
     return {
-        registered = knownCount,
+        registered = registryCount,
         note = "in-memory; refills as hutches are seen after a restart",
     }
 end
@@ -130,9 +130,9 @@ function HBFarmHand.pass()
     if not cell then return 0, 0 end
 
     local seen, serviced, skipped = {}, 0, 0
-    local dead = nil
+    local gone = nil
 
-    for k, pos in pairs(known) do
+    for k, pos in pairs(registry) do
         local sq = cell:getGridSquare(pos.x, pos.y, pos.z)
         if not sq then
             -- Cold coordinate. Keep the entry: the coop still exists, it is
@@ -149,8 +149,8 @@ function HBFarmHand.pass()
             -- resolution below, because "is there a hutch on this tile" and
             -- "can I reach its master right now" are different questions and
             -- only the first one justifies forgetting the coop.
-            dead = dead or {}
-            dead[#dead + 1] = k
+            gone = gone or {}
+            gone[#gone + 1] = k
         else
             -- Master resolution, through the one resolver the command path
             -- already uses - it handles the slave hop and the cold-master case.
@@ -166,18 +166,18 @@ function HBFarmHand.pass()
         end
     end
 
-    if dead then
-        for i = 1, #dead do
-            known[dead[i]] = nil
-            knownCount = knownCount - 1
+    if gone then
+        for i = 1, #gone do
+            registry[gone[i]] = nil
+            registryCount = registryCount - 1
             HBFarmHand.stats.pruned = HBFarmHand.stats.pruned + 1
         end
-        HBFarmHand.stats.registered = knownCount
+        HBFarmHand.stats.registered = registryCount
     end
 
-    HBFarmHand.stats.lastSeen    = serviced
-    HBFarmHand.stats.lastSkipped = skipped
-    HBFarmHand.stats.passes      = HBFarmHand.stats.passes + 1
+    HBFarmHand.stats.lastServiced = serviced
+    HBFarmHand.stats.lastSkipped  = skipped
+    HBFarmHand.stats.passes       = HBFarmHand.stats.passes + 1
     return serviced, skipped
 end
 
