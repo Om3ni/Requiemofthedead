@@ -146,7 +146,10 @@ local MAX_HUTCH_SLOTS = 64
 
 -- Caller owns per-hutch dedup (see the hutch loop below), so this just
 -- refills the occupants of one hutch and returns the count.
-local function refillHutch(hutch, seen)
+-- EXPORTED for HBFarmHand, which owns the hutch round now. The animal-refill
+-- logic stays here because it is the same refillAnimal contract the loose and
+-- trailer passes use; only the question of WHICH hutches to visit moved.
+function HBKeepAlive.refillHutch(hutch, seen)
     local inside = hutch:getAnimalInside()
     if not inside then return 0 end
     local count = 0
@@ -220,18 +223,21 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
                 -- then do two independent jobs per hutch:
                 --   • HBBedding.applyBedding - def-free dirt cleaning.
                 --   • refillHutch - animal keep-alive.
-                local objs = s:getObjects()
-                if objs then
-                    for k = 0, objs:size() - 1 do
-                        local obj = objs:get(k)
-                        if obj and instanceof(obj, "IsoHutch") then
-                            local hkey = tostring(obj)
-                            if not seenHutches[hkey] then
-                                seenHutches[hkey] = true
-                                if HBBedding then HBBedding.applyBedding(obj) end
-                                hutchRefilled = hutchRefilled + refillHutch(obj, seen)
-                            end
-                        end
+                -- SEEDING ONLY since 2026-08-20. The upkeep itself moved to
+                -- HBFarmHand, which visits hutches by coordinate instead of by
+                -- player proximity - see that file's header for why the two
+                -- conditions never matched and how dirt outran the cleaner.
+                --
+                -- getHutch replaces the old getObjects walk: it reads the
+                -- square's specialObjects list (IsoGridSquare.java:9846-9854),
+                -- which is short and is the engine's own way of finding a
+                -- hutch, where getObjects is every sprite on the tile.
+                local hutch = s:getHutch()
+                if hutch then
+                    local hkey = tostring(hutch)
+                    if not seenHutches[hkey] then
+                        seenHutches[hkey] = true
+                        if HBFarmHand then HBFarmHand.remember(hutch) end
                     end
                 end
             end
@@ -306,7 +312,20 @@ local function tick()
     end
 end
 
+-- The hutch round runs on the same cadence but is NOT part of `tick`: it walks
+-- a registry rather than the player-relative scan, so it must not inherit that
+-- scan's early exits (no players online is a perfectly normal state in which
+-- loaded hutches still need servicing - a driven-past base with its owner
+-- offline is the exact case this fixes).
+local function farmHandTick()
+    local sv = SandboxVars.RFTDHusbandry
+    if not sv or not sv.Enable then return end
+    if not HBFarmHand then return end
+    HBFarmHand.pass()
+end
+
 Events.EveryTenMinutes.Add(tick)
+Events.EveryTenMinutes.Add(farmHandTick)
 
 -- ─── Track B: Vehicles.Update.TrailerAnimalFood override ─────────────────
 -- Replace vanilla's meta-time drain. Vanilla calls

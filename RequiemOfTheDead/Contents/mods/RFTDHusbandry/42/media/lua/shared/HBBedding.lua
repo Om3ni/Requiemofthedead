@@ -217,7 +217,15 @@ function HBBedding.resolveHutchAt(x, y, z)
             -- square is not loaded, so keep walking the square rather than
             -- calling the whole lookup a miss on the strength of one object.
             local master = o:getHutch()
-            if master then return master end
+            if master then
+                -- Every command path that names a coop comes through here, so
+                -- this is the cheapest place to seed HBFarmHand's registry: an
+                -- admin who beds a hutch has just guaranteed it gets serviced
+                -- from now on, without waiting for someone to walk past it.
+                -- Server-only module; nil on the client, where this also runs.
+                if HBFarmHand then HBFarmHand.remember(master) end
+                return master
+            end
         end
     end
     return nil

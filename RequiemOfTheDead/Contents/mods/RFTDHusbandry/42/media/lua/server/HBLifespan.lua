@@ -248,6 +248,10 @@ local function walk(apply, present)
                                     local key = tostring(o)
                                     if not seenH[key] then
                                         seenH[key] = true
+                                        -- Free seed for HBFarmHand: this walk
+                                        -- already found a hutch, and telling
+                                        -- the registry costs one table write.
+                                        if HBFarmHand then HBFarmHand.remember(o) end
                                         visitHutchAnimals(o, visit)
                                     end
                                 end
