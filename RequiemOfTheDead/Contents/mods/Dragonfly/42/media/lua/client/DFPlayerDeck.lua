@@ -49,6 +49,7 @@ require "DFKit"
 require "DFForm"
 require "DFPlayerRegistry"
 require "DFTheme"
+require "DFDeckLayout"  -- shared per-tab size file contract
 
 DFPlayerDeck = ISPanel:derive("DFPlayerDeck")
 
@@ -174,8 +175,10 @@ function DFPlayerDeck:reflowContent()
     end
     local spec = DFPlayerRegistry.tabs[self.activeId or ""]
     if spec and type(spec.resize) == "function" then
-        -- tenant callback (foreign mod): contained so a broken tab cannot
-        -- wedge the shell's resize; failure is reported below
+        -- RETAINED - registration-contract adapter, the same class and the same
+        -- correction as DFDeck's: the tabs are suite mods, not foreign, and the
+        -- reason is the host's own mid-drag state transition, not containment
+        -- (which Event.java:53-63 already provides).
         local ok, err = pcall(spec.resize, spec, self.contentArea, cw, ch)
         if ok then return true end
         print("[PlayerDeck] tab resize failed (" .. tostring(self.activeId) .. "): " .. tostring(err))
@@ -278,8 +281,10 @@ function DFPlayerDeck:showTab(id)
 
     local spec = DFPlayerRegistry.tabs[id]
     if spec and type(spec.build) == "function" then
-        -- tenant callback (foreign mod): a tab that throws in build must not
-        -- kill showTab; the shell survives with an empty pane and a log line
+        -- RETAINED - registration-contract adapter, as above. contentArea is
+        -- already attached and the tab already committed, so an escaping throw
+        -- would strand the shell half-switched; it survives with an empty pane
+        -- and a log line naming the tab instead.
         local ok, err = pcall(spec.build, spec, self.contentArea, 0, 0, cw, ch)
         if not ok then
             print("[PlayerDeck] tab build failed (" .. tostring(id) .. "): " .. tostring(err))
@@ -479,37 +484,17 @@ function DFPlayerDeck:onMouseUpOutside(x, y) endDrag(self) end
 -- ---------------------------------------------------------------------------
 -- Remembered sizes - client-local, one line per tab, failures non-fatal;
 -- position is not saved (the panel centres on whatever screen it opens on).
--- The old single-line "w= h=" format simply fails the per-tab parse and is
--- forgotten - one default-sized open, then the file is rewritten new-style.
+--
+-- The file contract itself lives in DFDeckLayout, shared with DFDeck; this
+-- file owns only the filename and the per-tab key.
 -- ---------------------------------------------------------------------------
 
 function DFPlayerDeck.saveSizes(sizes)
-    -- getFileWriter allowlist I/O (throws on a denied path)
-    pcall(function()
-        local f = getFileWriter(LAYOUT_FILE, true, false)
-        if not f then return end
-        for k, r in pairs(sizes or {}) do
-            f:write(string.format("%s w=%d h=%d\n", k, math.floor(r.w), math.floor(r.h)))
-        end
-        f:close()
-    end)
+    return DFDeckLayout.save(LAYOUT_FILE, sizes)
 end
 
 function DFPlayerDeck.loadSizes()
-    local out = {}
-    -- getFileReader allowlist I/O; an unreadable layout file means defaults
-    pcall(function()
-        local r = getFileReader(LAYOUT_FILE, false)
-        if not r then return end
-        while true do
-            local line = r:readLine()
-            if not line then break end
-            local k, w, h = line:match("^(%S+) w=(%d+) h=(%d+)")
-            if k then out[k] = { w = tonumber(w), h = tonumber(h) } end
-        end
-        r:close()
-    end)
-    return out
+    return DFDeckLayout.load(LAYOUT_FILE)
 end
 
 -- ---------------------------------------------------------------------------

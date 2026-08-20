@@ -97,7 +97,12 @@ Events.OnGameStart.Add(function()
         DFRegistry.registerTab{
             id     = "limes",
             label  = "Zones",
-            order  = 6,
+            -- Deck nav order, set as one decision 2026-08-18 (live review):
+            -- Admin 10, Players 20, Necro 30, Vehicles 40, Husbandry 50,
+            -- Longstrider 60, Zones 70, Console 1000 (always last).
+            -- Spaced by ten so a new tab can land between two without
+            -- renumbering five files across five mods again.
+            order = 70,
             build  = build,
             resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
         }

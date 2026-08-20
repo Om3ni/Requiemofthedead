@@ -7,14 +7,14 @@
 -- removal is precisely the kind of pair that drifts silently, and the failure
 -- mode is a zombie you can hear but not see.
 --
--- WHY THE ENGINE'S OWN METHOD FIRST, and why the hand-rolled path stays:
+-- WHY THE ENGINE'S OWN METHOD:
 -- VirtualZombieManager.removeZombieFromWorld unregisters the sound emitter,
 -- then removes from world and square, in that order (VirtualZombieManager:80-86)
 -- - the same call the real delete packet ends up making
 -- (ZombieDeleteOnClientPacket:42). Doing it by hand and forgetting the emitter
--- is the audible-ghost bug. The manual path stays as a fallback because a
--- removal that half-happens is worse than either outcome, and this must not
--- depend on one symbol resolving.
+-- is the audible-ghost bug. The manager is Lua-exposed and its public static
+-- instance is constructed at class initialization, so this current-build
+-- module calls the one authoritative engine path directly.
 --
 -- VirtualZombieManager is Lua-exposed and `instance` is a public STATIC field,
 -- which Kahlua does expose - unlike instance fields.
@@ -38,21 +38,7 @@
 LMZedsShared = LMZedsShared or {}
 
 function LMZedsShared.cull(z)
-    if VirtualZombieManager and VirtualZombieManager.instance then
-        local vm = VirtualZombieManager.instance
-        -- pcall: engine removal mutates world state and must not half-happen
-        -- unguarded; direct form, this runs per removed zombie on both sides.
-        if pcall(vm.removeZombieFromWorld, vm, z) then return end
-    end
-    -- pcall: getEmitter() is a field read (IsoGameCharacter:1348) but the
-    -- emitter may be null, and unregister() is not in the decompile at all.
-    pcall(function() z:getEmitter():unregister() end)
-    -- pcall: IsoZombie.removeFromWorld:3550 chains into IsoMovingObject:688,
-    -- which calls getCell().isSafeToAdd() with no guard.
-    pcall(z.removeFromWorld, z)
-    -- No guard: IsoMovingObject.removeFromSquare:702 null-checks every field
-    -- it touches, and it is the last step so nothing follows it to skip.
-    z:removeFromSquare()
+    VirtualZombieManager.instance:removeZombieFromWorld(z)
 end
 
 -- ---------------------------------------------------------------------------

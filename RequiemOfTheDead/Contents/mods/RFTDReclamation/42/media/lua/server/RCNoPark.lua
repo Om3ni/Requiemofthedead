@@ -69,28 +69,38 @@ local function load()
     end
     local builtin = #rects
 
-    local reader
-    -- createIfNull false: a server that has never marked anything should not
-    -- have a mystery empty file appear next to its ledger.
-    -- guarded: file I/O through the getFileReader allowlist can throw
-    if not pcall(function() reader = getFileReader(FILE, false) end) or not reader then
+    -- No guard on the FACTORY call. getFileReader declares throws IOException,
+    -- but the only source of it is outFile.createNewFile(), which is gated on
+    -- createIfNull - and we pass false (LuaManager.java:4894-4917). Every other
+    -- exit returns null: a relative path, a missing file, or a failed open,
+    -- whose IOException the engine catches and logs itself. So nil is the whole
+    -- error surface here.
+    --
+    -- createIfNull false is also deliberate: a server that has never marked
+    -- anything should not have a mystery empty file appear next to its ledger.
+    local reader = getFileReader(FILE, false)
+    if not reader then
         RCShared.dbg("nopark: %d built-in, no file yet", builtin)
         return
     end
+
     local bad = 0
-    -- guarded: disk reads; a truncated or vanished file must fall back to the
-    -- built-ins already collected
-    pcall(function()
-        local line = reader:readLine()
-        while line do
-            local r = parseLine(line)
-            if r then rects[#rects + 1] = r
-            elseif line ~= "" and line:sub(1, 1) ~= "#" then bad = bad + 1 end
-            line = reader:readLine()
-        end
-    end)
-    -- guarded: close on a handle whose read may already have failed
-    pcall(function() reader:close() end)
+    -- Bare. "readLine genuinely throws IOException" was the same dead
+    -- doctrine RDLog and DFFile shed: BufferedReader is an EXPOSED class
+    -- (LuaManager.java:1651), so a read fault is a Java BODY throw, swallowed
+    -- and stack-traced by MethodCaller with readLine answering nil
+    -- (MethodCaller.java:33-56). From Lua a truncated read is early EOF: the
+    -- loop simply ends, and every exclusion parsed so far is kept - the exact
+    -- recovery the old guard promised, delivered by the lane for free. The
+    -- READ FAILED report could never fire; the engine's trace is the record.
+    local line = reader:readLine()
+    while line do
+        local r = parseLine(line)
+        if r then rects[#rects + 1] = r
+        elseif line ~= "" and line:sub(1, 1) ~= "#" then bad = bad + 1 end
+        line = reader:readLine()
+    end
+    reader:close()
 
     -- Malformed lines are COUNTED, not swallowed. This file is meant to be hand
     -- edited, and a typo that silently drops an exclusion would present as "the
@@ -133,20 +143,19 @@ function RCNoPark.add(x, y, z, w, h, label)
     -- typed by nobody in particular, so it is sanitised rather than trusted.
     label = tostring(label or "marked"):gsub("[,\r\n]", " "):sub(1, 60)
 
-    local writer
-    -- guarded: file I/O through the getFileWriter allowlist can throw
-    if not pcall(function() writer = getFileWriter(FILE, true, true) end) or not writer then
+    -- No guards. The WRITE side is not the read side: getFileWriter returns nil
+    -- rather than throwing (LuaManager.java:5523-5555), and LuaFileWriter's
+    -- writeln/close delegate to PrintWriter, which records I/O errors in an
+    -- internal flag instead of raising them (:9850-9868). The nil check is the
+    -- whole error surface, and the coordinates are already floored numbers.
+    local writer = getFileWriter(FILE, true, true)
+    if not writer then
         return nil, "cannot write " .. FILE
     end
-    -- guarded: disk write; the caller gets "write failed" instead of an error
-    local ok = pcall(function()
-        writer:writeln(string.format("%d,%d,%d,%d,%d,%s",
-            math.floor(x), math.floor(y), math.floor(z or 0),
-            math.floor(w), math.floor(h), label))
-    end)
-    -- guarded: close on a handle whose write may already have failed
-    pcall(function() writer:close() end)
-    if not ok then return nil, "write failed" end
+    writer:writeln(string.format("%d,%d,%d,%d,%d,%s",
+        math.floor(x), math.floor(y), math.floor(z or 0),
+        math.floor(w), math.floor(h), label))
+    writer:close()
 
     RCNoPark.reload()
     return true

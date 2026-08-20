@@ -35,8 +35,7 @@ end
 -- One small packet at the moment engine parts are actually obtained (rare).
 -- Fires for EVERYONE incl. staff so the ledger is complete; the server
 -- decides the bypass flag itself (see RCServer.hEnginePull).
-local function reportPull(character, part)
-    if not (character and sendClientCommand) then return end
+local function describePull(part)
     local args = {}
     -- getVehicle is a null-safe cast (VehiclePart.java:87); the rest are
     -- field returns on a non-nil vehicle
@@ -48,8 +47,9 @@ local function reportPull(character, part)
         args.y = math.floor(vehicle:getY())
         args.z = math.floor(vehicle:getZ())
     end
-    sendClientCommand(character, RCShared.MODULE, "enginePull", args)
+    return args
 end
+
 
 -- Wrapped at OnGameStart, never file-load: a wrap on a class that isn't
 -- defined yet silently no-ops (the RCClaimItemLock dead-gate bug, 2026-06-30).
@@ -81,10 +81,20 @@ local function applyWraps()
         ISTakeEngineParts.RC_pullWrapped = true
         local origComplete = ISTakeEngineParts.complete
         ISTakeEngineParts.complete = function(self, ...)
-            -- guarded: we are inside vanilla's action chain - telemetry must
-            -- never be able to abort the player's completed action
-            pcall(reportPull, self.character, self.part)
-            return origComplete(self, ...)
+            local completed = origComplete(self, ...)
+            if completed and self.character and sendClientCommand then
+                local args = describePull(self.part)
+                -- Bare: sendClientCommand is an exposed global
+                -- (LuaManager.java:7219-7236) - every fault inside it,
+                -- including the packet write, is swallowed and stack-traced
+                -- by MethodCaller before Lua sees anything (MethodCaller.java:
+                -- 33-56; GameClient.java:1741-1760). The pcall that sat here
+                -- could never fire and its once-flag never latched; the
+                -- engine's trace is the diagnostic for a failed audit send.
+                sendClientCommand(self.character,
+                    RCShared.MODULE, "enginePull", args)
+            end
+            return completed
         end
     end
     RCShared.dbg("engine-lock wraps applied")

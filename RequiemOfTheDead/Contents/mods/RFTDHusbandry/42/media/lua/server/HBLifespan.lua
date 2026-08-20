@@ -57,28 +57,9 @@ local SCAN_RANGE = 20  -- +/- squares around each player (matches HBKeepAlive)
 -- The flag is kept as a guard against a genuine (catchable) future API change:
 -- in 42.20.2 getAnimalInside (IsoHutch:898) is a field return and getAnimal
 -- (IsoHutch:902) a HashMap.get on a map initialised at the declaration
--- (IsoHutch:61), so neither can throw HERE - the guard exists because the B42
--- animal API is still moving and a rename in a later 42.x would. That makes it
--- a cross-build PROBE, so it runs ONCE and the verdict is cached:
--- nil = not yet probed, true = usable, false = disabled for the session.
-local hutchScanOK = nil
+-- (IsoHutch.java:61, 898-904), so this exact current API is a direct read.
 local MAX_HUTCH_SLOTS = 64
 local function visitHutchAnimals(hutch, visit)
-    if hutchScanOK == false then return end
-    if hutchScanOK == nil then
-        -- One-shot cross-build probe: the IsoHutch animal API either exists on
-        -- this build or it does not, so re-probing per hutch buys nothing.
-        local ok, err = pcall(function()
-            if hutch:getAnimalInside() then hutch:getAnimal(0) end
-        end)
-        if not ok then
-            hutchScanOK = false
-            print("[HB] HBLifespan hutch enumeration disabled - IsoHutch animal API "
-                .. "unavailable (logged once): " .. tostring(err))
-            return
-        end
-        hutchScanOK = true
-    end
     local inside = hutch:getAnimalInside()
     if not inside then return end
     for pos = 0, MAX_HUTCH_SLOTS - 1 do
@@ -98,21 +79,27 @@ local function setAgeSafe(animal, data, target)
     -- getSize/getWeight are field returns (AnimalData:1389/1409) - no guard.
     local size   = data:getSize()
     local weight = data:getWeight()
-    -- setAgeDebug (IsoAnimal:1500) reads this.adef.minAge and calls
-    -- AnimalData.init(); setSize/setWeight (AnimalData:1380/1598) clamp through
-    -- getMinSize/getMaxSize, which read parent.adef too. A constructor that
-    -- bailed early (IsoAnimal:259-275) leaves adef null, so all three can NPE.
-    pcall(animal.setAgeDebug, animal, target)
-    if size   then pcall(data.setSize,   data, size)   end
-    if weight then pcall(data.setWeight, data, weight) end
+    -- The adef-null NPEs the old guards named are real - setAgeDebug
+    -- (IsoAnimal:1500) reads this.adef.minAge, setSize/setWeight
+    -- (AnimalData:1380/1598) clamp through parent.adef, and a constructor that
+    -- bailed early (IsoAnimal:259-275) leaves adef null - but all three are
+    -- exposed methods: MethodCaller swallows the fault, logs the trace, and
+    -- the write silently no-ops (MethodCaller.java:33-56). The pcalls that sat
+    -- here could never fire; fire-and-forget is the same contract either way,
+    -- now stated honestly.
+    animal:setAgeDebug(target)
+    if size   then data:setSize(size)     end
+    if weight then data:setWeight(weight) end
 end
 
 -- An adult age guaranteed below the geriatric threshold (~0.8 * maxAge).
 local function safeAdultAge(animal, data, floorAge)
-    -- getMaxAgeGeriatric (AnimalData:1533) reads parent.adef.maxAgeGeriatric
-    -- and walks getUsedGene - NPEs on an animal whose adef never resolved.
-    local ok, maxAge = pcall(data.getMaxAgeGeriatric, data)
-    if ok and type(maxAge) == "number" and maxAge > 0 then
+    -- getMaxAgeGeriatric (AnimalData:1533) reads parent.adef.maxAgeGeriatric -
+    -- the NPE is real but arrives here as nil (exposed method, MethodCaller
+    -- .java:33-56), so the type test was always the whole gate; `ok` could not
+    -- be false.
+    local maxAge = data:getMaxAgeGeriatric()
+    if type(maxAge) == "number" and maxAge > 0 then
         return math.max(floorAge or 1, math.floor(maxAge * 0.6))
     end
     return math.max(floorAge or 1, 1)
@@ -125,14 +112,16 @@ local function manageAnimal(animal, mode, mult)
 
     if animal:isWild() then return end  -- only manage tame livestock
 
-    -- isBaby (IsoAnimal:1657) dereferences getData().currentStage and getAge
-    -- (IsoAnimal:2101) dereferences getData(); data is null on an animal whose
-    -- constructor bailed early. Failure keeps the old defaults: treat it as a
-    -- baby (leave it alone) and bail when the age is unreadable.
-    local okBaby, baby = pcall(animal.isBaby, animal)
-    if not okBaby then baby = true end
-    local okAge, age = pcall(animal.getAge, animal)
-    if not okAge or type(age) ~= "number" then return end
+    -- isBaby (IsoAnimal:1657) and getAge (IsoAnimal:2101) both dereference
+    -- getData(), null on an animal whose constructor bailed early
+    -- (IsoAnimal:259-275) - but both are exposed methods, so the fault arrives
+    -- here as nil, never as an error (MethodCaller.java:33-56). A faulted
+    -- animal skips the baby branch on the falsy nil and bails at the age type
+    -- test, which was always the real gate. The old "treat it as a baby"
+    -- fallback was dead code: its pcall could not fail.
+    local baby = animal:isBaby()
+    local age = animal:getAge()
+    if type(age) ~= "number" then return end
 
     if baby then
         lastAge[oid] = age   -- let babies grow untouched
@@ -154,9 +143,10 @@ local function manageAnimal(animal, mode, mult)
         -- Safety: a reloaded already-old animal can be past geriatric even at
         -- its recorded maturity age; pull it firmly below the threshold.
         -- isGeriatric (IsoAnimal:1809) reads this.adef.maxAgeGeriatric with no
-        -- null guard - NPEs on an animal whose adef never resolved.
-        local okGer, ger = pcall(animal.isGeriatric, animal)
-        if okGer and ger then
+        -- null guard - real, but swallowed to a falsy nil on a faulted animal
+        -- (exposed method), which is the same "not geriatric" answer the old
+        -- ok-test produced.
+        if animal:isGeriatric() then
             local t = safeAdultAge(animal, data, floorAge)
             setAgeSafe(animal, data, t)
             age = t
@@ -232,14 +222,13 @@ local function walk(apply, present)
             local px, py, pz = sq:getX(), sq:getY(), sq:getZ()
             for dx = -SCAN_RANGE, SCAN_RANGE do
                 for dy = -SCAN_RANGE, SCAN_RANGE do
-                    -- KEEP: getGridSquare (IsoCell:2791) and getVehicleContainer
-                    -- (IsoGridSquare:8602) both dereference the ServerMap.instance
-                    -- / IsoWorld.instance singletons and walk chunk lists - not
-                    -- field returns, and a square on an unloaded chunk edge is
-                    -- exactly when this scan runs.
-                    pcall(function()
-                        local s = cell:getGridSquare(px + dx, py + dy, pz)
-                        if not s then return end
+                    -- ServerMap is constructed at class initialization; cold grid
+                    -- coordinates return nil. A vehicle scan ignores removed or
+                    -- detached vehicles before consulting its polygon (IsoCell.java:
+                    -- 2800-2818; ServerMap.java:595-613; IsoGridSquare.java:
+                    -- 8602-8619; BaseVehicle.java:5269-5280, 9528-9530).
+                    local s = cell:getGridSquare(px + dx, py + dy, pz)
+                    if s then
 
                         local v = s:getVehicleContainer()
                         if v then
@@ -264,7 +253,7 @@ local function walk(apply, present)
                                 end
                             end
                         end
-                    end)
+                    end
                 end
             end
         end
@@ -280,10 +269,14 @@ local function tick()
     local mult = sv.AnimalLifespanMultiplier or 4
 
     local present = {}
-    -- KEEP: containment. manageAnimal writes ages through setAgeDebug/setSize/
-    -- setWeight, all of which read the animal's adef; one malformed animal must
-    -- not take the rest of the herd's pass down with it.
-    walk(function(animal) pcall(manageAnimal, animal, mode, mult) end, present)
+    -- No batch guard - after the per-call corrections above, manageAnimal is
+    -- total: every engine read in it is an exposed method whose fault arrives
+    -- as nil, and every nil is handled, so a malformed animal no-ops its own
+    -- writes and there is nothing left to contain. Should that ever stop being
+    -- true, this tick runs under the event dispatcher's per-listener catch
+    -- (Event.java:53-63) and retries on the next hour - loud, attributable,
+    -- self-healing, which the policy prefers to a silent herd-pass shield.
+    walk(function(animal) manageAnimal(animal, mode, mult) end, present)
 
     -- Prune state for animals no longer loaded (keeps the tables bounded).
     for oid in pairs(lastAge)   do if not present[oid] then lastAge[oid]   = nil end end

@@ -1,0 +1,12 @@
+{
+  "_comment": "Unadopted executable dispatchers. Lower is free; raising it means a token grew a second intake or a new legacy dispatcher appeared - neither is accepted without a deliberate --update.",
+  "legacy_dispatchers": 6,
+  "tokens": [
+    "Dragonfly_RoleEdit",
+    "RFTDDragonfly",
+    "RFTDHusbandry",
+    "RFTDMemoir",
+    "RFTDReaper",
+    "RFTDReclamation"
+  ]
+}

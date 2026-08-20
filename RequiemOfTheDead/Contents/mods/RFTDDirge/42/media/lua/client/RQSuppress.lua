@@ -60,6 +60,11 @@ local LINGER_MS = 3000
 -- }
 local groups = {}
 
+-- groupId -> { sourceId -> true }. A foreign predicate can be evaluated every
+-- render tick, so its failure must be visible without turning one bad source
+-- into an unbounded client-log stream.
+local predicateFaults = {}
+
 -- Multiplier currently written into weapon fields (1.0 = clean). Tracked so
 -- the exit sweep fires exactly once per suppression episode.
 local appliedEffective = 1.0
@@ -82,6 +87,8 @@ function RQSuppress.register(groupId, sourceId, predicate)
         groups[groupId] = g
     end
     g.sources[sourceId] = predicate
+    local faults = predicateFaults[groupId]
+    if faults then faults[sourceId] = nil end
 end
 
 -- ---------------------------------------------------------------------------
@@ -89,14 +96,26 @@ end
 -- ---------------------------------------------------------------------------
 local function computeEffective(player, weapon, now)
     local effective = 1.0
-    for _, g in pairs(groups) do
+    for groupId, g in pairs(groups) do
         local mult = nil
-        for _, predicate in pairs(g.sources) do
+        for sourceId, predicate in pairs(g.sources) do
             -- guard stays: predicates are registered by other RotD modules (and
             -- potentially other mods) through RQSuppress.register; one broken
             -- source must not take the whole multiplier pass down.
             local ok, m = pcall(predicate, player, weapon)
-            if ok and m then
+            if not ok then
+                local faults = predicateFaults[groupId]
+                if not faults then
+                    faults = {}
+                    predicateFaults[groupId] = faults
+                end
+                if not faults[sourceId] then
+                    faults[sourceId] = true
+                    print("[RFTDDirge] RQSuppress predicate "
+                        .. tostring(groupId) .. "." .. tostring(sourceId)
+                        .. " failed: " .. tostring(m))
+                end
+            elseif m then
                 m = tonumber(m)
                 if m and (not mult or m < mult) then
                     mult = m

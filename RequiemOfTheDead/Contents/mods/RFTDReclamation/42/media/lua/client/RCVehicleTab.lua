@@ -199,11 +199,26 @@ local function forEachClientVehicle(fn)
     if not vs then return end
     local it = vs:iterator()
     if not it then return end
+    local failed, firstErr = 0, nil
     while it:hasNext() do
-        -- guarded: one car that throws mid-row must not lose the rest of the
-        -- nearby list
+        -- RETAINED, one member of an independent batch: the walk holds live
+        -- refs that can stream out under it, and one car mid-removal must not
+        -- cost the admin the rest of the nearby list. Counted now - a nearby
+        -- list quietly short of cars reads as "it despawned", which is the
+        -- same silent failure the fleet scan just had corrected.
         local v = it:next()
-        if v then pcall(fn, v) end
+        if v then
+            local ok, err = pcall(fn, v)
+            if not ok then
+                failed = failed + 1
+                firstErr = firstErr or err
+            end
+        end
+    end
+    if failed > 0 then
+        print(string.format(
+            "[RC] nearby: %d car(s) omitted from the list (first: %s)",
+            failed, tostring(firstErr)))
     end
 end
 
@@ -413,9 +428,13 @@ end
 function T.teleportTo(row)
     if not (row and row.x) then setStatus("That row has no position."); return end
     local me = getPlayer()
-    -- guarded: teleportTo exits any vehicle and fires OnExitVehicle (foreign
-    -- handlers) before ensureOnTile (IsoGameCharacter.java:14980) - not trivial
-    pcall(function() me:teleportTo(row.x + 0.5, row.y + 0.5, math.floor(row.z or 0)) end)
+    -- Bare: teleportTo is an exposed method (IsoGameCharacter.java:
+    -- 14980-14990), so body faults are swallowed by MethodCaller
+    -- (MethodCaller.java:33-56), and the OnExitVehicle it fires en route
+    -- (:14992-14997) runs every foreign listener under the dispatcher's
+    -- per-listener catch plus its own protectedCallVoid (Event.java:52-63) -
+    -- doubly contained. Nothing here can throw back.
+    me:teleportTo(row.x + 0.5, row.y + 0.5, math.floor(row.z or 0))
 end
 local teleportToRow = T.teleportTo
 
@@ -448,7 +467,7 @@ end
 --     reads as authoritative.
 local function deleteRows(rows)
     local me = getPlayer()
-    local reports, skipped, failed = {}, 0, 0
+    local reports, skipped = {}, 0
     local capped = false
 
     for _, row in ipairs(rows) do
@@ -457,18 +476,21 @@ local function deleteRows(rows)
             -- an unloaded registry row: there is no object anywhere to remove
             skipped = skipped + 1
         else
-            -- guarded: the SP branch runs getVehicleById on a stale row vid
-            -- plus permanentlyRemove's full teardown (BaseVehicle.java:7205);
-            -- one failed row is counted, not fatal
-            local sent = pcall(function()
-                if isClient() then
-                    sendClientCommand(me, "vehicle", "remove", { vehicle = row.vid })
-                else
-                    local v = getVehicleById(row.vid)
-                    if v then v:permanentlyRemove() end
-                end
-            end)
-            if sent then reports[#reports + 1] = reportFor(row) else failed = failed + 1 end
+            -- Bare. Every failure the old guard named is body-swallowed:
+            -- sendClientCommand is an exposed global (LuaManager.java:
+            -- 7219-7236), getVehicleById takes an int and answers nil for a
+            -- stale id (LuaManager.java:8208-8211), and permanentlyRemove's
+            -- teardown NPEs (BaseVehicle.java:7205-7221) never reach Lua
+            -- (MethodCaller.java:33-56). `sent` was always true and `failed`
+            -- had never counted - the ledger already rode on every row with a
+            -- vid, and now says so.
+            if isClient() then
+                sendClientCommand(me, "vehicle", "remove", { vehicle = row.vid })
+            else
+                local v = getVehicleById(row.vid)
+                if v then v:permanentlyRemove() end
+            end
+            reports[#reports + 1] = reportFor(row)
         end
     end
 
@@ -480,7 +502,6 @@ local function deleteRows(rows)
     -- shortfall on a destructive action reads as "all of them went".
     local parts = { string.format("Deleted %d", #reports) }
     if skipped > 0 then parts[#parts + 1] = string.format("%d unloaded (skipped)", skipped) end
-    if failed > 0  then parts[#parts + 1] = string.format("%d failed", failed) end
     if capped      then parts[#parts + 1] = string.format("cap %d per click", BULK_MAX) end
     setStatus(table.concat(parts, " - ") .. ".")
 
@@ -738,9 +759,14 @@ local function drawBand(el)
     end
     -- Two stacked lines in the band. The second used to sit at a fixed +20,
     -- which drew it through the first as soon as the glyphs got taller.
-    local bfh = 12
-    -- guarded: getFontHeight NPEs on a missing font (TextManager.java:127)
-    pcall(function() bfh = getTextManager():getFontHeight(fL) end)
+    -- No guard. getFontHeight/MeasureStringX cannot NPE on an unknown font:
+    -- getFontFromEnum returns the DEFAULT font both when the enum is nil and
+    -- when enumToFont has no entry for it (TextManager.java:119-124), so the
+    -- deref one line below - the very line these guards cited - is on a value
+    -- that method guarantees. MeasureStringX additionally returns 0 for a null
+    -- string (:294). The fallback constants stay as the initial values, which
+    -- is all they ever were.
+    local bfh = getTextManager():getFontHeight(fL)
     local line2 = 4 + bfh + 2
 
     el:drawText(head, b.x + 12, b.y + 4, c.r, c.g, c.b, 1, fL)
@@ -810,9 +836,9 @@ local function drawMeat(el)
     -- Line advance from the ACTUAL font. Fixed 16/17px steps overlapped their
     -- own glyphs the moment the text size went up, which is what turned this
     -- column into a smear rather than a list.
-    local lh = 16
-    -- guarded: getFontHeight NPEs on a missing font (TextManager.java:127)
-    pcall(function() lh = getTextManager():getFontHeight(fL) + 3 end)
+    -- No guard - see the getFontFromEnum note earlier in this file. The floor
+    -- stays; it is a layout minimum, not an error path.
+    local lh = getTextManager():getFontHeight(fL) + 3
     if lh < 14 then lh = 14 end
 
     local function section(title)
@@ -1268,15 +1294,20 @@ local function recomputeMetrics()
     FONT = DFKit.font.code or UIFont.Code
 
     if not baseCodeFH then
-        baseCodeFH = 18
-        -- guarded: getFontHeight NPEs on a missing font (TextManager.java:127)
-        pcall(function() baseCodeFH = getTextManager():getFontHeight(UIFont.Code) end)
+        -- No guard - see the note on getFontFromEnum below. The floor stays:
+        -- a legitimately tiny line height would still break the grid rhythm.
+        baseCodeFH = getTextManager():getFontHeight(UIFont.Code)
         if not baseCodeFH or baseCodeFH < 1 then baseCodeFH = 18 end
     end
 
-    local fh = baseCodeFH
-    -- guarded: getFontHeight NPEs on a missing font (TextManager.java:127)
-    pcall(function() fh = getTextManager():getFontHeight(FONT) end)
+    -- No guard. getFontHeight/MeasureStringX cannot NPE on an unknown font:
+    -- getFontFromEnum returns the DEFAULT font both when the enum is nil and
+    -- when enumToFont has no entry for it (TextManager.java:119-124), so the
+    -- deref one line below - the very line these guards cited - is on a value
+    -- that method guarantees. MeasureStringX additionally returns 0 for a null
+    -- string (:294). The fallback constants stay as the initial values, which
+    -- is all they ever were.
+    local fh = getTextManager():getFontHeight(FONT)
     if not fh or fh < 1 then fh = baseCodeFH end
 
     local s = fh / baseCodeFH
@@ -1296,13 +1327,11 @@ local function recomputeMetrics()
     -- Measured columns. "88888" is the widest realistic vehicle id; the glyph
     -- is one character. Both get a real gap after them rather than a gap that
     -- happened to be big enough at one size.
-    local gw, iw = 8, 40
-    -- guarded: MeasureStringX derefs getFontFromEnum unguarded
-    -- (TextManager.java:297) - a missing font falls back to fixed columns
-    pcall(function()
-        gw = getTextManager():MeasureStringX(FONT, "o")
-        iw = getTextManager():MeasureStringX(FONT, "88888")
-    end)
+    -- No guard - same getFontFromEnum reading as the heights above; a null
+    -- string additionally returns 0 (TextManager.java:294), and neither of
+    -- these is null.
+    local gw = getTextManager():MeasureStringX(FONT, "o")
+    local iw = getTextManager():MeasureStringX(FONT, "88888")
     GLYPH_X = 8
     VID_X   = GLYPH_X + gw + 6
     NAME_X  = VID_X + iw + 8
@@ -1329,19 +1358,25 @@ end
 -- order within a session is alphabetical - OnGameStart is the level ground.
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
-    -- guarded: registerTab is another mod's surface (Dragonfly); its failure
-    -- is printed, never allowed to kill our OnGameStart
-    local ok, err = pcall(function()
-        DFRegistry.registerTab{
-            id         = "rcVehicles",
-            label      = "Vehicles",
-            capability = Capability.ChangeWeather,
-            order      = 6,
-            build      = build,
-            resize     = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
-        }
-    end)
-    if not ok then print("[RC] RCVehicleTab registerTab error: " .. tostring(err)) end
+    -- Bare: a throw out of this listener is caught by the event
+    -- dispatcher's per-listener boundary and logged with a full stack trace
+    -- at throw time (Event.java:53-63; KahluaThread.java:865, :1100). The
+    -- pcall here bought a shorter message than the engine already prints,
+    -- and "never allowed to kill our OnGameStart" was the containment the
+    -- engine provides on its own.
+    DFRegistry.registerTab{
+        id         = "rcVehicles",
+        label      = "Vehicles",
+        capability = Capability.ChangeWeather,
+        -- Deck nav order, set as one decision 2026-08-18 (live review):
+        -- Admin 10, Players 20, Necro 30, Vehicles 40, Husbandry 50,
+        -- Longstrider 60, Zones 70, Console 1000 (always last).
+        -- Spaced by ten so a new tab can land between two without
+        -- renumbering five files across five mods again.
+        order = 40,
+        build      = build,
+        resize     = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
+    }
 end)
 
 -- ---------------------------------------------------------------------------

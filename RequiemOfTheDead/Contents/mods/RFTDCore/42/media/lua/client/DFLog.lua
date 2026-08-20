@@ -74,21 +74,17 @@ DFLog.index = DFLog.index or {}
 -- fail to load on a build where it is absent or shaped differently. Calendar is
 -- the same class errorMagnifier and every other surface here already uses.
 local function calFields()
-    local ok, c = pcall(function() return Calendar.getInstance() end)
-    if not ok or not c then return nil end
-    local f
-    ok = pcall(function()
-        f = {
-            y   = c:get(Calendar.YEAR),
-            mo  = c:get(Calendar.MONTH) + 1,   -- Calendar.MONTH is 0-based
-            d   = c:get(Calendar.DAY_OF_MONTH),
-            h   = c:get(Calendar.HOUR_OF_DAY),
-            mi  = c:get(Calendar.MINUTE),
-            s   = c:get(Calendar.SECOND),
-        }
-    end)
-    if not ok then return nil end
-    return f
+    -- PZCalendar is exposed before Lua loads (LuaManager.java:1509-1524,
+    -- 2393); getInstance and these Calendar fields are deterministic reads.
+    local c = Calendar.getInstance()
+    return {
+        y   = c:get(Calendar.YEAR),
+        mo  = c:get(Calendar.MONTH) + 1,   -- Calendar.MONTH is 0-based
+        d   = c:get(Calendar.DAY_OF_MONTH),
+        h   = c:get(Calendar.HOUR_OF_DAY),
+        mi  = c:get(Calendar.MINUTE),
+        s   = c:get(Calendar.SECOND),
+    }
 end
 
 local function nowString()
@@ -115,8 +111,8 @@ end
 function DFLog.contextHeader()
     local lines = { "=== Requiem of the Dead - console report ===" }
 
-    local v
-    if pcall(function() v = getCore():getVersion() end) and v then
+    local v = getCore():getVersion()
+    if v then
         -- No guard: getSteamModeActive (LuaManager:7517) -> SteamUtils
         -- .isSteamModeEnabled:128 is `return steamEnabled`, a static field.
         local steam = getSteamModeActive() == true
@@ -164,8 +160,8 @@ function DFLog.contextHeader()
     end
 
     if mp then
-        local ck
-        if pcall(function() ck = getServerOptions():getBoolean("DoLuaChecksum") end) and ck ~= nil then
+        local ck = getServerOptions():getBoolean("DoLuaChecksum")
+        if ck ~= nil then
             lines[#lines + 1] = "Lua Checksum: " .. tostring(ck)
         end
     end
@@ -185,11 +181,9 @@ function DFLog.contextHeader()
     -- that happened before this buffer existed. Keyed by DISPLAY NAME, matching
     -- the attribution in DFErrorPoller.
     local bugged = {}
-    pcall(function()
-        if type(PauseBuggedModList) == "table" then
-            for name in pairs(PauseBuggedModList) do bugged[#bugged + 1] = tostring(name) end
-        end
-    end)
+    if type(PauseBuggedModList) == "table" then
+        for name in pairs(PauseBuggedModList) do bugged[#bugged + 1] = tostring(name) end
+    end
     -- Scoped by the same wall as everything else above: PauseBuggedModList is
     -- written by the engine of THIS VM, so in MP a server-only offender never
     -- lands in it. Say which VM's bookkeeping this is, for the same reason the
@@ -356,9 +350,13 @@ function DFLog.formatReport(e)
 end
 
 local function toClipboard(text, okMsg)
-    -- Clipboard is a static on a class that may be absent on some builds;
-    -- failure is surfaced through DFFeedback below
-    local ok = pcall(function() Clipboard.setClipboard(text) end)
+    -- Presence test instead of a guard. On a build without the Clipboard
+    -- class the global indexes to nil (exact in Kahlua), and when present
+    -- setClipboard is an exposed static whose body faults are swallowed to a
+    -- normal return (MethodCaller.java:33-56) - so the old pcall could only
+    -- ever catch the absent-class index, which this asks directly.
+    local ok = Clipboard ~= nil and type(Clipboard.setClipboard) == "function"
+    if ok then Clipboard.setClipboard(text) end
     if not DFFeedback then return ok end
     if ok then DFFeedback.good(okMsg) else DFFeedback.bad("Clipboard copy failed.") end
     return ok
@@ -391,8 +389,11 @@ function DFLog.copyAllToClipboard(filter)
 
     local reports = nil
     if DFReports and DFReports.collect then
-        -- a collector fault costs its section, not the whole copy
-        pcall(function() reports = DFReports.collect() end)
+        -- Bare: collect() bounds each provider and each render walk with its
+        -- own per-member guards (DFReports.lua), and what remains outside
+        -- them is our own total code - wrapping it again was uncertainty
+        -- about our own module, which is not a guard reason.
+        reports = DFReports.collect()
     end
     if reports then
         parts[#parts + 1] = reports

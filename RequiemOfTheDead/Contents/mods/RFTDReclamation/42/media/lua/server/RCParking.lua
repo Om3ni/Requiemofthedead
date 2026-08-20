@@ -179,7 +179,7 @@ end
 -- Orientation
 --
 -- A replacement used to take RCSpawn's uniform roll across all four headings
--- (RCSpawn.lua:70), which is how cars ended up wedged sideways between
+-- (RCSpawn.lua:73), which is how cars ended up wedged sideways between
 -- buildings. The zone already knows which way its stalls run, and vanilla
 -- derives exactly that before placing its own cars - so this ports vanilla's
 -- rule rather than inventing a heuristic.

@@ -46,7 +46,6 @@ HBKeepAlive.lastLooseRefilled    = 0
 HBKeepAlive.lastTrailerRefilled  = 0
 HBKeepAlive.lastHutchRefilled    = 0
 HBKeepAlive.trailerOverrideCalls = 0
-HBKeepAlive.hutchScanOK          = true   -- flips false only if getAnimalInside() ever raises a real Lua error
 HBKeepAlive.verbose              = false  -- set true to log per-tick refill counts
 
 -- Core primitive: zero hunger/thirst, reset elapsed-time clock.
@@ -141,36 +140,13 @@ end
 -- (HashMap.get is O(1)). Hutch animals do drain (IsoHutch.update →
 -- updateHungerAndThirst), so this refill is load-bearing, not cosmetic.
 --
--- The capability flag is kept as a genuine guard, and it is a CROSS-BUILD PROBE
--- rather than an error path: in 42.20.2 getAnimalInside is `return
--- this.animalInside` (IsoHutch:898) and getAnimal is `animalInside.get(index)`
--- (IsoHutch:902) over a map initialised at its declaration (IsoHutch:61), so
--- neither can NPE here. What a failure WOULD mean is the method renamed in a
--- future build - a real, catchable Lua error. That verdict cannot change inside
--- a session, so it is taken ONCE and cached: nil = not yet probed, true =
--- usable, false = disabled and logged.
-local hutchScanOK = nil
+-- getAnimalInside is a declaration-initialised map and getAnimal is its direct
+-- HashMap lookup (IsoHutch.java:61, 898-904), so the current API is direct.
 local MAX_HUTCH_SLOTS = 64
 
 -- Caller owns per-hutch dedup (see the hutch loop below), so this just
 -- refills the occupants of one hutch and returns the count.
 local function refillHutch(hutch, seen)
-    if hutchScanOK == false then return 0 end
-    if hutchScanOK == nil then
-        -- One-shot probe; re-running it per hutch per tick buys nothing.
-        local ok, err = pcall(function()
-            if hutch:getAnimalInside() then hutch:getAnimal(0) end
-        end)
-        if not ok then
-            hutchScanOK = false
-            HBKeepAlive.hutchScanOK = false
-            print("[HB] hutch keep-alive disabled - IsoHutch animal API unavailable "
-                .. "(logged once): " .. tostring(err))
-            return 0
-        end
-        hutchScanOK = true
-    end
-
     local inside = hutch:getAnimalInside()
     if not inside then return 0 end
     local count = 0
@@ -223,13 +199,12 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
 
     for dx = -TRAILER_SCAN_RANGE, TRAILER_SCAN_RANGE do
         for dy = -TRAILER_SCAN_RANGE, TRAILER_SCAN_RANGE do
-            -- KEEP: getGridSquare (IsoCell:2791) and getVehicleContainer
-            -- (IsoGridSquare:8602) dereference the ServerMap.instance /
-            -- IsoWorld.instance singletons and walk chunk lists; a square on an
-            -- unloaded chunk edge is precisely what this scan sweeps over.
-            pcall(function()
-                local s = cell:getGridSquare(px + dx, py + dy, pz)
-                if not s then return end
+            -- A cold server coordinate returns nil directly (IsoCell.java:2800-2818).
+            -- getVehicleContainer skips absent chunks and detached vehicles
+            -- (IsoGridSquare.java:8602-8619; BaseVehicle.java:5269-5280), so
+            -- the bounded scan has no recoverable exception path to contain.
+            local s = cell:getGridSquare(px + dx, py + dy, pz)
+            if s then
 
                 -- Trailer animals
                 local v = s:getVehicleContainer()
@@ -243,10 +218,8 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
 
                 -- Hutches: enumerate once per square, dedup across players,
                 -- then do two independent jobs per hutch:
-                --   • HBBedding.applyBedding - def-free dirt cleaning; runs
-                --     even if the animal API is disabled (it never calls it).
-                --   • refillHutch - animal keep-alive; gated by hutchScanOK,
-                --     which trips off if the IsoHutch animal API ever vanishes.
+                --   • HBBedding.applyBedding - def-free dirt cleaning.
+                --   • refillHutch - animal keep-alive.
                 local objs = s:getObjects()
                 if objs then
                     for k = 0, objs:size() - 1 do
@@ -256,16 +229,12 @@ local function refillContainersAround(cell, player, seen, seenVehicles, seenHutc
                             if not seenHutches[hkey] then
                                 seenHutches[hkey] = true
                                 if HBBedding then HBBedding.applyBedding(obj) end
-                                -- ~= false, not truthiness: nil means the probe
-                                -- inside refillHutch has not run yet.
-                                if hutchScanOK ~= false then
-                                    hutchRefilled = hutchRefilled + refillHutch(obj, seen)
-                                end
+                                hutchRefilled = hutchRefilled + refillHutch(obj, seen)
                             end
                         end
                     end
                 end
-            end)
+            end
         end
     end
 
@@ -359,21 +328,19 @@ if Vehicles and Vehicles.Update then
 
         HBKeepAlive.trailerOverrideCalls = (HBKeepAlive.trailerOverrideCalls or 0) + 1
 
-        -- KEEP: foreign-callback containment. Vanilla LUA calls this from its
-        -- meta-time chunk-reload sweep (Vehicles.lua:444) and hands us whatever
-        -- it has; an error escaping here would abort the vanilla update, not
-        -- just our refill. Vanilla Lua is not verifiable against the decompile.
-        pcall(function()
-            if not vehicle then return end
-            local animals = vehicle:getAnimals()
-            if not animals then return end
-            local n = animals:size()
-            if not n or n == 0 then return end
-            for i = 0, n - 1 do
-                local animal = animals:get(i)
-                if animal then refillAnimal(animal) end
-            end
-        end)
+        -- Vanilla calls this directly from its meta-time chunk-reload pass
+        -- (Vehicles.lua:443-450), with the same live vehicle contract it uses
+        -- for its own animal loop. An unexpected callback failure must surface
+        -- rather than silently disabling trailer keep-alive.
+        if not vehicle then return end
+        local animals = vehicle:getAnimals()
+        if not animals then return end
+        local n = animals:size()
+        if not n or n == 0 then return end
+        for i = 0, n - 1 do
+            local animal = animals:get(i)
+            if animal then refillAnimal(animal) end
+        end
     end
 
     print("[HB] Vehicles.Update.TrailerAnimalFood override installed")

@@ -70,21 +70,14 @@ end
 -- Config (sandbox-tunable, read once when the world is up)
 -- ---------------------------------------------------------------------------
 
-local function sb(key)
-    return SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore[key]
-end
-
-local function sbNum(key, default, lo, hi)
-    local v = sb(key)
-    if type(v) ~= "number" then return default end
-    if lo and v < lo then return lo end
-    if hi and v > hi then return hi end
-    return v
-end
+-- Clamped reads are RDShared.sbNum since 2026-08-20 (RDStall carried the
+-- identical pair); the single boolean read below writes its chain inline.
+local sbNum = RDShared.sbNum
 
 local function resolveConfig()
     return {
-        enabled   = (sb("WireProbeEnabled") == true),
+        enabled   = ((SandboxVars and SandboxVars.RFTDCore
+                       and SandboxVars.RFTDCore.WireProbeEnabled) == true),
         dumpMs    = sbNum("WireProbeDumpSeconds", 30, 5, 600) * 1000,
         -- 25, not 12. At 12 the 2026-08-02 live capture truncated 194 of 722
         -- windows (one held 37 distinct keys), so better than a quarter of the
@@ -262,10 +255,11 @@ local function installWraps()
                 est = est + #tostring(tag) + 2
                 local n = 1
                 if serverReady then
-                    -- guarded: the result drives the divisor below - n stays 1 when the roster is
-                    -- not available yet, rather than the rate being computed against nil.
-                    local ok, players = pcall(getOnlinePlayers)
-                    if ok and players then
+                    -- The OnServerStarted gate excludes the early udpEngine
+                    -- initialization window. The current Lua global returns
+                    -- GameServer's player list directly (LuaManager.java:3823-3827).
+                    local players = getOnlinePlayers()
+                    if players then
                         local sz = players:size()
                         if type(sz) == "number" and sz > 0 then n = sz end
                     end
@@ -317,8 +311,10 @@ Events.OnTick.Add(function()
             }, "RFTDCore")
             -- Flushed now rather than on the next cadence, so the directory
             -- exists the moment the armed line prints and the two cannot
-            -- disagree. pcall'd like every logging touch.
-            pcall(function() RDLog.flush() end)
+            -- disagree. Bare: flush() is our own total code (nil-checked
+            -- writers, exposed write/close faults swallowed) - "pcall'd like
+            -- every logging touch" was habit, not a failure mode.
+            RDLog.flush()
         else
             -- OFF IS SAID OUT LOUD, once. A silent default-off is how "the
             -- probe is off" gets diagnosed as "logging is shattered": no wire

@@ -35,9 +35,8 @@
 -- exist when a problem appears. The cost is one subtraction per tick.
 --
 -- INSTALL TIMING copies RDMeter exactly - first OnTick, not file scope, because
--- SandboxVars is not reliably populated at load and getOnlinePlayers() is a Java
--- NPE (escaping pcall) while GameServer.udpEngine is still null during
--- IsoWorld.init. serverReady gates every engine read below for that reason.
+-- SandboxVars is not reliably populated at load. serverReady gates the world-cell
+-- read below until the server-start lifecycle has completed.
 
 if not isServer() then return end
 
@@ -77,21 +76,14 @@ end
 -- Config (sandbox-tunable, read once when the world is up)
 -- ---------------------------------------------------------------------------
 
-local function sb(key)
-    return SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore[key]
-end
-
-local function sbNum(key, default, lo, hi)
-    local v = sb(key)
-    if type(v) ~= "number" then return default end
-    if lo and v < lo then return lo end
-    if hi and v > hi then return hi end
-    return v
-end
+-- Clamped reads are RDShared.sbNum since 2026-08-20 (RDMeter carried the
+-- identical pair); the single boolean read below writes its chain inline.
+local sbNum = RDShared.sbNum
 
 local function resolveConfig()
     return {
-        enabled = (sb("StallWatchEnabled") ~= false),
+        enabled = ((SandboxVars and SandboxVars.RFTDCore
+                     and SandboxVars.RFTDCore.StallWatchEnabled) ~= false),
         -- 250 ms to match the engine's own SlowLuaEvents threshold. Same number
         -- on both sensors means a stall recorded here and a SLOW callback logged
         -- there are directly comparable instead of needing a fudge factor.
@@ -109,30 +101,28 @@ end
 --
 -- Only read on an alert or a summary, never per tick: these are engine calls and
 -- this file's whole claim is that it costs one subtraction in the common case.
--- Each is independently pcall'd and defaults to -1, because "we could not count"
--- and "there were none" are different facts and a reader must be able to tell
--- them apart. -1 also survives the JSON round trip where nil would vanish.
+-- The zombie count defaults to -1 before server readiness, because "we could not
+-- count" and "there were none" are different facts and a reader must be able to
+-- tell them apart. -1 also survives the JSON round trip where nil would vanish.
 -- ---------------------------------------------------------------------------
 
 local function playerCount()
-    if not serverReady then return -1 end
-    local n = -1
-    pcall(function()
-        local players = getOnlinePlayers()
-        if players then n = players:size() end
-    end)
-    return n
+    -- LuaManager.java:3823-3832 returns an ArrayList on every side; this is not
+    -- the historical UDP-engine access path and has no readiness precondition.
+    return getOnlinePlayers():size()
 end
 
 local function zombieCount()
     if not serverReady then return -1 end
     local n = -1
-    -- Same idiom as RPCore.lua:268 - one server-wide IsoCell, so getCell() with
-    -- no player argument is the server's whole zombie list.
-    pcall(function()
-        local zlist = getCell():getZombieList()
-        if zlist then n = zlist:size() end
-    end)
+    -- Same idiom as RPCore.lua - one server-wide IsoCell, so getCell() with
+    -- no player argument is the server's whole zombie list. Bare with a nil
+    -- test: getCell's pre-world NPE arrives as nil (exposed global,
+    -- MethodCaller.java:33-56) and cannot occur past the serverReady gate
+    -- anyway; getZombieList is a field return. Nothing here can throw.
+    local cell = getCell()
+    local zlist = cell and cell:getZombieList()
+    if zlist then n = zlist:size() end
     return n
 end
 

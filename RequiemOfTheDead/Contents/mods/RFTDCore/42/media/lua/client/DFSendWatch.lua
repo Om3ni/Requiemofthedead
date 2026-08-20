@@ -64,34 +64,28 @@ local function report(act, text)
     })
 end
 
--- Safe accessors. Every one of these touches a Java object that may be nil or
--- may throw; a description that fails degrades to a placeholder rather than
--- taking the wrapper down with it.
+-- These describe valid engine objects. `wrap` owns the one optional-observer
+-- boundary for malformed/foreign callers; nested guards here only hid direct
+-- field-read failures without improving the wrapped engine action.
 local function nameOf(obj)
-    local v
-    if pcall(function() v = obj:getName() end) and v then return tostring(v) end
-    return "?"
+    -- Faction.java:255-256
+    return tostring(obj:getName() or "?")
 end
 
 local function titleOf(obj)
-    local v
-    if pcall(function() v = obj:getTitle() end) and v then return tostring(v) end
-    return "?"
+    -- SafeHouse.java:649-650
+    return tostring(obj:getTitle() or "?")
 end
 
 local function ownerOf(obj)
-    local v
-    if pcall(function() v = obj:getOwner() end) and v then return tostring(v) end
-    return "?"
+    -- Faction.java:263-264; SafeHouse.java:586-587
+    return tostring(obj:getOwner() or "?")
 end
 
 local function boundsOf(safehouse)
-    local x, y, x2, y2
-    local ok = pcall(function()
-        x, y   = safehouse:getX(),  safehouse:getY()
-        x2, y2 = safehouse:getX2(), safehouse:getY2()
-    end)
-    if not ok or not x then return "?" end
+    -- SafeHouse.java:526-563
+    local x, y   = safehouse:getX(),  safehouse:getY()
+    local x2, y2 = safehouse:getX2(), safehouse:getY2()
     return string.format("%d,%d..%d,%d", x, y, x2, y2)
 end
 
@@ -186,8 +180,9 @@ local function install()
         return "renamed faction [" .. nameOf(faction) .. "] to [" .. tostring(title) .. "]"
     end)
     w("sendFactionChangeTag", function(faction)
-        local tag
-        pcall(function() tag = faction:getTag() end)
+        -- getTag is the Faction tag field return (Faction.java:247-249).
+        -- wrap() owns the one observer boundary around every describer.
+        local tag = faction:getTag()
         return "changed tag of faction [" .. nameOf(faction) .. "] to [" .. tostring(tag or "") .. "]"
     end)
     w("sendFactionInvite", function(faction, host, invited)

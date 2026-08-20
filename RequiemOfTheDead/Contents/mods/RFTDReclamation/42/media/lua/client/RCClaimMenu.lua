@@ -22,6 +22,7 @@ RCClaimMenu = RCClaimMenu or {}
 -- toggle/visibility dance - instead of stacking fragile wrappers. Providers
 -- run AFTER the claim slices, only for a canInteract vehicle, pcall-guarded.
 RCClaimMenu.sliceProviders = RCClaimMenu.sliceProviders or {}
+local providerFaults = {}
 
 local M = RCShared.MODULE
 
@@ -107,14 +108,16 @@ local function applyMenuWraps()
             local wasVisible = menu and menu:isReallyVisible()
             orig(playerObj)
             if v and menu and not wasVisible and not menu:isEmpty() then
-                -- guarded: addSlice here is the vanilla LUA radial wrapper
-                -- (unverifiable against the decompile); a throw must leave the
-                -- wheel usable, just without our slices
-                pcall(RCClaimMenu.addRadialSlices, menu, v, playerObj)
-                for _, provider in ipairs(RCClaimMenu.sliceProviders) do
-                    -- guarded: registered provider callbacks (other files,
-                    -- potentially other mods) are contained, not propagated
-                    pcall(provider, menu, v, playerObj)
+                RCClaimMenu.addRadialSlices(menu, v, playerObj)
+                for index, provider in ipairs(RCClaimMenu.sliceProviders) do
+                    -- KEEP: this registry is an extension boundary. One foreign
+                    -- provider must not suppress later independent slices.
+                    local ok, err = pcall(provider, menu, v, playerObj)
+                    if not ok and not providerFaults[provider] then
+                        providerFaults[provider] = true
+                        print("[RC] radial slice provider " .. tostring(index)
+                            .. " failed: " .. tostring(err))
+                    end
                 end
                 -- re-center: added slices may have changed the wheel size
                 -- (mirrors vanilla's own positioning at the end of orig).

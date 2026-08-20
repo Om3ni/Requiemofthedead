@@ -794,20 +794,17 @@ print("[Dragonfly] DFPlayersTab body loaded; deferring registration to OnGameSta
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
-    -- DFRegistry is Core's: containment for a foreign-mod API whose contract
-    -- may change; a refusal must not kill this OnGameStart listener.
-    local ok, err = pcall(function()
-        DFRegistry.registerTab{
-            id         = "players",
-            label      = "Players",
-            order      = 20,
-            capability = Capability.KickUser,
-            build      = build,
-        }
-    end)
-    if not ok then
-        print("[Dragonfly] DFPlayersTab registerTab error: " .. tostring(err))
-    end
+    -- No guard - same reading as DFAdminTab: Core is a hard dependency, and
+    -- registerTab is a validated assignment (DFRegistry.lua:23-30). The engine
+    -- already contains each listener in its own try/catch (Event.java:53-63).
+    -- Capability.KickUser is a static enum read (Capability.java:50).
+    DFRegistry.registerTab{
+        id         = "players",
+        label      = "Players",
+        order      = 20,
+        capability = Capability.KickUser,
+        build      = build,
+    }
 end)
 
 -- Dragonfly v0.2.0

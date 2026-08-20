@@ -26,6 +26,8 @@ if LSTours.gridOn == nil then LSTours.gridOn = true end
 LSTours._nextId    = LSTours._nextId or 1
 LSTours._loaded    = LSTours._loaded or false
 
+require "DFFile"   -- the mod-wide file-read boundary
+
 local FILE = "Longstrider_tours.txt"
 
 -- Distinct, map-readable colours, assigned round-robin as tours are added.
@@ -44,6 +46,16 @@ local PALETTE = {
 -- { minX, minY, maxX, maxY }. Shared by add(), setRegion() and load() so a
 -- right-to-left / bottom-to-top gesture (or a hand-edited file) can never store
 -- an inverted, negative-size rect.
+-- Every entry must be a real number: normalizeRegion runs math.min/max over
+-- all four, and a hand-edited file can put anything in them.
+local function validRegion(r)
+    if type(r) ~= "table" or #r ~= 4 then return false end
+    for i = 1, 4 do
+        if type(r[i]) ~= "number" then return false end
+    end
+    return true
+end
+
 local function normalizeRegion(r)
     return {
         math.floor(math.min(r[1], r[3])), math.floor(math.min(r[2], r[4])),
@@ -159,54 +171,95 @@ function LSTours.serialize()
     return table.concat(p)
 end
 
+-- ---------------------------------------------------------------------------
+-- Save. No guard.
+--
+-- getFileWriter returns nil for a denied path or a failed open, and
+-- LuaFileWriter.write/close delegate to PrintWriter, which records I/O errors
+-- internally rather than raising them (LuaManager.java:5523-5555, 9850-9868).
+-- serialize() walks LSTours' own list, whose records are validated on the way
+-- in, so a format fault there is a programming error and must surface.
+-- ---------------------------------------------------------------------------
 function LSTours.save()
-    -- getFileWriter allowlist I/O (throws on a denied path); losing one save
-    -- must not break the mutator that triggered it
-    pcall(function()
-        local w = getFileWriter(FILE, true, false)
-        if not w then return end
-        w:write(LSTours.serialize())
-        w:close()
-    end)
+    local w = getFileWriter(FILE, true, false)
+    if not w then return false end
+    w:write(LSTours.serialize())
+    w:close()
+    return true
 end
 
+-- ---------------------------------------------------------------------------
+-- Load. One guard, on the one thing here that is genuinely foreign code.
+--
+-- The file is USER-EDITABLE, so its chunk is untrusted: it is sandboxed with
+-- setfenv(fn, {}) and executed behind a boundary. Everything else that used to
+-- share that boundary now stands on its own - the read is DFFile's, loadstring
+-- returns nil rather than throwing on a syntax error, and each tour record is
+-- validated before it is accepted.
+-- ---------------------------------------------------------------------------
 function LSTours.load()
     if LSTours._loaded then return end
     LSTours._loaded = true
-    -- getFileReader allowlist I/O over a user-editable file; a bad file means
-    -- an empty tour list, never a dead tab
-    pcall(function()
-        local r = getFileReader(FILE, false)
-        if not r then return end
-        local lines, line = {}, r:readLine()
-        while line do lines[#lines + 1] = line; line = r:readLine() end
-        r:close()
-        local src = table.concat(lines, "\n")
-        if not src:find("return", 1, true) then return end
-        local fn = loadstring(src)
-        if not fn then return end
-        setfenv(fn, {})
-        -- executing the loaded chunk; a hand-edited file may error at run time
-        local ok, data = pcall(fn)
-        if not ok or type(data) ~= "table" then return end
 
-        LSTours.cellSize = tonumber(data.cellSize) or LSTours.cellSize
-        LSTours.dwellMs  = tonumber(data.dwellMs)  or LSTours.dwellMs
-        LSTours.gridOn   = (data.gridOn ~= false)
-        LSTours._nextId  = tonumber(data.nextId) or 1
-        LSTours.list = {}
-        for _, t in ipairs(data.tours or {}) do
-            if type(t) == "table" and t.region and #t.region == 4 and t.color then
-                LSTours.list[#LSTours.list + 1] = {
-                    id     = tonumber(t.id) or LSTours._nextId,
-                    name   = tostring(t.name or ("Tour " .. tostring(t.id))),
-                    color  = { t.color[1] or 1, t.color[2] or 1, t.color[3] or 1 },
-                    region = normalizeRegion(t.region),
-                }
-            end
+    -- Truncation cannot be seen at the read layer - a BufferedReader fault
+    -- presents as early EOF there (see DFFile.readLines) - so the integrity
+    -- gate is below: a partial Lua chunk does not parse, and loadstring
+    -- rejects it. The `complete` flag this used to honour was always true.
+    local lines = DFFile.readLines(FILE)
+    if not lines then return end
+
+    local src = table.concat(lines, "\n")
+    if not src:find("return", 1, true) then return end
+
+    local fn = loadstring(src)   -- returns nil + message on a syntax error
+    if not fn then
+        print("[Longstrider] tour file does not parse; keeping the empty list")
+        return
+    end
+    setfenv(fn, {})
+
+    -- RETAINED: executing a hand-edited file's chunk. Foreign code by
+    -- definition, and the operator who edited it is the one who needs to be
+    -- told - the old boundary discarded the error silently.
+    local ok, data = pcall(fn)
+    if not ok then
+        print("[Longstrider] tour file failed to run: " .. tostring(data))
+        return
+    end
+    if type(data) ~= "table" then return end
+
+    LSTours.cellSize = tonumber(data.cellSize) or LSTours.cellSize
+    LSTours.dwellMs  = tonumber(data.dwellMs)  or LSTours.dwellMs
+    LSTours.gridOn   = (data.gridOn ~= false)
+    LSTours._nextId  = tonumber(data.nextId) or 1
+    LSTours.list = {}
+
+    local skipped = 0
+    for _, t in ipairs(data.tours or {}) do
+        -- Every field the accept path touches is type-checked here, not
+        -- guarded downstream. normalizeRegion does math.min on r[1]..r[4], so a
+        -- hand-edited region={1,"x",3,4} used to throw mid-loop - and the old
+        -- blanket swallowed it, leaving a PARTIALLY populated list with
+        -- _loaded already true, so the rest of the operator's tours vanished
+        -- for the session with nothing said. One bad tour now costs only
+        -- itself.
+        if type(t) == "table" and type(t.color) == "table" and validRegion(t.region) then
+            LSTours.list[#LSTours.list + 1] = {
+                id     = tonumber(t.id) or LSTours._nextId,
+                name   = tostring(t.name or ("Tour " .. tostring(t.id))),
+                color  = { tonumber(t.color[1]) or 1, tonumber(t.color[2]) or 1, tonumber(t.color[3]) or 1 },
+                region = normalizeRegion(t.region),
+            }
+        else
+            skipped = skipped + 1
         end
-        LSTours.selectedId = tonumber(data.selectedId) or (LSTours.list[1] and LSTours.list[1].id)
-    end)
+    end
+    if skipped > 0 then
+        print("[Longstrider] skipped " .. tostring(skipped) .. " malformed tour(s); kept "
+              .. tostring(#LSTours.list))
+    end
+
+    LSTours.selectedId = tonumber(data.selectedId) or (LSTours.list[1] and LSTours.list[1].id)
 end
 
 -- Read once per session. Reset _loaded first so a stale global surviving a soft

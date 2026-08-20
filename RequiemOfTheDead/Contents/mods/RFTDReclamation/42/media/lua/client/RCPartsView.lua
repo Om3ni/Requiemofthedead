@@ -68,10 +68,16 @@ local RECHECK_MS = 1500
 
 local function readLocalParts(vid)
     if not vid then return nil end
-    local v
-    -- guarded: vid rode in on a server row - a malformed value would blow the
-    -- (short) cast inside getVehicleById
-    if not pcall(function() v = getVehicleById(vid) end) or not v then return nil end
+    -- Precondition instead of a guard: getVehicleById takes an int
+    -- (LuaManager.java:8208-8211) and its only Lua-visible throw is
+    -- call-shape - a non-number, non-nil argument (LuaJavaInvoker.java:
+    -- 83-96). tonumber closes that deterministically; a numeric-but-stale id
+    -- just misses the map and answers nil. (Out-of-short-range ids wrap in
+    -- the body's own (short) cast - a lookup miss, not a throw.)
+    vid = tonumber(vid)
+    if not vid then return nil end
+    local v = getVehicleById(vid)
+    if not v then return nil end
     -- Part walk and reads are bounds-checked field returns (VehicleParts.java:111,
     -- VehiclePart.java:130/891/166/155/352/398/359/148) - no guards needed.
     local out = {}
@@ -373,10 +379,17 @@ function RCPartsView.draw(el, rect, row, noHit)
         return
     end
 
-    local bw, bh = 0, 0
-    -- guarded: a not-yet-loaded texture lazily reads its size off disk
-    -- (Texture.java:715 -> syncReadSize:1315); a bad file skips this frame
-    pcall(function() bw, bh = base:getWidth(), base:getHeight() end)
+    -- Bare: the lazy disk read cannot throw for a bad file - PNGSize
+    -- swallows its own IO faults internally and logs them (PNGSize.java:
+    -- 30-38), so getWidth/getHeight answer a plain number (Texture.java:
+    -- 715-720, :801-806; syncReadSize :1315-1325). The `or 0` covers the one
+    -- swallowed body throw left (a sandbox-prefix violation reads as nil),
+    -- and the <= 0 test already skips the frame. Read-time footnote: a
+    -- failed size read can leave a STALE size from the thread's previous
+    -- texture (PNGSize's ThreadLocal fields are never reset) - cosmetic
+    -- here, and not detectable from Lua.
+    local bw = base:getWidth() or 0
+    local bh = base:getHeight() or 0
     if bw <= 0 or bh <= 0 then return end
 
     -- Fit upright, centred. Uniform scale only - the part rects assume the
@@ -565,10 +578,12 @@ function RCPartsView.drawBreakdown(el, rect, row, scroll)
     -- Grid rhythm from the label font, not fixed. A 15px part row around a
     -- 20px glyph overlaps the row beneath it, and this grid is dense enough
     -- that the overlap compounds down the whole column.
-    local gfh = 12
-    -- guarded: getFontHeight NPEs on a font this build lacks
-    -- (TextManager.java:127); 12px is the fallback rhythm
-    pcall(function() gfh = getTextManager():getFontHeight(fL) end)
+    -- No guard. getFontFromEnum returns the DEFAULT font for a nil enum and
+    -- for one enumToFont has no entry for (TextManager.java:119-124), so the
+    -- deref on the next line is on a value that method guarantees - and "a font
+    -- this build lacks" is exactly the case it handles. The math.max floors
+    -- below are layout minimums and stay.
+    local gfh = getTextManager():getFontHeight(fL)
     local ROW_H2 = math.max(15, gfh + 3)
     local HEAD_H = math.max(16, gfh + 4)
     -- One column in a tall narrow pane; two if the caller hands this a wide

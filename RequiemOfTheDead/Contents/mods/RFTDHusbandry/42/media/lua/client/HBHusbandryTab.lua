@@ -83,19 +83,20 @@ end
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
-    -- KEEP: DFRegistry.registerTab is another mod's callback (Dragonfly), and a
-    -- host that has changed its contract must not take the OnGameStart chain
-    -- down with it - the error is logged, not swallowed.
-    local ok, err = pcall(function()
-        DFRegistry.registerTab{
-            id     = "husbandry",
-            label  = "Husbandry",
-            order  = 6,   -- where Animals used to sit; Hutches' slot is freed
-            build  = build,
-            resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
-        }
-    end)
-    if not ok then print("[Husbandry] HBHusbandryTab registerTab error: " .. tostring(err)) end
+    -- DFRegistry is Core-owned and this registered spec is already complete;
+    -- its current body validates the id then performs a table assignment.
+    DFRegistry.registerTab{
+        id     = "husbandry",
+        label  = "Husbandry",
+        -- Deck nav order, set as one decision 2026-08-18 (live review):
+        -- Admin 10, Players 20, Necro 30, Vehicles 40, Husbandry 50,
+        -- Longstrider 60, Zones 70, Console 1000 (always last).
+        -- Spaced by ten so a new tab can land between two without
+        -- renumbering five files across five mods again.
+        order = 50,
+        build  = build,
+        resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
+    }
     print("[Husbandry] HBHusbandryTab registered into Dragonfly (Animals | Hutches)")
 end)
 

@@ -126,10 +126,15 @@ local function show()
     if q.quip then text = text .. "\n- " .. q.quip end
     text = text .. "\n\n" .. q.author .. ", " .. q.work
 
-    -- guarded: ISModalDialog and the sizing chain are vanilla Lua running
-    -- while the HUD may still be settling (see header); failure falls back to
-    -- printing the quote below.
-    local ok = pcall(function()
+    -- No guard - "the HUD may still be settling" named no real failure. The
+    -- whole chain was read: ISModalDialog:new's only throw is a non-string
+    -- text (:188 text:gsub), and ours is built from our own quote table;
+    -- fonts are proven live before OnGameStart because ISModalDialog.lua:5
+    -- itself calls getFontHeight at file-load scope, so the class existing at
+    -- all means the text pipeline is up; and setX/setY/getWidth/getHeight all
+    -- self-instantiate (ISUIElement.lua:195-220). The print fallback this
+    -- guard fed was recovery for a failure that cannot occur.
+    do
         local w = 460
         local modal = ISModalDialog:new(0, 0, w, 0, text, false)
         modal:initialise()
@@ -157,10 +162,6 @@ local function show()
 
         modal:setAlwaysOnTop(true)
         modal:addToUIManager()
-    end)
-
-    if not ok then
-        print("[RFTDOddsAndEnds] Bookmark: " .. text:gsub("\n", " "))
     end
 end
 

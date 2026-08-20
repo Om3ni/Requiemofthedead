@@ -9,7 +9,8 @@
 --
 -- Our icons are self-contained 64x64 art (frame baked in), so unlike RQMoodle we
 -- draw a single texture instead of vanilla bg/border/icon layers. Size and shake
--- are shared with the over-head pass via LRDangerHUD.getBadgeSize / .shakeX so
+-- are shared with the over-head pass via DFKit.moodleBadgeSize and
+-- LRDangerHUD.shakeX so
 -- both placements feel identical.
 --
 -- The controller drives this with LRDangerMoodle.set(key, level, tex, shake) /
@@ -62,7 +63,7 @@ end
 local LRMoodleElem = ISUIElement:derive("LRMoodleElem")
 
 function LRMoodleElem:new(key)
-    local size = LRDangerHUD.getBadgeSize()
+    local size = DFKit.moodleBadgeSize()
     local o = ISUIElement:new(0, 0, size, size)
     setmetatable(o, self)
     self.__index = self
@@ -87,7 +88,7 @@ function LRMoodleElem:render()
     local player = getPlayer()
     if not player then return end
     local pn   = player:getPlayerNum()
-    local size = LRDangerHUD.getBadgeSize()
+    local size = DFKit.moodleBadgeSize()
 
     local baseX = getPlayerScreenLeft(pn) + getPlayerScreenWidth(pn) - X_OFFSET - size
     local baseY = getPlayerScreenTop(pn) + Y_OFFSET

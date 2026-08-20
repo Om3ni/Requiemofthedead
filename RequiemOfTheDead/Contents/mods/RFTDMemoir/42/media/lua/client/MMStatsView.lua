@@ -72,12 +72,18 @@ function MMStatsView:buildHeader()
         -- Fallback label is the full registry id, not getName(): this only shows for a
         -- trait with no definition, and that is exactly when you want the namespace.
         local label, tex = MMShared.labelOf(trait), nil
-        local ok, def = pcall(CharacterTraitDefinition.getCharacterTraitDefinition, trait)
-        if ok and def then
-            local okl, l = pcall(function() return def:getLabel() end)
-            if okl and l and l ~= "" then label = l end
-            local okt, t = pcall(function() return def:getTexture() end)
-            if okt then tex = t end
+        -- No guards. The whole trait-definition
+        -- surface is total: getCharacterTraitDefinition is a lookup on a
+        -- field-initialized LinkedHashMap that returns null for an unknown key
+        -- (CharacterTraitDefinition.java:22, 68-70), and getLabel/getTexture are
+        -- field returns (:136-138, :91-93). The nil check IS the whole error
+        -- path - a trait with no definition keeps its registry-id fallback,
+        -- which is the behaviour these guards were producing anyway.
+        local def = CharacterTraitDefinition.getCharacterTraitDefinition(trait)
+        if def then
+            local l = def:getLabel()
+            if l and l ~= "" then label = l end
+            tex = def:getTexture()
         end
         self.traits[#self.traits + 1] = { label = label, tex = tex }
     end

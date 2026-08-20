@@ -76,6 +76,16 @@ function RDAccess.isTopAdmin(player)
     return string.lower(access) == "admin"
 end
 
+-- The family's "any staff" notion, promoted here 2026-08-20 from identical
+-- copies in RDCmdRelay and RDTripwire plus the same predicate written inline
+-- in RDNet.sendStaff. isTopAdmin alone misses capability-granted roles, which
+-- is why this is the OR of both - and why it lives in the file that owns
+-- access classification, where the next surface that needs "is this player
+-- staff at all" finds one answer instead of writing a fourth.
+function RDAccess.isStaff(player)
+    return (RDAccess.isTopAdmin(player) or RDAccess.hasAnyCapability(player)) == true
+end
+
 -- Sandbox-driven tier gate, so each server chooses its own policy per
 -- surface. `tier` is the raw enum value from a sandbox option:
 --   1 (or anything else) -> Admin only        <- the shipped default

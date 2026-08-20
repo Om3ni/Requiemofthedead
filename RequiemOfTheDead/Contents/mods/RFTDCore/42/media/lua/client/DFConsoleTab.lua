@@ -121,10 +121,10 @@ local function rebuildDetail()
     ui.detail.lineFont  = font
     ui.detail.lineColor = e and (LEVEL_COLOR[e.level] or LEVEL_COLOR.info) or LEVEL_COLOR.info
 
-    local fh = 12
-    -- getFontHeight (TextManager:127) NPEs on a font this build lacks;
-    -- fallback height stands in
-    pcall(function() fh = getTextManager():getFontHeight(font) end)
+    -- getTextManager returns TextManager's eager singleton, and an unavailable
+    -- font enum resolves to its default font (LuaManager.java:6930-6933;
+    -- TextManager.java:119-129). This display measurement is deterministic.
+    local fh = getTextManager():getFontHeight(font)
     ui.detail.itemheight = math.max(12, fh + 1)
 
     DFKit.refillList(ui.detail, function(box)
@@ -368,20 +368,19 @@ Events.OnGameStart.Add(function()
         print("[RFTDCore] DFConsoleTab: DFLog not loaded, skipping tab registration")
         return
     end
-    -- a tab-registration fault is reported below, not allowed to kill
-    -- the OnGameStart chain
-    local ok, err = pcall(function()
-        DFRegistry.registerTab{
-            id     = "console",
-            label  = "Console",
-            order  = 1000,
-            build  = build,
-            resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
-        }
-    end)
-    if not ok then
-        print("[RFTDCore] DFConsoleTab registerTab error: " .. tostring(err))
-    end
+    -- Bare: a throw out of this listener is caught by the event
+    -- dispatcher's per-listener boundary and logged with a full stack trace
+    -- at throw time (Event.java:53-63; KahluaThread.java:865, :1100) - the
+    -- pcall bought a shorter message than the engine already prints, and
+    -- "not allowed to kill the OnGameStart chain" was the containment the
+    -- engine provides on its own.
+    DFRegistry.registerTab{
+        id     = "console",
+        label  = "Console",
+        order  = 1000,
+        build  = build,
+        resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
+    }
 end)
 
 -- ---------------------------------------------------------------------------

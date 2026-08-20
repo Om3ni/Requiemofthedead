@@ -37,6 +37,8 @@ tools/netprobe/captures/
 
 # --- Engine decompile: reference only, regenerate with tools/decompile-engine.ps1 ---
 PZ_Engine_Decompiled_*/
+# Exact-build vanilla Lua source: reference only, copied from the game install.
+PZ_Vanilla_Lua_*/
 IBdebuglog.txt
 
 # Dropped-in server forensic segments for analysis (not repo content)
@@ -87,3 +89,22 @@ docs/*
 
 # --- Native DLL decompiles: reference only, regenerate with Ghidra headless ---
 PZ_Natives_Decompiled_*/
+
+# --- All documentation is local-only (2026-08-20) ---------------------------
+# The docs/ purge above took the design tree off GitHub; this finishes the job
+# for everything that was still in the repo root. CLAUDE.md, AGENTS.md,
+# REFACTOR.md, TODO.md and the review/design records are the REASONING layer -
+# the engine readings, the lane model, the why behind every guard. The Workshop
+# artifact already strips all 25,705 comments before upload, so that layer was
+# never shipping; it was only ever exposed here, in a public repo. Closing that.
+#
+# LICENSE is deliberately NOT matched (no extension) and stays tracked: the GPL
+# notice stamped into every source file points at it, and a GPL work that
+# publishes no licence text is worse than one that publishes no notes.
+*.md
+
+# The Limes import fixture, again. `*.md` above re-matches it, so the exception
+# has to be repeated AFTER the broader rule - last matching pattern wins.
+# test_lmimport.lua and test_lmpersist.lua parse this file directly and
+# os.exit(2) without it. It is test data, not documentation.
+!docs/dirge-phunzones.md

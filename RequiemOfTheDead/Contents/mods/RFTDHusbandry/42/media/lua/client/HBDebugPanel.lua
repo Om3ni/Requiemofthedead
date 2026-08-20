@@ -10,6 +10,7 @@ require "ISUI/ISCollapsableWindow"
 require "ISUI/ISScrollingListBox"
 require "ISUI/ISLabel"
 require "ISUI/ISButton"
+require "HBAnimalMenu"
 
 HBDebugPanel = ISCollapsableWindow:derive("HBDebugPanel")
 HBDebugPanel._instance = nil
@@ -52,20 +53,30 @@ local function totalColW()
     return t
 end
 
--- Build a row from a live IsoAnimal. All accessors are pcall-wrapped so a
--- single broken method doesn't kill the whole row.
+-- Build a row from a live IsoAnimal.
+--
+-- Guard policy, re-read 2026-08-20 when this file left the scanner exemption.
+-- The old header said "all accessors are pcall-wrapped so a single broken
+-- method doesn't kill the whole row" - which is not a thing exposed methods do:
+-- a body fault is swallowed by MethodCaller and reads as nil
+-- (MethodCaller.java:33-56). What CAN kill a row is the Lua that follows a
+-- nil - `animal:getStats():get(...)` derefs whatever getStats handed back, and
+-- `getCustomName() or getFullName()` chains two candidates - so the guards that
+-- remain are chain guards on multi-call closures, per row field, which is the
+-- granularity CLAUDE.md sect. 2 asks a guard to earn. Single verified-safe
+-- calls run bare and their nil answers land in the row as the defaults above.
 local function buildRow(animal, location)
     local row = {
         oid = 0, id = nil, species = "?", name = "?", sex = "?", age = "?",
         hp = 0, hngA = nil, hngB = nil, thrA = nil, thrB = nil,
         stress = 0, loc = location or "?", seen = false,
     }
-    pcall(function() row.oid = animal:getOnlineID() or 0 end)
+    row.oid = animal:getOnlineID() or 0
     pcall(function()
         local md = animal:getModData()
         if md and md[HBData.NS_ANIMAL] then row.id = md[HBData.NS_ANIMAL].id end
     end)
-    pcall(function() row.species = animal:getAnimalType() or "?" end)
+    row.species = animal:getAnimalType() or "?"
     pcall(function()
         local n = animal:getCustomName()
         if n and n ~= "" then row.name = n
@@ -76,7 +87,7 @@ local function buildRow(animal, location)
     -- getHealth() returns 0-1 like hunger/thirst (NOT 0-100 like player getHealth).
     -- Multiply by 100 for percent-style display. Verified via DBD_NearbyAnimals
     -- which does the same conversion (line 191 of that mod).
-    pcall(function() row.hp = (animal:getHealth() or 0) * 100 end)
+    row.hp = (animal:getHealth() or 0) * 100
     pcall(function() row.hngA = animal:getHunger() end)
     pcall(function() row.hngB = animal:getStats():get(CharacterStat.HUNGER) end)
     pcall(function() row.thrA = animal:getThirst() end)
@@ -110,10 +121,11 @@ local function scanCellAnimals()
     local seen = {}
 
     -- ── Pass 1: loose animals via cell object list ─────────────────────
-    local ok, objs = pcall(function() return cell:getObjectListForLua() end)
-    if ok and objs and type(objs) ~= "boolean" then
-        local count = 0
-        pcall(function() count = objs:size() or 0 end)
+    -- Bare: getObjectListForLua and size are exposed methods, so a fault is a
+    -- nil result, not a throw - the nil checks are the whole recovery.
+    local objs = cell:getObjectListForLua()
+    if objs then
+        local count = objs:size() or 0
         for i = 0, count - 1 do
             pcall(function()
                 local obj = objs:get(i)
@@ -129,8 +141,7 @@ local function scanCellAnimals()
                 local location = "loose"
                 local v = obj:getVehicle()
                 if v then
-                    local vid = "?"
-                    pcall(function() vid = tostring(v:getId() or "?") end)
+                    local vid = tostring(v:getId() or "?")
                     location = "tr:" .. vid
                 elseif obj:getHutch() then
                     location = "hutch"
@@ -157,6 +168,15 @@ local function scanCellAnimals()
             local px, py, pz = sq:getX(), sq:getY(), sq:getZ()
             for dx = -TRAILER_SCAN_RANGE, TRAILER_SCAN_RANGE do
                 for dy = -TRAILER_SCAN_RANGE, TRAILER_SCAN_RANGE do
+                    -- One square of a 41x41 batch. Broad on purpose: every
+                    -- engine call inside is an exposed method whose fault reads
+                    -- as nil, and the closure chains those nils into container
+                    -- walks - vehicle -> getAnimals -> get(j), hutch ->
+                    -- getAnimalInside - where the follow-on Lua deref is the
+                    -- real throw. The guard buys per-square granularity: one
+                    -- square with a half-loaded vehicle or a broken hutch costs
+                    -- its own row set, not the remaining 1,680 squares. This is
+                    -- the independent-batch shape, not blanket containment.
                     pcall(function()
                         local s = cell:getGridSquare(px + dx, py + dy, pz)
                         if not s then return end
@@ -345,30 +365,8 @@ function HBAnimalList:onRightMouseUp(x, y)
         self.parent:onSelectionChanged(rowIdx)
     end
 
-    local ok, err = pcall(function()
-        require "ISUI/Animal/ISAnimalContextMenu"
-        local screenX = self:getAbsoluteX() + x
-        local screenY = self:getAbsoluteY() + y
-        local pn = player:getPlayerNum()
-        local context = ISContextMenu.get(pn, screenX, screenY)
-        if context and AnimalContextMenu and AnimalContextMenu.doMenu then
-            -- Force cheat-mode for the duration of the menu build. Two reasons:
-            --   1. Vanilla's distance check at ISAnimalContextMenu.lua:159 nil-
-            --      indexes when animal:getCurrentSquare() is nil (containerised
-            --      animal, edge-of-load animal, etc.). The `not cheat` guard
-            --      short-circuits that whole branch.
-            --   2. Cheat-mode surfaces debug-only options (set acceptance,
-            --      fertilize, set age, genetic-disorder editor) that are
-            --      exactly the diagnostics this admin panel wants.
-            -- We restore the previous value after - but note that menu building
-            -- is synchronous, so the option callbacks (clicked later) run with
-            -- the original cheat flag.
-            local prevCheat = AnimalContextMenu.cheat
-            AnimalContextMenu.cheat = true
-            AnimalContextMenu.doMenu(pn, context, animal, false)
-            AnimalContextMenu.cheat = prevCheat
-        end
-    end)
+    local ok, err = HBAnimalMenu.openCaretakerMenu(
+        player, self:getAbsoluteX() + x, self:getAbsoluteY() + y, animal)
     if not ok then
         print("[HB] right-click context menu error: " .. tostring(err))
     end
@@ -651,7 +649,7 @@ function HBDebugPanel:onCopyLog()
     local ok, err = pcall(function() Clipboard.setClipboard(text) end)
     if ok then
         self:logLine(string.format("[clipboard] copied %d log lines", #lines))
-        pcall(function() getSoundManager():playUISound("UISelectListItem") end)
+        getSoundManager():playUISound("UISelectListItem")
     else
         self:logLine("[clipboard] error: " .. tostring(err))
     end
@@ -798,10 +796,15 @@ function HBDebugPanel:onTeleport()
         tx, ty, tz = sq:getX() + 0.5, sq:getY() + 0.5, sq:getZ()
         return true
     end
+    -- All bare, re-read 2026-08-20: every accessor in this resolution ladder is
+    -- an exposed method, so a fault reads as nil rather than throwing - and nil
+    -- is already the ladder's own miss signal at every rung (fromSquare and
+    -- fromObject both refuse nil, and the loc branches nil-check before
+    -- chaining). Seven guards were saying "this might fail" about calls whose
+    -- failure mode was the very nil the next line handled.
     local function fromObject(obj)
         if not obj then return false end
-        local ax, ay, az
-        pcall(function() ax, ay, az = obj:getX(), obj:getY(), obj:getZ() end)
+        local ax, ay, az = obj:getX(), obj:getY(), obj:getZ()
         if not ax or not ay then return false end
         tx, ty, tz = ax, ay, az or 0
         return true
@@ -809,15 +812,15 @@ function HBDebugPanel:onTeleport()
 
     local loc = row.loc or "loose"
     if loc == "loose" then
-        local sq; pcall(function() sq = animal:getCurrentSquare() end)
+        local sq = animal:getCurrentSquare()
         if not fromSquare(sq) then fromObject(animal) end
     elseif string.sub(loc, 1, 3) == "tr:" then
-        local v;  pcall(function() v = animal:getVehicle() end)
-        local sq; pcall(function() if v then sq = v:getCurrentSquare() end end)
+        local v  = animal:getVehicle()
+        local sq = v and v:getCurrentSquare()
         if not fromSquare(sq) then fromObject(v) end
     elseif loc == "hutch" then
-        local h;  pcall(function() h = animal:getHutch() end)
-        local sq; pcall(function() if h then sq = h:getSquare() end end)
+        local h  = animal:getHutch()
+        local sq = h and h:getSquare()
         if not fromSquare(sq) then fromObject(h) end
     end
 

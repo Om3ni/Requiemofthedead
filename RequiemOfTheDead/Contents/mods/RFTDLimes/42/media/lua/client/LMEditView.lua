@@ -492,15 +492,16 @@ function LMEditView.attach(panel)
         -- it on, but it is stated rather than assumed because it is load-bearing
         -- here: a grid over the whole map is visually the same thing as a zone
         -- rectangle, and this view's entire job is telling those apart.
-        -- pcall: getAPI belongs to Dragonfly's LSMap, and setBoolean is the
-        -- engine world-map API keyed by STRING - an option name this build has
-        -- renamed fails at the call, and a lattice we could not turn off is not
-        -- worth losing the map over.
-        pcall(function()
-            local api = map:getAPI()
-            api:setBoolean("CellGrid",    false)
-            api:setBoolean("CellGrid300", false)
-        end)
+        -- No guard - the claimed failure mode does not exist. setBoolean
+        -- resolves the STRING through getOrDefault(name, null) and an unknown
+        -- name simply fails the instanceof test: a silent no-op, no throw, no
+        -- log (WorldMapRenderer.java:685-687, 697-703). And both names are
+        -- live registered options in this build, consumed by the renderer
+        -- (:140-141, :2027-2034). A future rename would cost us the lattice
+        -- turning off, never the map.
+        local api = map:getAPI()
+        api:setBoolean("CellGrid",    false)
+        api:setBoolean("CellGrid300", false)
     end
 
     local tree = TreeList:new(0, 0, 10, 10)
@@ -673,12 +674,14 @@ function LMEditView.layout(panel, x, y, w, h)
     -- text-size preference the counts line drew into the tree's border.
     local colX   = x + PAD
     local countH = FONT_HGT + 5
-    -- pcall: getFontHeight (TextManager:127) hands its argument to
-    -- getFontFromEnum and dereferences the result unguarded, so a font this
-    -- build does not carry is an NPE. FONT_HGT above is the fallback that keeps.
-    pcall(function()
-        countH = getTextManager():getFontHeight(DFKit.font.small or UIFont.Small) + 5
-    end)
+    -- No guard - the old claim missed getFontFromEnum's own double fallback:
+    -- a null argument AND an unpopulated enum slot both return this.font
+    -- (TextManager.java:119-125), so a "font this build does not carry" cannot
+    -- NPE. The only null this.font states are pre-Init and a headless server
+    -- (Init is gated on guiCommandline, GameServer.java:1359-1364) - and this
+    -- is client layout code drawing a view, which cannot run in either. DFKit
+    -- itself already calls this bare with the same argument (DFKit.lua:330).
+    countH = getTextManager():getFontHeight(DFKit.font.small or UIFont.Small) + 5
     local treeH = math.max(80, bodyH - countH)
     DFKit.sizeList(ui.tree, colX, bodyY, LEFT_W, treeH)
     ui.counts:setX(colX)

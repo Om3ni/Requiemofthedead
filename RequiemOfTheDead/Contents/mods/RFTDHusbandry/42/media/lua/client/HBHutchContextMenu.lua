@@ -16,8 +16,7 @@ if isServer() then return end
 
 require "ISUI/ISToolTip"
 require "TimedActions/ISTimedActionQueue"
-
-local HAY_TYPE = "Base.HayTuft"
+require "HBHayward"
 
 -- A COOP IS NOT ONE TILE, WHICH IS THE WHOLE OF THIS PROBLEM. IsoHutch's
 -- constructor walks the def's extraSprites table and spawns a SECOND IsoHutch
@@ -70,13 +69,8 @@ Events.OnPreFillWorldObjectContextMenu.Add(function(playerNum, context, worldobj
     if not player or player:isDead() then return end
 
     -- Need hay in inventory to offer the option at all.
-    -- KEEP: getFirstTypeRecurse (ItemContainer:1470) is overloaded on
-    -- ItemKey/String and allocates from a thread-local predicate pool before
-    -- recursing - overload dispatch through Kahlua is not a field read. Runs on
-    -- every world right-click, so the guard is the allocation-free form.
-    local inv = player:getInventory()
-    local ok, hay = pcall(inv.getFirstTypeRecurse, inv, HAY_TYPE)
-    if not ok or not hay then return end
+    local hay = HBHayward.find(player)
+    if not hay then return end
 
     local max     = (HBBedding and HBBedding.MAX) or 100
     local bedding = (HBBedding and HBBedding.getAmount and HBBedding.getAmount(hutch)) or 0

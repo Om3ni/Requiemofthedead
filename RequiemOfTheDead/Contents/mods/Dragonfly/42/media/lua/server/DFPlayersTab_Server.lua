@@ -46,12 +46,24 @@ local function isInvis(target)
     return target:isInvisible()
 end
 
+-- The old guard named the right hazard and then stood in for the precondition
+-- instead of establishing it. The chain, read out: getDisplayName
+-- (IsoPlayer.java:7343) calls getUsername(showFirstAndLastName,
+-- hideDisguisedUserName || usernameDisguises); the second argument being true is
+-- what reaches updateDisguisedState (:6001), which returns immediately unless one
+-- of those two options is set (IsoGameCharacter.java:14130) and otherwise derefs
+-- the TARGET's role at :14138 - reachable only inside a safehouse with
+-- safehouseDisableDisguises on. The camera-character deref at :6010 is behind
+-- GameClient.client and cannot fire here.
+--
+-- role is field-initialized (IsoPlayer.java:354) from Roles.defaultForNewUser, a
+-- plain static that is null until setRoles runs - which is why the engine
+-- null-checks it itself at :6984. So it is nullable, and getRole() (:6987) is a
+-- field return that answers the question directly. Check it and call bare.
 local function displayName(target)
-    -- pcall: IsoPlayer.getDisplayName (:7343) chains getUsername ->
-    -- updateDisguisedState, which derefs player.role unguarded
-    -- (IsoGameCharacter:14138) when disguise server options are on.
-    local ok, name = pcall(target.getDisplayName, target)
-    if ok and name and name ~= "" then return name end
+    if not target:getRole() then return target:getUsername() end
+    local name = target:getDisplayName()
+    if name and name ~= "" then return name end
     return target:getUsername()
 end
 

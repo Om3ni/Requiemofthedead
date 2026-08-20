@@ -143,6 +143,16 @@ end
 -- back the same morning as over-engineering a non-problem. Do not rebuild it.
 -- ---------------------------------------------------------------------------
 
+-- Runs INSIDE getAllEvalRecurse, so it must not rely on being able to throw:
+-- the engine invokes an eval predicate through protectedCallBoolean and
+-- discards the error text entirely (ItemContainer.java:3618-3621 into
+-- KahluaThread.java:1261-1278) - a throwing predicate reads as "false" with
+-- nothing in the log. Both calls here are safe on any InventoryItem
+-- (hasTag :2665-2669, isBroken :2934), so the predicate cannot throw.
+--
+-- Note it deliberately matches on the TAG, not on being a weapon. Anything a
+-- mod tags CHOP_TREE is a candidate; whether it can answer getTreeDamage is a
+-- separate question, settled per item in bestAxe below.
 local function isAxe(item)
     if not item then return false end
     return item:hasTag(ItemTag.CHOP_TREE) and not item:isBroken()
@@ -155,22 +165,44 @@ end
 -- Seeded with the axe already in hand so that ties keep it. Strictly-better
 -- still wins, but without the seed a second axe of identical TreeDamage sorts
 -- ahead on iteration order alone and the sweep re-equips between every tree.
-function LJS.bestAxe(playerObj)
-    local best = nil
-    -- guarded: getTreeDamage exists only on HandWeapon; a CHOP_TREE-tagged
-    -- non-weapon from a mod would throw "no such method" here
-    local ok = pcall(function()
-        local held = playerObj:getPrimaryHandItem()
-        if isAxe(held) then best = held end
+-- FIXED 2026-08-19 - the guard that used to wrap this whole walk was hiding a
+-- real defect rather than containing one. Its reading was right: getTreeDamage
+-- is declared ONLY on HandWeapon, which is final and extends InventoryItem
+-- directly (HandWeapon.java:52-55, :1523-1529; the whole decompile has exactly
+-- two mentions of the name, that declaration and IsoTree.java:219). So a
+-- CHOP_TREE-tagged item that is not a weapon indexes getTreeDamage to nil, and
+-- calling nil IS a genuine Lua throw - the call-shape lane, not a swallowed
+-- Java body.
+--
+-- But the guard wrapped the ENTIRE walk. One such item anywhere in the pack
+-- aborted the whole thing and returned nil, so the sweep reported "no axe"
+-- while the player was holding one. A per-item test costs that item and
+-- nothing else, which is what the granularity rule asks for - and Kahlua
+-- answers it exactly, since an absent method reads as nil rather than
+-- throwing on the index.
+local function treeDamageOf(item)
+    if not item or not item.getTreeDamage then return nil end
+    return item:getTreeDamage()
+end
 
-        local axes = playerObj:getInventory():getAllEvalRecurse(isAxe)
-        if not axes then return end
-        for i = 0, axes:size() - 1 do
-            local item = axes:get(i)
-            if not best or item:getTreeDamage() > best:getTreeDamage() then best = item end
-        end
-    end)
-    if not ok then return nil end
+function LJS.bestAxe(playerObj)
+    local best, bestDmg = nil, nil
+
+    local held = playerObj:getPrimaryHandItem()
+    if isAxe(held) then
+        bestDmg = treeDamageOf(held)
+        if bestDmg then best = held end
+    end
+
+    local axes = playerObj:getInventory():getAllEvalRecurse(isAxe)
+    if not axes then return best end
+    for i = 0, axes:size() - 1 do
+        local item = axes:get(i)
+        local dmg = treeDamageOf(item)
+        -- A tagged non-weapon simply is not a chopper. Skipping it is the
+        -- honest answer; it must never cost us the axes either side of it.
+        if dmg and (not bestDmg or dmg > bestDmg) then best, bestDmg = item, dmg end
+    end
     return best
 end
 
@@ -253,9 +285,24 @@ step = function(state)
 
     -- Walk, equip, chop - queued in that order because that is the order they
     -- must run in, and vanilla's doChopTree walks before it equips too.
-    -- guarded: walkAdj/equip/ISChopTreeAction/ISTimedActionQueue are all
-    -- vanilla Lua, unverifiable against the Java decompile - a throw ends the
-    -- sweep cleanly (nothing queued) instead of erroring the context menu.
+    -- RETAINED, and now with the throw READ rather than assumed - the old
+    -- "vanilla Lua, unverifiable against the Java decompile" is no longer true,
+    -- the vanilla tree is in the repo root. This is the LUA lane, where errors
+    -- really do propagate:
+    --   * luautils.lua:137-138 reassigns square through getCorrectSquareForWall,
+    --     which returns getCell():getGridSquare(...) - null for an unloaded or
+    --     out-of-bounds tile (IsoCell.java:2800-2819) - and then derefs it
+    --     unguarded. A tree at the edge of the loaded area on a collideW/N
+    --     tile reaches it.
+    --   * luautils.lua:140 derefs playerObj:getSquare(), which is nullable
+    --     (IsoMovingObject.java:534-539).
+    --   * ISTimedActionQueue.lua:158 derefs action.ignoreAction, so any helper
+    --     that hands it a nil throws there.
+    -- The action's OWN isValid/start are NOT a reason - the engine already
+    -- pcalls both (LuaTimedActionNew.java:107, :122).
+    --
+    -- Recovery is exact: a throw means nothing was queued, so the sweep ends
+    -- cleanly on this tree rather than erroring the context menu mid-walk.
     local ok, reachable = pcall(function()
         -- walkAdj over a raw AdjacentFreeTileFinder.Find: it skips the walk
         -- entirely when you are already standing in range, which on a dense

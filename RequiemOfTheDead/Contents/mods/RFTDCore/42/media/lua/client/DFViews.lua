@@ -48,6 +48,7 @@ function DFViews.new(spec)
     self.views    = {}
     self.order    = {}
     self.buttons  = {}
+    self.failures = {}
     self.relayout = spec and spec.relayout
     for _, v in ipairs((spec and spec.views) or {}) do
         if v.id then
@@ -58,6 +59,16 @@ function DFViews.new(spec)
     end
     self.activeId = self.order[1]
     return self
+end
+
+-- A view can be supplied by any suite tab. A failure must not strand the host
+-- mid-switch or kill its render pass, but a per-frame console flood is not a
+-- recovery either. Name each failed operation once for this tab instance.
+local function reportFailure(self, operation, id, err)
+    local key = operation .. "\0" .. tostring(id)
+    if self.failures[key] then return end
+    self.failures[key] = true
+    print("[Core] DFViews " .. operation .. " failed (" .. tostring(id) .. "): " .. tostring(err))
 end
 
 -- Build the strip. Returns the buttons so the host can keep them in its own
@@ -119,11 +130,14 @@ function DFViews:set(id)
     for _, vid in ipairs(self.order) do
         local v = self.views[vid]
         local on = (vid == id)
-        for _, wdg in ipairs(v.widgets or {}) do
+        for index, wdg in ipairs(v.widgets or {}) do
             -- pcall per widget: a view's list can hold anything a tab put in
             -- it, and one bad entry must not leave the rest of the panel in a
             -- half-switched state.
-            if wdg then pcall(function() wdg:setVisible(on) end) end
+            if wdg then
+                local ok, err = pcall(function() wdg:setVisible(on) end)
+                if not ok then reportFailure(self, "widget visibility", vid .. " #" .. index, err) end
+            end
         end
     end
 
@@ -137,10 +151,20 @@ function DFViews:set(id)
     -- paints into rects the switch just changed; doing it the other way round
     -- can land a reply against the outgoing view's geometry. Both are tab-owned
     -- callbacks: one view's fault must not leave the switch half-done.
-    if self.relayout then pcall(self.relayout) end
+    if self.relayout then
+        -- guarded: caller-owned relayout callback; preserve the completed
+        -- visibility switch and continue to the active view's independent refresh.
+        local ok, err = pcall(self.relayout)
+        if not ok then reportFailure(self, "relayout", id, err) end
+    end
 
     local v = self.views[id]
-    if v.view and v.view.onShow then pcall(v.view.onShow) end
+    if v.view and v.view.onShow then
+        -- guarded: caller-owned view refresh; the active view is still usable
+        -- when its optional refresh fails after a completed switch.
+        local ok, err = pcall(v.view.onShow)
+        if not ok then reportFailure(self, "onShow", id, err) end
+    end
 end
 
 -- Chrome pass for whichever view is active. Hosts that draw their own active
@@ -149,7 +173,10 @@ end
 function DFViews:draw(el)
     local v = self.views[self.activeId]
     -- tab-owned callback; a draw fault must not kill the host's render pass
-    if v and v.view and v.view.draw then pcall(v.view.draw, el) end
+    if v and v.view and v.view.draw then
+        local ok, err = pcall(v.view.draw, el)
+        if not ok then reportFailure(self, "draw", self.activeId, err) end
+    end
 end
 
 -- Layout the active view into the body rect the host has left after its strip.
@@ -157,7 +184,8 @@ function DFViews:layoutActive(panel, x, y, w, h)
     local v = self.views[self.activeId]
     -- tab-owned callback; a layout fault must not break the host's resize
     if v and v.view and v.view.layout then
-        pcall(v.view.layout, panel, x, y, w, h)
+        local ok, err = pcall(v.view.layout, panel, x, y, w, h)
+        if not ok then reportFailure(self, "layout", self.activeId, err) end
     end
 end
 

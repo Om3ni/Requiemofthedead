@@ -297,7 +297,7 @@ end
 -- life, and two things follow from that:
 --
 --   1. isVScrollBarVisible() is `vscroll:getHeight() < getScrollHeight()`
---      (ISUIElement.java:1412). Against a stale tiny height that is TRUE for
+--      (vanilla ISUIElement.lua:1411-1413). Against a stale tiny height that is TRUE for
 --      any non-empty list.
 --   2. Which makes prerender clamp the stencil to `vscroll.x + 3`
 --      (ISScrollingListBox.lua:495). Against a stale tiny x that is a ~2px
@@ -323,11 +323,58 @@ end
 -- font and every list that asks here grows with it, instead of keeping its
 -- old spacing around bigger text.
 function DFKit.rowHeight()
-    local fh = 12
-    -- getFontHeight (TextManager:127) NPEs on a font this build lacks
-    pcall(function() fh = getTextManager():getFontHeight(DFKit.font.small) end)
+    -- getTextManager returns TextManager's eager singleton (LuaManager.java:
+    -- 6930-6933), and getFontFromEnum falls back to its default font when the
+    -- requested enum is absent (TextManager.java:119-129). This read has no
+    -- recoverable exception path.
+    local fh = getTextManager():getFontHeight(DFKit.font.small)
     if not fh or fh < 1 then fh = 12 end
     return math.max(DFKit.metrics.rowH, fh + 8)
+end
+
+-- The size a moodle-scale badge draws at, mirroring vanilla exactly.
+--
+-- WHY IT IS HERE. Dirge's RQMoodle and Last Rites' LRDangerHUD both draw badges
+-- alongside the vanilla moodle stack, and both had grown the same fourteen
+-- lines to work out how big one should be. Two copies of a ladder is two
+-- chances to stop matching the row of icons sitting right next to it, and a
+-- badge that is one step out of scale is exactly the kind of thing a player
+-- reads as "this mod is broken" rather than as a setting. Promoted 2026-08-19.
+--
+-- WHAT VANILLA ACTUALLY DOES, since the copies asserted the ladder without ever
+-- citing it: MoodlesUI keeps a fixed table of texture sizes {32,48,64,80,96,128}
+-- (MoodlesUI.java:44) and indexes it with the moodle-size option minus one
+-- (:75-85). Option 7 is the "match font size" slot and defers to
+-- getOptionFontSizeReal instead; anything out of range falls back to 32.
+-- The option is an integer clamped to 1..7 (Core.java:219).
+--
+-- The copies computed math.floor(32 * scale) with scale = 0.5 + 0.5 * size,
+-- which reproduces that table value-for-value across the whole range - so this
+-- is the same answer, expressed as the table it was always approximating. The
+-- arithmetic form also implied a fractional option, which the engine never
+-- produces.
+local MOODLE_TEXTURE_SIZES = { 32, 48, 64, 80, 96, 128 }
+local MOODLE_FALLBACK      = 32
+
+function DFKit.moodleBadgeSize()
+    -- getCore is an exposed global; a fault inside it comes back as nil rather
+    -- than a throw (MethodCaller.java:33-56), and nil here simply means we are
+    -- being asked before Core exists.
+    local core = getCore()
+    if not core then return MOODLE_FALLBACK end
+
+    local index = core:getOptionMoodleSize() - 1
+    if MOODLE_TEXTURE_SIZES[index + 1] then return MOODLE_TEXTURE_SIZES[index + 1] end
+
+    -- Slot 7: "same as font size". Vanilla reads the font option and indexes the
+    -- SAME table with it, so a large-font player gets a large badge.
+    if index == 6 then
+        local fontIndex = core:getOptionFontSizeReal() - 1
+        if MOODLE_TEXTURE_SIZES[fontIndex + 1] then
+            return MOODLE_TEXTURE_SIZES[fontIndex + 1]
+        end
+    end
+    return MOODLE_FALLBACK
 end
 
 -- Rebuilding the bars after sizing puts the widget in exactly the state vanilla
@@ -342,10 +389,41 @@ function DFKit.sizeList(box, x, y, w, h)
     if w then box:setWidth(w) end
     if h then box:setHeight(h) end
     -- Order matters: bars first so they take the new geometry, then re-clamp
-    -- yScroll against the scroll area the new size implies. Both are vanilla
-    -- ISUI Lua (unverifiable here); a fault costs the bars, not the resize.
-    pcall(function() box:addScrollBars() end)
-    pcall(function() box:updateScrollbars() end)
+    -- yScroll against the scroll area the new size implies.
+    --
+    -- READ 2026-08-19, replacing "unverifiable here" - the vanilla tree is in
+    -- the repo root now, so the claim was stale rather than true. Neither call
+    -- reaches the engine; both are ISUI Lua, which IS a lane that throws.
+    --
+    --   addScrollBars (ISUIElement.lua:1389-1399) builds ISScrollBar instances
+    --   and addChild's them - and addChild INSTANTIATES self when javaObject is
+    --   nil (:1452-1454). So this call is also what guarantees the javaObject
+    --   the next line needs.
+    --
+    --   updateScrollbars (:1701) then derefs self.javaObject:getYScroll() with
+    --   NO nil check (:1708) - its own sibling setXScroll guards that exact
+    --   field two functions below (:1724-1726). It is safe here only BECAUSE
+    --   addScrollBars ran first and instantiated.
+    --
+    -- That makes this ONE CHAIN, not two operations, and the guard is the chain
+    -- kind CLAUDE.md sect. 2 allows: if a third-party mod has clobbered the shared
+    -- ISScrollBar global, the first call throws, no javaObject is created, and
+    -- the second would throw on the nil deref. Two separate guards said that
+    -- twice and implied the second could fail on its own, which it cannot.
+    --
+    -- Recovery is unchanged - a fault costs the bars, not the resize, and the
+    -- box returns with its new geometry either way. What is new is that the
+    -- failure is no longer silent: once per session, because this runs on every
+    -- layout pass and a per-resize print would be its own bug.
+    local ok, err = pcall(function()
+        box:addScrollBars()
+        box:updateScrollbars()
+    end)
+    if not ok and not DFKit._warnedScrollBars then
+        DFKit._warnedScrollBars = true
+        print("[RFTDCore] DFKit.sizeList: scroll bars unavailable, panels resize "
+            .. "without them (likely a mod replacing ISScrollBar): " .. tostring(err))
+    end
     return box
 end
 

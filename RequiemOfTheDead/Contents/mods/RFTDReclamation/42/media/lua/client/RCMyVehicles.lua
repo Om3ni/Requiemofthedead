@@ -97,10 +97,16 @@ function RCMyVehicles:createChildren()
     local rx = PAD * 2 + LIST_W
     local rw = self.width - rx - PAD
 
-    -- Right-top: 3D preview (guarded - ISUI3DScene is vanilla LUA over
-    -- UI3DScene's verb-string dispatch, which throws on any verb this build
-    -- lacks; if the scene element is unavailable we just skip it and the rest
-    -- of the panel still works).
+    -- Right-top: 3D preview. RETAINED - but the lane is narrower than this
+    -- comment used to think: the verb dispatch's throws (UI3DScene.java:894,
+    -- :1422) are Java BODY throws, swallowed before Lua sees them. What
+    -- genuinely throws here is the CONSTRUCTOR - instantiate() runs
+    -- UI3DScene.new(self) (ISUI3DScene.lua:5-15), and constructors are the
+    -- one exposed lane that rethrows into Lua (ConstructorCaller.java:25-28,
+    -- LuaJavaInvoker.java:150-151) - plus the vanilla ISUIElement Lua around
+    -- it. If the scene cannot be built we skip the preview and the rest of
+    -- the panel still works. (createVehicle returns nil even on success, so
+    -- there is nothing to verify by return value.)
     self.previewY = top
     local ok = pcall(function()
         self.preview = ISUI3DScene:new(rx, top, rw, PREVIEW_H)
@@ -170,9 +176,14 @@ function RCMyVehicles:updateSelection()
     -- swap the previewed model (or clear it)
     if self.preview then
         local script = self.selRec and self.selRec.name or ""
-        -- guarded: UI3DScene verb dispatch throws on a script name the scene
-        -- cannot resolve; a bad name must just leave the old preview
-        pcall(function() self.preview.javaObject:fromLua2("setVehicleScript", "rcPreview", script or "") end)
+        -- Bare: a bad script name does not throw AT ALL - SceneVehicle
+        -- .setScriptName null-handles the lookup and the vehicle just stops
+        -- rendering (UI3DScene.java:4899, :4665) - and the unknown-id NPE in
+        -- the dispatch is a Java BODY throw, swallowed by MethodCaller
+        -- (UI3DScene.java:1376, MethodCaller.java:33-56). javaObject exists
+        -- whenever self.preview does: both are set inside the same guarded
+        -- build above.
+        self.preview.javaObject:fromLua2("setVehicleScript", "rcPreview", script or "")
     end
     self.btnRelease:setEnable(self.selRec ~= nil)
     -- Manage only when the car is loaded somewhere (editable); greyed otherwise.

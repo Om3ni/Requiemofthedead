@@ -14,9 +14,12 @@
 -- Over-head projection reuses the sibling-proven isoToScreenX/Y head-anchor
 -- trick (zoom/camera baked in) - see Dirge RQCastBar.lua.
 --
--- Also the home of the two helpers shared with the sidebar widget
--- (LRDangerHUD.getBadgeSize / .shakeX) so the shake feel and badge size stay
--- identical across both placements.
+-- Also the home of the shake helper shared with the sidebar widget
+-- (LRDangerHUD.shakeX) so the shake feel stays identical across both
+-- placements. Badge SIZE is Core's (DFKit.moodleBadgeSize) - it is vanilla's
+-- ladder, not ours.
+
+require "RDWorldOverlay"
 
 LRDangerHUD = LRDangerHUD or {}
 
@@ -44,21 +47,10 @@ local QUIP_GAP        = 8       -- px gap between top badge and the quip line
 LRDangerHUD.overheadYAdjust = 0
 
 -- ── shared helpers (also used by LRDangerMoodle) ──────────
--- Badge size, mirroring vanilla moodle scaling.
-function LRDangerHUD.getBadgeSize()
-    local core = getCore()
-    if not core then return 32 end
-    local ms = core:getOptionMoodleSize()
-    local scale
-    if ms < 5.5 then
-        scale = 0.5 + 0.5 * ms
-    elseif ms < 6.5 then
-        scale = 4
-    else
-        scale = 0.5 + 0.5 * core:getOptionFontSizeReal()
-    end
-    return math.floor(32 * scale)
-end
+-- The badge-size helper used to live here and is now DFKit.moodleBadgeSize
+-- (Core, 2026-08-19) - Dirge's RQMoodle had grown the identical fourteen lines,
+-- and neither copy cited the vanilla ladder it was reproducing. Both placements
+-- call Core directly rather than through an alias here: one name for one thing.
 
 -- Show an over-head thought line for `ms` (default QUIP_MS). Replaces any
 -- currently-showing quip (a new tier pop supersedes the old one).
@@ -79,24 +71,13 @@ function LRDangerHUD.shakeX(mode, now)
 end
 
 -- ── element ───────────────────────────────────────────────
-local LRDangerHUDElem = ISUIElement:derive("LRDangerHUDElem")
-
-function LRDangerHUDElem:new()
-    local o = ISUIElement:new(0, 0, 1, 1)
-    setmetatable(o, self)
-    self.__index = self
-    o:setWantKeyEvents(false)
-    return o
-end
-
-function LRDangerHUDElem:prerender() end
--- Never consume mouse events (the 1x1 footprint already avoids most of it).
-function LRDangerHUDElem:onMouseDown(x, y) return false end
-function LRDangerHUDElem:onRightMouseDown(x, y) return false end
-function LRDangerHUDElem:onMouseUp(x, y) return false end
-function LRDangerHUDElem:onMouseMove(dx, dy) return false end
-function LRDangerHUDElem:onMouseMoveOutside(dx, dy) return false end
-function LRDangerHUDElem:onMouseWheel(del) return false end
+-- The 1x1 click-through element moved to Core 2026-08-19: Dirge's cast bar and
+-- health bar had grown the same one independently, down to the empty prerender
+-- and the list of return-false handlers. The old comment here read "the 1x1
+-- footprint already avoids most of it", which undersold those handlers -
+-- UIElement.consumeMouseEvents defaults TRUE, so an inherited nil return EATS
+-- the click. RDWorldOverlay's header has the read.
+local LRDangerHUDElem = RDWorldOverlay:derive("LRDangerHUDElem")
 
 function LRDangerHUDElem:render()
     local player = getPlayer()
@@ -109,7 +90,7 @@ function LRDangerHUDElem:render()
     if #badges == 0 and not quipOn then return end
 
     local pn   = player:getPlayerNum()
-    local size = LRDangerHUD.getBadgeSize()
+    local size = DFKit.moodleBadgeSize()
 
     self:suspendStencil()
 
@@ -150,10 +131,7 @@ local hud = nil
 
 function LRDangerHUD.ensure()
     if hud and hud.javaObject then return hud end
-    hud = LRDangerHUDElem:new()
-    hud:initialise()
-    hud:addToUIManager()
-    hud:setVisible(true)
+    hud = RDWorldOverlay.attach(LRDangerHUDElem)
     return hud
 end
 

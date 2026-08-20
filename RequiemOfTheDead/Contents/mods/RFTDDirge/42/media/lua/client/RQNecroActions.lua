@@ -11,6 +11,13 @@
 
 if isServer() then return end
 
+-- Both are Dirge's own client files and both load before this one under the
+-- alphabetical walk, but sect. 4 exists because that is a fact about filenames
+-- rather than a contract. RQCommon.MODULE is the wire token; RQCore carries the
+-- id-and-position lookup convertOrigin uses below.
+require "RQCommon"
+require "RQCore"
+
 -- DFRegistry check happens inside the OnGameStart callback below, not here.
 -- Top-of-file early return would prevent the OnGameStart hook from ever
 -- being registered if Dirge loads before DragonflyAdmin.
@@ -21,14 +28,50 @@ if isServer() then return end
 -- file loads, breaking everything else in the mod.
 local TYPE_IDS = { "Screamer", "Juggernaut", "EMP", "Glutton", "Scavenger", "Boss" }
 
+-- Where the server starts looking. Not a nicety: svFindZombieByOnlineID sweeps a
+-- 31x31 box centred on whatever arrives (RQSvShared.lua:418), so the origin
+-- decides whether a convert lands at all - and, when the id is 0, WHICH zombie
+-- it lands on.
+--
+-- The row is snapshot data and the zombie has been walking since. So: confirm
+-- the id is still near where the row said it was, and if it is, send where it
+-- IS. RQCore.findZombieByID is the right tool precisely because it is
+-- id-and-position - a match means the row is both current and locally loaded,
+-- which is the same "we can see it" test the panel's locality filter applies.
+--
+-- Falling back to the row's own coordinates is correct when the confirm misses
+-- (a zombie in another player's cell is real, just not ours to look at). What is
+-- NOT correct, and was what this did, is `rowData.x or 0`: a row that somehow
+-- arrived without coordinates became a 961-square sweep of the world ORIGIN,
+-- silently, under a "Convert request sent" toast. A row with no position cannot
+-- name a zombie, so it is refused where the operator can see the refusal.
+local function convertOrigin(rowData)
+    -- Called directly, not behind an existence check: RQCore is required at the
+    -- top of this file and a missing one is a load-order fault we want loud.
+    local live = RQCore.findZombieByID(rowData.id,
+        rowData.x or 0, rowData.y or 0, rowData.z or 0)
+    if live then
+        return math.floor(live:getX()), math.floor(live:getY()), math.floor(live:getZ())
+    end
+    if not rowData.x or not rowData.y or not rowData.z then return nil end
+    return math.floor(rowData.x), math.floor(rowData.y), math.floor(rowData.z)
+end
+
 local function convertHandler(zType)
     return function(rowData)
         if not rowData or not rowData.id then return end
+        local x, y, z = convertOrigin(rowData)
+        if not x then
+            if DFFeedback then
+                DFFeedback.bad("That row has no position - refresh the list and try again.")
+            end
+            return
+        end
         sendClientCommand(getPlayer(), RQCommon.MODULE, "adminConvert", {
             onlineID = rowData.id,
-            x        = rowData.x or 0,
-            y        = rowData.y or 0,
-            z        = rowData.z or 0,
+            x        = x,
+            y        = y,
+            z        = z,
             zType    = zType,
         })
         if DFFeedback then

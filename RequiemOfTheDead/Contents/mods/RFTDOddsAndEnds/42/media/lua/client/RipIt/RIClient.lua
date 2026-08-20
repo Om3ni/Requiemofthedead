@@ -91,19 +91,18 @@ function RI.isEnabled()
     return OEShared.enabled("RipItEnable")
 end
 
--- Resolve names to CraftRecipe objects once per menu build. A name that no
--- longer exists is skipped rather than fatal, so a vanilla recipe rename
--- costs that one recipe instead of the whole option. The guard is load-bearing:
--- getCraftRecipe resolves through ScriptBucketCollection.getScript:86, which
--- derefs a bucket the module map may not hold - an unknown name can NPE, not
--- just return nil.
+-- Resolve the fixed vanilla names to CraftRecipe objects once per menu build.
+-- A recipe removed by a future build is the ordinary nil result and costs only
+-- that recipe. These are suite-owned Base recipe names, not arbitrary mod
+-- input; ScriptManager performs the two registry lookups directly
+-- (ScriptManager.java:975-982).
 local function resolve(names)
     local out = {}
     local sm = getScriptManager()
     if not sm then return out end
     for _, name in ipairs(names) do
-        local ok, recipe = pcall(sm.getCraftRecipe, sm, name)
-        if ok and recipe then table.insert(out, recipe) end
+        local recipe = sm:getCraftRecipe(name)
+        if recipe then table.insert(out, recipe) end
     end
     return out
 end
@@ -112,9 +111,15 @@ end
 -- Candidate search
 -- ---------------------------------------------------------------------------
 
--- Intrinsic "may this item be destroyed at all" test. pcall'd as a whole
--- because it runs against every item in every open container on every
--- right-click: one odd item missing one accessor must not take out the menu.
+-- Intrinsic "may this item be destroyed at all" test. No guard - the premise
+-- "one odd item missing one accessor" is false. All three accessors exist on
+-- every item and every player by construction: isFavorite and isEquipped are
+-- declared on InventoryItem itself with zero overrides tree-wide (:3365-3367,
+-- :3166-3181), and isEquippedClothing on IsoGameCharacter, IsoPlayer's own
+-- superclass (IsoGameCharacter.java:9388-9391) - it only scans the player's
+-- wornItems by identity, so an item in a corpse's container answers false
+-- safely (WornItems.java:200-207). None of them can throw, and being exposed
+-- methods, even a body fault would reach us as nil, not an error.
 --
 -- Worn and held are checked against the PLAYER, deliberately. A corpse's
 -- clothing sits in its container while the body still "wears" it, and that is
@@ -122,13 +127,10 @@ end
 -- anything wearing it".
 local function isRippable(item, playerObj)
     if not item then return false end
-    local ok, safe = pcall(function()
-        if item:isFavorite() then return false end                  -- the universal "hands off" marker
-        if item:isEquipped() then return false end                  -- in your hands
-        if playerObj:isEquippedClothing(item) then return false end -- on your back
-        return true
-    end)
-    return ok and safe == true
+    if item:isFavorite() then return false end                  -- the universal "hands off" marker
+    if item:isEquipped() then return false end                  -- in your hands
+    if playerObj:isEquippedClothing(item) then return false end -- on your back
+    return true
 end
 
 -- Is this item sitting in one of the panels the player currently has open?
@@ -152,21 +154,28 @@ local function inOpenContainers(item, containers)
 end
 
 -- Can this exact item feed this exact recipe, as a CONSUMED input?
--- guarded: both statics resolve through consumeInputItem
--- (CraftRecipeManager.java:299 -> 304), which runs the recipe's input scripts
--- and mappers - malformed modded recipes can throw in there, and one bad
--- recipe must cost its own answer, not the menu.
+--
+-- No guards, and the old reason was wrong twice. Both statics resolve through
+-- getValidInputScriptForItem (:275-282) into isItemValidForInputScript, whose
+-- consumeInputItem call is at :306 (isItemToolForRecipe :294-297,
+-- isItemValidForRecipe :299-302) - but "mappers can throw in there" is
+-- refuted: mappers are parsed script DATA with zero Lua in them
+-- (InputScript.java:787-799; no Lua invocation anywhere in OutputMapper /
+-- OverlayMapper / InputScript), and the one mod-supplied Lua hook on the path,
+-- OnTest, is invoked through protectedCallBoolean INSIDE the engine
+-- (CraftRecipe.java:1027-1047 at :1042) - a throwing mod hook reads as false
+-- there and can never propagate. Every entry point is an exposed static, so
+-- even an internal fault reaches us as nil, which the boolean tests below
+-- already treat as "no".
+--
+-- OnTestItem likewise cannot throw: it is a method every CraftRecipe carries
+-- (the old "absent on some recipes" conflated the method with the optional
+-- OnTest HOOK, whose absence makes it return true at :1046).
 local function feeds(recipe, item, playerObj)
-    local ok, valid = pcall(function()
-        if not CraftRecipeManager.isItemValidForRecipe(recipe, item, playerObj) then return false end
-        if CraftRecipeManager.isItemToolForRecipe(recipe, item, playerObj) then return false end
-        return true
-    end)
-    if not ok or not valid then return false end
-    -- The recipe's own veto (IsNotWorn and friends). Absent on some recipes,
-    -- so a failed call means "no opinion", not "no".
-    local okTest, passed = pcall(function() return recipe:OnTestItem(item, playerObj) end)
-    if okTest and passed == false then return false end
+    if not CraftRecipeManager.isItemValidForRecipe(recipe, item, playerObj) then return false end
+    if CraftRecipeManager.isItemToolForRecipe(recipe, item, playerObj) then return false end
+    -- The recipe's own veto (IsNotWorn and friends). nil means "no opinion".
+    if recipe:OnTestItem(item, playerObj) == false then return false end
     return true
 end
 
@@ -208,26 +217,27 @@ end
 -- are declared (`tags[base:scissors;base:sharpknife] mode:keep`) - and keeps
 -- Normal and Destroy alike. That is the consumed set, tools excluded, which is
 -- exactly the question this gate is asking.
--- guarded: CraftRecipeData accessors on an engine-resolved set - nullability
--- varies by recipe, and a throw must read as "not safe", never as a crash.
+-- No guard - the nil tests below were always the whole mechanism. Both
+-- accessors are exposed methods, so an internal fault reaches us as nil, and
+-- getAllNotKeepInputItems cannot even do that ordinarily: it allocates and
+-- returns a fresh list every call (CraftRecipeData.java:1661-1669). "A throw
+-- must read as not safe" was describing a thing that cannot happen; nil
+-- reading as not safe is what actually does.
 local function resolvedSetIsSafe(logic, item, playerObj)
-    local ok, safe = pcall(function()
-        local data = logic:getRecipeData()
-        if not data then return false end
-        local doomed = data:getAllNotKeepInputItems()
-        if not doomed then return false end
+    local data = logic:getRecipeData()
+    if not data then return false end
+    local doomed = data:getAllNotKeepInputItems()
+    if not doomed then return false end
 
-        local ourItemConsumed = false
-        for i = 1, doomed:size() do
-            local it = doomed:get(i - 1)
-            if it then
-                if it == item then ourItemConsumed = true end
-                if not isRippable(it, playerObj) then return false end
-            end
+    local ourItemConsumed = false
+    for i = 1, doomed:size() do
+        local it = doomed:get(i - 1)
+        if it then
+            if it == item then ourItemConsumed = true end
+            if not isRippable(it, playerObj) then return false end
         end
-        return ourItemConsumed
-    end)
-    return ok and safe == true
+    end
+    return ourItemConsumed
 end
 
 -- Full confirmation for the MENU: tools in reach, skill, craft surface,
@@ -251,19 +261,23 @@ end
 -- Both the engine's own equivalent (CraftRecipeManager.getUniqueRecipeItems,
 -- line 1113) and RI.run below set it. Add one AnySurfaceCraft recipe above and
 -- this line is the difference between working and silently absent.
--- guarded: the whole HandcraftLogic build/resolve chain is engine crafting
--- internals (surface hunt, container walk, recipe pin) whose failure on one
--- candidate must cost that candidate, not the menu.
+-- No guard. The one lane in this chain that genuinely throws is the
+-- CONSTRUCTOR - ConstructorCaller does not catch and LuaJavaInvoker rethrows -
+-- and both ctor bodies were read: with a valid player and nil bench/surface
+-- nothing derefs beyond storage (HandcraftLogic.java:43-54 guards the bench;
+-- BaseCraftingLogic.java:83-100 never derefs the player), and vanilla itself
+-- constructs this from Lua bare with the same shape
+-- (ISHandCraftPanel.lua:347-360). Everything after it is exposed methods:
+-- findCraftSurface legitimately returns nil (:349-369) and setIsoObject
+-- stores it; an internal fault in canPerformCurrentRecipe reaches us as nil,
+-- which the `not` below already reads as "cannot".
 local function canRun(playerObj, recipe, item, containers)
-    local ok, result = pcall(function()
-        local logic = HandcraftLogic.new(playerObj, nil, nil)
-        logic:setIsoObject(logic:findCraftSurface(playerObj, 2))
-        logic:setContainers(containers)
-        logic:setRecipeFromContextClick(recipe, item)
-        if not logic:canPerformCurrentRecipe() then return false end
-        return resolvedSetIsSafe(logic, item, playerObj)
-    end)
-    return ok and result == true
+    local logic = HandcraftLogic.new(playerObj, nil, nil)
+    logic:setIsoObject(logic:findCraftSurface(playerObj, 2))
+    logic:setContainers(containers)
+    logic:setRecipeFromContextClick(recipe, item)
+    if not logic:canPerformCurrentRecipe() then return false end
+    return resolvedSetIsSafe(logic, item, playerObj)
 end
 
 -- ONE walk, both sets. This runs on every right-click that reaches either menu
@@ -333,9 +347,15 @@ function RI.run(playerObj, entries)
         -- are repeated precisely because the answer can have changed since.
         if item and recipe and isRippable(item, playerObj)
            and inOpenContainers(item, containers) then
-            -- guarded: same HandcraftLogic engine chain as canRun, plus the
-            -- transfer/queue calls - one item failing mid-batch must not
-            -- abandon the rest of the queue.
+            -- RETAINED - unlike canRun's chain, this one has real Lua-lane
+            -- throws. `logic:getRecipeData():getAllInputItems()` is a two-step
+            -- chain: an internal fault in the first step hands back nil and
+            -- the second call is then an error a pcall CAN catch. The transfer
+            -- and queue calls are vanilla Lua with genuine nil-derefs
+            -- (ISTimedActionQueue.lua:158 throws on a nil action; the transfer
+            -- helpers deref container parents). And this is one item of a
+            -- queued batch running over seconds: one failing must cost itself,
+            -- never the rest of the queue - the batch-member class exactly.
             pcall(function()
                 local logic = HandcraftLogic.new(playerObj, nil, nil)
                 logic:setIsoObject(logic:findCraftSurface(playerObj, 2))

@@ -109,10 +109,17 @@ local function listAddressableItems(target)
                     local subItems = sub:getItems()
                     local prefix = "[in bag] "
                     if container then
-                        -- getName routes through Translator/fluid chains -
-                        -- not verifiable throw-free, guard stays in direct form.
-                        local okN, nm = pcall(container.getName, container)
-                        if okN and nm then prefix = "[in " .. nm .. "] " end
+                        -- Bare: the format-throw theory died twice over.
+                        -- Translator.getText catches IllegalFormatException
+                        -- itself and only rethrows under Core.IS_DEV
+                        -- (Translator.java:398-410, MissingFormatArgument at
+                        -- :391), and even that rethrow is a Java BODY throw in
+                        -- an exposed method, swallowed to a nil return by
+                        -- MethodCaller before Lua sees it (MethodCaller.java:
+                        -- 33-56). The nil test was always the whole mechanism;
+                        -- a nameless bag keeps the plain "[in bag] " prefix.
+                        local nm = container:getName()
+                        if nm then prefix = "[in " .. nm .. "] " end
                     end
                     if subItems then
                         for j = 0, subItems:size() - 1 do add(subItems:get(j), "bag", prefix) end
@@ -153,9 +160,10 @@ local function resolveItem(target, slotIdx, fullType)
 end
 
 local function syncTarget(target)
-    -- pcall: wire send; must not let a transmit fault kill the handler
-    -- (suite policy on network sends - HBBedding keeps the same guard).
-    pcall(target.transmitModData, target)
+    -- Target is a resolved live IsoPlayer. IsoObject.transmitModData returns
+    -- for an absent square, then delegates its packet write to the engine's
+    -- guarded sender (IsoObject.java:4470-4480; GameServer.java:2666-2671).
+    target:transmitModData()
     -- transmitModData only covers ModData. Item field changes (condition,
     -- usedDelta, etc.) need sendItemStats per-item or the owning client's
     -- next sync overwrites our writes - same client-authoritative pattern
@@ -167,9 +175,14 @@ end
 -- clobbered by their next inbound inventory sync.
 local function syncItem(item)
     if not item then return end
-    -- pcall: sendItemStats derefs worldItem:getSquare() with no null check
-    -- (GameServer:2906) - a floor item mid-despawn NPEs.
-    pcall(sendItemStats, item)
+    -- Bare: the mid-despawn NPE is real - the body derefs
+    -- item.getWorldItem().getSquare().x with the square unchecked
+    -- (GameServer.java:2914) - but sendItemStats is an exposed global
+    -- (LuaManager.java:3747-3752), so MethodCaller swallows and stack-traces
+    -- the fault and the call returns normally (MethodCaller.java:33-56). The
+    -- pcall that sat here could never fire; the sync is fire-and-forget
+    -- either way, with the engine's trace as the diagnostic.
+    sendItemStats(item)
 end
 
 -- Container-level sync for add/remove. The state-field sendItemStats isn't
@@ -235,19 +248,15 @@ Events.OnServerStarted.Add(function()
         action     = "playerInventorySnapshot",
         capability = Capability.InspectPlayerInventory,
         run = function(player, args)
-            print(string.format(
-                "[Dragonfly] DEBUG playerInventorySnapshot enter: username=%s",
-                tostring(args and args.username or "?")))
+            -- The DEBUG enter/resolved prints that sat here were leftover
+            -- temporary instrumentation (S14): per-request console lines with
+            -- no bound. The one-line summary print at the end of this handler
+            -- is the bounded signal that stays, and a resolveTarget refusal
+            -- already reaches the requesting admin as the reply's reason.
             local target, err = resolveTarget(args.username)
             if not target then
-                print(string.format(
-                    "[Dragonfly] DEBUG playerInventorySnapshot resolveTarget FAILED: %s",
-                    tostring(err)))
                 return { ok = false, reason = err }
             end
-            print(string.format(
-                "[Dragonfly] DEBUG playerInventorySnapshot resolved: target=%s",
-                tostring(target:getUsername())))
 
             -- Resolve hand items up front so we can tag equipped weapons.
             local primary   = target:getPrimaryHandItem()
@@ -256,6 +265,7 @@ Events.OnServerStarted.Add(function()
             local rows = listAddressableItems(target)
             local out = {}
             local wornCount, hiddenCount = 0, 0
+            local nameFallbacks = 0
             for i, entry in ipairs(rows) do
                 local it = entry.item
 
@@ -265,10 +275,23 @@ Events.OnServerStarted.Add(function()
                 -- the index into the unfiltered walk, because resolveItem re-walks
                 -- that same function to map an edit back to an item, and DFBanBox's
                 -- login scrub shares it.
-                -- isHidden dereferences scriptItem, which can be null on
-                -- legacy items - guard stays, in direct form.
-                local okH, hidden = pcall(it.isHidden, it)
-                hidden = okH and hidden == true
+                -- No per-item boundary: the row is TOTAL under the dispatch
+                -- lanes. isHidden - `return this.scriptItem.isHidden()` with
+                -- no null check, scriptItem null on a legacy item whose script
+                -- is gone (InventoryItem.java:3849-3851) - is an exposed
+                -- method, so that NPE arrives here as a swallowed nil, read as
+                -- not-hidden (MethodCaller.java:33-56). Every other engine
+                -- call in the row answers a faulted item the same way, and
+                -- every nil lands in a handled fallback: `ft or "?"`,
+                -- `count or 1`, RDItemKind's readString type-checks,
+                -- resolveLocation's type tests. A malformed item contributes a
+                -- visible "?" row instead of vanishing, which is what an
+                -- inspecting admin actually needs; a systematic Lua fault in
+                -- our own row code is DFServer's dispatcher boundary to report
+                -- - once, loudly, with an honest reply to the client. The
+                -- skip counter and circuit breaker that sat here belonged to
+                -- throws the lanes cannot deliver.
+                local hidden = it:isHidden() == true
 
                 if hidden then
                     hiddenCount = hiddenCount + 1
@@ -278,10 +301,19 @@ Events.OnServerStarted.Add(function()
                     local cond    = it:getCondition()
                     local condMax = it:getConditionMax()
                     local count   = it:getCount()
-                    -- getName routes through Translator/fluid chains - not
-                    -- verifiable throw-free, guard stays in direct form.
-                    local okN, name = pcall(it.getName, it)
-                    if not okN then name = nil end
+                    -- A name that cannot be produced is COSMETIC, with a
+                    -- perfect fallback below (`name or ft or "?"`). The pcall
+                    -- that guarded it never had a job - getName's format
+                    -- exceptions are caught inside Translator except under
+                    -- Core.IS_DEV (Translator.java:398-410), and any body
+                    -- throw is swallowed to nil by MethodCaller regardless
+                    -- (MethodCaller.java:33-56). Counting the nils keeps this
+                    -- diagnostic LIVE; the old counter counted throws that
+                    -- could not happen and had never moved.
+                    local name = it:getName()
+                    if not name then
+                        nameFallbacks = nameFallbacks + 1
+                    end
 
                     local bucket, baseCat, weaponCapable = RDItemKind.classify(it)
 
@@ -303,9 +335,11 @@ Events.OnServerStarted.Add(function()
                 end
             end
 
+            -- nameFallback counts rows whose display name came back nil -
+            -- the "?" rows an admin will actually see when items are broken.
             print(string.format(
-                "[Dragonfly] playerInventorySnapshot target=%s items=%d worn=%d hidden=%d primary=%s secondary=%s",
-                args.username or "?", #out, wornCount, hiddenCount,
+                "[Dragonfly] playerInventorySnapshot target=%s items=%d worn=%d hidden=%d nameFallback=%d primary=%s secondary=%s",
+                args.username or "?", #out, wornCount, hiddenCount, nameFallbacks,
                 primary   and tostring(primary:getFullType())   or "-",
                 secondary and tostring(secondary:getFullType()) or "-"))
 
@@ -434,10 +468,18 @@ Events.OnServerStarted.Add(function()
             local inv = target:getInventory()
             if not inv then return { ok = false, reason = "no inventory" } end
             local added = 0
+            -- No guard. AddItem(String) cannot throw on the arbitrary client
+            -- string: an unfindable type logs and returns null
+            -- (ItemContainer.java:511-513), an obsolete script returns null
+            -- (:514-516), and a factory failure returns null (:517-520).
+            -- FindItem/getModule/getItemName are string and map operations that
+            -- tolerate any non-nil input, including "" (ScriptManager.java:
+            -- 1268-1274, 1280-1309). The nil check below IS the contract - a bad
+            -- type leaves `added` at 0, which the caller already reports as
+            -- "AddItem refused (bad type?)".
             for _ = 1, count do
-                -- AddItem takes an arbitrary client string; it can throw.
-                local ok, newItem = pcall(inv.AddItem, inv, ft)
-                if ok and newItem then
+                local newItem = inv:AddItem(ft)
+                if newItem then
                     added = added + 1
                     syncAdded(inv, newItem)
                 end
@@ -498,14 +540,33 @@ Events.OnServerStarted.Add(function()
             if not target then return { ok = false, reason = err } end
 
             local repaired, clothing = 0, 0
+            local restoreFailed, firstRestoreErr = 0, nil
             for _, entry in ipairs(listAddressableItems(target)) do
                 local it = entry.item
                 if it and RDClothing.isClothing(it) then
-                    -- pcall: compound engine op, per-item loop - direct form
-                    local ok = pcall(it.fullyRestore, it)
-                    if ok then
+                    -- PRECONDITION, not a guard. fullyRestore derefs
+                    -- getVisual() unchecked inside its loop (Clothing.java:
+                    -- 996-1014, derefs at :1003/:1006/:1007/:1009), and
+                    -- getVisual() returns null exactly when the backing
+                    -- ClothingItem asset is absent or not READY
+                    -- (InventoryItem.java:2070-2075). The pcall that sat here
+                    -- was inert - fullyRestore is an exposed method, so on a
+                    -- faulted garment the NPE was swallowed by MethodCaller
+                    -- AFTER condition/dirt/blood had already been applied,
+                    -- and the half-restored garment was counted repaired
+                    -- (MethodCaller.java:33-56). Asking getVisual first is
+                    -- deterministic, skips the garment whole, and makes this
+                    -- failure count honest for the first time. The residual
+                    -- async race - the asset flipping un-READY mid-call - is
+                    -- rare and stays engine-logged.
+                    if it:getVisual() then
+                        it:fullyRestore()
                         repaired = repaired + 1
                         clothing = clothing + 1
+                    else
+                        restoreFailed = restoreFailed + 1
+                        firstRestoreErr = firstRestoreErr
+                            or "visual unavailable (asset absent or not READY)"
                     end
                 elseif it and type(it.getCondition) == "function" then
                     local ok = DFItemProbes.runAction(it, "Repair")
@@ -524,10 +585,16 @@ Events.OnServerStarted.Add(function()
             -- blood/dirt/hole arrays live on. Once for the batch, not per item.
             if clothing > 0 then RDClothing.sync(target) end
 
+            if restoreFailed > 0 then
+                print(string.format(
+                    "[Dragonfly] playerInventoryRepairAll: %d garment(s) could not be "
+                    .. "restored (first: %s)", restoreFailed, tostring(firstRestoreErr)))
+            end
+
             syncTarget(target)
             DFCore.audit("playerInventoryRepairAll", player,
-                string.format("target=%s repaired=%d clothing=%d",
-                    args.username, repaired, clothing))
+                string.format("target=%s repaired=%d clothing=%d failed=%d",
+                    args.username, repaired, clothing, restoreFailed))
             return { ok = true,
                 message = string.format("Repaired %d item(s) on %s.",
                     repaired, args.username) }

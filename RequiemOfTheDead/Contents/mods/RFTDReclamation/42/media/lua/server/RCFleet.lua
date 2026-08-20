@@ -206,6 +206,14 @@ local function finish(scan)
     RCShared.dbg("fleet: scan %d for %s finished - %d row(s) of %d seen%s",
         scan.seq, tostring(scan.key), scan.emitted, scan.seen,
         scan.capped and " (CAPPED)" or "")
+    -- Rows lost to the per-car boundary are reported at print level, not dbg:
+    -- a fleet list quietly short of cars is how an admin concludes a vehicle
+    -- despawned when it did not.
+    if (scan.rowFailed or 0) > 0 then
+        print(string.format(
+            "[RC] fleet: scan %d omitted %d car(s) that could not be described",
+            scan.seq, scan.rowFailed))
+    end
 end
 
 local function stillOnline(player)
@@ -245,9 +253,14 @@ local function step(scan, budget)
         -- car may have streamed out or been removed since
         local alive = v:getId() ~= nil
         if alive then
-            -- guarded: buildRow reads claim modData and Janitor state off a ref
-            -- that can stream out between the id check and here
+            -- RETAINED, one member of an independent batch: buildRow reads
+            -- claim modData and Janitor state off a ref collected up to several
+            -- ticks ago, which can stream out between the id check above and
+            -- here. One car mid-removal must not cost the admin the rest of the
+            -- page. Counted rather than swallowed - see the report at the end
+            -- of the scan.
             local ok, row = pcall(buildRow, v)
+            if not ok then scan.rowFailed = (scan.rowFailed or 0) + 1 end
             if ok and row and not (scan.dueOnly and not DUE_VERDICTS[row.verdict or ""]) then
                 scan.rows[#scan.rows + 1] = row
                 scan.emitted = scan.emitted + 1
@@ -326,14 +339,21 @@ end
 -- ---------------------------------------------------------------------------
 local function collectClaimed()
     local rows = {}
+    local failed, firstErr = 0, nil
     local loaded = RCRegistry.loadedClaimMap()   -- self-heals the index first
     for _, rec in ipairs(RCRegistry.allClaims()) do
         local v = loaded[rec.claimId]
         if v then
-            -- guarded: the mapped ref can be mid-removal; one bad car must not
-            -- lose the rest of the claimed list
+            -- RETAINED, same batch-member class as the loaded scan: the mapped
+            -- ref can be mid-removal, and one bad car must not lose the rest of
+            -- the claimed list. Reported, because a claimed list quietly short
+            -- of rows is how an admin concludes a claim vanished.
             local ok, row = pcall(buildRow, v)
-            if ok and row then rows[#rows + 1] = row end
+            if ok and row then rows[#rows + 1] = row
+            else
+                failed = failed + 1
+                firstErr = firstErr or row
+            end
         else
             rows[#rows + 1] = {
                 loaded  = false,
@@ -349,6 +369,11 @@ local function collectClaimed()
                 shields = { claimed = true },
             }
         end
+    end
+    if failed > 0 then
+        print(string.format(
+            "[RC] fleet: %d claimed car(s) could not be described and are MISSING from the list (first: %s)",
+            failed, tostring(firstErr)))
     end
     return rows
 end
@@ -384,10 +409,17 @@ function RCFleet.begin(player, scope)
         -- The claimed set is index-sized (KB-scale, bounded by MaxClaims x
         -- players), not world-sized, so it is built in one go and then PAGED
         -- out on the same ticker - the wire still gets modest packets.
-        -- guarded: the registry self-heal inside walks live vehicles that can
-        -- mutate under it; the fallback is an empty (not partial) snapshot
-        local ok, rows = pcall(collectClaimed)
-        scan.pre = ok and rows or {}
+        -- No guard. It wrapped a function that already carries TWO reporting
+        -- boundaries of its own: RCRegistry.loadedClaimMap runs its self-heal
+        -- through RCLoadedVehicles.each, which isolates and counts per vehicle
+        -- (RCRegistry.lua:260-268), and buildRow is guarded per row below.
+        -- Nothing between them can throw but our own table walks.
+        --
+        -- The stated fallback was also the wrong one: "an empty (not partial)
+        -- snapshot" shows an admin a claim list with nothing in it, which reads
+        -- as "no claims exist" - a lie that is worse than the partial list, and
+        -- worse than an error.
+        scan.pre = collectClaimed()
         scan.refs = {}
         scan.i = 1
         -- feed the pre-built rows through the same pager
@@ -406,11 +438,15 @@ function RCFleet.begin(player, scope)
         end
         scan.count = #scan.pre
     else
-        -- guarded: getCell() dereferences IsoWorld.instance unguarded
-        -- (LuaManager.java:4772) - an early request must degrade to an empty
-        -- scan, not an error mid-dispatch
-        local ok, refs = pcall(collectLoaded)
-        scan.refs = ok and refs or {}
+        -- No guard. getCell() really does deref IsoWorld.instance with no null
+        -- check (LuaManager.java:4771-4773) - the nil test inside collectLoaded
+        -- cannot help, because a null instance THROWS rather than returning nil
+        -- - but "an early request" cannot happen on this path. A scan begins
+        -- only from a client command, and a client cannot issue one before the
+        -- world it connected to exists. That is the load-order precondition
+        -- §2 asks for in place of a guard, and it is structural rather than
+        -- hopeful.
+        scan.refs = collectLoaded()
         scan.count = #scan.refs
     end
 
@@ -434,10 +470,16 @@ end
 -- ---------------------------------------------------------------------------
 function RCFleet.parts(player, vid)
     if not (player and sendServerCommand and vid) then return end
-    -- vid comes off the wire: a non-number would blow the (short) cast inside
-    -- getVehicleById, so the guard stays.
-    local okv, v = pcall(getVehicleById, vid)
-    if not okv or not v then
+    -- No guard - the wire value is VALIDATED instead. The old reason was
+    -- right about the hazard and wrong about the remedy: getVehicleById takes
+    -- an int (LuaManager.java:8208-8211), so a non-number off the wire fails
+    -- the Kahlua coercion at the call boundary. tonumber() answers that
+    -- deterministically, which is a precondition rather than a guard, and it
+    -- lands the bad-input case in the SAME empty-list reply the miss already
+    -- uses.
+    local id = tonumber(vid)
+    local v = id and getVehicleById(id)
+    if not v then
         -- Answer anyway with an empty list. Silence would leave the client's
         -- in-flight flag set forever and the diagram stuck on "reading parts".
         sendServerCommand(player, M, "VehicleParts", { vid = vid, parts = {} })

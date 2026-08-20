@@ -73,30 +73,27 @@ local function onServerCommand(module, command, args)
 
     if command == MMShared.CMD.RESULT then
         if args.ok and args.applyData then
-            -- MIRROR-APPLY the same change the server made, on our local player.
-            -- pcall-armored so a mirror failure is loud (MMwarn) instead of half-updating
-            -- the UI silently - server state is already applied; a broken mirror heals on
-            -- relog, but it must never die quietly.
+            -- MIRROR-APPLY the same change the server made, on our local player. The
+            -- codec reports preflight versus partial failure; server state is already
+            -- authoritative, so either failure is loud and a relog is the recovery.
             local p = getPlayer()
             if p and not p:isDead() then
-                local okApply, err = pcall(function()
-                    -- fullRestore and xpFraction ride along for admin restores
-                    -- (MMRestore) so the mirror resolves the SAME restore fraction
-                    -- the server apply did; both nil/absent for normal memoir reads.
-                    -- xpFraction is not optional here: the server may have applied
-                    -- at 60% from the Players tab dial, and a mirror that defaulted
-                    -- to 100% would compute a higher target and desync the
-                    -- character until relog.
-                    MMSnapshotCodec.applyToCharacter(p, args.applyData.snap, args.applyData.chosen,
-                        args.applyData.xpMode, args.applyData.fullRestore,
-                        args.applyData.xpFraction)
-                end)
-                if not okApply then
-                    MMwarn("mirror-apply FAILED (server state is applied; relog to resync): " .. tostring(err))
+                -- fullRestore and xpFraction ride along for admin restores
+                -- (MMRestore) so the mirror resolves the SAME restore fraction
+                -- the server apply did; both nil/absent for normal memoir reads.
+                local apply = MMSnapshotCodec.applyToCharacter(p, args.applyData.snap,
+                    args.applyData.chosen, args.applyData.xpMode,
+                    args.applyData.fullRestore, args.applyData.xpFraction)
+                if not apply.ok then
+                    MMwarn("mirror-apply FAILED (phase=" .. tostring(apply.phase)
+                        .. ", partial=" .. tostring(apply.partial)
+                        .. "; server state is authoritative; relog to resync): "
+                        .. tostring(apply.error))
+                else
+                    MMlog("mirror-applied result locally")
                 end
                 p:resetModelNextFrame()
                 if sendVisual then sendVisual(p) end
-                MMlog("mirror-applied result locally")
             end
         end
         if args.ok then

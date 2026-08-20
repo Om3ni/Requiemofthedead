@@ -88,34 +88,55 @@ end
 --   player : the actor (nil for system events like expiry)
 --   kv     : table of extra fields (sorted for stable output) or a string
 function RCAudit.log(action, player, kv)
-    -- guarded: Core's forensic archive is a foreign module doing file I/O; a
-    -- failed mirror write must never break the claim mutation being logged
-    pcall(coreWrite, action, player, kv)
+    -- No guard. RDLog is CORE - a hard dependency of every mod in the suite,
+    -- never a "foreign module" - and its write path was read end to end:
+    -- envelope() is RDJson.encode, which is total for any payload (cycles,
+    -- depth and node count are all bounded and every non-table type falls
+    -- through to escape(), RDJson.lua:103-139), and both the forensic and
+    -- chronicle writes land in appendLine, which Core itself calls BARE
+    -- (RDLog.lua:192-198) on the same reading applied below. RDLog.forensic
+    -- owns the one real boundary in there, around RDTally (:459), which is not
+    -- ours to duplicate from out here.
+    coreWrite(action, player, kv)
 
-    -- guarded: file I/O through the getFileWriter allowlist can throw
-    local ok, writer = pcall(getFileWriter, FILE, true, true) -- createIfNull, append (never truncate)
-    if not ok or not writer then return end
+    -- No guard. getFileWriter returns nil for a refused extension or a failed
+    -- open and does not throw (LuaManager.java:5523-5555); the nil check IS the
+    -- error path.
+    local writer = getFileWriter(FILE, true, true) -- createIfNull, append (never truncate)
+    if not writer then return end
 
+    -- EVERY field goes through RCShared.ledgerSafe, including the ones we
+    -- derive ourselves. Most values here arrive from the wire (hDismantledReport
+    -- passes args.vehicle, args.owner, args.claimId and friends through
+    -- verbatim), and a newline in any of them would forge a complete extra
+    -- ledger line attributed to whoever the attacker names. Sanitising only the
+    -- "untrusted" ones would mean re-deciding which those are on every future
+    -- call site; sanitising all of them cannot rot.
+    local safe = RCShared.ledgerSafe
     local user = (player and player.getUsername and player:getUsername()) or "-"
-    local parts = { string.format("[%s] action=%s user=%s", stamp(), tostring(action), tostring(user)) }
+    local parts = { string.format("[%s] action=%s user=%s",
+        stamp(), safe(action), safe(user)) }
 
     if type(kv) == "table" then
         local keys = {}
         for k in pairs(kv) do keys[#keys + 1] = k end
         table.sort(keys)
         for _, k in ipairs(keys) do
-            parts[#parts + 1] = string.format("%s=%s", tostring(k), tostring(kv[k]))
+            parts[#parts + 1] = string.format("%s=%s", safe(k), safe(kv[k]))
         end
     elseif kv ~= nil then
-        parts[#parts + 1] = tostring(kv)
+        parts[#parts + 1] = safe(kv)
     end
 
-    -- guarded: LuaFileWriter write/close is disk I/O; a full disk or closed
-    -- handle must not take the caller down with it
-    pcall(function()
-        writer:write(table.concat(parts, " ") .. "\n")
-        writer:close()
-    end)
+    -- No guard, and the removed comment was the exact claim the decompile
+    -- disproves: LuaFileWriter.write/close declare throws IOException but
+    -- delegate to PrintWriter, which RECORDS an I/O error in an internal flag
+    -- instead of raising it (LuaManager.java:9850-9868). A full disk here has
+    -- never reached this caller, so the guard protected against nothing while
+    -- hiding the value. Every part is a string.format result, so the concat is
+    -- total too.
+    writer:write(table.concat(parts, " ") .. "\n")
+    writer:close()
 end
 
 -- ---------------------------------------------------------------------------

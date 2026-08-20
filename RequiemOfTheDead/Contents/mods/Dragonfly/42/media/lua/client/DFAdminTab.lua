@@ -21,24 +21,25 @@ if isServer() then return end
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
-    -- DFRegistry is Core's: containment for a foreign-mod API whose contract
-    -- may change; a refusal must not kill this OnGameStart listener.
-    local ok, err = pcall(function()
-        DFRegistry.registerTab{
-            id       = "admin",
-            label    = "Admin",
-            -- Between Players (20) and Longstrider (60). Sits with the
-            -- server-management half of the roster rather than the
-            -- per-subsystem tabs at 5-6.
-            order    = 30,
-            disabled = true,
-            -- No build. Adding one is the entire remaining task, and until
-            -- then the shells refuse to select this id at all.
-        }
-    end)
-    if not ok then
-        print("[Dragonfly] DFAdminTab registerTab error: " .. tostring(err))
-    end
+    -- No guard. Core is a HARD dependency, not the "foreign-mod API" the old
+    -- comment claimed, and registerTab is a validated assignment: a nil or
+    -- id-less spec is refused with a print, anything else is a table write
+    -- (DFRegistry.lua:23-30). Husbandry's host-tab slice removed this exact
+    -- wrapper on that reading. "Must not kill this OnGameStart listener" was
+    -- never a reason either - the engine already contains each listener in its
+    -- own try/catch (Event.java:53-63).
+    DFRegistry.registerTab{
+        id       = "admin",
+        label    = "Admin",
+        -- Deck nav order, one decision 2026-08-18: Admin 10, Players 20,
+        -- Necro 30, Vehicles 40, Husbandry 50, Longstrider 60, Zones 70,
+        -- Console 1000 (always last). Spaced by ten so a new tab can land
+        -- between two without renumbering five files across five mods.
+        order    = 10,
+        disabled = true,
+        -- No build. Adding one is the entire remaining task, and until
+        -- then the shells refuse to select this id at all.
+    }
 end)
 
 -- ---------------------------------------------------------------------------

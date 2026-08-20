@@ -36,6 +36,8 @@
 
 RQPhunZones = RQPhunZones or {}
 
+local phunZonesFailureLogged = false
+
 local activeMods = getActivatedMods()
 if (activeMods:contains("phunzones2") or activeMods:contains("phunzones2test")) then
     require "PhunZones/core"
@@ -99,7 +101,14 @@ function RQPhunZones.getEffectiveRules(zombieOrX, yOrNil, cfg)
     -- that can change or throw at any version, and a failure must degrade to
     -- the un-overridden cfg, not kill the spawn roll.
     local ok, zone = pcall(PhunZones.getLocation, x, y)
-    if not ok or not zone then return cfg end
+    if not ok then
+        if not phunZonesFailureLogged then
+            phunZonesFailureLogged = true
+            print("[Dirge]: PhunZones getLocation failed; using default zone rules: " .. tostring(zone))
+        end
+        return cfg
+    end
+    if not zone then return cfg end
 
     -- Per-zone weight overrides
     local sc  = tonumber(zone.dirgeSpawnChance)

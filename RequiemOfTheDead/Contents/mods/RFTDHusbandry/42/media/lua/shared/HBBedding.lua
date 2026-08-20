@@ -137,49 +137,47 @@ function HBBedding.applyBedding(hutch)
     local amount = HBBedding.getAmount(hutch)
     if amount <= 0 then return end
 
-    -- KEEP: the dirt getters/setters are field accesses, but transmitModData
-    -- (IsoObject:4470) pushes an ObjectModData packet through GameServer, and
-    -- this runs once per hutch per HBKeepAlive tick - a send failure must not
-    -- abort the keep-alive sweep mid-scan.
-    pcall(function()
-        local dirt = hutch:getHutchDirt()   or 0
-        local nb   = hutch:getNestBoxDirt() or 0
-        if dirt + nb <= 0 then return end  -- coop is clean; bedding just sits, no write
+    -- These dirt accessors are direct IsoHutch field reads/writes
+    -- (IsoHutch.java:965-977). A live hutch's transmitModData returns for an
+    -- absent square before sending and otherwise flags a hot save
+    -- (IsoObject.java:4470-4480), so this deterministic pass must fail visibly.
+    local dirt = hutch:getHutchDirt()   or 0
+    local nb   = hutch:getNestBoxDirt() or 0
+    if dirt + nb <= 0 then return end  -- coop is clean; bedding just sits, no write
 
-        local ratio    = HBBedding.dirtPerBedding()
-        local infinite = HBBedding.neverDepletes()
+    local ratio    = HBBedding.dirtPerBedding()
+    local infinite = HBBedding.neverDepletes()
 
-        -- Dirt we can absorb this pass: limited by the rate cap, by how much
-        -- dirt exists, and (unless bedding never depletes) by what the remaining
-        -- bedding can soak (amount*ratio).
-        local soakCap = infinite and (dirt + nb) or (amount * ratio)
-        local absorb  = math.min(HBBedding.CLEAN_PER_PASS, dirt + nb, soakCap)
-        if absorb <= 0 then return end
+    -- Dirt we can absorb this pass: limited by the rate cap, by how much
+    -- dirt exists, and (unless bedding never depletes) by what the remaining
+    -- bedding can soak (amount*ratio).
+    local soakCap = infinite and (dirt + nb) or (amount * ratio)
+    local absorb  = math.min(HBBedding.CLEAN_PER_PASS, dirt + nb, soakCap)
+    if absorb <= 0 then return end
 
-        if not infinite then
-            amount = math.max(0, amount - absorb / ratio)
-        end
-        local fromDirt = math.min(dirt, absorb)
-        dirt = dirt - fromDirt
-        local fromNb = math.min(nb, absorb - fromDirt)
-        nb = nb - fromNb
-        hutch:setHutchDirt(dirt)
-        hutch:setNestBoxDirt(nb)
+    if not infinite then
+        amount = math.max(0, amount - absorb / ratio)
+    end
+    local fromDirt = math.min(dirt, absorb)
+    dirt = dirt - fromDirt
+    local fromNb = math.min(nb, absorb - fromDirt)
+    nb = nb - fromNb
+    hutch:setHutchDirt(dirt)
+    hutch:setNestBoxDirt(nb)
 
-        if amount <= 0 and dirt <= 0 and nb <= 0 then
-            -- Clean AND out of bedding: drop the record so idle hutches store
-            -- nothing (auto-flush - keeps per-hutch ModData from lingering).
-            hutch:getModData()[HBData.NS_HUTCH] = nil
-        else
-            putState(hutch, "bedding", amount)
-            putState(hutch, "dirt",    dirt)
-            putState(hutch, "nbDirt",  nb)
-        end
-        -- Safe transmit: this hutch came from a loaded-square getObjects()
-        -- scan, so it is live and in its square's object list - not the stale
-        -- zone-list case that produces junk type-1/-1 ObjectModData packets.
-        hutch:transmitModData()
-    end)
+    if amount <= 0 and dirt <= 0 and nb <= 0 then
+        -- Clean AND out of bedding: drop the record so idle hutches store
+        -- nothing (auto-flush - keeps per-hutch ModData from lingering).
+        hutch:getModData()[HBData.NS_HUTCH] = nil
+    else
+        putState(hutch, "bedding", amount)
+        putState(hutch, "dirt",    dirt)
+        putState(hutch, "nbDirt",  nb)
+    end
+    -- Safe transmit: this hutch came from a loaded-square getObjects()
+    -- scan, so it is live and in its square's object list - not the stale
+    -- zone-list case that produces junk type-1/-1 ObjectModData packets.
+    hutch:transmitModData()
 end
 
 -- Add bedding charge to a hutch (admin "spawn hay"). Caps at MAX. Returns the
@@ -189,8 +187,10 @@ function HBBedding.addBedding(hutch, amount)
     amount = amount or HBBedding.perAdd()
     local newAmt = math.min(HBBedding.MAX, HBBedding.getAmount(hutch) + amount)
     putState(hutch, "bedding", newAmt)
-    -- KEEP: transmitModData (IsoObject:4470) is a network send, not a getter.
-    pcall(hutch.transmitModData, hutch)
+    -- The engine returns for an absent square, otherwise sends and hot-save flags
+    -- the object; a valid hutch has no throwable transmission precondition
+    -- (IsoObject.java:4470-4480).
+    hutch:transmitModData()
     return newAmt
 end
 
@@ -202,10 +202,11 @@ end
 function HBBedding.resolveHutchAt(x, y, z)
     local cell = getCell()
     if not cell then return nil end
-    -- KEEP: getGridSquare (IsoCell:2791) dereferences the ServerMap.instance
-    -- singleton; client-supplied coordinates can land off any loaded chunk.
-    local ok, sq = pcall(cell.getGridSquare, cell, x, y, z)
-    if not ok or not sq then return nil end
+    -- On a server, getGridSquare delegates to ServerMap; invalid, unloaded, and
+    -- absent coordinates are its direct nil result (IsoCell.java:2800-2818;
+    -- ServerMap.java:595-611).
+    local sq = cell:getGridSquare(x, y, z)
+    if not sq then return nil end
     local objs = sq:getObjects()   -- IsoGridSquare:8005, field return
     if not objs then return nil end
     for i = 0, objs:size() - 1 do

@@ -205,10 +205,16 @@ function T.showVehicleMenu(row)
             if spec.capability and RDAccess then
                 enabled = RDAccess.roleHas(getPlayer(), spec.capability)
             end
+            -- No guard. It was a pure silencer: the result was never
+            -- inspected, so a throwing row action produced no message, no
+            -- fallback and no clue - while the engine wrote a full Lua stack
+            -- trace at throw time anyway (KahluaThread.java:865, :1100).
+            -- There is no granularity to buy either; exactly one handler runs
+            -- per click, so there are no peers for it to protect. And these
+            -- are suite mods registering through DFRegistry, not the foreign
+            -- callers the comment implied.
             local opt = ctx:addOption(spec.label, row, function(rowData)
-                -- guarded: foreign-mod row-action callback - its errors are
-                -- contained, not ours to propagate
-                pcall(spec.handler, rowData)
+                spec.handler(rowData)
             end)
             if not enabled then opt.notAvailable = true end
         end

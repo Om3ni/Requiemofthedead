@@ -12,8 +12,8 @@ if isServer() then return end
 if not ISHutchRoostParentPanel or not ISHutchUI then return end
 
 require "TimedActions/ISTimedActionQueue"
+require "HBHayward"
 
-local HAY_TYPE   = "Base.HayTuft"
 local HAY_COLOR  = { r = 0.55, g = 0.82, b = 0.45, a = 1.0 }  -- green bedding bar
 
 -- Vanilla layout constants (mirror ISHutchUI.lua's file-locals).
@@ -22,28 +22,16 @@ local BUTTON_HGT       = FONT_HGT_SMALL + 6
 local PROGRESS_WIDTH   = 200
 local UI_BORDER_SPACING = 10
 
--- KEEP: getFirstTypeRecurse (ItemContainer:1470) is overloaded on ItemKey/String
--- and allocates from a thread-local predicate pool before recursing - overload
--- dispatch through Kahlua is not a field read. Called from render(), so the
--- guard is the allocation-free form.
-local function findHay(chr)
-    local inv = chr and chr:getInventory()
-    if not inv then return nil end
-    local ok, hay = pcall(inv.getFirstTypeRecurse, inv, HAY_TYPE)
-    return ok and hay or nil
-end
-
 -- Button handler (called as ISHutchUI method: self == the hutch window).
 function ISHutchUI:onAddHayBedding()
     local chr, hutch = self.chr, self.hutch
     if not chr or not hutch then return end
-    local hay = findHay(chr)
+    local hay = HBHayward.find(chr)
     if not hay then return end
-    -- KEEP: getEntrySq (IsoHutch:950) chains getSquare():getCell():getGridSquare
-    -- and offsets by getEnterSpotX/Y, which read this.def.rawgetInt - def is null
-    -- for any hutch the definitions do not cover, and that NPEs in the engine.
-    local ok, entry = pcall(hutch.getEntrySq, hutch)
-    if ok and entry and luautils.walkAdj(chr, entry) then
+    -- Vanilla hutch actions call this directly; valid UI hutches own both their
+    -- square and definition (IsoHutch.java:924-951).
+    local entry = hutch:getEntrySq()
+    if entry and luautils.walkAdj(chr, entry) then
         ISTimedActionQueue.add(HBAddHayAction:new(chr, hutch, hay))
     end
 end
@@ -95,7 +83,7 @@ function ISHutchRoostParentPanel:render()
     btn:setX(bedX)
     btn:setY(clean:getY())
     btn:setVisible(true)
-    local hay  = findHay(self.hutchUI.chr)
+    local hay  = HBHayward.find(self.hutchUI.chr)
     local full = st.bedding and st.max and st.bedding >= st.max
     if not hay then
         btn.enable = false; btn.tooltip = "Requires hay (HayTuft)."

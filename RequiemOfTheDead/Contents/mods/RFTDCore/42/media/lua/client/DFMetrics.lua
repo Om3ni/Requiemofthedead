@@ -66,9 +66,13 @@ local SPEC = {
 local referenceFH
 
 local function measure(font)
-    local h
-    -- getFontHeight (TextManager:127) NPEs on a font this build lacks
-    if font then pcall(function() h = getTextManager():getFontHeight(font) end) end
+    if not font then return nil end
+    -- getTextManager returns the eagerly initialized singleton
+    -- (LuaManager.java:6930-6933; TextManager.java:423-425), and
+    -- getFontFromEnum falls back to its default font for an unavailable enum
+    -- (TextManager.java:119-129). This is a deterministic read, not an
+    -- exception boundary.
+    local h = getTextManager():getFontHeight(font)
     if type(h) ~= "number" or h < 1 then return nil end
     return h
 end
@@ -89,12 +93,9 @@ end
 -- Recompute every token against the live font and publish into DFKit.metrics.
 -- Idempotent and cheap; safe to call on any preference change.
 function DFMetrics.recompute()
-    -- NEVER CACHE A FAILED MEASUREMENT. This runs at file load, which in PZ can
-    -- be before the text manager is ready, and an unmeasurable reference that
-    -- got cached as the fallback would poison every later recompute: a real
-    -- font of 18 against a remembered reference of 15 is a permanent x1.2 on
-    -- every panel, at DEFAULT text size, for the rest of the session. Leaving
-    -- it nil means the next call measures properly.
+    -- Never cache a missing font as the reference. The TextManager itself is
+    -- already initialized by the time Lua can call it; the only ordinary
+    -- unavailable case is a missing font selection.
     if not referenceFH then referenceFH = measure(REFERENCE_FONT) end
 
     local fh = measure(liveFont())

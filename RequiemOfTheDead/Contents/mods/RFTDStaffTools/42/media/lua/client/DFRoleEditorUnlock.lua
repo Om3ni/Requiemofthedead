@@ -80,7 +80,23 @@ DFRoleEdit.findRole            = DFRoleShared.findRole
 DFRoleEdit.getCapabilityByName = DFRoleShared.capability
 
 local function onServerCommand(module, command, args)
-    if module ~= MODULE or command ~= "applied" then return end
+    if module ~= MODULE then return end
+
+    -- A refusal is its own command precisely so it can never reach
+    -- applyOverride, which rebuilds a role's capabilities from the payload it
+    -- is given. Answering the caller matters here: the role editor is a panel
+    -- with a save button, and a save that returns nothing at all leaves the
+    -- admin unable to tell "refused" from "broken".
+    if command == "saveRefused" then
+        print("[Dragonfly] role save refused: " .. tostring(args and args.reason))
+        if DFLog and DFLog.push then
+            DFLog.push{ source = "Admin", level = "warn",
+                text = "Role save refused: " .. tostring(args and args.reason) }
+        end
+        return
+    end
+
+    if command ~= "applied" then return end
     DFRoleShared.applyOverride(DFRoleShared.findRole(args.roleName), args)
 end
 

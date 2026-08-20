@@ -36,7 +36,9 @@ local function broadcastAudit(action, player, extra)
     local username = player and player.getUsername and player:getUsername() or "?"
     local tail = extra and (" " .. tostring(extra)) or ""
     print(string.format("[Reaper] %s by %s%s", action, username, tail))
-    sendServerCommand("RFTDDragonfly", "LogBroadcast", {
+    -- Staff only since 2026-08-19; this was the all-connections overload, which
+    -- pushed every Reaper admin action to every player. See RDNet.sendStaff.
+    RDNet.sendStaff("RFTDDragonfly", "LogBroadcast", {
         source = "Mod:RFTDReaper",
         level  = "audit",
         text   = string.format("%s by %s%s", action, username, tail),
@@ -283,11 +285,38 @@ local function onClientCommand(module, command, player, args)
         local key   = args.key
         local value = tonumber(args.value)
         if not key or not value then return end
-        local allowed = {
-            sequentialThreshold = true, stackThreshold = true,
-            outfitIdGap = true, outfitMinCluster = true, outfitProximity = true,
+        -- The key was allow-listed but the VALUE was not, and it goes straight
+        -- into the live automatic-cull thresholds. A negative or absurd figure
+        -- from a staff account - fat-fingered as easily as forged - could make
+        -- the culler match everything or nothing, on a server where culling is
+        -- how the population stays survivable. A capability answers who may
+        -- attempt this; it does not make the payload true.
+        --
+        -- Ranges are the operational envelope each key actually has: run
+        -- lengths and cluster sizes are counts of zombies, the id gap is a
+        -- spread within an outfit run, and proximity is measured in tiles.
+        local RANGE = {
+            sequentialThreshold = { 2, 500 },
+            stackThreshold      = { 2, 500 },
+            outfitIdGap         = { 1, 10000 },
+            outfitMinCluster    = { 2, 500 },
+            outfitProximity     = { 1, 200 },
         }
-        if not allowed[key] then return end
+        local bounds = RANGE[key]
+        if not bounds then return end
+        if value ~= value or value < bounds[1] or value > bounds[2] then
+            print(string.format(
+                "[Reaper] setThreshold refused: %s=%s outside [%d, %d]",
+                tostring(key), tostring(value), bounds[1], bounds[2]))
+            -- No `value` in the refusal: there is no RPCore.getRuntime to read
+            -- the live figure back from, and echoing the REJECTED number would
+            -- let the panel display it as though it had been applied.
+            reply(player, "ThresholdAck",
+                { key = key, refused = true,
+                  reason = string.format("%s must be between %d and %d",
+                                         key, bounds[1], bounds[2]) })
+            return
+        end
         RPCore.setRuntime(key, value)
         broadcastAudit("setThreshold", player, key .. "=" .. tostring(value))
         reply(player, "ThresholdAck", { key = key, value = value })

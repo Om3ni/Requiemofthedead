@@ -4,8 +4,8 @@
 -- The economy's PRIMARY fuel (DESIGN §0): on a big server the high-volume,
 -- self-replenishing input is players going inactive - their claims expire,
 -- the cars sit as unclaimed husks, the Janitor reclaims them into respawn
--- tokens. Player field-dismantle is the minor side channel; wrecks mint
--- nothing and are NEVER touched.
+-- tokens. Server-confirmed destruction and field dismantle are smaller side
+-- channels; wrecks themselves are NEVER touched.
 --
 -- THE PRESENCE LAW (owner's rule, 2026-07-03): abandonment is a property of
 -- the PLAYER, not the object. "If the player logs in, their stuff is
@@ -116,19 +116,31 @@ local function reclaim(vehicle, lastUser)
     report.z = math.floor(vehicle:getZ())
     report.trailer = RCShared.isTrailer(vehicle)
 
-    -- guarded: the dump walks part containers and spills items onto squares
-    -- that can be unloading under it; a failed dump must still allow removal
-    local dumped = 0
-    local okDump, n = pcall(RCShared.dumpVehicleContainers, vehicle)
-    if okDump and type(n) == "number" then dumped = n end
+    -- No guard. dumpVehicleContainers is OURS, and it already owns the only
+    -- boundary in there: it returns 0 for a nil vehicle or square, nil-checks
+    -- every part and container, and wraps the one operation that actually
+    -- throws - the per-item drop - in its own per-item guard (RCShared.lua:415).
+    -- Wrapping a function whose throwing step is already isolated adds no
+    -- granularity, and the outer guard could only have converted a partial dump
+    -- into a reported-as-zero one.
+    local dumped = RCShared.dumpVehicleContainers(vehicle)
 
     -- We ARE the server: permanentlyRemove() here is the authoritative call
     -- (the same one VehicleCommands.remove makes) and propagates to clients.
-    -- guarded: removal cascades through exit/physics/world teardown
-    -- (BaseVehicle.java:7205 -> removeFromWorld), unverifiable-trivial
-    local removed = pcall(vehicle.permanentlyRemove, vehicle)
-    if not removed then
-        RCShared.dbg("janitor: removal threw on %s at %s,%s",
+    -- The NPE sites the old pcall named (BaseVehicle.java:7127, :7148, :7158,
+    -- :7220) are Java BODY throws in an exposed method - swallowed and
+    -- stack-traced by MethodCaller (MethodCaller.java:33-56) - so `removed`
+    -- was always true and the skip branch below had never once run. The
+    -- postcondition replaces it with the first REAL check this sweep has had:
+    -- a successful teardown sets removedFromWorld at :7146 and drops cell
+    -- membership at :7177 (HashSet is exposed, LuaManager.java:1667), so a
+    -- fault at any cited site leaves at least one of the two false. Blind
+    -- spot: a fault at the final DB delete (:7220) reads as success and the
+    -- row can respawn on reload - engine-logged when it happens.
+    vehicle:permanentlyRemove()
+    if not (vehicle:isRemovedFromWorld()
+            and not getCell():getVehicles():contains(vehicle)) then
+        RCShared.dbg("janitor: removal INCOMPLETE on %s at %s,%s (engine trace has the fault)",
             tostring(report.vehicle), tostring(report.x), tostring(report.y))
         return false
     end
@@ -320,29 +332,50 @@ end
 -- trunk lock, horn, keys, lights, tow. One modData write per interaction -
 -- event-driven, no polling, nothing transmitted.
 -- ---------------------------------------------------------------------------
-local EXCLUDE = {
-    -- damage/grief paths: the attacker must not become the keeper
-    damageWindow = true, crash = true, damageFromHitChr = true,
-    -- lifecycle/admin paths, not "use"
-    remove = true,
-    -- STAFF EDITS ARE NOT USE (2026-08-02). Every command below is sent ONLY
-    -- from a cheat/debug surface - vanilla's mechanics cheat menu, the debug
-    -- spawn UI, the Patrick scenario - and several are gated server-side on
-    -- Capability.UseMechanicsCheat. Attribution is a record of who USES a car,
-    -- so a staff member editing one must not become its keeper: without these
-    -- here, an admin repairing a row from the vehicles tab is stamped
-    -- RC_LastUser, and the Presence Law then shields that car from reclamation
-    -- for as long as the admin keeps logging in. A repair sweep across the map
-    -- would silently adopt every vehicle it touched - the same class of error
-    -- as letting a vandal inherit the windshield they smashed, which is why
-    -- these sit beside the damage paths rather than in a list of their own.
-    --
-    -- fixPart is DELIBERATELY ABSENT: that is the PLAYER mechanic repair
-    -- (skill-checked, sets haveBeenRepaired, no capability gate), which is
-    -- exactly the kind of care that should keep a car alive.
-    getKey = true, repair = true, repairPart = true, setPartCondition = true,
-    setContainerContentAmount = true, setRust = true, cheatHotwire = true,
-    setAlarmed = true,
+-- WHAT COUNTS AS USING A VEHICLE. An ALLOWLIST since 2026-08-19, and the switch
+-- from a blacklist is the whole point.
+--
+-- This listener sits on vanilla's "vehicle" command channel, not on RCServer's
+-- dispatcher, so nothing rate-limits it and every message reaching it came
+-- straight off the wire. While the rule was "ignore these, count everything
+-- else", any name NOT on the ignore list counted as use - including names
+-- vanilla does not implement. Vanilla's own dispatcher silently drops unknown
+-- commands (VehicleCommands.lua:457-465), so a client could invent a name that
+-- does nothing at all, aim it at any vehicle id, and be recorded as that car's
+-- keeper. Presence Law then shields it from reclamation. Loop the ids and the
+-- entire reclaimable fleet is immune, without going near a single car.
+--
+-- Naming what counts inverts that: an invented name is simply not in the table.
+--
+-- THE POLICY (maintainer, 2026-08-19). Use means a person operated the car.
+--   * Driving and its controls - engine, doors, lights, horn, tyres, heater.
+--   * setTrunkLocked IS use: securing your own vehicle is caring for it.
+--   * Keys on DOORS are not (putKeyOnDoor / removeKeyFromDoor). Handling a key
+--     near a car is not operating it; putKeyInIgnition is, and is listed.
+--   * Trailers are not - including attach/detach. Towing requires driving,
+--     which fires startEngine and setDoorOpen anyway, so nothing legitimate
+--     loses its claim by leaving these out.
+--   * Cosmetic and debug state is not: paint, skin, blood, headlight config.
+--   * fixPart IS use, deliberately - the PLAYER mechanic repair, skill-checked
+--     and ungated. Staff repair paths (repair / repairPart / setPartCondition)
+--     are not, so a maintenance sweep cannot silently adopt every car it
+--     touches; that reasoning predates this table and is preserved.
+--   * Damage is never use: a vandal must not inherit the car he wrecked.
+local USE_COMMANDS = {
+    startEngine            = true,
+    putKeyInIgnition       = true,
+    removeKeyFromIgnition  = true,
+    setDoorOpen            = true,
+    setTrunkLocked         = true,
+    setHeadlightsOn        = true,
+    setStoplightsOn        = true,
+    setLightbarLightsMode  = true,
+    setLightbarSirenMode   = true,
+    onHorn                 = true,
+    onBackSignal           = true,
+    toggleHeater           = true,
+    setTirePressure        = true,
+    fixPart                = true,
 }
 
 -- Attribute a vehicle to `name` as USED right now: stamp the keeper + restart
@@ -364,17 +397,20 @@ end
 
 local function onVehicleCommand(module, command, player, args)
     if module ~= "vehicle" then return end
-    if EXCLUDE[command] then return end
+    if not USE_COMMANDS[command] then return end
     if not (player and args and args.vehicle) then return end
     local c = RCShared.cfg()
     if not (c.enabled and c.janitorEnabled) then return end
     local name = player:getUsername()
     if not name then return end
     RCRegistry.notePresence(name)
-    -- args.vehicle comes off the wire from vanilla's channel: a non-number
-    -- would blow the (short) cast inside getVehicleById, so the guard stays.
-    local okv, v = pcall(getVehicleById, args.vehicle)
-    if okv and v then RCJanitor.attribute(name, v) end
+    -- Wire value VALIDATED rather than guarded - and this one arrives on
+    -- VANILLA's channel, so it is genuinely untrusted input rather than our own
+    -- payload. getVehicleById takes an int (LuaManager.java:8208-8211), so
+    -- tonumber() is both the type check and the precondition.
+    local vid = tonumber(args.vehicle)
+    local v = vid and getVehicleById(vid)
+    if v then RCJanitor.attribute(name, v) end
 end
 Events.OnClientCommand.Add(onVehicleCommand)
 

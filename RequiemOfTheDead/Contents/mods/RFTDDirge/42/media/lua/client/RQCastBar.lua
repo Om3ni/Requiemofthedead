@@ -6,6 +6,8 @@
 -- suspendStencil lets us draw anywhere on screen despite the
 -- tiny element size.
 
+require "RDWorldOverlay"
+
 RQCastBar = RQCastBar or {}
 
 -- Active cast bars table: barId -> barData
@@ -38,31 +40,13 @@ end
 local hudPanel = nil
 local hudActive = false
 
--- Key design: element size is 1x1 pixel, Java UIManager only checks mouse hit
--- within that 1 pixel, won't block mouse clicks on the game world.
--- Uses suspendStencil() to remove clipping limits, allowing drawing anywhere on screen.
-
-local RQCastBarHUD = ISUIElement:derive("RQCastBarHUD")
-
-function RQCastBarHUD:new()
-    local o = ISUIElement:new(0, 0, 1, 1)
-    setmetatable(o, self)
-    self.__index = self
-    o:setWantKeyEvents(false)
-    return o
-end
-
-function RQCastBarHUD:prerender() end
-
--- Defensive override: don't consume events even if mouse is at (0,0)
-function RQCastBarHUD:onMouseDown(x, y) return false end
-function RQCastBarHUD:onRightMouseDown(x, y) return false end
-function RQCastBarHUD:onMouseUp(x, y) return false end
-function RQCastBarHUD:onRightMouseUp(x, y) return false end
-function RQCastBarHUD:onMouseMove(dx, dy) return false end
-function RQCastBarHUD:onMouseMoveOutside(dx, dy) return false end
-function RQCastBarHUD:onMouseWheel(del) return false end
-function RQCastBarHUD:onFocus(x, y) end
+-- The 1x1 click-through element, its empty prerender and its whole set of
+-- return-false handlers moved to Core 2026-08-19 - Dirge's health bar and Last
+-- Rites' danger HUD had written the same thing independently, and the reason
+-- those handlers matter (UIElement.consumeMouseEvents defaults TRUE) is worth
+-- reading once rather than three times. See RDWorldOverlay's header. All that
+-- is left here is render, which is the part that was ever specific to cast bars.
+local RQCastBarHUD = RDWorldOverlay:derive("RQCastBarHUD")
 
 -- Render all active cast bars
 function RQCastBarHUD:render()
@@ -167,6 +151,19 @@ local function detachHUDIfEmpty()
     end
 end
 
+-- Callback compatibility boundary. RQCastBar is globally reachable, so a
+-- third-party caller may supply lifecycle code. One callback failure cannot
+-- strand this bar's removal or block other bars; every callback runs at most
+-- once, making this diagnostic naturally bounded.
+local function runLifecycleCallback(callback, phase, id)
+    if not callback then return end
+    local ok, err = pcall(callback)
+    if not ok then
+        print("[RFTDDirge] cast bar " .. tostring(id) .. " " .. phase
+            .. " callback failed: " .. tostring(err))
+    end
+end
+
 
 -- Create a new cast bar
 function RQCastBar.create(params)
@@ -200,9 +197,7 @@ function RQCastBar.cancel(id)
     if bar then
         activeBars[id] = nil
         activeBarCount = math.max(0, activeBarCount - 1)
-        -- guard stays: onCancel/onComplete are caller-supplied callbacks from
-        -- the ability modules; a bad one must not strand the bar or the HUD.
-        if bar.onCancel then pcall(bar.onCancel) end
+        runLifecycleCallback(bar.onCancel, "cancel", id)
         detachHUDIfEmpty()
     end
 end
@@ -234,20 +229,18 @@ local function onTick()
                 end
             end
         end
-        -- onCancel/onComplete guards stay: caller-supplied callbacks from the
-        -- ability modules; one bad callback must not strand every other bar.
         if zombieDied then
-            if bar.onCancel then pcall(bar.onCancel) end
+            runLifecycleCallback(bar.onCancel, "death", id)
             removeCount = removeCount + 1
             toRemoveBuffer[removeCount] = id
         -- Stagger/knockdown interrupt
         elseif bar.interruptOnStagger and bar.zombie and isZombieStaggered(bar.zombie) then
-            if bar.onCancel then pcall(bar.onCancel) end
+            runLifecycleCallback(bar.onCancel, "stagger", id)
             removeCount = removeCount + 1
             toRemoveBuffer[removeCount] = id
         -- Cast bar complete
         elseif now >= bar.startTime + bar.duration then
-            if bar.onComplete then pcall(bar.onComplete) end
+            runLifecycleCallback(bar.onComplete, "complete", id)
             removeCount = removeCount + 1
             toRemoveBuffer[removeCount] = id
         end

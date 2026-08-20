@@ -35,6 +35,7 @@
 if isServer() then return end
 
 require "LMCore"
+require "RDSelect"   -- Core's one keyboard-modifier reader
 require "LMEdit"
 
 LMMapEditor = LMMapEditor or {}
@@ -129,14 +130,16 @@ function LMMapEditor:_seedSpan()
     local api = self:_api()
     local w = self.host and self.host.map and self.host.map:getWidth() or 0
     if not api or w <= 0 then return 64 end
-    -- pcall: uiToWorldX is the engine world-map API projecting through a
-    -- transform that is not populated until the widget has rendered a frame,
-    -- so this throws when called before the map is on screen. 64 is the seed
-    -- that keeps in that case.
-    local ok, span = pcall(function()
-        return math.abs(api:uiToWorldX(w, 0) - api:uiToWorldX(0, 0))
-    end)
-    if not ok or not span or span <= 0 then return 64 end
+    -- No guard - uiToWorldX cannot throw, before render or ever. Without map
+    -- data it returns literal 0.0 (UIWorldMapV1.java:266-271); pre-render it
+    -- projects through an identity MVP over a zero viewport - the matrix is a
+    -- final field, never null (WorldMapRenderer.java:112-114), updateView only
+    -- composes it from render (:496-500, UIWorldMap.java:188-189), and a ray
+    -- miss explicitly ZEROES the output rather than raising (:231-233). So the
+    -- pre-render failure is a wrong NUMBER, and the span<=0 test below plus
+    -- the clamps under it were always the real protection.
+    local span = math.abs(api:uiToWorldX(w, 0) - api:uiToWorldX(0, 0))
+    if not span or span <= 0 then return 64 end
     local seed = math.floor(span / 12)
     if seed < MIN_SPAN * 2 then seed = MIN_SPAN * 2 end
     if seed > 1500 then seed = 1500 end
@@ -157,13 +160,12 @@ function LMMapEditor:addRectAtView(name)
     local mw = self.host.map:getWidth()
     local mh = self.host.map:getHeight()
     local cx, cy
-    -- pcall: same unrendered-transform failure as _seedSpan. No centre means no
-    -- rectangle, which is the nil return below.
-    local ok = pcall(function()
-        cx = math.floor(api:uiToWorldX(mw / 2, mh / 2))
-        cy = math.floor(api:uiToWorldY(mw / 2, mh / 2))
-    end)
-    if not ok or not cx or not cy then return nil end
+    -- No guard - same reading as _seedSpan: the projection returns a number
+    -- in every state. This path only runs from a click on the rendered editor,
+    -- so the transform is live; the nil test keeps the no-centre contract.
+    cx = math.floor(api:uiToWorldX(mw / 2, mh / 2))
+    cy = math.floor(api:uiToWorldY(mw / 2, mh / 2))
+    if not cx or not cy then return nil end
 
     local half = math.floor(self:_seedSpan() / 2)
     rec.rects = rec.rects or {}
@@ -402,13 +404,6 @@ end
 -- Mouse
 -- ---------------------------------------------------------------------------
 
-local function shiftDown()
-    return isKeyDown(Keyboard.KEY_LSHIFT) or isKeyDown(Keyboard.KEY_RSHIFT)
-end
-local function ctrlDown()
-    return isKeyDown(Keyboard.KEY_LCONTROL) or isKeyDown(Keyboard.KEY_RCONTROL)
-end
-
 function LMMapEditor:_onMouseDown(widget, x, y)
     self._clickX, self._clickY = x, y
     if self.locked or not self.draft then return end
@@ -417,7 +412,8 @@ function LMMapEditor:_onMouseDown(widget, x, y)
     -- modified rather than a mode: a mode has to be entered, shown, and left,
     -- and an editor that is silently in the wrong one is worse than one that
     -- needs a key held.
-    if ctrlDown() and self.selected then
+    local ctrlHeld = RDSelect.modifiers()
+    if ctrlHeld and self.selected then
         local wx, wy = self:_sToW(x, y)
         local rec = self.draft:get(self.selected)
         if rec then
@@ -450,7 +446,8 @@ function LMMapEditor:_onMouseDown(widget, x, y)
             widget:setCapture(true)
             return
         end
-        if shiftDown() and x >= x1 and x <= x2 and y >= y1 and y <= y2 then
+        local _, shiftHeld = RDSelect.modifiers()
+        if shiftHeld and x >= x1 and x <= x2 and y >= y1 and y <= y2 then
             local wx, wy = self:_sToW(x, y)
             self._bodyDrag   = true
             self._bodyOrig   = { r[1], r[2], r[3], r[4] }

@@ -42,22 +42,19 @@ local function show(season)
         "Set a new name and restart the server before players join.\n\n" ..
         "Nothing has been changed automatically."
 
-    -- vanilla ISUI Lua construction (ISModalDialog), unverifiable here; the
-    -- console fallback below carries the warning when the modal cannot
-    local ok = pcall(function()
-        local w, h = 460, 260
-        local sw = getCore():getScreenWidth()
-        local sh = getCore():getScreenHeight()
-        local modal = ISModalDialog:new((sw - w) / 2, (sh - h) / 2, w, h, text, false, nil, nil)
-        modal:initialise()
-        modal:setAlwaysOnTop(true)
-        modal:addToUIManager()
-    end)
-
-    if not ok then
-        -- The warning matters more than the presentation.
-        print("[RFTDCore] " .. text:gsub("\n", " "))
-    end
+    -- Bare - the BMClient reading (O&E slice) applies verbatim: with a
+    -- string text, ISModalDialog's one throw site (:188, non-string text) is
+    -- unreachable, ISModalDialog.lua:5 proves fonts live before the class
+    -- can exist, and the engine getters here are exposed methods whose
+    -- faults are swallowed (MethodCaller.java:33-56). The console fallback
+    -- was recovery for an impossible event.
+    local w, h = 460, 260
+    local sw = getCore():getScreenWidth()
+    local sh = getCore():getScreenHeight()
+    local modal = ISModalDialog:new((sw - w) / 2, (sh - h) / 2, w, h, text, false, nil, nil)
+    modal:initialise()
+    modal:setAlwaysOnTop(true)
+    modal:addToUIManager()
 end
 
 Events.OnTick.Add(function()

@@ -52,31 +52,27 @@ local PAD = 12
 local function fontBody()  return DFKit.font.small or UIFont.Small end
 local function fontTitle() return DFKit.font.label or UIFont.Small end
 
--- getFontHeight/MeasureStringX (TextManager:127) deref the font enum lookup
--- with no null check - a font this build lacks is an NPE, so each measure
--- keeps its fallback behind the guard.
+-- TextManager is an eager singleton and resolves an absent font enum to its
+-- default font (LuaManager.java:6930-6933; TextManager.java:119-129). The
+-- measurement calls are direct; the layout floors below remain for a bad
+-- numeric result, not an exception path.
 local function lineH()
-    local fh = 14
-    pcall(function() fh = getTextManager():getFontHeight(fontBody()) end)
+    local fh = getTextManager():getFontHeight(fontBody())
     return math.max(14, fh + 2)
 end
 
 local function titleH()
-    local fh = 14
-    pcall(function() fh = getTextManager():getFontHeight(fontTitle()) end)
+    local fh = getTextManager():getFontHeight(fontTitle())
     return math.max(24, fh + 12)
 end
 
 local function entryH()
-    local fh = 14
-    pcall(function() fh = getTextManager():getFontHeight(fontBody()) end)
+    local fh = getTextManager():getFontHeight(fontBody())
     return math.max(DFKit.metrics.btnH, fh + 10)
 end
 
 local function tw(s)
-    local n = 0
-    pcall(function() n = getTextManager():MeasureStringX(fontBody(), s or "") end)
-    return n
+    return getTextManager():MeasureStringX(fontBody(), s or "")
 end
 
 -- ---------------------------------------------------------------------------
@@ -146,10 +142,10 @@ function DFEntry:onCancel() DFEntry.close() end
 function DFEntry:text()
     local s = ""
     if self.entry then
-        -- getInternalText/getText availability differs across builds of the
-        -- UITextBox2 wrapper - fall through the pair rather than assume one
-        local ok = pcall(function() s = self.entry:getInternalText() end)
-        if not ok or s == nil then pcall(function() s = self.entry:getText() end) end
+        -- Both UITextBox2 getters are direct field returns in the supported
+        -- engine; internalText is the editable value consumers must receive.
+        -- UITextBox2.java:314-320
+        s = self.entry:getInternalText()
     end
     return tostring(s or "")
 end

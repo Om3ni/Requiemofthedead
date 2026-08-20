@@ -105,14 +105,14 @@ function RQLoot.dropForZombie(zombie)
     for i = 1, dropCount do
         local itemType = pickFromPool(pool)
         if itemType then
-            -- Verify item script exists before adding (avoid Java NPE)
             local sm = getScriptManager()
             if sm and sm:getItem(itemType) then
-                -- guard stays: AddItem runs the item factory (script resolve +
-                -- InstanceItem), too deep to prove throw-free, and a bad entry
-                -- must not cost the rest of the drop.
-                local addOk, item = pcall(inv.AddItem, inv, itemType)
-                if addOk and item then
+                -- ItemContainer.AddItem(String) returns nil for missing/obsolete
+                -- scripts after its own FindItem check, and vanilla Lua calls it
+                -- directly for fixed Base.* item rewards. Evidence:
+                -- ItemContainer.java:506-532; SpawnItems.lua:72-91, 151-155.
+                local item = inv:AddItem(itemType)
+                if item then
                     given[#given + 1] = itemType
                 end
             end

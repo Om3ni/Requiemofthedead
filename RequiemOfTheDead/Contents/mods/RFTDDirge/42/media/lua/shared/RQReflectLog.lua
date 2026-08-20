@@ -35,25 +35,19 @@ end
 
 function RQReflectLog.writeAll(lines)
     if not lines or #lines == 0 then return end
-    -- guard stays: getFileWriter is the allowlisted (and case-sensitive) write
-    -- path -- a rejected extension or a locked handle throws, and forensic
-    -- logging must never take the caller down with it.
-    local ok, err = pcall(function()
-        local writer = getFileWriter(FILE, true, true)
-        if not writer then return end
-        if not sessionMarked then
-            sessionMarked = true
-            writer:write("=== Dirge reflect session start " .. stamp() .. "===\n")
-        end
-        local ts = stamp()
-        for i = 1, #lines do
-            writer:write(ts .. lines[i] .. "\n")
-        end
-        writer:close()
-    end)
-    if not ok then
-        print("[RQReflect] log write failed: " .. tostring(err))
+    -- getFileWriter logs open failures and returns nil. LuaFileWriter delegates
+    -- write/close to PrintWriter, which records I/O failure internally rather
+    -- than throwing it back through Lua; an exception guard here could only
+    -- hide a programming error. LuaManager.java:5523-5556, 9850-9868.
+    local writer = getFileWriter(FILE, true, true)
+    if not writer then return end
+    if not sessionMarked then
+        sessionMarked = true
+        writer:write("=== Dirge reflect session start " .. stamp() .. "===\n")
     end
+    local ts = stamp()
+    for i = 1, #lines do writer:write(ts .. lines[i] .. "\n") end
+    writer:close()
 end
 
 function RQReflectLog.write(line)

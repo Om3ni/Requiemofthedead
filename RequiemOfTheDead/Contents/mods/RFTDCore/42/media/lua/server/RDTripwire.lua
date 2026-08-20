@@ -50,6 +50,8 @@
 if not isServer() then return end
 
 require "RDShared"
+require "RDAccess"
+require "RDNet"      -- intake is REGISTERED, not listened for; see the tail of this file
 
 RDTripwire = RDTripwire or {
     privileged = {},   -- [module][command] = true
@@ -98,10 +100,9 @@ end
 -- point, and a command nobody registers simply never trips a wire.
 RDTripwire.registerPrivileged("RFTDDirge", "adminReroll")
 
-local function isStaff(player)
-    if not RDAccess then return false end
-    return (RDAccess.isTopAdmin(player) or RDAccess.hasAnyCapability(player)) == true
-end
+-- Staff classification is RDAccess.isStaff, called directly - the promoted
+-- predicate this file used to hold a copy of. Shared tier loads before server
+-- tier, so RDAccess is structurally present; the require below states it.
 
 local function usernameOf(player)
     local u = player and player:getUsername()
@@ -131,7 +132,7 @@ local function broadcast(payload)
     -- unmapped/closed connections - the record already exists either way
     for i = 0, players:size() - 1 do
         local p = players:get(i)
-        if p and isStaff(p) then
+        if p and RDAccess.isStaff(p) then
             sendServerCommand(p, RDShared.MODULE, "tripwire", payload)
         end
     end
@@ -170,11 +171,11 @@ function RDTripwire.raise(severity, code, player, text, extra)
         end
     end
 
+    -- No guard - see RDLog's totality reading in RDForage/RCAudit. The
+    -- presence check stays: RDLog is Core's, but this file can load in a
+    -- context where the server half has not.
     if RDLog and RDLog.forensic then
-        -- a logging fault must never disturb the tripwire path
-        pcall(function()
-            RDLog.forensic("tripwire", "RD.TRIP", player, fields, RDShared.MODULE)
-        end)
+        RDLog.forensic("tripwire", "RD.TRIP", player, fields, RDShared.MODULE)
     end
 
     broadcast{
@@ -201,7 +202,7 @@ function RDTripwire.inspect(module, command, player, access)
     local m = RDTripwire.privileged[module]
     if not m or not m[command] then return end
     if not enabled() then return end
-    if isStaff(player) then return end
+    if RDAccess.isStaff(player) then return end
 
     RDTripwire.raise("impossible", "privilegedCommand", player,
         tostring(module) .. ":" .. tostring(command)
@@ -256,7 +257,7 @@ function RDTripwire.receiveReport(player, args)
 
     -- A claim of "without accesslevel" made by an account that HAS the access
     -- level is not evidence of anything; drop it rather than record noise.
-    if args.claimsUnauthorised and isStaff(player) then return end
+    if args.claimsUnauthorised and RDAccess.isStaff(player) then return end
 
     RDTripwire.raise("reported", code, player, text, { channel = tostring(args.channel or "") })
 end
@@ -274,29 +275,71 @@ function RDTripwire.receiveLifecycle(player, args)
     if throttled(user, "lifecycle") then return end
 
     if RDLog and RDLog.forensic then
-        -- a logging fault must never disturb the lifecycle path
-        pcall(function()
-            RDLog.forensic("lifecycle", "RD.LIFE", player, {
-                act    = tostring(args.act or "?"),
-                text   = text,
-                access = (player and player:getAccessLevel()) or "",
-            }, RDShared.MODULE)
-        end)
+        -- Bare: RDLog is our own module and its forensic path is total for a
+        -- scalar payload (buffered push, nil-safe writer, internally-bounded
+        -- tally); getAccessLevel's faults arrive as nil (exposed method,
+        -- MethodCaller.java:33-56) and the `or ""` carries them. A real fault
+        -- here would be our bug and should be loud.
+        RDLog.forensic("lifecycle", "RD.LIFE", player, {
+            act    = tostring(args.act or "?"),
+            text   = text,
+            access = (player and player:getAccessLevel()) or "",
+        }, RDShared.MODULE)
     end
 end
 
-Events.OnClientCommand.Add(function(module, command, player, args)
-    if module ~= RDShared.MODULE then return end
+-- ---------------------------------------------------------------------------
+-- Intake, through RDNet - the RFTDCore token's ONE executable listener.
+--
+-- This file used to add its own OnClientCommand listener here, which made a
+-- SECOND executable intake on a token RDNet had already adopted
+-- (RDNet.lua:294, at file scope, which puts the token in default-deny). Neither
+-- command was ever RDNet-REGISTERED, so every report arriving from
+-- DFIntentWatch/DFSendWatch was written to the forensic archive as an
+-- RD.NET_REJECT and then executed anyway by the listener below it.
+--
+-- The 2026-08-18 live capture priced that: 95 lifecycle reports, 95 matching
+-- false rejects, 86% of the entire rdnet stream. The one record an operator
+-- would search for intrusion was filling up with rejections of legitimate,
+-- handled traffic. Registering here is what makes that stream mean what it
+-- says - and this file's own header already stated the rule ("never its own
+-- listener") for the Guardian pathway, so the listener was out of step with
+-- the design it was written beside.
+--
+-- capability = nil is deliberate and load-bearing. Both commands are telemetry
+-- from ORDINARY clients; a capability gate would silence exactly the reporters
+-- they exist to hear from. RDAccess.can(player, nil) returns true
+-- unconditionally (RDAccess.lua:62), so these are public endpoints and are
+-- meant to be. That is a declared entry on the intended-open set, not an
+-- oversight.
+--
+-- rate is the anti-flood layer ONLY. Per-code throttling is stricter and lives
+-- in throttled() - 10s per player per code - but a flood of DISTINCT codes
+-- passes that untouched, so RDNet's per-command bucket is what bounds it. One
+-- constant for both because the cadence is genuinely the same: low-rate,
+-- human-driven client wrappers (measured 1.2/h across 31 senders). 10/s sits
+-- far above any hand at a keyboard and far below a script.
+--
+-- enabled() stays here rather than moving into the receive functions: it is
+-- this file's operator switch, not RDNet's. Turning the sensor off must stop
+-- intake WITHOUT unregistering the commands, so the rejection stream keeps
+-- telling the truth about what arrived while the sensor was dark.
+--
+-- No guard on the receive calls. They are the tail of the handler, and RDNet
+-- already isolates handler faults into RD.NET_ERROR (RDNet.lua:124) - a
+-- strictly better boundary than the engine's per-listener try/catch this
+-- replaced, because a fault now lands in the archive instead of only the log.
+-- ---------------------------------------------------------------------------
+local INTAKE_RATE = 10
+
+RDNet.register(RDShared.MODULE, "tripwireReport", { public = true, rate = INTAKE_RATE }, function(player, args)
     if not enabled() then return end
-    -- args are wire-controlled, but no guard is needed at this boundary:
-    -- Event.trigger isolates each listener (Event.java:53-63), so a malformed
-    -- report costs this call and nothing else. Both branches are the tail of
-    -- the handler, so there is no continuation to protect either.
-    if command == "tripwireReport" then
-        RDTripwire.receiveReport(player, args)
-    elseif command == "lifecycleReport" then
-        RDTripwire.receiveLifecycle(player, args)
-    end
+    RDTripwire.receiveReport(player, args)
+end)
+
+RDNet.register(RDShared.MODULE, "lifecycleReport", { public = true, rate = INTAKE_RATE }, function(player, args)
+    if not enabled() then return end
+    RDTripwire.receiveLifecycle(player, args)
 end)
 
 return RDTripwire

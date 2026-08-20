@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- SHClient.lua - Sticky Headwear: your hat stays on your head.
+-- SHClient.lua - local lifecycle for Sticky Headwear.
 --
 -- Vanilla knocks headwear off when you take a hit. This pins it, and does so
 -- on the WORN ITEM rather than the item script - which is the whole design
@@ -24,89 +24,26 @@
 -- (Item.java:1626) and a later script edit never reaches it.
 --
 -- So this touches instances only. Precise, reversible within the session, and
--- it works on a save you have been playing for a month. The cost is that it
--- must be re-applied when the worn set changes, which is what the event hooks
--- below are for - cheap, since it only ever walks what one character wears.
+-- it works on a save you have been playing for a month. SHAnchor centralizes
+-- that contract; this file only feeds it local lifecycle changes.
 --
--- Client-side by nature: the check at IsoGameCharacter:7552 runs against the
--- character's own worn items, and each client owns its player. Nothing here
--- needs the server, and nothing here trusts another client.
+-- SHAnchor owns the mutation. This runner covers single-player (where this
+-- process is authoritative) and keeps the local multiplayer copy consistent;
+-- SHServer owns the dedicated server instance that decides helmetFall.
 
 if isServer() then return end
 
 require "OEShared"
-
-StickyHeadwear = StickyHeadwear or {}
+require "StickyHeadwear/SHAnchor"
 local SH = StickyHeadwear
 
-function SH.isEnabled()
-    return OEShared.enabled("StickyHeadwearEnable")
-end
+local lastEnabled = nil
 
--- Remember what each item's chance WAS, so switching the sandbox option off
--- mid-session restores the vanilla value instead of leaving everything pinned
--- until a restart. Keyed by item id; weak-valued so dropped items do not hold
--- their own memory open.
-SH.original = SH.original or {}
-
--- getChanceToFall/setChanceToFall live on Clothing (Clothing.java:872), and a
--- worn slot can hold something that is not Clothing. Test for the METHOD
--- before calling: a caught error is still an error to the engine, and PZ's
--- poller logged one per non-clothing worn item on every clothing change - a
--- wall of "Tried to call nil" from code that was technically working. Once the
--- method exists the calls run bare: both declarations of each name in the
--- 42.20.2 decompile are plain field accessors (Clothing.java:872/876,
--- scripting Item.java:3819), so neither can throw.
-local function chanceOf(item)
-    if not item or not item.getChanceToFall then return nil end
-    local chance = item:getChanceToFall()
-    if type(chance) ~= "number" then return nil end
-    return chance
-end
-
-local function pin(item)
-    local chance = chanceOf(item)
-    if not chance or chance <= 0 then return end   -- already sticky, or no such behaviour
-    if not item.setChanceToFall then return end
-    local id = item:getID()
-    if SH.original[id] == nil then SH.original[id] = chance end
-    item:setChanceToFall(0)
-end
-
-local function unpin(item)
-    if not item or not item.setChanceToFall then return end
-    local id = item:getID()
-    local was = SH.original[id]
-    if was == nil then return end
-    item:setChanceToFall(was)
-    SH.original[id] = nil
-end
-
--- Walk what the character is wearing. In vanilla, chanceToFall is only set on
--- head and face items, so filtering by "is it headwear" would just be a second
--- guess at the same set - a nonzero chance to fall IS the definition of the
--- thing this module is for, including anything modded that opts in.
-local function sweep(character, apply)
-    if not character then return end
-    -- field return (IsoGameCharacter.getWornItems:3040) - may legitimately BE
-    -- nil, which the next line handles; it cannot throw.
-    local worn = character:getWornItems()
-    if not worn then return end
-    for i = 0, worn:size() - 1 do
-        local entry = worn:get(i)
-        local item = entry and entry.getItem and entry:getItem()
-        if item then apply(item) end
-    end
-end
-
-function SH.apply()
-    local player = getPlayer()
+function SH.apply(character)
+    local player = character or getPlayer()
     if not player then return end
-    if SH.isEnabled() then
-        sweep(player, pin)
-    else
-        sweep(player, unpin)
-    end
+    SH.reconcile(player)
+    lastEnabled = SH.isEnabled()
 end
 
 -- Re-apply whenever the worn set can have changed. OnClothingUpdated is the
@@ -115,9 +52,20 @@ end
 -- the script-editing approach can never reach.
 Events.OnClothingUpdated.Add(function(character)
     if character ~= getPlayer() then return end
-    SH.apply()
+    SH.apply(character)
 end)
 Events.OnGameStart.Add(SH.apply)
+
+-- LuaEventManager has no sandbox-changed event. Compare the one boolean so a
+-- live disable restores pinned instances even if no clothing event follows.
+Events.OnTick.Add(function()
+    local enabled = SH.isEnabled()
+    if lastEnabled == nil then
+        lastEnabled = enabled
+    elseif enabled ~= lastEnabled then
+        SH.apply()
+    end
+end)
 
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.

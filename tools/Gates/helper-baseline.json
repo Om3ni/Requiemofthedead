@@ -1,0 +1,14 @@
+{
+  "_comment": "Per-mod ceiling on COPIED helpers (identical body, second and later copies). Lower is free; raising it means you pasted a helper - promote it instead. See check-helpers.py.",
+  "mods": {
+    "Dragonfly": 11,
+    "RFTDCore": 7,
+    "RFTDDirge": 4,
+    "RFTDHusbandry": 4,
+    "RFTDLimes": 6,
+    "RFTDMemoir": 1,
+    "RFTDOddsAndEnds": 7,
+    "RFTDReaper": 2,
+    "RFTDReclamation": 5
+  }
+}

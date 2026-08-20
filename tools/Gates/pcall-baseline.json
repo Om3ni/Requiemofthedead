@@ -1,0 +1,15 @@
+{
+  "_comment": "Per-mod pcall ceiling. Lower is free; raising it is a deliberate act - document the guard's reason in the code first. RAISED 2026-08-20 (Dragonfly 7->10, RFTDHusbandry 1->25): luascan.EXEMPT_BASENAMES was retired, so DFItemProbes, HBDebugPanel and HBAPIProbe are scanned for the first time - this admits guards the tooling could not previously see, not new ones. 13 inert guards found by the first scan were deleted the same day; what is counted here passed every rule.",
+  "mods": {
+    "Dragonfly": 10,
+    "RFTDCore": 37,
+    "RFTDDirge": 4,
+    "RFTDHusbandry": 25,
+    "RFTDLastRites": 1,
+    "RFTDLimes": 7,
+    "RFTDMemoir": 8,
+    "RFTDOddsAndEnds": 7,
+    "RFTDReaper": 2,
+    "RFTDReclamation": 10
+  }
+}

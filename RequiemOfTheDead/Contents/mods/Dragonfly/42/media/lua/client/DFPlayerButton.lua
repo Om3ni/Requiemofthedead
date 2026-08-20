@@ -40,31 +40,20 @@ if isServer() then return end
 if not ISEquippedItem then return end
 
 require "DFPlayerDeck"
+require "DFSidebarBadge"
 
 DFPlayerButton = DFPlayerButton or {}
 
 DFPlayerBtnState = DFPlayerBtnState or { wrapped = false }
 
 local SPACING = 10
-local SIZE_BUCKETS = { 48, 64, 80, 96, 128 }
 
 local iconCache = {}   -- bucket -> { off = tex, on = tex } | false
 
-local function tex(path)
-    -- the getTexture GLOBAL is self-catching (LuaManager:6855 ->
-    -- Texture.getSharedTexture:406, try/catch returning null), so a missing
-    -- file is a nil here, never a throw
-    return getTexture(path)
-end
-
-local function bucketFor(width)
-    local best, bestDiff = SIZE_BUCKETS[#SIZE_BUCKETS], nil
-    for _, b in ipairs(SIZE_BUCKETS) do
-        local d = math.abs(b - (width or 0))
-        if not bestDiff or d < bestDiff then best, bestDiff = b, d end
-    end
-    return best
-end
+-- Plate resolution is DFSidebarBadge's, shared with DFDeckButton - see that
+-- file's note. This badge's policy is simply two plates, off and on.
+local tex       = DFSidebarBadge.tex
+local bucketFor = DFSidebarBadge.bucketFor
 
 local function resolveIcon(width)
     local b = bucketFor(width)

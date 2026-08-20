@@ -55,9 +55,10 @@ function RCSpawn.spawn(spec)
     -- (ScriptBucketCollection.java:78-88).
     local model = spec.model
     if type(model) ~= "string" or model == "" or #model > 128 then return nil, "badmodel" end
-    local script
-    -- guarded: getVehicle can NPE on a null bucket (ScriptBucketCollection.java:86-87)
-    pcall(function() script = getScriptManager():getVehicle(model) end)
+    -- Bare: the null-bucket NPE (ScriptBucketCollection.java:86-87) is
+    -- swallowed to nil by MethodCaller (MethodCaller.java:33-56); the nil
+    -- test is the gate, and `model` is string-typed above.
+    local script = getScriptManager():getVehicle(model)
     if not script then return nil, "badmodel" end
 
     -- Square: loaded-or-nothing.
@@ -83,12 +84,16 @@ function RCSpawn.spawn(spec)
     -- Latched so RCNoVanilla's story interceptor never burns a staff spawn:
     -- OnSpawnVehicleStart fires synchronously inside addVehicleDebug.
     RCNoVanilla.beginExempt()
-    -- guarded: addVehicleDebug builds physics/model/parts and fires spawn
-    -- events (foreign handlers included) - a throw must report "failed", and
-    -- endExempt must still run
-    local ok, vehicle = pcall(addVehicleDebug, model, direction, nil, square)
+    -- Bare: addVehicleDebug is an exposed global (LuaManager.java:8493-8526)
+    -- whose body faults - the BaseVehicle constructor included - are
+    -- swallowed and stack-traced by MethodCaller (MethodCaller.java:33-56),
+    -- and the spawn event it fires runs every listener under the
+    -- dispatcher's own per-listener catch (Event.java:52-63). Nothing here
+    -- can throw past endExempt; a faulted build answers nil and reports
+    -- "failed" exactly as before.
+    local vehicle = addVehicleDebug(model, direction, nil, square)
     RCNoVanilla.endExempt()
-    if not ok or not vehicle then return nil, "failed" end
+    if not vehicle then return nil, "failed" end
 
     -- Wreck hulls (Burnt/Smashed) keep their as-spawned state: dressing a
     -- wreck in "perfect" parts is a contradiction, and burnt hulls have no
@@ -96,15 +101,33 @@ function RCSpawn.spawn(spec)
     if RCShared.isWreck(vehicle) then return vehicle, nil end
 
     local count = vehicle:getPartCount()
+    local partFailed, firstPartErr, firstPartId = 0, nil, nil
     for i = 0, count - 1 do
-        -- Per-part pcall: one modded part with a nonstandard layout must not
-        -- abort the rest of the pass (the dumpVehicleContainers lesson) -
-        -- setCondition/setEngineFeature/createVehicleKey are not verifiable-trivial.
-        pcall(function()
+        -- RETAINED, one member of an independent batch: a modded part with a
+        -- nonstandard layout must not abort conditioning for the rest of the
+        -- vehicle (the dumpVehicleContainers lesson). setEngineFeature,
+        -- createVehicleKey and setInventoryItem all cascade into part stats,
+        -- mass and model visibility, and none is preflightable from Lua.
+        --
+        -- REDESIGNED twice over. The wear roll now runs FIRST: it is the one
+        -- write every part needs, and sitting last meant a battery whose
+        -- setUsedDelta threw ALSO silently lost its condition, so one odd part
+        -- came out both unconditioned and unreported. The specialised branches
+        -- are mutually exclusive by id, so at most one follows it.
+        --
+        -- And the pass now REPORTS. It used to swallow whole, which meant a
+        -- modded vehicle where every part failed produced a car that looked
+        -- spawned correctly and was uniformly untouched - the exact silent
+        -- failure this refactor exists to delete.
+        local okPart, partErr = pcall(function()
             local part = vehicle:getPartByIndex(i)
             if not part then return end
             local id = part:getId()
             local idLower = id and string.lower(id) or ""
+
+            ----- every part: wear rolled inside the chosen band -----
+            part:setCondition(rollCondition(mode))
+            vehicle:transmitPartCondition(part)
 
             ----- battery charge: uniform 0-100% unless forced empty -----
             if string.contains(idLower, "battery") then
@@ -151,10 +174,20 @@ function RCSpawn.spawn(spec)
                 end
             end
 
-            ----- every part: wear rolled inside the chosen band -----
-            part:setCondition(rollCondition(mode))
-            vehicle:transmitPartCondition(part)
         end)
+        if not okPart then
+            partFailed = partFailed + 1
+            if not firstPartErr then
+                firstPartErr = partErr
+                local p = vehicle:getPartByIndex(i)
+                firstPartId = p and p:getId() or ("index " .. tostring(i))
+            end
+        end
+    end
+    if partFailed > 0 then
+        print(string.format(
+            "[RC] spawn: %d of %d part(s) could not be conditioned on %s (first: %s - %s)",
+            partFailed, count, tostring(model), tostring(firstPartId), tostring(firstPartErr)))
     end
 
     -- Missing parts: strip a random 1..cap installable parts so a reclaimed
@@ -189,14 +222,17 @@ function RCSpawn.spawn(spec)
             for k = 1, n do
                 local j = ZombRand(k, pool + 1)   -- k..pool inclusive
                 candidates[k], candidates[j] = candidates[j], candidates[k]
-                -- guarded: setInventoryItem cascades through part stats, mass
-                -- and model visibility (VehiclePart.java:170) - one part that
-                -- throws must not abort the strip pass
-                pcall(function()
-                    candidates[k]:setInventoryItem(nil)
-                    vehicle:transmitPartItem(candidates[k])
-                    removed = removed + 1
-                end)
+                -- Bare: setInventoryItem(nil) is vanilla's own idiom
+                -- (ISUninstallVehiclePart.lua:64, Vehicles.lua:1359) - nil is
+                -- legal for an object parameter, and any cascade fault inside
+                -- the body (VehiclePart.java:184-186) is swallowed and
+                -- stack-traced by MethodCaller (MethodCaller.java:33-56). The
+                -- pcall here could never fire, so "a failed strip is never
+                -- counted as a strip" was an illusion - the count was already
+                -- unconditional in practice, and now says so.
+                candidates[k]:setInventoryItem(nil)
+                vehicle:transmitPartItem(candidates[k])
+                removed = removed + 1
             end
         end
     end

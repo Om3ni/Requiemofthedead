@@ -13,6 +13,8 @@ if not isServer() then return end
 -- Load submodules
 -- ========================
 
+require "RQCommon"      -- RQCommon.MODULE is read at file scope by the registrations
+require "RDNet"         -- so is RDNet.register
 require "RQDirgeLog"
 require "RQSvShared"
 require "RQSvDormant"
@@ -23,6 +25,8 @@ require "RQSvScreamer"
 require "RQSvJuggernaut"
 require "RQSvBoss"
 require "RQSvEMP"
+require "RQSvLoot"
+require "RQWireHeadroom"
 
 -- ========================
 -- Orchestrator-owned state
@@ -660,6 +664,11 @@ end
 -- (which wants its results synchronously, not on the next interval).
 -- Returns the number of live zombies visited (overlapping player ranges can
 -- visit a zombie twice; the guards make the second visit a no-op).
+-- Exported for RQSvAdminCmds (adminReroll). These two are the only pieces of
+-- this file's conversion machinery the admin plane needs; everything else it
+-- uses already lives in RQSvShared.
+RQServer = RQServer or {}
+
 local function svRunConversionScan()
     local cell = getCell()
     if not cell then return 0 end
@@ -704,6 +713,9 @@ local function svRunConversionScan()
     return visited
 end
 
+RQServer.svTryConvert        = svTryConvert
+RQServer.svRunConversionScan = svRunConversionScan
+
 local function svConversionTick()
     svTickCount = svTickCount + 1
     if svTickCount < SCAN_INTERVAL then return end
@@ -712,77 +724,62 @@ local function svConversionTick()
 end
 
 -- ========================
--- Loot: drop items on the corpse
--- ========================
-
-local SV_LOOT_POOLS = {
-    Screamer   = { "Base.Bandage", "Base.AlcoholBandage", "Base.Antibiotics", "Base.PillsVitamins", "Base.Bullets9mmBox", "Base.ShotgunShellsBox" },
-    Juggernaut = { "Base.Axe", "Base.BaseballBat", "Base.Crowbar", "Base.HuntingKnife", "Base.Katana", "Base.Pistol", "Base.Shotgun", "Base.ShotgunShellsBox", "Base.Bullets9mmBox" },
-    EMP        = { "Base.Battery", "Base.ElectronicsScrap", "Base.Screwdriver", "Base.HandTorch", "Base.WalkieTalkie1", "Base.Bandage", "Base.PillsVitamins" },
-    Glutton    = { "Base.Bandage", "Base.AlcoholBandage", "Base.SutureNeedle", "Base.WaterBottle", "Base.TinnedBeans", "Base.CannedCorn" },
-    Scavenger  = { "Base.WaterBottle", "Base.TinnedBeans", "Base.CannedCorn", "Base.CannedChili", "Base.Bandage" },
-    Boss       = { "Base.Katana", "Base.Pistol", "Base.Shotgun", "Base.HuntingRifle", "Base.Bullets9mmBox", "Base.ShotgunShellsBox", "Base.223Box", "Base.Antibiotics", "Base.SutureNeedle", "Base.AlcoholBandage" },
-}
-local SV_DROP_COUNTS = {
-    Screamer   = {1, 2},
-    Juggernaut = {1, 3},
-    EMP        = {1, 2},
-    Glutton    = {1, 2},
-    Scavenger  = {1, 2},
-    Boss       = {3, 5},
-}
-
-local function svDropLoot(zombie, zType)
-    local inv = zombie:getInventory()
-    if not inv then return end
-    local pool = SV_LOOT_POOLS[zType]
-    if not pool then return end
-    local c     = SV_DROP_COUNTS[zType] or {1, 2}
-    local count = c[1] + ZombRand(c[2] - c[1] + 1)
-    for i = 1, count do
-        local itemType = pool[ZombRand(#pool) + 1]
-        -- guard stays: AddItem runs the item factory (script lookup +
-        -- InstanceItem), which is too deep to prove throw-free.
-        pcall(inv.AddItem, inv, itemType)
-    end
-end
-
--- ========================
 -- Client command handling
 -- ========================
+--
+-- The admin type whitelist and spawn cap moved to RQSvAdminCmds with the
+-- commands that used them.
 
--- reflectPing per-player rate limit (username-keyed: exact SteamIDs are lossy
--- in server-side Lua). Any client may ping; the answer is read-only state.
+-- reflectPing per-player gap (username-keyed: exact SteamIDs are lossy in
+-- server-side Lua). Any client may ping; the answer is read-only state. Pruned
+-- on disconnect below - it used to grow one entry per distinct player seen, for
+-- the lifetime of the server.
 local svReflectPingAt = {}
 
--- Every type an admin may name. Shared by adminConvert and adminSpawnSpecial so
--- the two can't drift; Boss is admin-only and never spawns organically.
-local ADMIN_VALID_TYPES = {
-    Screamer = true, Juggernaut = true, EMP = true,
-    Glutton  = true, Scavenger  = true, Boss = true,
-}
+-- Ceiling on the eater-arrival queue between tick drains. Each pending entry
+-- costs a linear scan of the active-special registry when it drains, so this is
+-- a bound on tick-thread work, not on packets. Comfortably above what every
+-- eater on a busy server reports in one tick.
+local MAX_PENDING_EATER_ARRIVALS = 256
 
--- Hard ceiling on a single admin spawn request. The client is never trusted for
--- a count -- this is clamped server-side. Deliberately far below vanilla
--- ISSpawnHordeUI's 500: these land on a populated cell that is already shedding
--- packets, and a horde drop is the exact burst shape this release exists to fix.
-local ADMIN_SPAWN_CAP = 50
+-- ---------------------------------------------------------------------------
+-- Inbound commands, player plane.
+--
+-- The admin verbs used to live here too, inline, in one 433-line anonymous
+-- listener; they are now RQSvAdminCmds.lua. These three stayed because they
+-- read and write this file's own state - svProcessedDeaths, svDeathCache,
+-- svPids, the snapshot - and exporting three mutable tables to make a file
+-- boundary look tidier would trade a real invariant for a cosmetic one.
+--
+-- All three are ungated on purpose and always were: they are reports from an
+-- ordinary player's client about zombies that client owns. What they lacked was
+-- a limiter and, in two cases, a server-owned source of truth for the values
+-- they act on. Both arrive here.
+-- ---------------------------------------------------------------------------
 
-Events.OnClientCommand.Add(function(module, command, player, args)
-    -- "RFTDDirge" only. The legacy bare token is dead (see RQCommon) - the
-    -- bundle ships every client and server atomically and Husbandry took
-    -- its own token in the same release.
-    if not RQCommon.acceptsModule(module) then return end
-
-    if command == "reflectPing" then
+-- Reflection probe (client half: RQReflect.lua). A client is asking "which
+-- specials does the server believe are near me RIGHT NOW?". Answer with
+-- authoritative rows AND log the same rows server-side, so the truth survives
+-- even if the response packet never lands.
+--
+-- The 3s per-player gap is DOMAIN policy and stays here. RDNet's rate is a
+-- per-second ceiling - RDRate is called with a fixed 1000ms window - so the
+-- strictest thing registration can express is 1/s, and this endpoint wants to
+-- be six times stricter than that. RDNet's bucket sits behind it as the flood
+-- backstop; this is the actual policy.
+--
+-- The table used to leak: keyed by username, never evicted on disconnect or on
+-- OnGameStart, so it grew one entry per distinct player for the lifetime of the
+-- server. It is pruned on disconnect now.
+local function hReflectPing(player, args)
+    local pingNow = getTimestampMs()
+    local uname   = player and player:getUsername() or "?"
+    if svReflectPingAt[uname] and pingNow - svReflectPingAt[uname] < 3000 then return end
+    svReflectPingAt[uname] = pingNow
         -- Reflection probe (client half: RQReflect.lua). A client is asking
         -- "which specials does the server believe are near me RIGHT NOW?".
         -- Answer with authoritative rows AND log the same rows server-side,
         -- so the truth survives even if the response packet never lands.
-        local pingNow = getTimestampMs()
-        local uname   = player and player:getUsername() or "?"
-        if svReflectPingAt[uname] and pingNow - svReflectPingAt[uname] < 3000 then return end
-        svReflectPingAt[uname] = pingNow
 
         local px, py, pz = 0, 0, 0
         if player then px, py, pz = player:getX(), player:getY(), player:getZ() end
@@ -854,253 +851,42 @@ Events.OnClientCommand.Add(function(module, command, player, args)
             rows        = rows,
         })
         return
+end
+
+-- An owned eater reports that it reached its corpse.
+local function hEaterArrived(player, args)
+    -- The queue is BOUNDED, and that is the repair. Every entry costs a linear
+    -- scan of svActiveZombies when it drains (RQSvShared.svFindActiveZombieByOnlineID),
+    -- so an unbounded append let one client turn N packets into N scans on the
+    -- tick thread. The content was never the weak part - svProcessEaterArrival
+    -- already checks type, phase, target square and exact corpse coordinates
+    -- against the server's own state, and rejects anything that disagrees.
+    --
+    -- Dedup on onlineID as well: a client latches arrivedSent (RQGlutton.lua:149)
+    -- so an honest sender reports once, which means a second entry for the same
+    -- zombie in the same drain window is either a resend or a forgery. Either
+    -- way the first one is the one that matters.
+    local q = RQSvEating.svPendingEaterArrivals
+    if #q >= MAX_PENDING_EATER_ARRIVALS then return end
+
+    local onlineID = tonumber(args and args.onlineID)
+    if not onlineID then return end
+    for i = 1, #q do
+        if q[i].onlineID == onlineID then return end
     end
 
-    if command == "adminConvert" then
-        if not RQSvShared.svIsAdminPlayer(player) then return end
+    q[#q + 1] = {
+        onlineID = onlineID,
+        corpseX  = tonumber(args.corpseX),
+        corpseY  = tonumber(args.corpseY),
+        corpseZ  = tonumber(args.corpseZ),
+    }
+end
 
-        local onlineID = tonumber(args.onlineID)
-        local zType    = args.zType
-        if not onlineID or not zType then return end
-
-        if not ADMIN_VALID_TYPES[zType] then return end
-
-        local cfg = RQSvShared.getSvConfig()
-        local x = args.x or 0
-        local y = args.y or 0
-        local z = args.z or 0
-        -- 15-tile radius to match client findZombieByID; zombie may have wandered a bit
-        -- onlineID rides back on every reply so the client can retire the right
-        -- pending-confirm entry (RQAdmin) instead of guessing.
-        local obj = RQSvShared.svFindZombieByOnlineID(onlineID, x, y, z, 15)
-        if not obj then
-            RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "missing", zType = zType, onlineID = onlineID })
-            return
-        end
-        if svActiveZombies[obj] then
-            RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "already", zType = svActiveZombies[obj], onlineID = onlineID })
-            return
-        end
-        svTryConvert(obj, cfg, zType, true)   -- admin placement: spacing bypassed
-        if zType == "Boss" then
-            RQSvShared.applyBossSprinter(obj)
-        end
-        RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "ok", zType = zType, onlineID = onlineID })
-        return
-    end
-
-    -- ---------------------------------------------------------------------
-    -- Admin toolkit. Shaped as a reusable command layer rather than as
-    -- context-menu callbacks, so a future horde-manager panel can drive the
-    -- same three commands without any server rework.
-    -- ---------------------------------------------------------------------
-
-    if command == "adminSpawnSpecial" then
-        if not RQSvShared.svIsAdminPlayer(player) then return end
-
-        local zType = args and args.zType
-        if not zType or not ADMIN_VALID_TYPES[zType] then return end
-
-        local x = math.floor(tonumber(args.x) or 0)
-        local y = math.floor(tonumber(args.y) or 0)
-        local z = math.floor(tonumber(args.z) or 0)
-
-        local count = math.floor(tonumber(args.count) or 1)
-        if count < 1 then count = 1 end
-        if count > ADMIN_SPAWN_CAP then count = ADMIN_SPAWN_CAP end
-
-        local cfg = RQSvShared.getSvConfig()
-        local converted = 0
-
-        -- Convert AT BIRTH via the spawn callback: the zombie is special before
-        -- it is ever tracked or drawn as an ordinary one, so there is no
-        -- spawn-then-convert step. Passing our own handler is what makes this
-        -- deterministic -- the default (onSummonSpawned) would burn the roll and
-        -- hand out a RANDOM type, which is not what the admin asked for.
-        local spawned = RQSvShared.svDoSpawn(x, y, z, count, function(zed)
-            -- Belt and braces: the conversion scan must never re-roll a
-            -- deliberate placement even if svTryConvert somehow declines.
-            zed:getModData()["RQRolled"] = true
-            -- skipSpacing: a deliberate placement is not subject to the
-            -- same-type spacing veto, exactly as adminConvert does.
-            if svTryConvert(zed, cfg, zType, true) then
-                converted = converted + 1
-                -- Without this a spawned Boss shambles: setWalkType/bSprinter
-                -- are not part of conversion, they're applied per placement.
-                if zType == "Boss" then
-                    RQSvShared.applyBossSprinter(zed)
-                end
-            end
-        end)
-
-        print(string.format(
-            "[Dirge] adminSpawnSpecial by %s: %s x%d requested, %d spawned, %d converted at (%d,%d,%d)",
-            tostring(player and player:getUsername() or "?"),
-            tostring(zType), count, spawned or 0, converted, x, y, z))
-        RQDirgeLog.write(zType, "[INFO] adminSpawnSpecial by "
-            .. tostring(player and player:getUsername() or "?")
-            .. " requested=" .. count .. " spawned=" .. tostring(spawned or 0)
-            .. " converted=" .. converted
-            .. " at (" .. x .. "," .. y .. "," .. z .. ")")
-
-        RQSvShared.sendToPlayer(player, "adminSpawnResult", {
-            status    = converted > 0 and "ok" or "failed",
-            zType     = zType,
-            requested = count,
-            spawned   = spawned or 0,
-            converted = converted,
-        })
-        return
-    end
-
-    if command == "adminScream" then
-        if not RQSvShared.svIsAdminPlayer(player) then return end
-
-        local x = math.floor(tonumber(args and args.x) or 0)
-        local y = math.floor(tonumber(args and args.y) or 0)
-        local z = math.floor(tonumber(args and args.z) or 0)
-        local cfg = RQSvShared.getSvConfig()
-
-        -- Emitter is the admin: the sound should originate from where they are
-        -- standing, and it keeps them out of their own nearby-zombie count.
-        local spawnedCount = RQSvScreamer.screamAt(player, x, y, z, cfg)
-
-        -- Ring id must not collide with a live screamer's. Every organic id is
-        -- "screamer_<onlineID>", so an "admin_" infix can never alias one.
-        local displayRadius = math.min(cfg.screamerSoundRadius, 15)
-        local ringId = "screamer_admin_" .. tostring(getTimestampMs())
-        RQSvShared.broadcast("castStart", RQSvShared.makeCastArgs(
-            ringId, x, y, z,
-            cfg.screamerCastTime, RQSvShared.COLORS.Screamer, "Screaming...", displayRadius))
-        -- An organic screamer retires its own ring from its behaviour tick once
-        -- castDue passes (RQSvScreamer.tick). Nothing ticks an admin scream, so
-        -- schedule the teardown here or the ring lingers on every client forever.
-        RQSvShared.scheduleAction(cfg.screamerCastTime, function()
-            RQSvShared.broadcast("castDone", { ringId = ringId })
-        end)
-
-        print(string.format("[Dirge] adminScream by %s at (%d,%d,%d) spawned=%d",
-            tostring(player and player:getUsername() or "?"), x, y, z, spawnedCount or 0))
-        RQSvShared.sendToPlayer(player, "adminScreamResult", {
-            status = "ok", x = x, y = y, spawned = spawnedCount or 0,
-        })
-        return
-    end
-
-    if command == "adminEMP" then
-        if not RQSvShared.svIsAdminPlayer(player) then return end
-
-        local x = math.floor(tonumber(args and args.x) or 0)
-        local y = math.floor(tonumber(args and args.y) or 0)
-        local z = math.floor(tonumber(args and args.z) or 0)
-        local cfg = RQSvShared.getSvConfig()
-
-        -- "emp_<x>_<y>" is the form the client's detonation regex matches, so
-        -- reusing it here is what makes the blast VFX fire. Cast then detonate,
-        -- mirroring the EMP zombie's own death sequence.
-        local ringId = "emp_" .. x .. "_" .. y
-        RQSvShared.broadcast("castStart", RQSvShared.makeCastArgs(ringId, x, y, z,
-            cfg.empCastTime, RQSvShared.COLORS.EMP, "EMP Detonating...", cfg.empRadius))
-        RQSvShared.scheduleAction(cfg.empCastTime, function()
-            RQSvShared.broadcast("castDone", {
-                ringId = ringId, fixedX = x, fixedY = y, fixedZ = z, radius = cfg.empRadius,
-            })
-            RQSvShared.svApplyEMPBlast(x, y, z, cfg.empRadius, cfg.empBatteryDrain)
-        end)
-
-        print(string.format("[Dirge] adminEMP by %s at (%d,%d,%d) radius=%s",
-            tostring(player and player:getUsername() or "?"), x, y, z, tostring(cfg.empRadius)))
-        RQDirgeLog.write("EMP", "[INFO] adminEMP by "
-            .. tostring(player and player:getUsername() or "?")
-            .. " at (" .. x .. "," .. y .. "," .. z .. ") radius=" .. tostring(cfg.empRadius))
-        RQSvShared.sendToPlayer(player, "adminEMPResult", { status = "ok", x = x, y = y })
-        return
-    end
-
-    if command == "adminReroll" then
-        if not RQSvShared.svIsAdminPlayer(player) then return end
-
-        -- Refund every loaded zombie's consumed spawn roll (and any parked
-        -- spacing retries), then sweep immediately so the admin sees the
-        -- result now rather than on the next interval pass. Verdicts live in
-        -- zombie modData now, so the refund happens inline during the sweep
-        -- (svRefundSeen) and by construction reaches exactly the zombies the
-        -- sweep can re-roll (loaded, near a player). Existing specials are
-        -- untouched: the scan skips svActiveZombies, and reloaded RQConverted
-        -- zombies just re-adopt. Recent screamer summons stay protected --
-        -- svCheckAndMarkSummoned re-marks any zombie still inside a live
-        -- summon window. NOTE: the GUARD_RANGE engagement gate still applies,
-        -- so zombies currently fighting someone (or near a visible admin)
-        -- refund now but re-roll only after they disengage -- expect
-        -- "converted" to trail "refunded" when players are in the thick of it.
-        local before = 0
-        for _ in pairs(svActiveZombies) do before = before + 1 end
-
-        svRefundSeen  = {}
-        svRefundCount = 0
-        local visited = svRunConversionScan()
-        svRefundSeen  = nil
-        local refunded = svRefundCount
-
-        local after = 0
-        for _ in pairs(svActiveZombies) do after = after + 1 end
-
-        print(string.format(
-            "[Dirge] adminReroll by %s: %d rolls refunded, %d zombies visited, %d new specials (%d active)",
-            tostring(player and player:getUsername() or "?"),
-            refunded, visited, after - before, after))
-        RQSvShared.sendToPlayer(player, "adminRerollResult", {
-            refunded  = refunded,
-            visited   = visited,
-            converted = after - before,
-            active    = after,
-        })
-        return
-    end
-
-    if command == "adminInspect" then
-        if not RQSvShared.svIsAdminPlayer(player) then return end
-
-        local onlineID = tonumber(args.onlineID)
-        if not onlineID then return end
-
-        local x = args.x or 0
-        local y = args.y or 0
-        local z = args.z or 0
-        local obj = RQSvShared.svFindZombieByOnlineID(onlineID, x, y, z, 5)
-        if not obj then
-            RQSvShared.sendToPlayer(player, "adminInspectResult", {
-                onlineID = onlineID,
-                status   = "missing",
-            })
-            return
-        end
-
-        local md = obj:getModData()
-        local zType = svActiveZombies[obj] or md["RQType"]
-        RQSvShared.sendToPlayer(player, "adminInspectResult", {
-            onlineID = onlineID,
-            status   = zType and "special" or "normal",
-            zType    = zType,
-        })
-        return
-    end
-
-    if command == "eaterArrived" then
-        local onlineID = tonumber(args and args.onlineID)
-        if onlineID then
-            -- Push into RQSvEating's queue; it owns all eater-arrival logic
-            RQSvEating.svPendingEaterArrivals[#RQSvEating.svPendingEaterArrivals + 1] = {
-                onlineID = onlineID,
-                corpseX  = tonumber(args.corpseX),
-                corpseY  = tonumber(args.corpseY),
-                corpseZ  = tonumber(args.corpseZ),
-            }
-        end
-        return
-    end
-
-    if command ~= "zombieKilled" then return end
+-- A client reports one of its specials died. The report is a HINT, never a
+-- fact: the server confirms the zombie is real, is dead, and is the type it
+-- believes, before any of this has an effect.
+local function hZombieKilled(player, args)
 
     local onlineID = tonumber(args.onlineID)
     if not onlineID then return end
@@ -1109,11 +895,37 @@ Events.OnClientCommand.Add(function(module, command, player, args)
     local onlineIDStr = tostring(onlineID)
     if svProcessedDeaths[onlineIDStr] then return end
 
-    -- Client coords are just a search hint; server position wins for effects
+    -- THE SCAN ORIGIN PREFERS SERVER STATE, and only falls back to the wire.
+    --
+    -- Three sources, best first. svDeathCache is written at conversion time and
+    -- refreshed on every sighting, so it is authoritative and carries zType.
+    -- Failing that, the active-special registry resolves the id with no
+    -- coordinates at all. Only if neither knows the id do the client's coordinates
+    -- get used - and then only COERCED, because they are the centre of a 17x17
+    -- getGridSquare sweep and an unfloored value makes every lookup in it
+    -- fractional. adminSpawnSpecial already did exactly this coercion; these two
+    -- never got it.
+    --
+    -- The wire fallback is deliberately KEPT rather than removed. It looks
+    -- redundant - the object below overwrites x/y/z from server state the moment
+    -- it is found - but the scan is also the only path that recovers zType for a
+    -- special that has left svActiveZombies and survives only as RQType in its own
+    -- modData (see the resolution below). Dropping the fallback would silently
+    -- stop processing those deaths: no loot, no chronicle record, no dormant
+    -- retirement, no EMP detonation. A narrow path, but a real one, and its
+    -- failure mode is a ghost special that never retires.
     local cached = svDeathCache[onlineID]
-    local x      = cached and cached.x or (args.x or 0)
-    local y      = cached and cached.y or (args.y or 0)
-    local z      = cached and cached.z or (args.z or 0)
+    if not cached then
+        local live = RQSvShared.svFindActiveZombieByOnlineID(onlineID)
+        if live then
+            cached = { x = math.floor(live:getX()), y = math.floor(live:getY()),
+                       z = math.floor(live:getZ()) }
+        end
+    end
+
+    local x      = cached and cached.x or math.floor(tonumber(args.x) or 0)
+    local y      = cached and cached.y or math.floor(tonumber(args.y) or 0)
+    local z      = cached and cached.z or math.floor(tonumber(args.z) or 0)
     local zType  = cached and cached.zType or nil
 
     local cell     = getCell()
@@ -1155,7 +967,7 @@ Events.OnClientCommand.Add(function(module, command, player, args)
                                             updatedAt = getTimestampMs(),
                                         }
                                     end
-                                    svDropLoot(obj, zType)
+                                    RQSvLoot.drop(obj, zType)
                                     lootDone = true
                                     break
                                 end
@@ -1199,7 +1011,27 @@ Events.OnClientCommand.Add(function(module, command, player, args)
             RQSvShared.svApplyEMPBlast(x, y, z, cfg.empRadius, cfg.empBatteryDrain)
         end)
     end
-end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Registration.
+--
+-- Rates come from the 2026-08-18 live capture, with burst headroom on top. The
+-- measured figures are all-sender aggregates over 78.7h - eaterArrived 52.9/h
+-- across 80 senders, zombieKilled 47.6/h across 82 - which averages under 1/h
+-- each. Averages are the wrong shape for the limit though: kills and eater
+-- arrivals come in flurries during a horde, and a ceiling set near the mean
+-- would refuse honest players at exactly the moment the mod is busiest. These
+-- are set well above any plausible burst and bound only a scripted client.
+--
+-- public = true on all three: they are reports from ordinary players' clients
+-- and gating them would silence the traffic the features are built on. That is
+-- a declaration, not an oversight - see RDNet.register.
+-- ---------------------------------------------------------------------------
+
+RDNet.register(RQCommon.MODULE, "reflectPing",  { public = true, rate = 2  }, hReflectPing)   -- real policy is the 3s gap in the handler
+RDNet.register(RQCommon.MODULE, "eaterArrived", { public = true, rate = 20 }, hEaterArrived)
+RDNet.register(RQCommon.MODULE, "zombieKilled", { public = true, rate = 20 }, hZombieKilled)
 
 -- ========================
 -- Main OnTick (Server)
@@ -1396,28 +1228,14 @@ local function svOnTick()
             -- What we get is the distribution rather than one sampled floor - how
             -- often it approaches the ceiling, and how big it gets at 39 players
             -- during a horde. That is what sizing the real fix needs.
-            if RDWire and RDLog then
-                local est = 0
-                -- RDWire.estimate self-guards (type check + internal pcall);
-                -- only its existence varies across Core versions.
-                if type(RDWire.estimate) == "function" then est = RDWire.estimate(delta) end
-                if est > 6144 then
-                    -- guard stays: RDLog.forensic is RFTDCore's, version-skewed
-                    -- against this mod, and a telemetry write must never abort
-                    -- the delta broadcast it is only observing.
-                    pcall(function()
-                        local changed = 0
-                        if delta.changed then for _ in pairs(delta.changed) do changed = changed + 1 end end
-                        RDLog.forensic("wire", "RQ.DELTA_LARGE", nil, {
-                            fp      = "zombieDelta",
-                            est     = est,
-                            changed = changed,
-                            removed = delta.removed and #delta.removed or 0,
-                        }, "RFTDDirge")
-                    end)
-                end
-            end
+            -- Authoritative send FIRST, telemetry after. The observer used to
+            -- run first behind a pcall whose only job was to stop a telemetry
+            -- fault eating this broadcast; ordering answers that outright and
+            -- keeps answering it if the observer changes. broadcast does not
+            -- touch the payload - it forwards to sendServerCommand
+            -- (RQSvShared.lua:299-301) - so the delta it reads is identical.
             RQSvShared.broadcast("zombieDelta", delta)
+            RQWireHeadroom.observe(delta)
         end
         svSnapshotDirty = false
     end
@@ -1448,6 +1266,22 @@ local function svTransmitBaseline()
     svBaselineQueued       = false
     svBuildSnapshot()
     ModData.transmit("RQZombieState")
+end
+
+-- Drop a leaver's reflectPing gap so the table cannot grow without bound. The
+-- arg shape differs by engine path - some builds pass the IsoPlayer, some a
+-- username string - which is the same hedge DFServer and RDRate both carry.
+local function onPlayerDisconnect(a)
+    local name
+    if type(a) == "string" then
+        name = a
+    elseif a and a.getUsername then
+        name = a:getUsername()
+    end
+    if name then svReflectPingAt[name] = nil end
+end
+if Events.OnPlayerDisconnect then
+    Events.OnPlayerDisconnect.Add(onPlayerDisconnect)
 end
 
 local function onPlayerConnect(player)

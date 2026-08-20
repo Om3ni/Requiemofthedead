@@ -16,8 +16,18 @@
 --   * the skills required to CRAFT it even once known
 --
 -- Everything is read off public script-object methods verified against the
--- 42.20 decompile; every walk is pcall-armored per entry so one malformed
--- modded script costs its own entry, never the index.
+-- 42.20 decompile. The four walks below are BARE: getAllCraftRecipes and
+-- getAllItems delegate to ScriptBucketCollection.getAllScripts, whose every
+-- dereference is on a final inline-initialized field, which cannot throw and
+-- cannot return null (ScriptBucketCollection.java:90-106), and whose entries
+-- cannot be null because the only insertion site is guarded
+-- (ScriptBucket.java:200-217). What survives is the PER-ENTRY guard on
+-- indexRecipe, which is a real boundary - see it for why.
+--
+-- One hazard worth knowing rather than guarding: getAllScripts returns the
+-- collection's LIVE internal buffer and clears it on every call, because
+-- ScriptType.CraftRecipe carries Flags.Clear (ScriptType.java:113, :125-128).
+-- Never hold one of these lists across a second call.
 --
 -- KNOWN-NESS IS NEVER CACHED. WSIndex.known(player, rec) asks the
 -- live character (the engine's own rule: !needToBeLearn or knownRecipes
@@ -83,11 +93,17 @@ function X.build()
     X.recipes, X.byOutput = {}, {}
     local catSet = {}
 
-    -- 1) every loaded craft recipe. This walk and the three below stay under
-    -- pcall (see header): script-object accessors vary in nullability across
-    -- mods, and one malformed modded script must cost its own entry - or its
-    -- own walk - never the index.
-    pcall(function()
+    -- 1) every loaded craft recipe. The WALK is bare (see header); the
+    -- per-entry guard stays, and it is the real one. indexRecipe reads a dozen
+    -- accessors off a recipe, and a mod recipe that threw during
+    -- OnScriptsLoaded leaves every LATER recipe in the collection
+    -- un-post-processed - null icon texture, unset tool refs, empty input
+    -- caches - because that pass has no per-script try/catch and is caught
+    -- only at whole-load granularity (ScriptBucketCollection.java:148-153,
+    -- ScriptManager.java:1603-1619). Those half-built recipes are handed to us
+    -- looking normal, and the Lua nil-chain errors they cause are this lane's
+    -- real failure. One bad recipe costs its own row.
+    do
         local all = ScriptManager.instance:getAllCraftRecipes()
         for i = 0, all:size() - 1 do
             local ok, rec = pcall(indexRecipe, all:get(i))
@@ -101,12 +117,17 @@ function X.build()
                 end
             end
         end
-    end)
+    end
 
     -- 2) teaching literature, inverted: which items' LearnedRecipes name each
     -- recipe. `type` is the BARE type (containsTypeRecurse's currency) for
     -- carried checks; disp for display.
-    pcall(function()
+    --
+    -- Bare walk. getLearnedRecipes returns NULL for any item without a
+    -- LearnedRecipes line (Item.java:291, :3803-3805) - which is most items -
+    -- so the `taught and taught.size` test below is load-bearing, and is the
+    -- same guard the engine uses on this exact walk (ScriptManager.java:999).
+    do
         local items = ScriptManager.instance:getAllItems()
         for i = 0, items:size() - 1 do
             local it = items:get(i)
@@ -119,12 +140,17 @@ function X.build()
                 end
             end
         end
-    end)
+    end
 
-    -- 3) spawn grants. Professions always resolve; trait definitions may not
-    -- exist yet on this side (the dedi/creation gap MMShared documents) -
-    -- degrade to "professions only" rather than fail the build.
-    pcall(function()
+    -- 3) spawn grants. Both getGrantedRecipes are final inline-initialized
+    -- lists that can never be null (CharacterProfessionDefinition.java:29,
+    -- :79-81; CharacterTraitDefinition.java:31, :115-117), and getLabel is a
+    -- bare read of a final field that Translator can never leave null
+    -- (CharacterTraitDefinition.java:135-138, Translator.java:361-376). Bare.
+    --
+    -- getType() is NOT read here, which is what keeps this walk clear of the
+    -- null-typed profession definition Memoir had to defend against.
+    do
         local profs = CharacterProfessionDefinition.getProfessions()
         for i = 0, profs:size() - 1 do
             local def = profs:get(i)
@@ -137,8 +163,8 @@ function X.build()
                 end
             end
         end
-    end)
-    pcall(function()
+    end
+    do
         local defs = CharacterTraitDefinition.getTraits()
         for i = 0, defs:size() - 1 do
             local def = defs:get(i)
@@ -151,7 +177,7 @@ function X.build()
                 end
             end
         end
-    end)
+    end
 
     X.cats = {}
     for c in pairs(catSet) do X.cats[#X.cats + 1] = c end

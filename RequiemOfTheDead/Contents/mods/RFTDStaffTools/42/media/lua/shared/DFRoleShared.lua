@@ -57,13 +57,25 @@ end
 -- Mutates the live Role. setDescription and setColor are unguarded by vanilla,
 -- and getCapabilities() hands back the underlying HashSet by reference, so
 -- clear/add on it bypass the isReadOnly checks that make addCapability a no-op.
+-- MAX_CAPABILITIES bounds the loop, not the outcome. Unknown names were always
+-- discarded - `capability()` resolves against the real table and `if cap` drops
+-- misses - so the list could never grant anything that does not exist. What it
+-- could do is be arbitrarily long: the payload is unbounded wire data, and this
+-- runs on the server for the sender and again on every client that receives the
+-- broadcast. A ceiling well above the real capability count costs nothing
+-- legitimate and stops one packet from spending everyone's frame.
+DFRoleShared.MAX_CAPABILITIES = 256
+
 function DFRoleShared.applyOverride(role, args)
     if not role then return end
     role:setDescription(args.description or "")
     role:setColor(Color.new(args.r or 1, args.g or 1, args.b or 1, 1.0))
     local caps = role:getCapabilities()
     caps:clear()
+    local n = 0
     for _, capName in ipairs(args.capabilities or {}) do
+        n = n + 1
+        if n > DFRoleShared.MAX_CAPABILITIES then break end
         local cap = DFRoleShared.capability(capName)
         if cap then caps:add(cap) end
     end

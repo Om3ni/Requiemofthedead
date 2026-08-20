@@ -216,9 +216,11 @@ end
 -- =====================================================================
 
 -- The registry id of a CharacterTrait / CharacterProfession, lowercased
--- ("base:organized"). Both classes' toString() is
--- Registries.X.getLocation(this).toString() - VERIFIED live in-game via
--- print(tostring(...)) on 2026-08-09, which is what proved the collision.
+-- ("base:organized"). Both classes' toString() is a LIVE REVERSE LOOKUP,
+-- Registries.X.getLocation(this).toString() - CharacterTrait.java:122-124 and
+-- CharacterProfession.java:50-52. Neither object stores its own id; the
+-- instance is only a key. First proved live in-game via print(tostring(...))
+-- on 2026-08-09, and read in the decompile on 2026-08-19.
 --
 -- WHY THREE FUNCTIONS AND NOT ONE (2026-08-13). Resolution fails four distinct
 -- ways, and the old `fqid(x) or x:getName()` idiom collapsed all four into one
@@ -240,7 +242,28 @@ end
 -- "stale" is the registry-reset case that makes staleness detectable at all.
 function MMShared.idOf(obj)
     if obj == nil then return nil, "nil" end
-    -- stale: the object outlived its registry, getLocation() is null, toString NPEs
+    -- RETAINED, and read end to end on 2026-08-19 - this is the rare guard whose
+    -- throw path is real, specific, and unpreventable from the call site.
+    --
+    -- Registry.reset() deletes every entry whose namespace is not "base"
+    -- (Registry.java:62-67), and ModRegistries.init() then re-registers each mod
+    -- trait as a BRAND NEW object (Core.java:4094-4143, IngameState.java
+    -- :1033-1098). A reference we already hold is not re-adopted - it is orphaned,
+    -- and getLocation() on it is a plain IdentityHashMap miss returning null
+    -- (Registry.java:31-33). toString() derefs that null without a check.
+    --
+    -- Kahlua really does surface it as a catchable Lua error - and ONLY
+    -- because tostring is a BaseLib builtin. BaseLib.tostring (:334-340) calls
+    -- KahluaUtil.tostring, which falls through to a bare o.toString()
+    -- (KahluaUtil.java:320) inside the interpreter itself, so the NPE reaches
+    -- KahluaThread.pcall's catch (Throwable) (KahluaThread.java:1379-1382).
+    -- An EXPOSED METHOD could never deliver this: exposed bodies route through
+    -- MethodCaller, which swallows every Throwable, logs it, and returns nil
+    -- (MethodCaller.java:33-56) - which is why obj:getName() elsewhere in this
+    -- file gets a nil test, not a guard.
+    --
+    -- Recovery is the whole point: "stale" is a DISTINCT answer from "unqualified",
+    -- and only this guard can tell them apart. Vanilla base traits cannot reach it.
     local ok, s = pcall(tostring, obj)
     if not ok then return nil, "stale" end
     if type(s) ~= "string" or s == "" then return nil, "empty" end
@@ -264,8 +287,15 @@ end
 function MMShared.labelOf(obj)
     local id = MMShared.idOf(obj)
     if id then return id end
-    local ok, nm = pcall(function() return obj and obj:getName() end)
-    if ok and type(nm) == "string" and nm ~= "" then return "?" .. nm end
+    -- No guard, and the one that sat here was INERT. getName() is an exposed
+    -- method, so its stale-object NPE (CharacterTrait.java:118-120) never
+    -- reaches Lua at all - MethodCaller swallows it, prints the stack trace to
+    -- the console, and the call returns nil (MethodCaller.java:33-56). The nil
+    -- test below was always the thing actually producing "?unresolved?"; the
+    -- pcall could not fire. Contrast idOf above, whose tostring guard is real
+    -- because BaseLib builtins bypass MethodCaller.
+    local nm = obj and obj:getName()
+    if type(nm) == "string" and nm ~= "" then return "?" .. nm end
     return "?unresolved?"
 end
 
@@ -299,14 +329,26 @@ end
 
 function MMShared.findTraitByName(name)
     if not traitByName then
-        local ok, defs = pcall(function() return CharacterTraitDefinition.getTraits() end)
-        if (not ok or not defs or defs:size() == 0)
-                and BaseGameCharacterDetails and BaseGameCharacterDetails.DoTraits then
-            -- guarded: vanilla ISUI Lua, not in the decompile and so unverifiable here.
-            pcall(BaseGameCharacterDetails.DoTraits)
-            ok, defs = pcall(function() return CharacterTraitDefinition.getTraits() end)
-        end
-        if not ok or not defs or defs:size() == 0 then
+        -- No guard on getTraits: it copies a field-initialized LinkedHashMap's
+        -- values into a fresh ArrayList (CharacterTraitDefinition.java:22,
+        -- 64-66) and cannot throw. An empty list is the real signal, and it is
+        -- already what the size() test below reads.
+        -- The DoTraits rebuild attempt that used to sit here is GONE, and its
+        -- guard with it. The guard was defensible; the CALL was not. DoTraits
+        -- does not populate anything - it iterates the definitions that already
+        -- exist and appends XP-boost text to each one's DESCRIPTION
+        -- (MainCreationMethods.lua:103-111 into SetTraitDescription :113-135).
+        -- The map itself is filled by the script loader, at parse time
+        -- (CharacterTraitDefinitionScript.java:112 into addCharacterTraitDefinition,
+        -- CharacterTraitDefinition.java:54-57), and wiped by ScriptManager
+        -- (:1418-1419). So calling DoTraits on an EMPTY list iterated zero times
+        -- and could never have refilled it: the rebuild was inert for its stated
+        -- purpose, and the guard was protecting a call that did nothing.
+        --
+        -- The correct answer to an empty list was always the one below - warn,
+        -- leave the cache unbuilt, retry on the next call.
+        local defs = CharacterTraitDefinition.getTraits()
+        if not defs or defs:size() == 0 then
             MMwarn("findTraitByName: trait definitions unavailable - lookup for '"
                 .. tostring(name) .. "' fails; will retry on next call")
             return nil -- leave the cache unbuilt so a later call retries
@@ -344,13 +386,48 @@ end
 --     registry has it, else the by-name scan for mod-only traits. That bias is
 --     deliberate - every pre-id book was written by a character who picked from
 --     the creation screen, where the vanilla trait is the one with the effect.
+-- The one step that can FAIL in either registry lookup, isolated as a
+-- precondition rather than wrapped in a guard.
+--
+-- ResourceLocation.of raises IllegalArgumentException in Java for exactly
+-- three shapes: an empty id, an empty namespace (":x"), and an empty path
+-- ("x:") - :29-38 delegating to the constructor's checks at :17-23. It does
+-- NOT object to a bare key (silently defaults to base, :34-36), extra colons,
+-- or any character at all - not even spaces, which vanilla itself registers
+-- ("Very Underweight", CharacterTrait.java:103).
+--
+-- BUT that IAE never reaches Lua as an error: of() is an exposed static, so
+-- MethodCaller swallows the throw, prints a stack trace to the console, and
+-- hands back nil (MethodCaller.java:33-56) - and get(nil) is a null map read.
+-- So the OLD pcalls here were doubly inert: they wrapped a chain that could
+-- only ever produce nil. What a malformed stored key actually costs is a
+-- console stack trace per lookup. The shape test below is what it always
+-- should have been - a validated-input precondition that refuses the three
+-- bad shapes explicitly and keeps the console clean.
+--
+-- The LOOKUPS cannot throw. CharacterTrait.get and CharacterProfession.get are
+-- one-line delegations to Registry.get, a bare HashMap read returning null on a
+-- miss (CharacterTrait.java:114-116, CharacterProfession.java:42-44,
+-- Registry.java:46-48); getCharacterProfessionDefinition is the same shape
+-- (CharacterProfessionDefinition.java:55-57).
+--
+-- So the only failure is a MALFORMED STORED KEY - validated input, not an error
+-- state. A snapshot from an older build or edited by hand can carry one. Testing
+-- the shape is the precondition the guard was standing in for, and it leaves a
+-- genuine registry fault loud instead of returning nil for every cause alike.
+local function wellFormedKey(id)
+    if id == "" then return false end
+    local colon = id:find(":", 1, true)
+    if not colon then return true end          -- bare -> base:<path>, never throws
+    return colon > 1 and colon < #id           -- namespace and path both non-empty
+end
+
 function MMShared.findTrait(key)
     if type(key) ~= "string" or key == "" then return nil end
     key = key:lower()
     local function reg(id)
-        local ok, t = pcall(function() return CharacterTrait.get(ResourceLocation.of(id)) end)
-        if ok then return t end
-        return nil
+        if not wellFormedKey(id) then return nil end
+        return CharacterTrait.get(ResourceLocation.of(id))
     end
     if key:find(":", 1, true) then return reg(key) end
     return reg("base:" .. key) or MMShared.findTraitByName(key)
@@ -379,29 +456,54 @@ end
 -- ---------------------------------------------------------------------
 --  Professions (same shape, same landmine - see the header)
 -- ---------------------------------------------------------------------
--- BaseGameCharacterDetails.DoProfessions() must have populated the table - it
--- runs at creation/boot; we guard-call it lazily in case a snapshot read is the
--- first thing that needs it.
+-- No DoProfessions call, for the reason spelled out over findTraitByName: it
+-- decorates descriptions, it does not populate the map
+-- (MainCreationMethods.lua:155-165). It is also latched by professionsDone
+-- (:156-158, :164) so it is a no-op after boot, and its work is read-append-write
+-- (:168, :181-185, :195) - a mid-loop failure leaves the latch false with some
+-- descriptions already mutated, so a retry would silently DUPLICATE their text.
+-- Calling it lazily was the debt; the guard was only hiding it.
 local profByName = nil
 function MMShared.findProfessionDefByName(name)
     if not profByName then
-        if BaseGameCharacterDetails and BaseGameCharacterDetails.DoProfessions then
-            -- guarded: vanilla ISUI Lua, not in the decompile and so unverifiable here.
-            pcall(BaseGameCharacterDetails.DoProfessions)
-        end
         profByName = {}
         local dupes = {}
+        local untyped = 0
         local list = CharacterProfessionDefinition.getProfessions()
         for i = 0, list:size() - 1 do
             local def = list:get(i)
             local t = def:getType()
-            local nm = t:getName()
-            local prev = profByName[nm]
-            if prev ~= nil and prev:getType() ~= t then
-                dupes[#dupes + 1] = tostring(nm) .. " [" .. tostring(fqid(prev:getType()) or "?")
-                    .. " vs " .. tostring(fqid(t) or "?") .. "]"
+            if t == nil then
+                -- getType() really can be nil here, and the trait loop above
+                -- really cannot hit the same case. A definition script that omits
+                -- or misspells CharacterProfession= leaves the type null
+                -- (CharacterProfessionDefinitionScript.java:36-37, 51-53, 95), and
+                -- LinkedHashMap accepts the null key, so the broken definition is
+                -- still handed back by getProfessions()
+                -- (CharacterProfessionDefinition.java:45-49, 51-53). The trait
+                -- constructor derefs its type to build the icon path
+                -- (CharacterTraitDefinition.java:43), so a null-typed trait
+                -- definition NPEs before it can ever be stored.
+                --
+                -- t:getName() on that nil used to take the whole index build down,
+                -- surfacing to an admin as an opaque restore preflight failure
+                -- whose real cause was another mod's malformed script. Skip the
+                -- row and name it instead.
+                untyped = untyped + 1
+            else
+                local nm = t:getName()
+                local prev = profByName[nm]
+                if prev ~= nil and prev:getType() ~= t then
+                    dupes[#dupes + 1] = tostring(nm) .. " [" .. tostring(fqid(prev:getType()) or "?")
+                        .. " vs " .. tostring(fqid(t) or "?") .. "]"
+                end
+                profByName[nm] = def
             end
-            profByName[nm] = def
+        end
+        if untyped > 0 then
+            MMwarn("PROFESSION definitions with no CharacterProfession= line: "
+                .. tostring(untyped) .. " skipped. Another mod's profession script is"
+                .. " malformed; those professions cannot be restored by name.")
         end
         reportCollisions("PROFESSION", dupes)
     end
@@ -420,12 +522,9 @@ function MMShared.findProfessionDef(key)
     if type(key) ~= "string" or key == "" then return nil end
     key = key:lower()
     local function reg(id)
-        local ok, def = pcall(function()
-            local p = CharacterProfession.get(ResourceLocation.of(id))
-            return p and CharacterProfessionDefinition.getCharacterProfessionDefinition(p)
-        end)
-        if ok then return def end
-        return nil
+        if not wellFormedKey(id) then return nil end
+        local p = CharacterProfession.get(ResourceLocation.of(id))
+        return p and CharacterProfessionDefinition.getCharacterProfessionDefinition(p)
     end
     if key:find(":", 1, true) then return reg(key) end
     return reg("base:" .. key) or MMShared.findProfessionDefByName(key)
@@ -443,9 +542,15 @@ end
 function MMShared.professionUIName(key)
     if not key or key == "" then return "?" end
     local def = MMShared.findProfessionDef(key)
-    if def and def.getUIName then
-        local ok, n = pcall(function() return def:getUIName() end)
-        if ok and n and n ~= "" then return n end
+    -- No guard: getUIName is `return this.displayName;`, a bare read of a final
+    -- field (CharacterProfessionDefinition.java:115-117). It cannot throw and it
+    -- cannot be null - the translation happens once in the constructor (:34), and
+    -- Translator.getText returns the KEY ITSELF when a translation is missing
+    -- rather than null (Translator.java:361-380). The empty test stays only
+    -- because an empty UIName= line is a legitimate authoring mistake.
+    if def then
+        local n = def:getUIName()
+        if n and n ~= "" then return n end
     end
     return key
 end

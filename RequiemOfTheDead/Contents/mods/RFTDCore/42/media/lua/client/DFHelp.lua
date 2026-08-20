@@ -38,29 +38,26 @@ local MAX_H = 460
 local function fontBody()  return DFKit.font.small or UIFont.Small end
 local function fontTitle() return DFKit.font.label or UIFont.Small end
 
--- getFontHeight/MeasureStringX (TextManager:127) NPE on a font this build
--- lacks; each measure below keeps its fallback behind the guard.
+-- TextManager is eagerly initialized and resolves an absent font enum through
+-- its default font (LuaManager.java:6930-6933; TextManager.java:119-129), so
+-- these are direct measurements. The layout bounds below remain for numeric
+-- geometry, not exception recovery.
 
 local function lineH()
-    local fh = 14
-    pcall(function() fh = getTextManager():getFontHeight(fontBody()) end)
+    local fh = getTextManager():getFontHeight(fontBody())
     return math.max(14, fh + 2)
 end
 
 local function titleH()
-    local fh = 14
-    pcall(function() fh = getTextManager():getFontHeight(fontTitle()) end)
+    local fh = getTextManager():getFontHeight(fontTitle())
     return math.max(24, fh + 12)
 end
 
 local function width()
     -- Roughly 62 characters of the current font, which keeps prose near the
     -- comfortable measure at every size instead of only at Small.
-    local w = 380
-    pcall(function()
-        w = getTextManager():MeasureStringX(fontBody(),
-            "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij") + PAD * 2
-    end)
+    local w = getTextManager():MeasureStringX(fontBody(),
+        "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij") + PAD * 2
     return math.max(320, math.min(w, 620))
 end
 

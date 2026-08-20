@@ -28,30 +28,22 @@ end
 -- nearby count. Coords are explicit rather than read off the source, so the
 -- admin path and the zombie path run the exact same code instead of drifting.
 function RQSvScreamer.screamAt(source, zx, zy, zz, cfg)
-    -- guard stays and is load-bearing: addSound is a vanilla Lua global (not in
-    -- the Java decompile), and its failure is what selects the WorldSoundManager
-    -- fallback below.
-    local okSound = pcall(addSound, source, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
-    if not okSound then
-        RQDirgeLog.write("Screamer", "[WARN] addSound failed - falling back to WorldSoundManager at (" .. zx .. "," .. zy .. "," .. zz .. ")")
-        -- guard stays: last-resort fallback -- if getWorldSoundManager() is nil
-        -- too, the scream must still spawn its wave.
-        pcall(function()
-            getWorldSoundManager():addSound(source, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius, false)
-        end)
-    end
+    -- addSound is a Java-exported global whose body delegates to the final
+    -- WorldSoundManager singleton. Retrying through that same singleton after a
+    -- partial failure could duplicate the world sound, so this authoritative
+    -- emission is direct. LuaManager.java:9227-9229, 3475-3477;
+    -- WorldSoundManager.java:43, 73-82, 107-156.
+    addSound(source, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
     local nearbyCount = RQSvShared.svCountNearbyAliveZombies(zx, zy, zz, RQSvShared.SCREAMER_SPAWN_RADIUS, source)
     if nearbyCount < cfg.screamerSpawnThreshold then
         local count = cfg.screamerSpawnMin + ZombRand(cfg.screamerSpawnMax - cfg.screamerSpawnMin + 1)
         RQDirgeLog.write("Screamer", "[INFO] scream fired at (" .. zx .. "," .. zy .. "," .. zz .. ")"
-            .. " soundOk=" .. tostring(okSound)
             .. " nearby=" .. nearbyCount .. " threshold=" .. cfg.screamerSpawnThreshold
             .. " spawning=" .. count)
         RQSvShared.svDoSpawn(zx, zy, zz, count)
         return count
     end
     RQDirgeLog.write("Screamer", "[INFO] scream fired at (" .. zx .. "," .. zy .. "," .. zz .. ")"
-        .. " soundOk=" .. tostring(okSound)
         .. " nearby=" .. nearbyCount .. " >= threshold=" .. cfg.screamerSpawnThreshold .. " NO spawn")
     return 0
 end

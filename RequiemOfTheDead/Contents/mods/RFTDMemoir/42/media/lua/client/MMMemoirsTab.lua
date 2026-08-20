@@ -110,13 +110,19 @@ local function traitChips(names)
     for _, nm in ipairs(names or {}) do
         local label, tex = tostring(nm), nil
         local trait = MMShared.findTrait(nm) -- by registry id; legacy bare names resolve vanilla-first
+        -- No guards. The whole trait-definition
+        -- surface is total: getCharacterTraitDefinition is a lookup on a
+        -- field-initialized LinkedHashMap that returns null for an unknown key
+        -- (CharacterTraitDefinition.java:22, 68-70), and getLabel/getTexture are
+        -- field returns (:136-138, :91-93). The nil check IS the whole error
+        -- path - a trait with no definition keeps its registry-id fallback,
+        -- which is the behaviour these guards were producing anyway.
         if trait then
-            local ok, def = pcall(CharacterTraitDefinition.getCharacterTraitDefinition, trait)
-            if ok and def then
-                local okl, l = pcall(function() return def:getLabel() end)
-                if okl and l and l ~= "" then label = l end
-                local okt, tx = pcall(function() return def:getTexture() end)
-                if okt then tex = tx end
+            local def = CharacterTraitDefinition.getCharacterTraitDefinition(trait)
+            if def then
+                local l = def:getLabel()
+                if l and l ~= "" then label = l end
+                tex = def:getTexture()
             end
         end
         out[#out + 1] = { label = label, tex = tex }
@@ -156,24 +162,28 @@ end
 -- ---------------------------------------------------------------------------
 local function findBook(player)
     local carried, owned = 0, {}
-    local ok, list = pcall(function() return player:getInventory():getAllTypeRecurse("Memoir") end)
-    if ok and list then
-        carried = list:size()
-        local uname = player:getUsername()
-        for i = 0, list:size() - 1 do
-            local item = list:get(i)
-            local snap = item:getModData()["MM"]
-            if type(snap) == "table" and snap.perks then
-                local owner = snap.owner
-                if not (owner and owner.username and uname and owner.username ~= uname) then
-                    owned[#owned + 1] = { item = item, snap = snap }
-                end
+    -- No guard. getInventory is a bare field read (IsoGameCharacter.java
+    -- :2953-2955, initialized at :557), and getAllTypeRecurse's only throw is
+    -- Objects.requireNonNull on a NULL type argument (ItemContainer.java:3596)
+    -- - "Memoir" is a literal. An unknown type just never matches (:1132-1137),
+    -- so the result is a freshly allocated ArrayList, never null
+    -- (:1866-1868 into :1713-1718); empty is the ordinary no-book answer.
+    local list = player:getInventory():getAllTypeRecurse("Memoir")
+    carried = list:size()
+    local uname = player:getUsername()
+    for i = 0, list:size() - 1 do
+        local item = list:get(i)
+        local snap = item:getModData()["MM"]
+        if type(snap) == "table" and snap.perks then
+            local owner = snap.owner
+            if not (owner and owner.username and uname and owner.username ~= uname) then
+                owned[#owned + 1] = { item = item, snap = snap }
             end
         end
-        table.sort(owned, function(a, b)
-            return (a.snap.writtenAt or 0) > (b.snap.writtenAt or 0)
-        end)
     end
+    table.sort(owned, function(a, b)
+        return (a.snap.writtenAt or 0) > (b.snap.writtenAt or 0)
+    end)
     return owned[1], carried, #owned
 end
 

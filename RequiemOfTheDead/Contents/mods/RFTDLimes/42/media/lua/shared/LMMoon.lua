@@ -101,11 +101,13 @@ end
 
 local provider = nil       -- test/override hook; wins when set
 local warnedNoClock = false
+local warnedProviderFault = false
 
 -- Tests (and anything else that needs a deterministic sky) inject here.
 -- fn() -> int 0..7 or nil. Pass nil to restore the engine read.
 function LMMoon.setProvider(fn)
     provider = fn
+    warnedProviderFault = false
 end
 
 -- The one answer to "what phase is it" on this machine. 0..7, or nil when the
@@ -115,20 +117,35 @@ end
 function Limes.moonPhase()
     if provider then
         -- pcall: `provider` is injected from outside this file (tests, an
-        -- admin console) and its body is not ours to verify.
+        -- admin console) and its body is not ours to verify. It may run on
+        -- every watcher poll, so report its first failure without flooding.
         local ok, p = pcall(provider)
-        p = ok and tonumber(p) or nil
+        if not ok then
+            if not warnedProviderFault then
+                warnedProviderFault = true
+                print("[Limes] moon provider failed; phase-conditional profiles are"
+                    .. " INACTIVE until it recovers: " .. tostring(p))
+            end
+            return nil
+        end
+        p = tonumber(p)
         if p and p >= 0 and p <= 7 then return math.floor(p) end
+        if p ~= nil and not warnedProviderFault then
+            warnedProviderFault = true
+            print("[Limes] moon provider returned an invalid phase; phase-conditional"
+                .. " profiles are INACTIVE until it recovers: " .. tostring(p))
+        end
         return nil
     end
-    local phase = nil
-    -- pcall: getClimateMoon is absent under a headless test harness and
-    -- returns nil before ClimateManager is up, so both the global and its
-    -- result can fail - which is exactly the "unknowable" this returns nil for.
-    local ok = pcall(function()
-        phase = getClimateMoon():getCurrentMoonPhase()
-    end)
-    phase = ok and tonumber(phase) or nil
+    -- No guard, and both halves of the old reason were wrong. getClimateMoon
+    -- can never return nil: it hands back a static-final singleton built at
+    -- class load (ClimateMoon.java:18-22, exposed at LuaManager.java:9053-9056)
+    -- with no ClimateManager dependency. getCurrentMoonPhase is a bare
+    -- primitive read (:48-50) - before the climate system's first tick it
+    -- returns 0, which is "New", a VALID phase. We inherit that ambiguity from
+    -- the engine: a pre-tick read is indistinguishable from a real new moon,
+    -- and profiles gated on "new" open a minute early at worst.
+    local phase = tonumber(getClimateMoon():getCurrentMoonPhase())
     if phase and phase >= 0 and phase <= 7 then return math.floor(phase) end
     if not warnedNoClock then
         warnedNoClock = true

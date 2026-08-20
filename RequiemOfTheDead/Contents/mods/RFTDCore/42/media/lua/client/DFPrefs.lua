@@ -71,9 +71,9 @@ DFPrefs.SCALE_NAMES = { "Small", "Medium", "Large" }
 -- the whole reason the form renderer is in Core rather than in a tab.
 DFPrefs.SCHEMA = {
     { group = "Display" },
-    { key = "fontScale", kind = "enum", numValues = 3, label = "Text size",
-      values = DFPrefs.SCALE_NAMES,
-      help = "How large text is drawn across the deck and its tabs. Project Zomboid has no continuous font scaling - it ships a fixed set of fonts - so this picks between three real sizes rather than stretching one.\n\nTabs that captured their font when the game loaded keep their old size until they are updated; the deck chrome and the Reclamation tabs follow this setting immediately." },
+    -- "Text size" is withheld while the scale ladder is locked - see
+    -- LOCKED_FONT_SCALE below. Offering a control that cannot move is
+    -- worse than offering none. Restore this entry to re-enable it.
     { key = "opacity", kind = "int", min = 20, max = 100, step = 5,
       label = "Panel opacity", unit = "%",
       help = "How much of the game world shows through the panel behind the text.\n\nLower values let you keep an eye on what is happening around you; higher values make dense text far easier to read against a bright or busy background. This affects panel grounds only - text and borders always draw at full strength, so raising it never dims the content.\n\nIt will not go below 20%: a fully transparent panel is one you cannot find again to fix, and the control that would undo it is drawn on the thing that just vanished." },
@@ -91,21 +91,51 @@ function DFPrefs.onChange(fn)
     end
 end
 
+-- One line per listener index per session: a stale closure faults on EVERY
+-- preference change, so an unbounded report would be worse than the silence it
+-- replaces.
+local listenerFaults = {}
+
 local function notify()
     for i = 1, #DFPrefs.listeners do
-        -- One bad listener must not stop the others: a stale closure from a
-        -- hot-reloaded panel is the expected failure here, not an exception.
-        pcall(DFPrefs.listeners[i])
+        -- RETAINED, one member of an independent batch: one bad listener must
+        -- not stop the others, and the expected failure is a stale closure left
+        -- by a hot-reloaded panel rather than an engine fault.
+        --
+        -- REPORTED now. A stale listener that silently stops applying reads to
+        -- the user as "the setting did nothing", which is the exact class of
+        -- silent failure this refactor exists to delete.
+        local ok, err = pcall(DFPrefs.listeners[i])
+        if not ok and not listenerFaults[i] then
+            listenerFaults[i] = true
+            print("[Dragonfly] a preference listener failed and will be skipped "
+                .. "until reload (#" .. i .. "): " .. tostring(err))
+        end
     end
 end
 
 -- ---------------------------------------------------------------------------
 -- Persistence
 -- ---------------------------------------------------------------------------
+-- TEXT SIZE IS LOCKED (2026-08-18, by request, pending a refinement pass).
+--
+-- The ladder did not behave well enough to ship enabled: tabs that captured a
+-- font at load keep the old size while the chrome follows the setting, so a
+-- change leaves the deck visibly inconsistent until every tab is rebuilt. It
+-- is switched OFF rather than removed - the ladder, DFKit.setFontScale and the
+-- deck's builtTier rebuild path are all intact and correct, and pinning the
+-- value keeps them trivially coherent: the tracker can never disagree with the
+-- preference because the preference never moves.
+--
+-- To re-enable: drop LOCKED_FONT_SCALE and restore the "Text size" entry in
+-- DFPrefs.SCHEMA. Nothing else needs to change.
+local LOCKED_FONT_SCALE = 1
+
 local function clampState()
     local s = DFPrefs.state
-    s.fontScale = math.floor(tonumber(s.fontScale) or DEFAULTS.fontScale)
-    if s.fontScale < 1 then s.fontScale = 1 elseif s.fontScale > 3 then s.fontScale = 3 end
+    -- Pinned, not clamped: a file carrying 2 or 3 from before the lock is read
+    -- and quietly normalised rather than rejected.
+    s.fontScale = LOCKED_FONT_SCALE
     s.opacity = math.floor(tonumber(s.opacity) or DEFAULTS.opacity)
     -- Floored at 20 rather than 0. A fully transparent panel is not a
     -- preference, it is a panel you cannot find again to fix - and the control
@@ -116,10 +146,13 @@ end
 function DFPrefs.load()
     for k, v in pairs(DEFAULTS) do DFPrefs.state[k] = v end
 
-    -- file I/O: a failed or partial read leaves the defaults standing
-    pcall(function()
-        local r = getFileReader(DFPrefs.FILE, false)
-        if not r then return end
+    -- Bare. BufferedReader is an exposed class (LuaManager.java:1651): a
+    -- read fault is swallowed to a nil readLine (MethodCaller.java:33-56), so
+    -- a failed or partial read simply ends the loop early and the defaults
+    -- stand for whatever was not read - the recovery the old guard promised,
+    -- delivered by the lane for free.
+    local r = getFileReader(DFPrefs.FILE, false)
+    if r then
         while true do
             local line = r:readLine()
             if not line then break end
@@ -129,7 +162,7 @@ function DFPrefs.load()
             end
         end
         r:close()
-    end)
+    end
 
     clampState()
     return DFPrefs.state
@@ -137,25 +170,28 @@ end
 
 function DFPrefs.save()
     clampState()
-    -- getFileWriter allowlist I/O: a failed save keeps the in-memory state
-    pcall(function()
-        -- create = true, append = false: this file is a complete snapshot
-        -- every time, so appending would grow it forever with stale lines that
-        -- the reader would then apply in order and the last one would win by
-        -- accident rather than by intent.
-        local w = getFileWriter(DFPrefs.FILE, true, false)
-        if not w then return end
-        -- writeln, not write with an embedded \n. getFileWriter returns a
-        -- LuaManager.LuaFileWriter (LuaManager.java:9889) whose writeln appends
-        -- System.lineSeparator(); hand-rolling "\n" writes a bare LF that
-        -- Windows tooling renders as one long line. BufferedReader.readLine
-        -- strips either on the way back in, so this is about the file being
-        -- readable by a human, not about the parser.
-        for k in pairs(DEFAULTS) do
-            w:writeln(string.format("%s=%d", k, math.floor(DFPrefs.state[k] or 0)))
-        end
-        w:close()
-    end)
+    -- No guard. getFileWriter returns nil for a refused extension or a failed
+    -- open, catching both of its own IOException sites (LuaManager.java:5523-5555),
+    -- and LuaFileWriter.writeln/close delegate to PrintWriter, which records I/O
+    -- errors on an internal flag rather than raising them (:9850-9868). The nil
+    -- check below IS the failure path; in-memory state is kept either way.
+    --
+    -- create = true, append = false: this file is a complete snapshot
+    -- every time, so appending would grow it forever with stale lines that
+    -- the reader would then apply in order and the last one would win by
+    -- accident rather than by intent.
+    local w = getFileWriter(DFPrefs.FILE, true, false)
+    if not w then return end
+    -- writeln, not write with an embedded \n. getFileWriter returns a
+    -- LuaManager.LuaFileWriter (LuaManager.java:9850) whose writeln appends
+    -- System.lineSeparator(); hand-rolling "\n" writes a bare LF that
+    -- Windows tooling renders as one long line. BufferedReader.readLine
+    -- strips either on the way back in, so this is about the file being
+    -- readable by a human, not about the parser.
+    for k in pairs(DEFAULTS) do
+        w:writeln(string.format("%s=%d", k, math.floor(DFPrefs.state[k] or 0)))
+    end
+    w:close()
 end
 
 -- ---------------------------------------------------------------------------

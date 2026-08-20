@@ -92,12 +92,62 @@ function RDShared.registerMod(id, version)
     RDShared.mods[tostring(id)] = tostring(version or "?")
 end
 
+-- Make one untrusted value safe to put in a LINE-ORIENTED TEXT FILE.
+--
+-- The threat is log/record injection. Several places in the family format
+-- wire-supplied values into delimited text lines - "k=v k=v" audit rows, and
+-- tab-delimited override records - and append them to a .txt. A newline inside
+-- any value ends the attacker's line and begins one they fully control,
+-- including fields naming somebody else; a delimiter inside a value shifts
+-- every field after it. Those files are what an admin reads to adjudicate a
+-- dispute, so a forgeable line is worse than no line.
+--
+-- JSON sinks never needed this: RDJson.escape already handles newlines,
+-- quotes, backslashes and every control byte (RDJson.lua:56-63). This is for
+-- the legacy text sinks that predate it.
+--
+-- Control bytes become a VISIBLE escape rather than being dropped - silently
+-- deleting them would let two different payloads print identically, and these
+-- records exist to be unambiguous. `extra` names additional literal characters
+-- to escape, for callers whose format has its own delimiter (a tab, a comma).
+-- Length is capped because a wire string has no bound and one record must not
+-- be able to fill the disk.
+RDShared.TEXT_MAXLEN = 200
+
+function RDShared.textSafe(v, extra)
+    if v == nil then return "-" end
+    local s = tostring(v)
+    if s == "" then return "-" end
+    s = s:gsub("[%c]", function(c) return string.format("\\x%02X", string.byte(c)) end)
+    if extra then
+        s = s:gsub("[" .. extra .. "]", function(c) return string.format("\\x%02X", string.byte(c)) end)
+    end
+    if #s > RDShared.TEXT_MAXLEN then s = s:sub(1, RDShared.TEXT_MAXLEN) .. "~" end
+    return s
+end
+
 RDShared.registerMod(RDShared.MODULE, RDShared.VERSION)
 
 -- ---------------------------------------------------------------------------
 -- Debug gate. Off by default; flipped by SandboxVars.RFTDCore.Debug when the
 -- sandbox page exists client/server-side. Print-only - never writes files.
 -- ---------------------------------------------------------------------------
+
+-- Core's own sandbox numbers, read defensively and clamped. Promoted
+-- 2026-08-20 from identical sb/sbNum pairs in RDMeter and RDStall - the
+-- clamp-to-envelope rule is the stable part (an operator's fat-fingered
+-- 100000 must land at the bound, not in the hot path), and two copies of a
+-- clamp is two chances for the bounds semantics to drift. RFTDCore namespace
+-- only, on purpose: satellites read their own namespaces through their own
+-- cfg() surfaces, and a namespace parameter here would just be a longer way
+-- to write SandboxVars.
+function RDShared.sbNum(key, default, lo, hi)
+    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore[key]
+    if type(v) ~= "number" then return default end
+    if lo and v < lo then return lo end
+    if hi and v > hi then return hi end
+    return v
+end
 
 function RDShared.debugOn()
     -- SandboxVars is nil until options load; the chain replaces the guard

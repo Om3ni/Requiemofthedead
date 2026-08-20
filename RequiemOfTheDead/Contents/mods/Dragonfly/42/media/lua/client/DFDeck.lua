@@ -45,7 +45,9 @@ if isServer() then return end
 
 require "ISUI/ISPanel"
 require "DFKit"      -- the font tier the resize drives
+require "RDSelect"   -- Core's one keyboard-modifier reader
 require "DFTheme"
+require "DFDeckLayout"  -- shared per-tab size file contract
 
 DFDeck = ISPanel:derive("DFDeck")
 
@@ -177,8 +179,17 @@ function DFDeck:reflowContent()
 
     local spec = DFRegistry.tabs[self.activeId or ""]
     if spec and type(spec.resize) == "function" then
-        -- pcall: tenant containment - a foreign mod's resize hook must not
-        -- take the deck down mid-drag.
+        -- RETAINED - registration-contract adapter, same class as DFServer's
+        -- dispatcher. NOT "foreign": every tab is a suite mod that hard-requires
+        -- Core, and the engine already contains listeners on its own
+        -- (Event.java:53-63), so containment is not the reason.
+        --
+        -- The reason is that the host owns a state transition the tenant can
+        -- interrupt. resize runs mid-drag, every frame: an escaping throw would
+        -- abandon the deck part-resized with its own chrome unlaid-out, and
+        -- would do it once per frame for as long as the drag lasts. Returning
+        -- false here lets the deck fall back to its own layout, keeps the other
+        -- tabs reachable, and names the tab that broke.
         local ok, err = pcall(spec.resize, spec, self.contentArea, cw, ch)
         if ok then return true end
         print("[Deck] tab resize failed (" .. tostring(self.activeId) .. "): " .. tostring(err))
@@ -262,8 +273,11 @@ function DFDeck:showTab(id)
     self:addChild(self.contentArea)
 
     if type(spec.build) == "function" then
-        -- pcall: tenant containment - a foreign mod's build callback must not
-        -- take the deck down.
+        -- RETAINED - registration-contract adapter, as above. The host has
+        -- already created and attached contentArea and committed activeId by
+        -- this point; a tenant throwing out of build would strand the deck
+        -- half-switched, showing a tab it never populated. One broken tab costs
+        -- itself an empty pane and a named log line, not the admin's whole deck.
         local ok, err = pcall(spec.build, spec, self.contentArea, 0, 0, cw, ch)
         if not ok then
             print("[Deck] tab build failed (" .. tostring(id) .. "): " .. tostring(err))
@@ -550,41 +564,24 @@ function DFDeck:onMouseUpOutside(x, y) endDrag(self) end
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
--- Remembered size. Client-local, one line, failures non-fatal: a deck that
--- forgets its size is a nuisance, a deck that refuses to open because it could
--- not write a preference is a fault. Position is NOT saved - the deck centres
--- itself on the screen it opens on, which is the right answer when the screen
--- may have changed since last session.
+-- Remembered size. Client-local, one line per tab, failures non-fatal: a deck
+-- that forgets its size is a nuisance, a deck that refuses to open because it
+-- could not write a preference is a fault. Position is NOT saved - the deck
+-- centres itself on the screen it opens on, which is the right answer when the
+-- screen may have changed since last session.
+--
+-- The file contract itself lives in DFDeckLayout, shared with DFPlayerDeck;
+-- this file owns only the filename and the per-tab key.
 -- ---------------------------------------------------------------------------
 
 function DFDeck.saveSizes(sizes)
-    pcall(function()
-        local f = getFileWriter(LAYOUT_FILE, true, false)
-        if not f then return end
-        for k, r in pairs(sizes or {}) do
-            f:write(string.format("%s w=%d h=%d\n", k, math.floor(r.w), math.floor(r.h)))
-        end
-        f:close()
-    end)
+    return DFDeckLayout.save(LAYOUT_FILE, sizes)
 end
 
--- The old single-line "w= h=" format fails this parse and is forgotten: one
--- default-sized open, then the file is rewritten new-style.
 function DFDeck.loadSizes()
-    local out = {}
-    pcall(function()
-        local r = getFileReader(LAYOUT_FILE, false)
-        if not r then return end
-        while true do
-            local line = r:readLine()
-            if not line then break end
-            local k, w, h = line:match("^(%S+) w=(%d+) h=(%d+)")
-            if k then out[k] = { w = tonumber(w), h = tonumber(h) } end
-        end
-        r:close()
-    end)
-    return out
+    return DFDeckLayout.load(LAYOUT_FILE)
 end
+
 
 function DFDeck.canOpen()
     -- No guard: the nil-check chain replaces it. Indexing SandboxVars before
@@ -646,16 +643,6 @@ function DFDeck.toggle()
     end
 end
 
-local function shiftDown()
-    -- guarded: GameKeyboard.isKeyDown:113 is fully null-checked, but a build whose
-    -- Keyboard table lacks KEY_LSHIFT hands it nil, which Kahlua cannot coerce to
-    -- int. Degrade to 'shift is not held' rather than break the hotkey.
-    local ok, held = pcall(function()
-        return isKeyDown(Keyboard.KEY_LSHIFT) or isKeyDown(Keyboard.KEY_RSHIFT)
-    end)
-    return ok and held == true
-end
-
 -- Registered ONCE across any number of reloads; the closure reads the DFDeck
 -- global at press time, so the single registration always runs current code.
 -- The binding is the classic panel's sandbox pair, inherited at graduation:
@@ -669,7 +656,8 @@ if not DFDeckState.hooked then
         local s = SandboxVars.RFTDDragonfly or {}
         local bound = tonumber(s.OpenKeybind) or 22
         if bound == 0 or key ~= bound then return end
-        if s.OpenKeyRequiresShift ~= false and not shiftDown() then return end
+        local _, shiftHeld = RDSelect.modifiers()
+        if s.OpenKeyRequiresShift ~= false and not shiftHeld then return end
         DFDeck.toggle()
     end)
 end

@@ -110,10 +110,20 @@ function LSMap:initMap()
     -- once the instance exists. pcall'd because it is a convenience, not a
     -- requirement - if it fails we still check the API below.
     if not ISWorldMap_instance then
-        pcall(function()
+        -- RETAINED - Lua lane: ISWorldMap.ShowWorldMap and HideWorldMap are
+        -- vanilla Lua we do not own (ISWorldMap.lua:1500, :1574 - Hide indexes
+        -- ISWorldMap_instance unguarded after its IsAllowed test), and Lua
+        -- throws DO propagate. A convenience with a real recovery immediately
+        -- below - the mapAPI check decides whether the map is usable either
+        -- way. Reported rather than silent: if the warm-up is failing, that is
+        -- the first thing worth knowing when a map comes up blank.
+        local warmed, warmErr = pcall(function()
             ISWorldMap.ShowWorldMap(self.playerIndex)
             ISWorldMap.HideWorldMap(self.playerIndex)
         end)
+        if not warmed then
+            print("[Dragonfly] LSMap: world-map warm-up failed: " .. tostring(warmErr))
+        end
     end
 
     local api = self.map.mapAPI
@@ -122,49 +132,73 @@ function LSMap:initMap()
         return
     end
 
-    local ok, err = pcall(function()
-        local dirs = getLotDirectories()
-        for i = 1, dirs:size() do
-            local sub  = dirs:get(i - 1)
-            local file = "media/maps/" .. sub .. "/worldmap.xml"
-            if fileExists(file) then api:addData(file) end
-            api:endDirectoryData()
-            api:addImages("media/maps/" .. sub)
-        end
-        api:setBoundsFromWorld()
-        api:setZoom(DEFAULT_ZOOM)
-
-        -- View flags. Only the ones every embedded consumer wants: show the whole
-        -- world rather than the visited part, draw player markers so the admin can
-        -- orient, and hide vanilla map symbols so an overlay is not fighting them.
-        --
-        -- THE CELL GRID IS NOT SET HERE, deliberately (2026-08-04). This used to
-        -- turn "CellGrid" on for everybody, which is a VIEW POLICY and belongs to
-        -- whoever is using the map, not to the bring-up. Longstrider wants it -
-        -- its whole job is walking 300-tile cells - and LSTab sets it from
-        -- LSTours.gridOn immediately after acquiring the map anyway, so nothing is
-        -- lost there. Limes' zone editor emphatically does not: a 256-square
-        -- lattice over the entire map buries the zone rectangles it exists to
-        -- draw. The engine's own default is false (WorldMapRenderer.java:140,
-        -- and CellGrid300 at :141 is a separate option, also false), so consumers
-        -- that say nothing now get a clean map.
-        api:setBoolean("HideUnvisited", false)
-        api:setBoolean("Players",       true)
-        api:setBoolean("RemotePlayers", true)
-        api:setBoolean("PlayerNames",   true)
-        api:setBoolean("Symbols",       false)
-        api:setBoolean("Isometric",     false)
-
-        -- Centre on the player initially.
-        if self.player then api:centerOn(self.player:getX(), self.player:getY()) end
-
-        MapUtils.initDefaultStyleV1(self.map)
-    end)
-
-    if not ok then
-        print("[Dragonfly] LSMap initMap error: " .. tostring(err))
-        return
+    -- The blanket that used to wrap everything below is gone. It covered four
+    -- unrelated consequences under one fallback - foreign map data, required
+    -- bounds/zoom, cosmetic view flags, and optional centring - so any one of
+    -- them failing disabled the whole map with a single line of console.
+    --
+    -- No boundary on the loop either, and the reason is the dispatch lanes.
+    -- worldmap.xml is still third-party data - but the XML is parsed
+    -- ASYNCHRONOUSLY: the load is queued through the asset manager and its
+    -- failures are caught and logged when the future drains on the game
+    -- thread (FileSystemImpl.java:186-193 into WorldMapDataAssetManager
+    -- loadCallback :45-53), so a parse fault never reaches this call stack at
+    -- all. The one SYNCHRONOUS throw on the path - Paths.get's
+    -- InvalidPathException (WorldMapData.java:35, uncaught up through
+    -- UIWorldMapV1.addData:83-90) - is a Java BODY throw in an exposed method,
+    -- swallowed and stack-traced by MethodCaller before Lua sees it
+    -- (MethodCaller.java:33-56). One broken map mod already cannot cost the
+    -- others: its addData no-ops with an engine trace and the loop moves on.
+    -- The per-directory skip/report machinery that sat here had never fired.
+    local dirs = getLotDirectories()
+    for i = 1, dirs:size() do
+        local sub  = dirs:get(i - 1)
+        local file = "media/maps/" .. sub .. "/worldmap.xml"
+        if fileExists(file) then api:addData(file) end
+        api:endDirectoryData()
+        api:addImages("media/maps/" .. sub)
     end
+
+    -- Direct from here down. setBoundsFromWorld and endDirectoryData are thin
+    -- delegates onto the map's own WorldMap; setZoom and setBoolean reach a
+    -- FINAL renderer (UIWorldMapV1:29) whose setBoolean is instanceof-guarded
+    -- (WorldMapRenderer.java:697); centerOn early-returns when there is no data
+    -- or imagery at all. A failure in any of them is a broken contract in code
+    -- we own or hard-depend on, and must surface rather than silently yield a
+    -- map that looks fine and is wrong.
+    api:setBoundsFromWorld()
+    api:setZoom(DEFAULT_ZOOM)
+
+    -- View flags. Only the ones every embedded consumer wants: show the whole
+    -- world rather than the visited part, draw player markers so the admin can
+    -- orient, and hide vanilla map symbols so an overlay is not fighting them.
+    --
+    -- THE CELL GRID IS NOT SET HERE, deliberately (2026-08-04). This used to
+    -- turn "CellGrid" on for everybody, which is a VIEW POLICY and belongs to
+    -- whoever is using the map, not to the bring-up. Longstrider wants it -
+    -- its whole job is walking 300-tile cells - and LSTab sets it from
+    -- LSTours.gridOn immediately after acquiring the map anyway, so nothing is
+    -- lost there. Limes' zone editor emphatically does not: a 256-square
+    -- lattice over the entire map buries the zone rectangles it exists to
+    -- draw. The engine's own default is false (WorldMapRenderer.java:140,
+    -- and CellGrid300 at :141 is a separate option, also false), so consumers
+    -- that say nothing now get a clean map.
+    api:setBoolean("HideUnvisited", false)
+    api:setBoolean("Players",       true)
+    api:setBoolean("RemotePlayers", true)
+    api:setBoolean("PlayerNames",   true)
+    api:setBoolean("Symbols",       false)
+    api:setBoolean("Isometric",     false)
+
+    -- Centre on the player initially.
+    if self.player then api:centerOn(self.player:getX(), self.player:getY()) end
+
+    -- Vanilla Lua, called the same way vanilla calls it. It reads
+    -- mapUI.javaObject:getAPIv1() (ISMapDefinitions.lua:153-159), and this
+    -- function already proved mapAPI non-nil above, which is that same backing
+    -- object. A throw here means the map UI contract broke, which is worth
+    -- seeing.
+    MapUtils.initDefaultStyleV1(self.map)
 
     self._initialised = true
     print("[Dragonfly] LSMap initialised for player " .. tostring(self.playerIndex))

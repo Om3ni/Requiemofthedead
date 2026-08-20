@@ -102,6 +102,21 @@ end
 -- Reading the ini. See the header: this gates every write.
 -- ---------------------------------------------------------------------------
 
+-- One line per (option, callback) per session. A third-party handler that
+-- throws on every interaction would otherwise write a line per keystroke, and
+-- the point of reporting is to be readable.
+local callbackFaults = {}
+
+local function noteCallbackFault(who, hook, ok, err)
+    if ok then return end
+    local key = tostring(who) .. "/" .. hook
+    if callbackFaults[key] then return end
+    callbackFaults[key] = true
+    print(string.format(
+        "[Dragonfly] mod options: %s's %s failed; that setting may not have taken: %s",
+        tostring(who), hook, tostring(err)))
+end
+
 function DFModOptionsBridge.ensureLoaded()
     if DFModOptionsBridge.loaded then return true end
     local a = api()
@@ -306,10 +321,19 @@ function DFModOptionsBridge.get(k)
 
     elseif o.type == "keybind" then
         local code = tonumber(o.key) or 0
-        -- getKeyName on an out-of-range code is engine-dependent; the raw
-        -- code is an acceptable label when the lookup fails
-        local ok, name = pcall(getKeyName, code)
-        return (ok and name) or tostring(code)
+        -- No guard. getKeyName is not in the Java decompile below the Lua
+        -- wrapper (LuaManager.java:8588-8591 into Input.getKeyName,
+        -- core/input/Input.java:28-38, which bottoms out in LWJGL's Keyboard) -
+        -- but vanilla Lua calls it BARE in six places on exactly this input
+        -- class, a persisted keycode straight out of getCore():getKey(...)
+        -- (ISDuplicateKeybindDialog.lua:17, 96, 112, 121;
+        -- ISPrintMediaTextPanel.lua:295). Vanilla ships working with those, and
+        -- that is the evidence rule 1 asks for where the decompile stops.
+        --
+        -- It CAN return nil - Input.getKeyName falls through to a possibly-null
+        -- Keyboard name when no IGUI_Key_ translation exists (:33-37) - so the
+        -- raw-code fallback stays. That was always the useful half.
+        return getKeyName(code) or tostring(code)
 
     elseif o.type == "colorpicker" then
         local c = o.color or {}
@@ -366,23 +390,41 @@ function DFModOptionsBridge.set(k, v)
         return
     end
 
-    -- Strangers' callbacks, in MainOptions' order. onChangeApply is the one
-    -- that only fires on real movement; onChange fires on the interaction.
-    if type(o.onChange) == "function" then pcall(o.onChange, o, new) end
+    -- RETAINED, all four: these are STRANGERS' callbacks in the literal sense
+    -- this bridge exists for - it mirrors options registered by third-party
+    -- mods, so onChange, onChangeApply, setValue and apply are code we do not
+    -- own, cannot read and cannot preflight. That is the foreign-callback class
+    -- exactly, and one mod's broken handler must not stop the settings sheet
+    -- writing the other mods' values.
+    --
+    -- What they were NOT doing is reporting. All four discarded the error
+    -- outright, so a third-party option that threw on every interaction looked
+    -- identical to one that worked - and the user's setting silently did not
+    -- take. Now named and bounded: once per option per session, so a
+    -- persistently broken handler cannot fill the log.
+    --
+    -- Order is MainOptions': onChangeApply only fires on real movement,
+    -- onChange fires on the interaction.
+    local who = label(o.name, o.id)
+    if type(o.onChange) == "function" then
+        noteCallbackFault(who, "onChange", pcall(o.onChange, o, new))
+    end
     if new ~= old and type(o.onChangeApply) == "function" then
-        pcall(o.onChangeApply, o, new)
+        noteCallbackFault(who, "onChangeApply", pcall(o.onChangeApply, o, new))
     end
 
     if o.type == "multipletickbox" then
-        pcall(o.setValue, o, idx, new)
+        noteCallbackFault(who, "setValue", pcall(o.setValue, o, idx, new))
     else
-        pcall(o.setValue, o, new)
+        noteCallbackFault(who, "setValue", pcall(o.setValue, o, new))
     end
 
     -- The mod's own settled hook, then the file. Both optional in practice:
     -- apply() defaults to a no-op, and a failed save must not take the value
     -- change down with it.
-    if type(g.apply) == "function" then pcall(g.apply, g) end
+    if type(g.apply) == "function" then
+        noteCallbackFault(who, "apply", pcall(g.apply, g))
+    end
 
     local a = api()
     if a and type(a.save) == "function" then

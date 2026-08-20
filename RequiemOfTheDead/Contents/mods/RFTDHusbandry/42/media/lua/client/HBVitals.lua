@@ -94,12 +94,11 @@ end
 function HBVitals.nameOf(animal)
     if not animal then return "?" end
     local name = animal:getCustomName()
-    if not name or name == "" then
-        -- KEEP: getFullName (IsoAnimal:2050) dereferences getData().getBreed()
-        -- and runs the Translator; data is null on an animal whose constructor
-        -- bailed early (IsoAnimal:259-275). Falls through to the type name.
-        local ok, fn = pcall(animal.getFullName, animal)
-        if ok then name = fn end
+    if (not name or name == "") and animal:getData() then
+        -- getFullName dereferences AnimalData; an animal whose constructor
+        -- bailed early has no data and falls through to its type instead
+        -- (IsoAnimal.java:1185-1187, 2050-2065).
+        name = animal:getFullName()
     end
     if not name or name == "" then
         name = animal:getAnimalType()

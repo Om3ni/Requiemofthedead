@@ -277,10 +277,7 @@ function RCShared.halo(character, text, isError)
     if not character or not text then return end
     local r, g, b = 100, 255, 100
     if isError then r, g, b = 255, 90, 90 end
-    -- guarded: HaloTextHelper is vanilla LUA (unverifiable against the
-    -- decompile) and absent server-side; setHaloNote is the degraded fallback
-    local ok = pcall(function() HaloTextHelper.addText(character, text, "", r, g, b) end)
-    if not ok then pcall(function() character:setHaloNote(text) end) end
+    HaloTextHelper.addText(character, text, "", r, g, b)
 end
 
 -- Halo variant for IN-CHARACTER thoughts ("I shouldn't do this..."). PZ has
@@ -289,9 +286,7 @@ end
 -- character musing, not the system refusing.
 function RCShared.haloThought(character, text)
     if not character or not text then return end
-    -- guarded: same vanilla-LUA helper + fallback pair as halo() above
-    local ok = pcall(function() HaloTextHelper.addText(character, text, "", 190, 205, 255) end)
-    if not ok then pcall(function() character:setHaloNote(text) end) end
+    HaloTextHelper.addText(character, text, "", 190, 205, 255)
 end
 
 -- Staff bypass everything (interaction lock + claim cap). Matches the levels
@@ -310,6 +305,12 @@ end
 -- uses it to GATE the command on the trusted sender (authoritative) - one
 -- brain, so the two can never diverge.
 local SPAWNER_RANK = { admin = 1, moderator = 2, overseer = 3, gm = 3, observer = 3 }
+
+-- Reclamation's two text ledgers (RCAudit, RCDamageAudit) write wire-supplied
+-- values into "k=v k=v" lines, where a newline forges a whole extra row. The
+-- mechanism is Core's - StaffTools' tab-delimited override file has the same
+-- exposure - so this is a named alias for it rather than a second copy.
+RCShared.ledgerSafe = RDShared.textSafe
 
 function RCShared.spawnerRank(player)
     if not player or not player.getAccessLevel then return nil end
@@ -349,6 +350,8 @@ function RCShared.claimDismantleBlock(vehicle, player)
     return "other"
 end
 
+local phunZoneFaultSaid = false
+
 -- PhunZones gate: a zone with "No Vehicle Dismantle" ticked blocks NON-WRECK
 -- dismantle (wreck cleanup is always allowed - callers skip this for wrecks).
 -- RCPhunZones registers the field on PhunZones' schema; here we only read it.
@@ -358,7 +361,15 @@ function RCShared.phunZoneBlocks(x, y)
     if not (PhunZones and PhunZones.getLocation) then return false end
     -- guarded: foreign-mod callback - PhunZones' internals are not ours to trust
     local ok, zone = pcall(PhunZones.getLocation, x, y)
-    if not ok or not zone then return false end
+    if not ok then
+        if not phunZoneFaultSaid then
+            phunZoneFaultSaid = true
+            print("[RC] PhunZones lookup failed; dismantle zone gate is open: "
+                .. tostring(zone))
+        end
+        return false
+    end
+    if not zone then return false end
     local v = zone.reclamationNoDismantle
     -- the zone editor may persist the flag as a boolean or a string
     return v == true or v == "true" or v == "1"
@@ -387,11 +398,11 @@ end
 -- overload of AddWorldInventoryItem transmits each drop - that is the vanilla
 -- loot idiom (dedi-verified retrievable pre-scrape) and a one-shot burst on a
 -- rare event, not a recurring network cost.
-function RCShared.dumpVehicleContainers(vehicle)
+function RCShared.dumpVehicleContainers(vehicle, removedVehicleSquare)
     if not vehicle then return 0 end
-    local square = vehicle:getSquare()
+    local square = removedVehicleSquare or vehicle:getSquare()
     if not square then return 0 end
-    local dumped = 0
+    local dumped, failed, firstErr = 0, 0, nil
     -- the part walk and container reads are bounds-checked field returns
     -- (VehicleParts.java:111, VehiclePart.java:99); only the drop itself throws
     local count = vehicle:getPartCount()
@@ -404,16 +415,35 @@ function RCShared.dumpVehicleContainers(vehicle)
             local grab = {}
             for j = 0, items:size() - 1 do grab[#grab + 1] = items:get(j) end
             for _, it in ipairs(grab) do
-                -- guarded: AddWorldInventoryItem builds and transmits a world
-                -- object (IsoGridSquare.java:5426, corpse path included) - one
-                -- modded item that throws must not abort the rest of the dump
-                pcall(function()
-                    container:Remove(it)
-                    square:AddWorldInventoryItem(it, ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9), 0)
+                -- No pcall - the InventoryItem overload of
+                -- AddWorldInventoryItem returns the item itself on every
+                -- normal path and has no null return of its own
+                -- (IsoGridSquare.java:5406-5485), so a nil back means the
+                -- body faulted, swallowed and stack-traced by MethodCaller
+                -- (MethodCaller.java:33-56). That return IS the loot-loss
+                -- diagnostic the old guard promised and could never deliver -
+                -- its throw never reached Lua, so `failed` had never counted.
+                -- A nil is counted as UNCONFIRMED, not absent: the square
+                -- mutates at :5474-5475 before the last throw-capable lines
+                -- (:5476-5483), so the item may be on the ground; never
+                -- re-add it.
+                container:Remove(it)
+                local placed = square:AddWorldInventoryItem(it,
+                    ZombRandFloat(0.1, 0.9), ZombRandFloat(0.1, 0.9), 0)
+                if placed then
                     dumped = dumped + 1
-                end)
+                else
+                    failed = failed + 1
+                    firstErr = firstErr or "AddWorldInventoryItem faulted (see engine trace)"
+                end
             end
         end
+    end
+    if failed > 0 then
+        print(string.format(
+            "[RC] dump: %d item(s) UNCONFIRMED while emptying %s - removed from the "
+            .. "container, ground placement unverified (first: %s)",
+            failed, tostring(vehicle:getScriptName()), tostring(firstErr)))
     end
     return dumped
 end

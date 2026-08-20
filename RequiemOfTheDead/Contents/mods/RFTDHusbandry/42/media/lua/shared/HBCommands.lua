@@ -14,6 +14,10 @@ RDShared.registerMod("RFTDHusbandry", "1.2.0")   -- keep in sync with mod.info
 HBCmd = {}
 
 HBCmd.ADD_SEEN           = "hbAddSeen"
+-- RESERVED, NOT WIRED. The dispatcher below deliberately does not accept these
+-- two - see the note there. The names are kept because they are the vocabulary
+-- the Ledger panel will claim, and HBData.register/unregister already implement
+-- the behaviour behind them.
 HBCmd.REGISTER           = "hbRegister"
 HBCmd.UNREGISTER         = "hbUnregister"
 HBCmd.SYNC_ANIMAL        = "hbSyncAnimal"
@@ -21,6 +25,7 @@ HBCmd.DEBUG_PROBE        = "hbDebugProbe"
 HBCmd.DEBUG_REFILL       = "hbDebugRefill"
 HBCmd.DEBUG_PROBE_RESULT = "hbDebugProbeResult"
 HBCmd.ADD_BEDDING        = "hbAddBedding"     -- player: add hay bedding to a hutch
+HBCmd.SEX_CHECK          = "hbSexCheck"       -- admin: authoritative sex diagnostic
 
 if not isServer() then return end
 
@@ -49,13 +54,38 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         local animal = getAnimal(tonumber(args.id))
         if animal then HBData.addSeen(animal) end
 
-    elseif command == HBCmd.REGISTER then
-        local animal = getAnimal(tonumber(args.id))
-        if animal then HBData.register(animal, player) end
+    -- hbRegister / hbUnregister ARE NOT ACCEPTED HERE, on purpose (2026-08-20).
+    --
+    -- They were scaffolding for the unbuilt Ledger panel - no UI ever sent
+    -- them, and nothing anywhere reads the herd list they wrote - so the only
+    -- way to reach them was to forge the command, which made them two
+    -- unauthenticated writes that each fired two transmitModData calls.
+    --
+    -- They are REMOVED rather than gated because there is nothing yet to gate
+    -- against: ownership is not recorded on the animal at all today (the RQHB
+    -- record holds one field, `id`), so no owner check is expressible. The real
+    -- feature puts a player-designed brand ON the animal with append-only
+    -- history, and the owner-or-admin rule gets written once, against that
+    -- contract, when the panel lands. HBData.register/unregister are untouched
+    -- and still correct; only the wire door is closed. Git holds the branches.
 
-    elseif command == HBCmd.UNREGISTER then
-        local animal = getAnimal(tonumber(args.id))
-        if animal then HBData.unregister(animal, player) end
+    elseif command == HBCmd.SEX_CHECK then
+        -- Folded in 2026-08-19 from HBSexCheck_Server's own listener, which was
+        -- a second executable intake on this token. The logic still lives in
+        -- that file; only intake moved. HBSexCheck_Server is in server/ and
+        -- this file is in shared/, so it loads AFTER us - but dispatch happens
+        -- at runtime, long past load, so resolving it here is safe. The
+        -- presence check follows ADD_BEDDING's idiom below rather than assuming
+        -- the module is there.
+        if not isAdminLike(player) then
+            print("[HBSexCheck] rejected (not admin)")
+            return
+        end
+        if HBSexCheck_Server and HBSexCheck_Server.handle then
+            HBSexCheck_Server.handle(player, args)
+        else
+            print("[HB] SEX_CHECK: HBSexCheck_Server not loaded")
+        end
 
     elseif command == HBCmd.DEBUG_PROBE then
         if not isAdminLike(player) then
@@ -81,35 +111,26 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         -- harmless on the way up.
         local oidStr = tostring(args and args.oids or "")
         local target = tonumber(args and args.value) or 0
-        local count, errors, missing = 0, 0, 0
+        local count, missing = 0, 0
         for s in string.gmatch(oidStr, "[^,]+") do
             local oid = tonumber(s)
             local animal = oid and getAnimal(oid)
             if not animal then
                 missing = missing + 1
             else
-                -- KEEP: Stats.set (Stats.java:80) clamps through the
-                -- CharacterStat argument, so a build without
-                -- CharacterStat.HUNGER/THIRST passes null and NPEs inside the
-                -- engine; updateLastTimeSinceUpdate (IsoAnimal:1561) goes
-                -- through the GameTime.getInstance() singleton. The error is
-                -- counted and reported to the caller, not swallowed.
-                local ok, err = pcall(function()
-                    animal:getStats():set(CharacterStat.HUNGER, target)
-                    animal:getStats():set(CharacterStat.THIRST, target)
-                    animal:updateLastTimeSinceUpdate()
-                end)
-                if ok then
-                    count = count + 1
-                else
-                    errors = errors + 1
-                    print("[HB] set error on OID " .. tostring(oid) .. ": " .. tostring(err))
-                end
+                -- The current Build 42 stat object and CharacterStat enum are
+                -- established engine contracts; unexpected mutation faults must
+                -- surface instead of turning a manual admin action into a
+                -- misleading partial success.
+                animal:getStats():set(CharacterStat.HUNGER, target)
+                animal:getStats():set(CharacterStat.THIRST, target)
+                animal:updateLastTimeSinceUpdate()
+                count = count + 1
             end
         end
         local label = (target <= 0.05) and "refill" or "starve"
-        local msg = string.format("[%s value=%.2f] applied=%d  missing=%d  errors=%d",
-            label, target, count, missing, errors)
+        local msg = string.format("[%s value=%.2f] applied=%d  missing=%d",
+            label, target, count, missing)
         print("[HB] " .. msg)
         sendServerCommand(player, "RFTDHusbandry", HBCmd.DEBUG_PROBE_RESULT, { line = msg })
 

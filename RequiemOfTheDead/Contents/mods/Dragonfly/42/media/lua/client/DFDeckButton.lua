@@ -75,13 +75,13 @@ if isServer() then return end
 if not ISEquippedItem then return end
 
 require "DFDeck"
+require "DFSidebarBadge"
 
 DFDeckButton = DFDeckButton or {}
 
 DFDeckBtnState = DFDeckBtnState or { wrapped = false }
 
 local SPACING = 10
-local SIZE_BUCKETS = { 48, 64, 80, 96, 128 }
 
 -- Dwell per plate in the alert cycle. Slow enough to read as deliberate rather
 -- than as a rendering fault, fast enough to catch peripheral vision.
@@ -89,21 +89,13 @@ local ALERT_FRAME_MS = 400
 
 local iconCache = {}   -- bucket -> { off = tex, on = tex, alert = tex } | false
 
-local function tex(path)
-    -- the getTexture GLOBAL is self-catching (LuaManager:6855 ->
-    -- Texture.getSharedTexture:406, try/catch returning null), so a missing
-    -- file is a nil here, never a throw
-    return getTexture(path)
-end
-
-local function bucketFor(width)
-    local best, bestDiff = SIZE_BUCKETS[#SIZE_BUCKETS], nil
-    for _, b in ipairs(SIZE_BUCKETS) do
-        local d = math.abs(b - (width or 0))
-        if not bestDiff or d < bestDiff then best, bestDiff = b, d end
-    end
-    return best
-end
+-- Plate resolution (tex, bucketFor, the bucket list) is DFSidebarBadge's -
+-- shared with DFPlayerButton since 2026-08-20, because two independently
+-- maintained copies of "which of our art files fits this sidebar" is a badge
+-- one size off its neighbours waiting to happen. What stays here is policy:
+-- WHICH plates, and the alert cycle's tolerance for a missing blue.
+local tex       = DFSidebarBadge.tex
+local bucketFor = DFSidebarBadge.bucketFor
 
 -- Worn honestly since graduation: Off art (green) closed, On art (red) open.
 --
@@ -129,13 +121,17 @@ local function resolveIcon(width)
     return iconCache[b]
 end
 
--- Is there an unacknowledged server-observed impossibility? Guarded rather than
--- assumed: DFTripwire is Core's and this file is Dragonfly's, so it may legitimately
--- be absent and the badge must simply behave as it always did.
+-- Is there an unacknowledged server-observed impossibility?
+--
+-- No guard: alertActive is `return DFTripwire.pending == true` - one field read
+-- on a table this function has already nil-checked (DFTripwire.lua:35-37). Core
+-- is a HARD dependency of Dragonfly (DFCore.lua registers against it), not an
+-- optional integration, so an absent DFTripwire is a load-order fault to fix
+-- rather than a contingency to absorb. The presence check below stays because
+-- it is ordinary precondition work, not exception handling.
 local function alerting()
     if not DFTripwire or not DFTripwire.alertActive then return false end
-    local ok, v = pcall(DFTripwire.alertActive)
-    return ok and v == true
+    return DFTripwire.alertActive() == true
 end
 
 -- Which plate the alert cycle is showing this frame. Red, then blue, then green,
@@ -160,10 +156,14 @@ local function mayOpen()
     if not DFDeck or not DFDeck.canOpen then return false end
     local s = SandboxVars.RFTDDragonfly or {}
     if s.Enabled == false then return false end
-    -- canOpen chains into Core's RDAccess (foreign mod): a missing or
-    -- mismatched Core must not break every sidebar prerender
-    local ok, allowed = pcall(DFDeck.canOpen)
-    return ok and allowed == true
+    -- No guard: canOpen lost its own internal guard in Phase One because every
+    -- path is nil-chained - SandboxVars is indexed defensively, getPlayer() may
+    -- return nil, and RDAccess.meetsTier accepts a nil player and a nil tier,
+    -- falling through isTopAdmin/hasAnyCapability which both nil-check their
+    -- receiver and bounds-check the capability walk (RDAccess.lua:43-88).
+    -- Guarding the caller while the callee runs direct only converted a Core
+    -- contract break into a silent "access denied" on the badge.
+    return DFDeck.canOpen() == true
 end
 
 local function onClick()
@@ -248,9 +248,11 @@ if not DFDeckBtnState.wrapped then
         -- Idempotent, because this runs every frame the deck is visible.
         local open = deckOpen()
         if open and DFTripwire and DFTripwire.acknowledge then
-            -- Core's tripwire (foreign mod): contained so it cannot take the
-            -- sidebar prerender down with it
-            pcall(DFTripwire.acknowledge)
+            -- No guard: acknowledge is two field writes behind an early return
+            -- (DFTripwire.lua:47-51). "Must not take the prerender down" is not
+            -- a reason either - UIManager already contains a throwing element
+            -- per element, so the guard bought nothing and hid the write.
+            DFTripwire.acknowledge()
         end
 
         local icon = self.dfDeckIcon
@@ -268,9 +270,10 @@ if not DFDeckBtnState.wrapped then
         -- is a string build per frame, forever.
         local want
         if (not open) and alerting() then
-            local n = 0
-            -- Core's tripwire (foreign mod): a count that throws reads as 0
-            pcall(function() n = DFTripwire.pendingCount() or 0 end)
+            -- No guard: pendingCount is `return DFTripwire.count or 0`
+            -- (DFTripwire.lua:39-41), so it already supplies the zero this
+            -- fallback was duplicating. Pinned by the DFTripwire fixture.
+            local n = DFTripwire.pendingCount and DFTripwire.pendingCount() or 0
             want = "Dragonfly Admin Deck  -  " .. tostring(n)
                 .. " unreviewed tripwire" .. ((n == 1) and "" or "s")
         else

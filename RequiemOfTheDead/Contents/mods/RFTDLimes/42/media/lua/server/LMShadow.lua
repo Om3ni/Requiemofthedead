@@ -66,6 +66,7 @@ local COMPARE = {
 
 local seen, seenCount = {}, 0
 local SEEN_CAP = 500
+local phunLookupFaultSaid = false
 
 local function fold(v)
     if v == nil or v == "" then return "" end
@@ -101,7 +102,12 @@ local function sweep()
             -- pcall stays: PhunZones' lookup is a foreign mod's code, and this
             -- watch must never break on the store it is only observing.
             local okPz, pz = pcall(PhunZones.getLocation, x, y)
-            if okPz then
+            if not okPz then
+                if not phunLookupFaultSaid then
+                    phunLookupFaultSaid = true
+                    print("[Limes] shadow: PhunZones lookup failed; sample skipped: " .. tostring(pz))
+                end
+            else
                 local d = diff(pz, Limes.getLocation(x, y))
                 if d then
                     -- getUsername is a field return; p came from

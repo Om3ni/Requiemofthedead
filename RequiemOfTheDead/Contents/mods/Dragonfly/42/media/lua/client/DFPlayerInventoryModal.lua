@@ -13,6 +13,7 @@
 if isServer() then return end
 
 require "ISUI/ISCollapsableWindow"
+require "DFItemQuery"   -- type-ahead for the Add Item field
 require "ISUI/ISScrollingListBox"
 require "ISUI/ISButton"
 require "ISUI/ISTextEntryBox"
@@ -148,9 +149,16 @@ function Modal:createChildren()
     local cursorY = TITLE_H + PAD
 
     -- Action row 1: Add by full type + Refresh
-    self.addEntry = ISTextEntryBox:new("Base.Bandage", PAD, cursorY, 220, BTN_H)
+    -- Empty text + a REAL placeholder. The old construction seeded the literal
+    -- string "Base.Bandage" as the field's VALUE - vanilla text boxes have no
+    -- ghost-text concept at the Lua ctor, so it never cleared and had to be
+    -- hand-deleted before every use. setPlaceholderText is the engine's actual
+    -- ghost text (UITextBox2.java:673-675, nil-safe; vanilla wraps it at
+    -- ISTextEntryBox.lua:121), drawn only while the box is empty.
+    self.addEntry = ISTextEntryBox:new("", PAD, cursorY, 220, BTN_H)
     self.addEntry.align = "left"
     self.addEntry:initialise(); self.addEntry:instantiate()
+    self.addEntry:setPlaceholderText("Search items or Base.FullType")
     self:addChild(self.addEntry)
 
     self.addCountEntry = ISTextEntryBox:new("1", PAD + 224, cursorY, 50, BTN_H)
@@ -225,6 +233,63 @@ function Modal:createChildren()
     closeBtn.borderColor.a = 0.4
     closeBtn:initialise(); closeBtn:instantiate()
     self:addChild(closeBtn)
+
+    -- Type-ahead results for the Add Item field. Added LAST deliberately:
+    -- children paint in order, and this floats over the column header and the
+    -- top of the inventory list while it is open.
+    local dropY = TITLE_H + PAD + BTN_H + 2
+    self.searchDrop = ISScrollingListBox:new(PAD, dropY, 320, 8 * 20 + 4)
+    self.searchDrop.itemheight = 20
+    self.searchDrop.font = UIFont.Small
+    self.searchDrop.drawBorder = true
+    self.searchDrop.backgroundColor = { r = 0.06, g = 0.08, b = 0.10, a = 0.97 }
+    self.searchDrop:initialise(); self.searchDrop:instantiate()
+    self.searchDrop:setOnMouseDownFunction(self, function(_, item)
+        if item and item.full then self:pickSearchResult(item.full) end
+    end)
+    self.searchDrop:setVisible(false)
+    self:addChild(self.searchDrop)
+end
+
+function Modal:pickSearchResult(full)
+    -- The picked fullType becomes the field's text; remembering it is what
+    -- keeps the dropdown from instantly reopening over its own selection.
+    self._pickedFull = full
+    self._lastQuery = full
+    if self.addEntry then self.addEntry:setText(full) end
+    if self.searchDrop then self.searchDrop:setVisible(false) end
+end
+
+function Modal:refreshSearch()
+    local q = self.addEntry and self.addEntry:getText() or ""
+    if q == self._lastQuery then return end
+    self._lastQuery = q
+
+    if q == "" or q == self._pickedFull then
+        self.searchDrop:setVisible(false)
+        return
+    end
+
+    local results = DFItemQuery.search(q, 8)
+    self.searchDrop:clear()
+    for i = 1, #results do
+        local r = results[i]
+        -- addItem stores r as the row's `item`, and vanilla hands exactly that
+        -- back to the click callback (ISScrollingListBox.lua:277-281, and
+        -- invokeOnMouseDownFunction passes items[selected].item) - so the
+        -- handler receives {full, disp} directly.
+        self.searchDrop:addItem(r.disp .. "  -  " .. r.full, r)
+    end
+    self.searchDrop:setHeight(math.min(#results, 8) * self.searchDrop.itemheight + 4)
+    self.searchDrop:setVisible(#results > 0)
+end
+
+function Modal:prerender()
+    ISCollapsableWindow.prerender(self)
+    -- Poll rather than hook: vanilla ISTextEntryBox exposes no reliable
+    -- text-changed callback, and one string compare per frame while this
+    -- window is open costs nothing.
+    self:refreshSearch()
 end
 
 function Modal:attachHeader()

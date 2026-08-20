@@ -100,7 +100,8 @@ local FREEZE_GAP_MS = 3000
 
 local function audit(text)
     print("[LZI] " .. text)
-    sendServerCommand("RFTDDragonfly", "LogBroadcast", {
+    -- Staff only since 2026-08-19; see RDNet.sendStaff.
+    RDNet.sendStaff("RFTDDragonfly", "LogBroadcast", {
         source = "Mod:RFTDReaper",
         level  = "audit",
         text   = "LZI: " .. text,

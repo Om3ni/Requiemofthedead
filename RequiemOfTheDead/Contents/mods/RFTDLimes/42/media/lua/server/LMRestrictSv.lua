@@ -85,10 +85,18 @@ end
 
 local counts = {}   -- flag -> refusals since boot, for the report
 
--- pcall: evidence-writing must never break the refusal it records.
+-- No guard. "Evidence-writing must never break the refusal it records" was a
+-- real concern about ORDER, answered by a guard instead of by order - and it
+-- does not arise, because RDLog.forensic cannot throw: envelope() is
+-- RDJson.encode (total for any payload, RDJson.lua:103-139) and every write
+-- lands on getFileWriter, which returns nil rather than throwing
+-- (LuaManager.java:5523-5555), through a PrintWriter that records I/O errors
+-- internally (:9850-9868). Core calls the same primitive bare
+-- (RDLog.lua:192-198). The presence check stays as an ordinary load-order
+-- precondition.
 local function forensic(event, data, subject)
     if RDLog and RDLog.forensic then
-        pcall(RDLog.forensic, "limes", event, subject, data, "RFTDLimes")
+        RDLog.forensic("limes", event, subject, data, "RFTDLimes")
     end
 end
 
@@ -98,9 +106,13 @@ end
 -- administered.
 local function refuse(character, flag, zoneName, what)
     counts[flag] = (counts[flag] or 0) + 1
-    -- pcall: the refusal already happened; a wire failure must not throw back
-    -- into the wrapped vanilla global that called us.
-    pcall(RDNet.reply, character, TOKEN, "restricted", {
+    -- No guard - there is no wire failure to contain. RDNet.reply is a
+    -- one-line delegation to sendServerCommand, which returns silently for a
+    -- dropped or unmapped connection (GameServer.java:3264-3274), logs and
+    -- skips unserializable payload entries, and catches its own IOException
+    -- (:3196-3215). Nothing on this path can throw back into the wrapped
+    -- vanilla global.
+    RDNet.reply(character, TOKEN, "restricted", {
         flag = flag, zone = zoneName, what = what,
     })
     -- `character` is whatever the wrapped handler was given, so the method is
@@ -286,11 +298,16 @@ local function onSafehousesChanged()
             local no, zone = safehouseDenied(sh)
             if no then
                 local owner = sh:getOwner() or "?"
-                -- pcall stays: removeSafeHouse:297 formats a DebugType line off
-                -- the record's own fields and re-triggers OnSafehousesChanged
-                -- when GameClient.client - neither is safe to unwind this walk.
-                -- Direct form; this is inside the list loop.
-                pcall(SafeHouse.removeSafeHouse, sh)
+                -- No guard - the old comment was wrong on both halves.
+                -- The debug line reads four plain fields (a null owner formats
+                -- as "null", never .equals - SafeHouse.java:297-303, :586-588)
+                -- and the OnSafehousesChanged re-trigger is inside
+                -- if (GameClient.client), which is false on a dedicated
+                -- server (:300-302). Server-side there is no throw path at
+                -- all. The backwards index walk stays load-bearing:
+                -- getSafehouseList returns the LIVE list (:582-584) and
+                -- removal shifts every index above the removed row.
+                SafeHouse.removeSafeHouse(sh)
                 counts.nosafehouse = (counts.nosafehouse or 0) + 1
                 forensic("LM.RESTRICT",
                     { flag = "nosafehouse", zone = zone, user = owner, what = "unclaim" }, owner)

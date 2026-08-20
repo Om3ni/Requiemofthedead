@@ -67,22 +67,41 @@ MMSnapshotCodec.countSet = countSet
 local traitKey = MMShared.fqid
 
 -- The 5 weight traits (Underweight/Very Underweight/Emaciated/Overweight/Obese) are
--- DYNAMIC labels the engine adds/removes from body weight, not identity: Nutrition
--- .applyTraitFromWeight() wipes all 5 each tick and re-adds whichever matches the current
--- weight bracket. So we never snapshot them as traits - on restore they re-derive from the
--- restored weight (see capture / identityMatches / applyBodyState). Keyed by id, with the
--- bare getName() registered too so a legacy snapshot's "underweight" is still recognised.
+-- DYNAMIC labels the engine derives from body weight, not identity:
+-- Nutrition.applyTraitFromWeight() removes all 5 unconditionally and re-adds whichever
+-- matches the current bracket (Nutrition.java:203-224). So we never snapshot them as
+-- traits - on restore they re-derive from the restored weight (see capture /
+-- identityMatches / applyBodyState).
+--
+-- CADENCE, corrected 2026-08-19: this is NOT per tick. The sole call site is gated on a
+-- 2000-iteration counter and on !GameClient.client (Nutrition.java:159-166), so it runs
+-- on roughly every 2000th nutrition update, server/singleplayer side only - an MP client
+-- never derives them locally and receives them with the rest of the trait set. The old
+-- "each tick" note overstated how fast a restored weight re-asserts itself.
+--
+-- Keyed by id, with the bare getName() registered too so a legacy snapshot's
+-- "underweight" is still recognised. Note getName() lowercases and KEEPS THE SPACE, so
+-- Very Underweight's legacy key is "very underweight" (CharacterTrait.java:103,
+-- ResourceLocation.java:24-25).
 local weightTraitKeys
 local function isWeightTrait(key)
     if not weightTraitKeys then
         weightTraitKeys = {}
         local consts = { CharacterTrait.UNDERWEIGHT, CharacterTrait.VERY_UNDERWEIGHT,
                          CharacterTrait.EMACIATED, CharacterTrait.OVERWEIGHT, CharacterTrait.OBESE }
+        -- No guard on getName(). Its only failure is a stale-object NPE
+        -- (CharacterTrait.java:118-120 into Registry.getLocation :31-33), and
+        -- these five cannot go stale: registerBase puts them in the "base"
+        -- namespace (CharacterTrait.java:38, 78, 82, 101, 103 into :130-136)
+        -- and Registry.reset deletes only NON-base entries (Registry.java
+        -- :62-67). Were a stale object ever passed anyway, the NPE would not
+        -- reach Lua - MethodCaller swallows it and returns nil
+        -- (MethodCaller.java:33-56) - and the :lower() on that nil would then
+        -- fail loudly here as an ordinary Lua error. Either way: loud.
         for _, c in ipairs(consts) do
             local id = traitKey(c)
             if id then weightTraitKeys[id] = true end
-            local ok, nm = pcall(function() return c and c:getName() end)
-            if ok and nm then weightTraitKeys[nm:lower()] = true end -- legacy bare name
+            weightTraitKeys[c:getName():lower()] = true -- legacy bare name
         end
     end
     return type(key) == "string" and weightTraitKeys[key:lower()] == true
@@ -250,15 +269,7 @@ end
 -- ========================
 -- Apply: identity (only on reconcile) then earnables (always merge up)
 -- ========================
-local function applyIdentity(player, ident)
-    -- 0) GUARD: if trait definitions can't resolve AT ALL on this side (dedi boot gap -
-    -- nothing runs BaseGameCharacterDetails.DoTraits on a dedicated server), proceeding
-    -- would strip every current trait and re-add none: a silent trait wipe. Abort with
-    -- error() instead - the server dispatcher pcalls the apply and replies "applyfail",
-    -- so the player is told and the memoir is NOT consumed.
-    if ident.traits and #ident.traits > 0 and not MMShared.traitDefsReady() then
-        error("MMSnapshotCodec.applyIdentity: trait definitions unavailable on this side")
-    end
+local function applyIdentity(player, ident, prepared, markMutation)
     -- 1) STRIP current traits FIRST, while the outgoing build's boosts are still
     -- what the map holds. modifyTraitXPBoost(trait, true) blindly SUBTRACTS that
     -- trait's boosts from whatever map is live (IsoGameCharacter.modifyTraitXPBoost
@@ -270,44 +281,27 @@ local function applyIdentity(player, ident)
     local current = {}
     for i = 0, known:size() - 1 do current[#current + 1] = known:get(i) end
     for _, trait in ipairs(current) do
+        markMutation()
         player:getCharacterTraits():remove(trait)
         player:modifyTraitXPBoost(trait, true)
     end
     -- 2) PROFESSION (setProfessionSkills = clear()+putAll: wipes the whole boost
     -- map and installs the saved profession's boosts)
     if ident.profession then
-        local def = MMShared.findProfessionDef(ident.profession)
-        if def then
-            player:getDescriptor():setCharacterProfession(def:getType())
-            player:getDescriptor():setProfessionSkills(def)
-            MMlog("  IDENTITY profession -> " .. tostring(ident.profession))
-        else
-            MMwarn("IDENTITY profession '" .. tostring(ident.profession)
-                .. "' did not resolve - left as-is (mod removed since the book was written?)")
-        end
+        local def = prepared.profession
+        markMutation()
+        player:getDescriptor():setCharacterProfession(def:getType())
+        player:getDescriptor():setProfessionSkills(def)
+        MMlog("  IDENTITY profession -> " .. tostring(ident.profession))
     end
     -- 3) TRAITS: add chosen (boosts stack on top of the profession's, like creation).
     -- Resolution is by registry id, so a mod trait sharing a vanilla path can no
     -- longer be substituted for the real one - the whole point of this file's header.
-    local wanted, missing = {}, {}
-    for _, name in ipairs(ident.traits or {}) do
-        local trait = MMShared.findTrait(name)
-        if trait then
-            player:getCharacterTraits():add(trait)
-            player:modifyTraitXPBoost(trait, false)
-            local id = traitKey(trait)
-            if id then wanted[id] = true end
-        else
-            missing[#missing + 1] = tostring(name)
-        end
-    end
-    if #missing > 0 then
-        -- Never silent. A trait we cannot resolve is a trait the player LOSES, and
-        -- the pre-2026-08-09 code logged this at debug level only - which is how a
-        -- lost trait reached a player before it reached the console.
-        table.sort(missing)
-        MMwarn("IDENTITY " .. tostring(#missing) .. " trait(s) did not resolve and were NOT applied to "
-            .. MMname(player) .. ": " .. table.concat(missing, ", "))
+    local wanted = prepared.wanted
+    for _, trait in ipairs(prepared.traits) do
+        markMutation()
+        player:getCharacterTraits():add(trait)
+        player:modifyTraitXPBoost(trait, false)
     end
 
     -- 4) VERIFY. CharacterTraits.add() returns nothing and validates nothing
@@ -433,12 +427,12 @@ end
 -- We scale RAW XP, never levels, so the engine re-derives the level from the total.
 -- preSwapBuild = {profession, traits} worn BEFORE applyIdentity ran (caller captures
 -- it; after the swap the "current build" IS the saved build and the info is gone).
-local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpFraction)
+local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpFraction,
+        prepared, markMutation)
     mode = mode or "max"
     local xp = player:getXp()
-    local savedGrant = MMSnapshotCodec.buildGrantLevels(snap.profession, snap.traits)
-    local preSwapGrant = preSwapBuild
-        and MMSnapshotCodec.buildGrantLevels(preSwapBuild.profession, preSwapBuild.traits) or nil
+    local savedGrant = prepared.savedGrant
+    local preSwapGrant = prepared.preSwapGrant
 
     -- Precedence, resolved once where it cannot vary per perk: an explicit
     -- xpFraction (the Players tab dial) outranks fullRestore, which outranks the
@@ -467,7 +461,7 @@ local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpF
         local t = perk:getType()
         if t ~= PerkFactory.Perks.None and t ~= PerkFactory.Perks.MAX then
             local id = perk:getId()
-            local pct = fixedPct or MMShared.xpRestoreFraction(id)
+            local pct = fixedPct or prepared.restoreFractions[id]
             local cur = xp:getXP(t) or 0
             local rawSaved = (snap.perks and snap.perks[id]) or 0
             local savedGrantXP = perk:getTotalXpForLevel(savedGrant[id] or 0) or 0
@@ -494,6 +488,7 @@ local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpF
             local delta = target - cur
             if delta ~= 0 then
                 local lvlB = player:getPerkLevel(t)
+                markMutation()
                 xp:AddXP(t, delta, false, false, false)
                 MMlog("  XP[" .. mode .. "] " .. id .. " " .. tostring(cur) .. "->" .. tostring(target)
                     .. " (lvl " .. tostring(lvlB) .. "->" .. tostring(player:getPerkLevel(t)) .. ")")
@@ -513,22 +508,18 @@ local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpF
     --    which the XP model already governs).
     local stripped = 0
     if mode == "overwrite" and preSwapBuild then
-        local strip = MMSnapshotCodec.buildGrantRecipes(preSwapBuild.profession, preSwapBuild.traits)
+        local strip = prepared.stripRecipes
         local list = player:getKnownRecipes()
         for recipeID in pairs(strip) do
             if not (snap.recipes and snap.recipes[recipeID]) then
-                local guard, callFailed = 0, false
+                local guard = 0
                 while player:isRecipeActuallyKnown(recipeID) and guard < 5 do
-                    local ok, removedOne = pcall(function() return list:remove(recipeID) end)
-                    if not ok then callFailed = true; break end
+                    markMutation()
+                    local removedOne = list:remove(recipeID)
                     if removedOne == false then break end -- not in the list (auto-known via skills)
                     guard = guard + 1
                 end
                 if guard > 0 then stripped = stripped + 1 end
-                if callFailed then
-                    MMwarn("recipe strip: List.remove not callable for '" .. tostring(recipeID)
-                        .. "' - respawn-build recipe grants NOT stripped; report this")
-                end
             end
         end
         MMlog("  RECIPES -" .. tostring(stripped) .. " respawn-build grant(s) dismissed")
@@ -538,6 +529,7 @@ local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpF
     local learned = 0
     for recipeID, _ in pairs(snap.recipes or {}) do
         if not player:isRecipeActuallyKnown(recipeID) then
+            markMutation()
             player:learnRecipe(recipeID); learned = learned + 1
         end
     end
@@ -547,10 +539,14 @@ local function applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpF
     -- legacy top-up -> max (same history may overlap, never add)
     if snap.kills then
         if mode == "overwrite" then
+            markMutation()
             player:setZombieKills((snap.kills.Zombie or 0) + (player:getZombieKills() or 0))
+            markMutation()
             player:setSurvivorKills((snap.kills.Survivor or 0) + (player:getSurvivorKills() or 0))
         else
+            markMutation()
             player:setZombieKills(maxn(snap.kills.Zombie, player:getZombieKills()))
+            markMutation()
             player:setSurvivorKills(maxn(snap.kills.Survivor, player:getSurvivorKills()))
         end
     end
@@ -560,17 +556,17 @@ end
 -- trait from the restored weight. Set-to-saved (never merged) - weight isn't earnable, it's
 -- the body you respawn into; "same character, same body." Runs last so applyTraitFromWeight()
 -- fires after any identity strip, leaving no window of a stale/missing weight trait.
-local function applyBodyState(player, snap)
+local function applyBodyState(player, snap, prepared, markMutation)
     local n = snap.nutrition
     if not n then return end -- v1 snapshot (pre-nutrition): nothing to restore
-    local nut = player.getNutrition and player:getNutrition()
+    local nut = prepared.nutrition
     if not nut then return end
-    if n.weight   ~= nil then nut:setWeight(n.weight) end
-    if n.calories ~= nil then nut:setCalories(n.calories) end
-    if n.lipids   ~= nil then nut:setLipids(n.lipids) end
-    if n.proteins ~= nil then nut:setProteins(n.proteins) end
-    if n.carbs    ~= nil then nut:setCarbohydrates(n.carbs) end
-    if nut.applyTraitFromWeight then nut:applyTraitFromWeight() end -- re-derive Underweight/Obese/etc
+    if n.weight   ~= nil then markMutation(); nut:setWeight(n.weight) end
+    if n.calories ~= nil then markMutation(); nut:setCalories(n.calories) end
+    if n.lipids   ~= nil then markMutation(); nut:setLipids(n.lipids) end
+    if n.proteins ~= nil then markMutation(); nut:setProteins(n.proteins) end
+    if n.carbs    ~= nil then markMutation(); nut:setCarbohydrates(n.carbs) end
+    if nut.applyTraitFromWeight then markMutation(); nut:applyTraitFromWeight() end -- re-derive Underweight/Obese/etc
     MMlog("  BODY weight->" .. tostring(n.weight) .. " (+macros, weight trait re-derived)")
 end
 
@@ -579,10 +575,11 @@ end
 -- capture or ParanormalZ isn't present (snap.faith == nil). The server pushes the value to the
 -- client via transmitModData (MMServer.pushFields); the owning client's mirror-apply also sets
 -- it here, so the Faith UI updates immediately without waiting for the modData sync.
-local function applyFaith(player, snap)
+local function applyFaith(player, snap, prepared, markMutation)
     if snap.faith == nil then return end
-    local md = player:getModData()
+    local md = prepared.modData
     if not md then return end
+    markMutation()
     md.exorcistFaith = snap.faith
     MMlog("  FAITH -> " .. tostring(snap.faith))
 end
@@ -596,22 +593,151 @@ end
 --   and the owning client mirror-applies the identical snapshot; if one runs at
 --   1.0 and the other at 0.6 they compute different targets and the character
 --   desyncs until relog. MMRestore puts it in applyData, MMClient reads it back.
+local function finiteNumber(value, field)
+    if value == nil then return end
+    if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
+        error("MMSnapshotCodec.applyToCharacter: " .. field .. " must be a finite number")
+    end
+end
+
+local function validateSnapshot(snap)
+    if type(snap) ~= "table" then
+        error("MMSnapshotCodec.applyToCharacter: snapshot must be a table")
+    end
+    for _, field in ipairs({ "perks", "traits", "recipes", "kills", "nutrition" }) do
+        if snap[field] ~= nil and type(snap[field]) ~= "table" then
+            error("MMSnapshotCodec.applyToCharacter: snapshot." .. field .. " must be a table")
+        end
+    end
+    if snap.profession ~= nil and type(snap.profession) ~= "string" then
+        error("MMSnapshotCodec.applyToCharacter: snapshot.profession must be a string")
+    end
+    for id, value in pairs(snap.perks or {}) do
+        if type(id) ~= "string" then
+            error("MMSnapshotCodec.applyToCharacter: snapshot perk ids must be strings")
+        end
+        finiteNumber(value, "snapshot.perks[" .. id .. "]")
+    end
+    for _, value in ipairs(snap.traits or {}) do
+        if type(value) ~= "string" then
+            error("MMSnapshotCodec.applyToCharacter: snapshot trait ids must be strings")
+        end
+    end
+    for id in pairs(snap.recipes or {}) do
+        if type(id) ~= "string" then
+            error("MMSnapshotCodec.applyToCharacter: snapshot recipe ids must be strings")
+        end
+    end
+    if snap.kills then
+        finiteNumber(snap.kills.Zombie, "snapshot.kills.Zombie")
+        finiteNumber(snap.kills.Survivor, "snapshot.kills.Survivor")
+    end
+    if snap.nutrition then
+        for _, field in ipairs({ "weight", "calories", "lipids", "proteins", "carbs" }) do
+            finiteNumber(snap.nutrition[field], "snapshot.nutrition." .. field)
+        end
+    end
+    finiteNumber(snap.faith, "snapshot.faith")
+end
+
+local function prepareIdentity(ident)
+    if type(ident) ~= "table" then
+        error("MMSnapshotCodec.applyToCharacter: chosen identity must be a table")
+    end
+    if ident.traits ~= nil and type(ident.traits) ~= "table" then
+        error("MMSnapshotCodec.applyToCharacter: chosen identity traits must be a table")
+    end
+    if ident.traits and #ident.traits > 0 and not MMShared.traitDefsReady() then
+        error("MMSnapshotCodec.applyToCharacter: trait definitions unavailable on this side")
+    end
+
+    local prepared = { traits = {}, wanted = {} }
+    if ident.profession then
+        prepared.profession = MMShared.findProfessionDef(ident.profession)
+        if not prepared.profession then
+            error("MMSnapshotCodec.applyToCharacter: profession '" .. tostring(ident.profession)
+                .. "' did not resolve")
+        end
+    end
+    local missing = {}
+    for _, name in ipairs(ident.traits or {}) do
+        local trait = MMShared.findTrait(name)
+        if not trait then
+            missing[#missing + 1] = tostring(name)
+        else
+            prepared.traits[#prepared.traits + 1] = trait
+            local id = traitKey(trait)
+            if id then prepared.wanted[id] = true end
+        end
+    end
+    if #missing > 0 then
+        table.sort(missing)
+        error("MMSnapshotCodec.applyToCharacter: trait(s) did not resolve: "
+            .. table.concat(missing, ", "))
+    end
+    return prepared
+end
+
+-- Applies cannot be rolled back: every Java setter above mutates immediately, and
+-- AddXP also changes levels while it walks the thresholds (IsoGameCharacter.java:
+-- 15482-15623). Preflight resolves every fallible registry/config lookup before the
+-- first setter. The single protected commit then reports whether a mutation was
+-- attempted, so callers can distinguish a safe retry from a partial character.
 function MMSnapshotCodec.applyToCharacter(player, snap, chosenIdentity, xpMode, fullRestore, xpFraction)
-    if not snap then return end
-    MMlog("APPLY to " .. MMname(player) .. " | xpMode=" .. tostring(xpMode or "max")
-        .. (chosenIdentity and " (overwrite identity)" or " (keep identity)")
-        .. (type(xpFraction) == "number"
-            and string.format(" (xp %d%% of earned)", math.floor(xpFraction * 100 + 0.5))
-            or (fullRestore and " (FULL restore, knob bypassed)" or "")))
-    -- The dismissal rule needs the build the player is wearing BEFORE the identity
-    -- swap (its XP grants AND its granted recipes) - capture it first; applyIdentity
-    -- rewrites it and the information is gone.
-    local preSwapBuild = (xpMode == "overwrite")
-        and MMSnapshotCodec.playerBuildIdentity(player) or nil
-    if chosenIdentity then applyIdentity(player, chosenIdentity) end
-    applyEarnables(player, snap, xpMode, preSwapBuild, fullRestore, xpFraction)
-    applyBodyState(player, snap)
-    applyFaith(player, snap)
+    local phase, mutationStarted = "preflight", false
+    local function markMutation() mutationStarted = true end
+    local ok, err = pcall(function()
+        if not player then error("MMSnapshotCodec.applyToCharacter: player is required") end
+        validateSnapshot(snap)
+        finiteNumber(xpFraction, "XP fraction")
+        if xpMode ~= nil and xpMode ~= "max" and xpMode ~= "overwrite" then
+            error("MMSnapshotCodec.applyToCharacter: invalid XP mode '" .. tostring(xpMode) .. "'")
+        end
+
+        local mode = xpMode or "max"
+        local preSwapBuild = mode == "overwrite" and MMSnapshotCodec.playerBuildIdentity(player) or nil
+        local prepared = {
+            identity = chosenIdentity and prepareIdentity(chosenIdentity) or nil,
+            savedGrant = MMSnapshotCodec.buildGrantLevels(snap.profession, snap.traits),
+            preSwapGrant = preSwapBuild
+                and MMSnapshotCodec.buildGrantLevels(preSwapBuild.profession, preSwapBuild.traits) or nil,
+            stripRecipes = preSwapBuild
+                and MMSnapshotCodec.buildGrantRecipes(preSwapBuild.profession, preSwapBuild.traits) or {},
+            restoreFractions = {},
+            nutrition = snap.nutrition and player.getNutrition and player:getNutrition() or nil,
+            modData = snap.faith ~= nil and player:getModData() or nil,
+        }
+        if type(xpFraction) ~= "number" and not fullRestore then
+            for i = 0, PerkFactory.PerkList:size() - 1 do
+                local perk = PerkFactory.PerkList:get(i)
+                local t = perk:getType()
+                if t ~= PerkFactory.Perks.None and t ~= PerkFactory.Perks.MAX then
+                    prepared.restoreFractions[perk:getId()] = MMShared.xpRestoreFraction(perk:getId())
+                end
+            end
+        end
+
+        MMlog("APPLY to " .. MMname(player) .. " | xpMode=" .. tostring(mode)
+            .. (chosenIdentity and " (overwrite identity)" or " (keep identity)")
+            .. (type(xpFraction) == "number"
+                and string.format(" (xp %d%% of earned)", math.floor(xpFraction * 100 + 0.5))
+                or (fullRestore and " (FULL restore, knob bypassed)" or "")))
+
+        if chosenIdentity then
+            phase = "identity"
+            applyIdentity(player, chosenIdentity, prepared.identity, markMutation)
+        end
+        phase = "earnables"
+        applyEarnables(player, snap, mode, preSwapBuild, fullRestore, xpFraction, prepared, markMutation)
+        phase = "body"
+        applyBodyState(player, snap, prepared, markMutation)
+        phase = "faith"
+        applyFaith(player, snap, prepared, markMutation)
+    end)
+    if not ok then
+        return { ok = false, partial = mutationStarted, phase = phase, error = tostring(err) }
+    end
+    return { ok = true, partial = false, phase = "complete" }
 end
 
 return MMSnapshotCodec

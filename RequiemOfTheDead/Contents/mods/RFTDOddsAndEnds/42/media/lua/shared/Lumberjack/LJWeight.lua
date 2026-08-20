@@ -72,7 +72,13 @@ end
 local function dial(name, fallback)
     local sv = SandboxVars and SandboxVars.RFTDOddsAndEnds
     local v = sv and tonumber(sv[name])
-    if not v or v <= 0 then return fallback end
+    -- The declared custom-double contract is 0.05..5.0. Validate it here as
+    -- well: DoubleConfigOption rejects ordinary out-of-range values but its
+    -- comparisons do not reject NaN (DoubleConfigOption.java:95-105).
+    if type(v) ~= "number" or v ~= v or v == math.huge or v == -math.huge
+        or v < 0.05 or v > 5.0 then
+        return fallback
+    end
     return v
 end
 
@@ -83,17 +89,17 @@ local function round2(v)
     return math.floor(v * 100 + 0.5) / 100
 end
 
--- ItemTag lookup is pcall'd and cached: the constant table is not guaranteed
--- across builds, and Item:getTags() returns a Java Set that Kahlua cannot
--- iterate - so hasTag with a resolved tag is the only safe route, and failing
--- to resolve one must degrade to "no tag match" rather than kill the pass.
+-- ItemTag and ResourceLocation are exported to Lua in 42.20.2. These fixed,
+-- non-empty identifiers cannot fail ResourceLocation.of (ResourceLocation.java:
+-- 29-37), while ItemTag.get is one registry map lookup that returns nil for a
+-- missing tag (ItemTag.java:478-480; Registry.java:46-48). Item:getTags()
+-- remains a Java Set Kahlua cannot iterate, so hasTag with a resolved tag is
+-- the correct route.
 local tagCache = {}
 local function tagFor(name)
     if tagCache[name] ~= nil then return tagCache[name] or nil end
-    local ok, tag = pcall(function()
-        return ItemTag.get(ResourceLocation.of("base:" .. name))
-    end)
-    tagCache[name] = (ok and tag) or false
+    local tag = ItemTag.get(ResourceLocation.of("base:" .. name))
+    tagCache[name] = tag or false
     return tagCache[name] or nil
 end
 
@@ -141,19 +147,25 @@ local function scale(item, factor)
 
     if LJ.original[full] == nil then
         local w = item:getActualWeight()
-        if type(w) ~= "number" then return end
+        if type(w) ~= "number" or w ~= w or w == math.huge or w == -math.huge then return end
         LJ.original[full] = w
     end
 
     local target = round2(LJ.original[full] * factor)
-    -- guarded: DoParam rethrows InvalidParameterException on any parse hiccup
-    pcall(function()
-        item:setActualWeight(target)
-        -- Both paths: setActualWeight moves the field the instance copies,
-        -- DoParam keeps the script's own Weight parameter in step so anything
-        -- re-reading the parameter sees the same number.
-        item:DoParam("Weight = " .. tostring(target))
-    end)
+    -- A valid Item script weight is a finite float. The validated dial above
+    -- and current float source make this a deterministic Weight parameter:
+    -- setActualWeight clamps/writes a field (Item.java:563-568), and DoParam's
+    -- exact Weight branch only Float.parseFloats this finite value (Item.java:
+    -- 1929-1942, 2099-2104). No exception boundary has useful recovery here.
+    if target ~= target or target == math.huge or target == -math.huge
+        or target > 3.4028235e38 then
+        return
+    end
+    item:setActualWeight(target)
+    -- Both paths: setActualWeight moves the field the instance copies, DoParam
+    -- keeps the script's own Weight parameter in step so later script readers
+    -- see the same number.
+    item:DoParam("Weight = " .. tostring(target))
 end
 
 function LJ.apply()

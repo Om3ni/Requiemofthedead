@@ -105,10 +105,12 @@ local function dumpLocalView(reason, detail)
         px, py, pz, tostring(vehicle ~= nil), speed, tostring(blind), tostring(dazed))
 
     local seen = 0
-    -- guard stays: getCell() is nil before a world exists, and the failure is
-    -- what selects the "SEEN unavailable" line below.
-    local okList, zl = pcall(function() return getCell():getZombieList() end)
-    if okList and zl then
+    -- LuaManager.getCell returns IsoWorld.currentCell (LuaManager.java:4771-4773),
+    -- which is nil before a world exists. Treat that known lifecycle state as a
+    -- precondition instead of converting its nil dereference into an exception.
+    local cell = getCell()
+    local zl = cell and cell:getZombieList()
+    if zl then
         for i = 0, zl:size() - 1 do
             local zombie = zl:get(i)
             if zombie then
@@ -130,7 +132,7 @@ local function dumpLocalView(reason, detail)
             lines[#lines + 1] = fmt(" SEEN ... %.0f more within %.0f tiles (capped)", seen - SEEN_CAP, DUMP_RADIUS)
         end
     else
-        lines[#lines + 1] = " SEEN unavailable (getZombieList failed)"
+        lines[#lines + 1] = " SEEN unavailable (world cell unavailable)"
     end
 
     for oid, zType in pairs(RQRegistry.activeZombies) do

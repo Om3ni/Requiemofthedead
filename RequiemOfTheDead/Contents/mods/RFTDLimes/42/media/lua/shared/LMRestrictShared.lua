@@ -19,10 +19,11 @@ LMRestrictShared = LMRestrictShared or {}
 
 function LMRestrictShared.denied(x, y, flag)
     if not x or not y then return false, nil end
-    -- pcall stays: both callers run this INSIDE a wrapped vanilla action, so a
-    -- throw in the store walk would break that action rather than just the flag.
-    local ok, zone = pcall(Limes.getLocation, math.floor(x), math.floor(y))
-    if not ok or not zone or not zone.fields then return false, nil end
+    -- This is Limes' own validated spatial index, not a foreign callback. An
+    -- absent zone is its normal nil result; a broken store must fail visibly
+    -- rather than silently turning a server-side restriction into allow.
+    local zone = Limes.getLocation(math.floor(x), math.floor(y))
+    if not zone or not zone.fields then return false, nil end
     if zone.fields[flag] == true then return true, zone.name end
     return false, nil
 end

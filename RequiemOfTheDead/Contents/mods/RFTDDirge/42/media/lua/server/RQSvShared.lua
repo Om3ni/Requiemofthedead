@@ -1,6 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 if not isServer() then return end
 
+require "RQChargeLevy"
+
 RQSvShared = RQSvShared or {}
 
 -- ========================
@@ -207,9 +209,6 @@ end
 -- damage subtraction from racing the cap.
 local MAX_NETWORK_HP = 30.0
 
--- Cross-build probe verdict for IsoZombie:getOwnerPlayer (nil = unprobed).
-local svHasGetOwnerPlayer = nil
-
 -- ownerOnly: send to the zombie's owning client instead of broadcasting.
 -- Only the owner's setHealth survives anyway -- every other client's write is
 -- overwritten by the owner's next NetworkZombieManager sync -- so broadcasting
@@ -242,27 +241,15 @@ local function svSetZombieHP(zombie, targetHP, ownerOnly)
     }
 
     if ownerOnly then
-        -- Lazy one-shot cross-build probe: getOwnerPlayer is IsoZombie:454 in
-        -- 42.20.2 (an ECS field read that cannot throw), but it may vanish in a
-        -- later engine change, and this is the only branch that can tell.
-        -- Colon-call inside the pcall so a missing method reads as a failed
-        -- probe, not as "no owner". Verdict cached; the hot per-zombie callers
-        -- never re-probe.
-        if svHasGetOwnerPlayer == nil then
-            svHasGetOwnerPlayer = pcall(function() return zombie:getOwnerPlayer() end)
+        -- The owner read is nullable by design: no owner means this server already
+        -- owns the zombie, so its direct setHealth above is authoritative. Do not
+        -- broadcast in that case or the saved network traffic is undone.
+        -- IsoZombie.java:453-456.
+        local owner = zombie:getOwnerPlayer()
+        if owner then
+            sendServerCommand(owner, RQCommon.MODULE, "applyZombieHP", payload)
         end
-        if svHasGetOwnerPlayer then
-            -- nil owner means the SERVER owns this zombie: the setHealth above
-            -- is already authoritative and no packet is needed. Do NOT fall
-            -- back to a broadcast here or the saving is undone.
-            local owner = zombie:getOwnerPlayer()
-            if owner then
-                sendServerCommand(owner, RQCommon.MODULE, "applyZombieHP", payload)
-            end
-            return true
-        end
-        -- getOwnerPlayer itself is missing (engine change): fall back to the
-        -- old broadcast so behaviour degrades rather than breaks.
+        return true
     end
 
     sendServerCommand(RQCommon.MODULE, "applyZombieHP", payload)
@@ -544,6 +531,8 @@ local function svDoSpawn(x, y, z, count, onSpawned)
     local handler  = onSpawned or RQSvShared.onSummonSpawned
     local spawned  = 0
     local attempts = 0
+    local handlerFailures = 0
+    local firstHandlerError = nil
     local rSq = r * r
     while spawned < count and attempts < count * 3 do
         attempts = attempts + 1
@@ -552,26 +541,35 @@ local function svDoSpawn(x, y, z, count, onSpawned)
         if dx * dx + dy * dy <= rSq then
             local sq = cell:getGridSquare(x + dx, y + dy, z)
             if sq and not sq:isSolid() then
-                -- guard stays: addZombiesInOutfit is a vanilla Lua global (not in
-                -- the Java decompile) and it fails on an unloaded/invalid chunk --
-                -- a failed attempt must cost one attempt, not the whole summon.
-                local okAdd, added = pcall(addZombiesInOutfit, x + dx, y + dy, z, 1, nil, 50)
-                if okAdd then
-                    spawned = spawned + 1
-                    if added and handler then
-                        -- guard stays: handler is caller-supplied mod logic
-                        -- (onSummonSpawned or an admin-spawn closure); one bad
-                        -- newborn must not abort the rest of the summon.
-                        pcall(function()
-                            for i = 0, added:size() - 1 do
-                                local zed = added:get(i)
-                                if zed then handler(zed) end
+                -- The Java global returns an empty ArrayList for a missing
+                -- square, disabled zombies, or failed allocation. It does not
+                -- use exceptions to report an unsuccessful spawn.
+                -- LuaManager.java:8343-8345, 8368-8423.
+                local added = addZombiesInOutfit(x + dx, y + dy, z, 1, nil, 50)
+                local addedCount = added:size()
+                spawned = spawned + addedCount
+                if handler then
+                    for i = 0, addedCount - 1 do
+                        local zed = added:get(i)
+                        if zed then
+                            -- Retained independent-member boundary: a newborn
+                            -- handler can mutate conversion state before failing;
+                            -- later newborns remain valid work in the summon.
+                            local okHandler, handlerError = pcall(handler, zed)
+                            if not okHandler then
+                                handlerFailures = handlerFailures + 1
+                                if not firstHandlerError then firstHandlerError = handlerError end
                             end
-                        end)
+                        end
                     end
                 end
             end
         end
+    end
+    if handlerFailures > 0 then
+        print("[RFTDDirge] summon newborn handler failed for " .. handlerFailures
+            .. " of " .. spawned .. " spawned zombie(s); first error: "
+            .. tostring(firstHandlerError))
     end
     return spawned
 end
@@ -582,20 +580,19 @@ end
 
 local function svApplyEMPEnduranceDrain(player)
     if not player then return end
-    -- guard stays: MoodleType and CharacterStat are Java enum globals, and
-    -- indexing them when the enum is absent in a future build throws before
-    -- any of the reads below run.
-    pcall(function()
-        local level = player:getMoodles():getMoodleLevel(MoodleType.ENDURANCE)
-        if level < 4 then
-            local targets = { 0.65, 0.40, 0.18, 0.05 }
-            local target  = targets[level + 1]
-            local current = player:getStats():get(CharacterStat.ENDURANCE)
-            if target and target < current then
-                player:getStats():set(CharacterStat.ENDURANCE, target)
-            end
+    -- 42.20.3: LuaManager.java:1756,1765-1766,2228 exposes Moodles, Stats,
+    -- CharacterStat, and MoodleType; IsoGameCharacter.java:3472-3478 returns
+    -- initialized moodles/stats; Stats.java:76-84 clamps get/set directly.
+    local level = player:getMoodles():getMoodleLevel(MoodleType.ENDURANCE)
+    if level < 4 then
+        local targets = { 0.65, 0.40, 0.18, 0.05 }
+        local target  = targets[level + 1]
+        local stats   = player:getStats()
+        local current = stats:get(CharacterStat.ENDURANCE)
+        if target and target < current then
+            stats:set(CharacterStat.ENDURANCE, target)
         end
-    end)
+    end
 end
 
 local function svDamageWorldElectronics(x, y, z, radius, drainPercent)
@@ -618,25 +615,24 @@ local function svDamageWorldElectronics(x, y, z, radius, drainPercent)
                                     obj:setCondition(math.max(0, cond - math.floor(cond * drainPercent / 100)))
                                 end
                             elseif obj and (instanceof(obj, "IsoTelevision") or instanceof(obj, "IsoRadio")) then
-                                -- WaveSignalDevice API: getDeviceData():setIsTurnedOn(false).
-                                -- Earlier code called obj:turnOff() which silently no-op'd
-                                -- (that method doesn't exist on radios/TVs in vanilla - confirmed
-                                -- by grep against the Steam install). Pattern below mirrors
-                                -- ISMoveablesAction.lua and ISVehicleDashboard.lua.
-                                local dd = obj.getDeviceData and obj:getDeviceData()
-                                if dd and dd.getIsTurnedOn and dd:getIsTurnedOn() then
-                                    -- guard stays: DeviceData.setIsTurnedOn:455 ends
-                                    -- with IsoGenerator.updateGenerator(getParent()
-                                    -- .getSquare()) and never null-checks getParent().
-                                    pcall(dd.setIsTurnedOn, dd, false)
+                                local dd = obj:getDeviceData()
+                                -- DeviceData.canBePoweredHere dereferences its
+                                -- parent before checking it and shutdown ends at
+                                -- parent.getSquare(). Objects detached during the
+                                -- scan are stale work, not exceptional work.
+                                -- DeviceData.java:455-472, 491-514.
+                                if dd and dd:getParent() == obj and obj:getSquare() == sq
+                                   and dd:getIsTurnedOn() then
+                                    dd:setIsTurnedOn(false)
                                 end
                             elseif obj and instanceof(obj, "IsoWindow") then
-                                -- Shockwave shatters intact panes in the blast radius.
-                                -- guard stays: IsoWindow.smashWindow:275 dereferences
-                                -- this.square and PolygonalMap2.instance unguarded, so
-                                -- a pane on a half-unloaded square throws.
-                                if not obj:isSmashed() then
-                                    pcall(obj.smashWindow, obj)
+                                -- The window implementation requires its square
+                                -- throughout sound, attachment, path, and polygon
+                                -- updates. Skip a pane detached during this scan;
+                                -- live windows follow vanilla's direct call.
+                                -- IsoWindow.java:275-318.
+                                if obj:getSquare() == sq and not obj:isSmashed() then
+                                    obj:smashWindow()
                                 end
                             end
                         end
@@ -650,60 +646,6 @@ end
 -- inner half of blast radius hits harder than outer ring
 local EMP_INNER_DMG = 0.15
 local EMP_OUTER_DMG = 0.10
-
--- Switch off + partially drain a player's handheld electronics. Filter is
--- "currently activated OR type is Battery" so we hit
--- flashlights, lanterns, walkies, watches, plus loose battery stockpiles,
--- without accidentally consuming "uses" on unrelated drainables (food, water,
--- books, page-read trackers). Everything pcall-wrapped because inventory item
--- subclasses vary on which methods they actually expose.
---
--- Drainable semantics: setUsedDelta(x) treats x as REMAINING fullness, not
--- "amount consumed" - 1.0 = full, 0.0 = depleted. Naming is misleading but
--- the getCurrentUsesFloat/setUsedDelta pairing in vanilla (ISItemEditPanel,
--- RecipeTests, ClientCommands) confirms this. To drain, we subtract.
-local function svDrainPlayerElectronics(player, drainPercent)
-    local inv = player and player:getInventory()
-    if not inv then return 0 end
-    local items = inv:getItems()
-    if not items then return 0 end
-    local drainFrac = drainPercent / 100.0
-    local hit = 0
-    for i = 0, items:size() - 1 do
-        local it = items:get(i)
-        if it then
-            local wasActive = false
-            if it:isActivated() then
-                wasActive = true
-                it:setActivated(false)
-            end
-
-            -- No hasTag("Battery") probe: InventoryItem.hasTag:2665/2669 only
-            -- takes ItemTag, Kahlua registers no String->ItemTag converter
-            -- (KahluaNumberConverter/KahluaArrayConverter are the only ones), and
-            -- ItemTag has no Battery constant anyway -- so that branch always
-            -- threw and was always swallowed. getType is the path that works.
-            local isBattery = false
-            if it.getType then
-                if it:getType() == "Battery" then isBattery = true end
-            end
-
-            if (wasActive or isBattery) and it.getCurrentUsesFloat and it.setUsedDelta then
-                -- guard stays: getCurrentUsesFloat/setUsedDelta are overridden per
-                -- item subclass (DrainableComboItem:86/98, Clothing:1257,
-                -- WeaponPart:307, Food:2037, Radio:271) and the drainable path
-                -- divides by the script's useDelta -- unverifiable across all of
-                -- them, and "hit" must only count items that really drained.
-                local okD = pcall(function()
-                    local cur = it:getCurrentUsesFloat() or 0
-                    it:setUsedDelta(math.max(0.0, cur - drainFrac))
-                end)
-                if okD then hit = hit + 1 end
-            end
-        end
-    end
-    return hit
-end
 
 local function svApplyEMPBlast(x, y, z, radius, drainPercent)
     local innerSq = (radius * 0.5) * (radius * 0.5)
@@ -724,7 +666,7 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent)
                     local newHP  = math.max(0.01, hp - hp * dmgPct)
                     p:setHealth(newHP)
                     svApplyEMPEnduranceDrain(p)
-                    local itemsHit = svDrainPlayerElectronics(p, drainPercent)
+                    local itemsHit = RQChargeLevy.drain(p, drainPercent)
                     sendToPlayer(p, "empDebuff", {
                         x      = x,
                         y      = y,

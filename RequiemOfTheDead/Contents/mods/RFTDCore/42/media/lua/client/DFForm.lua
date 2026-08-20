@@ -108,21 +108,21 @@ local function tw(s)  return getTextManager():MeasureStringX(font(), s or "") en
 -- group gap is most of a row - so changing the font changes the size of the
 -- form without changing how it reads.
 -- ---------------------------------------------------------------------------
--- getFontHeight (TextManager:127) NPEs on a font this build lacks; each
--- measure below keeps its fallback behind the guard.
+-- TextManager is eagerly initialized and substitutes its default font for an
+-- unavailable enum (LuaManager.java:6930-6933; TextManager.java:119-129), so
+-- these are deterministic measurements. The numeric fallback only handles an
+-- unusable returned height.
 local baseFH
 local function baseline()
     if not baseFH then
-        baseFH = 12
-        pcall(function() baseFH = getTextManager():getFontHeight(UIFont.Small) end)
+        baseFH = getTextManager():getFontHeight(UIFont.Small)
         if not baseFH or baseFH < 1 then baseFH = 12 end
     end
     return baseFH
 end
 
 local function metrics()
-    local fh = baseline()
-    pcall(function() fh = getTextManager():getFontHeight(font()) end)
+    local fh = getTextManager():getFontHeight(font())
     if not fh or fh < 1 then fh = baseline() end
     local s = fh / baseline()
     if s < 1 then s = 1 end

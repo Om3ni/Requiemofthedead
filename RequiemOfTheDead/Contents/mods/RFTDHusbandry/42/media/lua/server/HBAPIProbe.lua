@@ -29,7 +29,16 @@ local function emit(player, line)
     end
 end
 
--- Safe read: returns (ok, value_or_err).
+-- The discovery helper. Returns (ok, value_or_err), and the ERROR TEXT is the
+-- product - `runOn` prints it beside every reading.
+--
+-- pcall-probe: this file's entire job is finding out which of these methods
+-- exist on this build. A method that is not on the class is `attempt to call a
+-- nil value` - Lua lane, real throw - and so is a wrong arity through
+-- MethodArguments.assertValid. Neither is a claim about a method BODY, which is
+-- what rule 1's safe-list answers, so no reading of the decompile can retire
+-- these. Removing one does not make the probe fail loudly; it makes the probe
+-- unable to report, which is the only thing it does.
 local function tryGet(fn)
     local ok, v = pcall(fn)
     return ok, v
@@ -41,15 +50,25 @@ local function fmt(v)
     return tostring(v)
 end
 
+-- The probe's header line. Same rule as tryGet, and for the same reason: these
+-- four are catalog CLAIMS about IsoAnimal, and a claim that turns out false
+-- reads as a nil method rather than a bad value. Each falls back to "?" so one
+-- absent getter costs its own field and not the whole identification.
+--
+-- pcall-probe: unconfirmed API surface - a method absent on this build throws
+-- `attempt to call a nil value` from Lua, which no body reading can rule out.
 local function identity(animal)
     local name = "?"
     pcall(function() name = animal:getFullName() or animal:getCustomName() or "?" end)
     local species = "?"
+    -- pcall-probe: as above.
     pcall(function() species = animal:getAnimalType() or "?" end)
     local sex = "?"
+    -- pcall-probe: as above.
     pcall(function() sex = animal:isFemale() and "F" or "M" end)
     -- isBaby() is the only lifecycle flag confirmed in vanilla Lua - isYoung()
     -- has zero grep hits and was removed as an unverified claim.
+    -- pcall-probe: as above.
     local age = "?"
     pcall(function() age = animal:isBaby() and "Baby" or "Adult" end)
     return name, species, sex, age
@@ -91,6 +110,9 @@ function HBAPIProbe.runOn(oid, player)
     -- ── Phase 2: write via stats:set then re-read both APIs ─────────────
 
     local testVal = 0.42
+    -- pcall-probe: the write half of claim 2. Whether getStats():set accepts a
+    -- CharacterStat and a float on this build is precisely the open question,
+    -- and a wrong arity or an absent overload raises before any body runs.
     local okSet, errSet = pcall(function() animal:getStats():set(CharacterStat.HUNGER, testVal) end)
     if not okSet then
         emit(player, "[probe] stats:set(HUNGER, 0.42) ERROR: " .. tostring(errSet))
@@ -114,6 +136,8 @@ function HBAPIProbe.runOn(oid, player)
 
     -- ── Phase 3: check updateLastTimeSinceUpdate() existence ────────────
 
+    -- pcall-probe: claim 4 is existence, stated as such - "exists as documented".
+    -- The whole result of this phase is which branch below runs.
     local okU, errU = pcall(function() animal:updateLastTimeSinceUpdate() end)
     if okU then
         emit(player, "[probe] updateLastTimeSinceUpdate() ok - clock reset available")
@@ -124,6 +148,9 @@ function HBAPIProbe.runOn(oid, player)
     -- ── Phase 4: restore original hunger (non-destructive) ──────────────
 
     if okStatH and type(statH) == "number" then
+        -- pcall-probe: the restore. Same unconfirmed setter as phase 2 - and if
+        -- it is absent, phase 2 could not have changed anything either, so
+        -- there is nothing to put back and nothing to report twice.
         pcall(function() animal:getStats():set(CharacterStat.HUNGER, statH) end)
         emit(player, string.format("[probe] restored HUNGER to %s; done", fmt(statH)))
     else
@@ -143,6 +170,7 @@ function HBAPIProbe.runOn(oid, player)
     emit(player, "[probe] appearanceTxt: " .. tostring(appearTxt))
 
     -- Genetic disorders: list of currently expressed disorder strings.
+    -- pcall-probe: unconfirmed API surface, same lane as every guard above.
     local okGD, gd = pcall(function() return animal:getGeneticDisorder() end)
     if okGD and gd and gd.size then
         if gd:size() == 0 then

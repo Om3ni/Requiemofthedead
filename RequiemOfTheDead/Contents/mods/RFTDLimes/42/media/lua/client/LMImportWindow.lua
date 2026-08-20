@@ -68,10 +68,14 @@ function LMImportWindow:createChildren()
     self.body.borderColor     = { r = 0, g = 0, b = 0, a = 0 }
     self.body:initialise(); self.body:instantiate()
     self:addChild(self.body)
-    -- pcall: attach builds LMImportTab's whole control set, including widgets
-    -- from Dragonfly's DFKit. A tab that fails to build must still leave this
-    -- window with its log pane, which is the half that explains the failure.
-    pcall(LMImportTab.attach, self.body)
+    -- No guard, and the old justification was wrong twice over. It called DFKit
+    -- "Dragonfly's" - DFKit lives in CORE (RFTDCore/client/DFKit.lua), which
+    -- everything hard-requires, so there is no optional integration here. And
+    -- LMImportTab is this mod's own file. pcall over our own code plus
+    -- always-present Core widgets is exactly the shape the policy forbids: a
+    -- build failure is a programming error, and it should be loud and
+    -- attributable, not a tab that silently is not there.
+    LMImportTab.attach(self.body)
 
     self.log = LogList:new(4, self.height - CONSOLE_H, self.width - 8, CONSOLE_H - 6)
     self.log:initialise(); self.log:instantiate()
@@ -110,10 +114,11 @@ function LMImportWindow:onResize()
     if self.body then
         self.body:setWidth(self.width)
         self.body:setHeight(bodyH)
-        -- pcall: onResize fires on every drag frame, and layout touches widgets
-        -- attach() may have failed to build (see createChildren) - the log pane
-        -- below still has to be resized either way.
-        pcall(LMImportTab.layout, self.body, 0, 0, self.width, bodyH)
+        -- No guard. Its old premise - "widgets attach() may have failed to
+        -- build" - existed only because attach was itself pcall'd; with that
+        -- guard gone, a window that opened at all has a fully built tab.
+        -- Guard-begets-guard is how the original 2,400 grew.
+        LMImportTab.layout(self.body, 0, 0, self.width, bodyH)
     end
     if self.copyBtn then
         self.copyBtn:setX(self.width - 116)

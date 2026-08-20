@@ -5,6 +5,8 @@
 -- and the zombie type name if it's a special. Toggle it on
 -- in sandbox options, leave it off for normal play.
 
+require "RDWorldOverlay"
+
 RQHealthBar = RQHealthBar or {}
 
 local BAR_W = 56
@@ -16,30 +18,10 @@ local VIEW_RANGE_SQ = 900 -- don't bother rendering past 30 tiles
 local hudPanel = nil
 local hudActive = false
 
--- 1x1 pixel element trick - keeps the HUD overlay from eating
--- mouse clicks on the actual game world. Same approach as the
--- cast bar system (see RQCastBar.lua).
-local RQHealthBarHUD = ISUIElement:derive("RQHealthBarHUD")
-
-function RQHealthBarHUD:new()
-    local o = ISUIElement:new(0, 0, 1, 1)
-    setmetatable(o, self)
-    self.__index = self
-    o:setWantKeyEvents(false)
-    return o
-end
-
-function RQHealthBarHUD:prerender() end
-
--- block nothing, pass everything through
-function RQHealthBarHUD:onMouseDown(x, y) return false end
-function RQHealthBarHUD:onRightMouseDown(x, y) return false end
-function RQHealthBarHUD:onMouseUp(x, y) return false end
-function RQHealthBarHUD:onRightMouseUp(x, y) return false end
-function RQHealthBarHUD:onMouseMove(dx, dy) return false end
-function RQHealthBarHUD:onMouseMoveOutside(dx, dy) return false end
-function RQHealthBarHUD:onMouseWheel(del) return false end
-function RQHealthBarHUD:onFocus(x, y) end
+-- The 1x1 click-through element and its pass-through handlers live in Core now
+-- (RDWorldOverlay, 2026-08-19). The comment this replaces already said "same
+-- approach as the cast bar system", which is the tell: it was the same code.
+local RQHealthBarHUD = RDWorldOverlay:derive("RQHealthBarHUD")
 
 function RQHealthBarHUD:render()
     local player = getPlayer()
@@ -171,10 +153,7 @@ local function onGameStart()
         -- the backing element (ISUIElement.lua:1373-1380).
         hudPanel:removeFromUIManager()
     end
-    hudPanel = RQHealthBarHUD:new()
-    hudPanel:initialise()
-    hudPanel:addToUIManager()
-    hudPanel:setVisible(true)
+    hudPanel = RDWorldOverlay.attach(RQHealthBarHUD)
     hudActive = true
 end
 

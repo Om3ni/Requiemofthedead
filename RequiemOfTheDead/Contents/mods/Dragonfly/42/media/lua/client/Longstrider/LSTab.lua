@@ -4,7 +4,8 @@
 -- Left: the list of tours (add / rename / delete / select), each in its colour.
 -- Right: the map with every tour drawn; the selected one is editable.
 -- Bottom: shared Cell size / Dwell / Grid toggle + selected-region coords, then
--- Run Selected / Run All / Abort with a live progress readout.
+-- Run Selected / Run All / Abort with a live progress readout, plus the pasted
+-- CSV route (LSRoute): Route CSV opens the paste modal, Next advances it.
 --
 -- Gated by Capability.TeleportToCoordinates. Pure client; teleport is the
 -- vanilla /teleportto. Tours persist via LSTours (client-local file).
@@ -111,6 +112,7 @@ local function build(spec, panel, x, y, w, h)
     -- Forward declarations
     local toursList, cornerFields, cellField, dwellField, gridBtn
     local runSelBtn, runAllBtn, abortBtn, progress, stats, renameBtn, deleteBtn
+    local routeBtn, nextBtn
     local rebuildList, recompute, syncFields, selectTour
 
     -- ---- Header: "Tours" label (left) + stats (over map) ----
@@ -282,10 +284,60 @@ local function build(spec, panel, x, y, w, h)
     end)
 
     abortBtn = mkBtn("Abort", PAD + 236, 90, r2y, function()
-        LSTour.abort(); overlay:setLocked(false); DFFeedback.good("Tour aborted.")
+        -- One button ends whichever runner is live - they are mutually
+        -- exclusive by construction (each start() refuses while the other
+        -- runs), and both abort()s no-op when idle, so this cannot double-fire.
+        LSTour.abort(); LSRoute.abort()
+        overlay:setLocked(false); DFFeedback.good("Aborted.")
     end)
 
-    progress = ISLabel:new(PAD + 336, r2y + 4, LBL, "", 0.95, 0.90, 0.50, 1, UIFont.Small, true)
+    -- ---- Route: pasted CSV, walked on Next ----
+    routeBtn = mkBtn("Route CSV", PAD + 336, 96, r2y, function()
+        if LSRoute.status().active or LSTour.status().running then
+            DFFeedback.bad("A run is already in progress."); return
+        end
+        -- Vanilla's own multiline path: multipleLine and numLines are read
+        -- inside initialise (ISTextBox.lua:24-25), so both are set before it.
+        local modal
+        modal = ISTextBox:new(getCore():getScreenWidth() / 2 - 190,
+            getCore():getScreenHeight() / 2 - 130, 380, 160,
+            "One waypoint per line: x,y or x,y,z", "", nil, function(_, btn)
+                if btn.internal ~= "OK" or not (modal and modal.entry) then return end
+                local wps, skipped = LSRoute.parse(modal.entry:getText())
+                -- Skip-and-name, never abort-on-first: the named rows go to
+                -- the console where a multi-line report can actually be read,
+                -- the halo text carries the count.
+                for _, r in ipairs(skipped) do
+                    print(string.format("%s route: row %d skipped (%s): %s",
+                        MODULE_TAG, r.line, r.reason, r.text))
+                end
+                if #wps == 0 then
+                    DFFeedback.bad(#skipped > 0
+                        and string.format("No usable waypoints - all %d row(s) skipped (see console).", #skipped)
+                        or "Paste is empty.")
+                    return
+                end
+                local ok, err = LSRoute.start(wps)
+                if not ok then DFFeedback.bad(err or "Could not start."); return end
+                DFFeedback.good(string.format("Route started: %d waypoint(s)%s. Use Next to advance.",
+                    #wps, #skipped > 0 and (", " .. #skipped .. " row(s) skipped") or ""))
+            end, player:getPlayerNum())
+        modal:setMultipleLine(true)
+        modal:setNumberOfLines(10)
+        modal:setMaxLines(500)
+        modal:initialise(); modal:addToUIManager()
+    end)
+
+    nextBtn = mkBtn("Next", PAD + 440, 90, r2y, function()
+        LSRoute.next()
+        if not LSRoute.status().active then
+            overlay:setLocked(false)
+            DFFeedback.good("Route completed.")
+        end
+    end)
+    nextBtn.enable = false
+
+    progress = ISLabel:new(PAD + 540, r2y + 4, LBL, "", 0.95, 0.90, 0.50, 1, UIFont.Small, true)
     progress:initialise(); progress:instantiate(); panel:addChild(progress)
 
     -- ---- Helpers ----
@@ -379,16 +431,29 @@ local function build(spec, panel, x, y, w, h)
         end
 
         local st = LSTour.status()
+        local rt = LSRoute.status()
         if st.running then
             overlay:setLocked(true)
             overlay:setRunner({ cells = st.cells, current = st.idx })
             runSelBtn.enable, runAllBtn.enable, abortBtn.enable = false, false, true
+            routeBtn.enable, nextBtn.enable = false, false
             progress:setName(string.format("Touring %s: cell %d / %d  ~%ds left",
                 tostring(st.jobName or "?"), st.idx, st.total, math.ceil(st.etaMs / 1000)))
+        elseif rt.active then
+            -- No runner marker on the overlay: the route has no cells to
+            -- shade, and its position is wherever the admin is standing.
+            runSelBtn.enable, runAllBtn.enable, abortBtn.enable = false, false, true
+            routeBtn.enable, nextBtn.enable = false, true
+            nextBtn:setTitle(rt.idx >= rt.total and "Finish" or "Next")
+            progress:setName(string.format("Route: waypoint %d / %d%s",
+                rt.idx, rt.total,
+                rt.idx >= rt.total and "  -  Finish returns you home" or ""))
         else
             overlay:setLocked(false)
             overlay:setRunner(nil)
             abortBtn.enable = false
+            routeBtn.enable, nextBtn.enable = true, false
+            nextBtn:setTitle("Next")
             progress:setName("")
         end
     end
@@ -409,18 +474,17 @@ print(MODULE_TAG .. " body loaded; deferring registration to OnGameStart")
 
 Events.OnGameStart.Add(function()
     if not DFRegistry then return end
-    -- DFRegistry is Core's: containment for a foreign-mod API whose contract
-    -- may change; a refusal must not kill this OnGameStart listener.
-    local ok, err = pcall(function()
-        DFRegistry.registerTab{
-            id         = "longstrider",
-            label      = "Longstrider",
-            order      = 60,
-            capability = Capability.TeleportToCoordinates,
-            build      = build,
-        }
-    end)
-    if not ok then print(MODULE_TAG .. " registerTab error: " .. tostring(err)) end
+    -- No guard - same reading as DFAdminTab: Core is a hard dependency, and
+    -- registerTab is a validated assignment (DFRegistry.lua:23-30). The engine
+    -- already contains each listener in its own try/catch (Event.java:53-63).
+    -- Capability.TeleportToCoordinates is a static enum read (Capability.java:20).
+    DFRegistry.registerTab{
+        id         = "longstrider",
+        label      = "Longstrider",
+        order      = 60,
+        capability = Capability.TeleportToCoordinates,
+        build      = build,
+    }
 end)
 
 -- Dragonfly Longstrider v0.3.0

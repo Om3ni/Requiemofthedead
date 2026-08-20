@@ -39,6 +39,7 @@
 if not isServer() then return end
 
 require "RDShared"
+require "RDAccess"
 
 RDCmdRelay = RDCmdRelay or {}
 
@@ -71,10 +72,17 @@ end
 
 -- Cheap staff test. RDAccess.hasAnyCapability is the "any staff" notion the family
 -- already uses; isTopAdmin alone would miss capability-granted roles.
-local function isStaff(player)
-    if not RDAccess then return false end
-    return (RDAccess.isTopAdmin(player) or RDAccess.hasAnyCapability(player)) == true
-end
+--
+-- Kept local because offer() needs to CLASSIFY a sender (scope 1 vs 2 route on
+-- it, and the relayed row carries s=staff), which is a different question from
+-- "who should receive this". The delivery walk that used to sit in flush() was
+-- the same predicate applied to recipients, and that half moved to
+-- RDNet.sendStaff when three more call sites appeared.
+-- The predicate is RDAccess.isStaff (promoted 2026-08-20; this file held one
+-- of its three identical sources). Called directly: the old copy nil-checked
+-- RDAccess against a boot-order window that does not exist - shared-tier files
+-- load before ANY server-tier file runs, and the require makes the dependency
+-- a stated contract rather than a defended fear.
 
 -- ---------------------------------------------------------------------------
 -- Hot path. Called once per client command from RDGuardian's handler, so it must
@@ -84,7 +92,7 @@ end
 function RDCmdRelay.offer(module, command, player, access, est)
     if not cfg or not cfg.enabled then return end
 
-    local staff = isStaff(player)
+    local staff = RDAccess.isStaff(player)
     if cfg.scope == 1 and staff then return end
     if cfg.scope == 2 and not staff then return end
 
@@ -122,18 +130,11 @@ local function flush()
     local payload = { n = #buf, dropped = dropped, rows = buf }
     buf, dropped = {}, 0
 
-    local players = getOnlinePlayers()
-    if not players then return end
-
-    -- size/get are bounds-safe in the loop; isStaff routes through RDAccess
-    -- (non-throwing); sendServerCommand (GameServer:3256) early-returns for
-    -- unmapped/closed connections
-    for i = 0, players:size() - 1 do
-        local p = players:get(i)
-        if p and isStaff(p) then
-            sendServerCommand(p, RDShared.MODULE, "cmdRelay", payload)
-        end
-    end
+    -- One shared staff-delivery walk (RDNet.sendStaff) rather than a private
+    -- copy of it. This file had the original; it became the fourth consumer's
+    -- worth of duplication once Dragonfly's audit and Reaper's two audit paths
+    -- needed the same thing.
+    RDNet.sendStaff(RDShared.MODULE, "cmdRelay", payload)
 end
 
 Events.OnTick.Add(function()

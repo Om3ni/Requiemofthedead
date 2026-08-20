@@ -48,11 +48,17 @@ local function consumeAndReplace(player, item)
     local container = item:getContainer() or inv
     container:Remove(item)
     sendRemoveItemFromContainer(container, item)
-    -- AddItem keeps its guard: it resolves a script item by name and returns
-    -- null for an unknown type, and the container can refuse on capacity - the
-    -- one call here that has a failure mode rather than a reassuring name.
-    local nb
-    pcall(function() nb = container:AddItem("Base.Notebook") end)
+    -- No guard, and BOTH of the old comment's failure modes were wrong.
+    -- AddItem answers an unknown or obsolete type by LOGGING and returning
+    -- null, not by throwing (ItemContainer.java:506-539 at :512-515, :516-518;
+    -- InventoryItemFactory.java:100-107 is the same shape), and it has NO
+    -- capacity check at all - it adds unconditionally at :524; the weight
+    -- refusal the comment imagined lives in AddItemBlind (:480-486), a
+    -- different method. The real throw paths are a null type argument
+    -- (ScriptManager.java:1330) and a script item whose Type= maps to no
+    -- InstanceItem branch (Item.java:1832-1835) - unreachable for a vanilla
+    -- literal. The nil test below was always the entire error contract.
+    local nb = container:AddItem("Base.Notebook")
     if nb then sendAddItemToContainer(container, nb) end
     MMlog("consumed memoir -> Base.Notebook for " .. MMname(player) .. " (notebook=" .. tostring(nb ~= nil) .. ")")
     return nb
@@ -104,7 +110,14 @@ function MMServer.onWrite(player, args)
     local md = player:getModData()
     if md and not md.MMLifeId then
         md.MMLifeId = tostring(getTimestamp and getTimestamp() or 0) .. "-" .. tostring(ZombRand(100000000))
-        if player.transmitModData then pcall(function() player:transmitModData() end) end
+        -- No guard. transmitModData is IsoObject's (:4469-4479): a null square
+        -- silently returns, a dropped connection is skipped by the relevance
+        -- loop or absorbed by catch(Exception) (INetworkPacket.java:174-181,
+        -- :127-138), and the ONE real NPE window - GameServer.server set but
+        -- udpEngine not yet assigned (INetworkPacket.java:176; GameServer.java
+        -- :407 vs :1425) - cannot contain a client-command handler, because a
+        -- connected player exists only after udpEngine does.
+        player:transmitModData()
     end
 
     -- Same contract every other failure in this handler already honours: deny,
@@ -230,19 +243,35 @@ function MMServer.onRead(player, args)
         end
     end
 
-    -- pcall-armored: a server-side failure must deny loudly and keep the memoir -
-    -- never a silent no-op. The codec apply is idempotent, so retrying is safe.
-    local preLevels = MMAudit and MMAudit.perkLevels(player) or nil
-    local okApply, err = pcall(function() MMSnapshotCodec.applyToCharacter(player, snap, chosen, xpMode) end)
-    if not okApply then
-        MMwarn("READ apply FAILED (xpMode=" .. tostring(xpMode) .. ") for " .. MMname(player) .. ": " .. tostring(err))
-        if MMAudit then MMAudit.log(player, "READ_APPLYFAIL", { itemId = args.itemID,
-            xpMode = xpMode, err = tostring(err) }) end
+    -- The codec owns the mutation boundary. A preflight refusal is safe to retry;
+    -- once any setter was attempted, the result is partial and retrying the additive
+    -- portions could duplicate progression. Keep the memoir in both cases, but close
+    -- this life's gate on a partial apply and require admin intervention.
+    local preProgress = MMAudit and MMAudit.sampleProgression(player) or nil
+    local apply = MMSnapshotCodec.applyToCharacter(player, snap, chosen, xpMode)
+    if not apply.ok then
+        if apply.partial then
+            if md then md.MMRecalled = true end
+            MMServer.pushFields(player)
+        end
+        MMwarn("READ apply FAILED (xpMode=" .. tostring(xpMode) .. ", phase="
+            .. tostring(apply.phase) .. ", partial=" .. tostring(apply.partial) .. ") for "
+            .. MMname(player) .. ": " .. tostring(apply.error))
+        if MMAudit then
+            local postProgress = MMAudit.sampleProgression(player)
+            MMAudit.log(player, "READ_APPLYFAIL", MMAudit.attachProgression({ itemId = args.itemID,
+            xpMode = xpMode, phase = apply.phase, partial = apply.partial,
+            err = tostring(apply.error) }, preProgress, postProgress))
+        end
+        if apply.partial then
+            return reply(player, false, "applypartial",
+                "The recall broke partway through. Do not retry; relog and tell an admin. The memoir was kept.")
+        end
         return reply(player, false, "applyfail",
-            "The pages blur... (recall failed, the memoir was not consumed - please tell an admin)")
+            "The pages blur... (nothing was changed; the memoir was kept and may be retried)")
     end
-    -- Spend this life's single recall (see the gate above). Stamped only after a
-    -- successful apply - a failed apply must leave the player eligible to retry.
+    -- Spend this life's single recall (see the gate above). A preflight failure
+    -- leaves it eligible; a partial failure stamps inside the branch above.
     -- pushFields' transmitModData carries it to the client with the rest.
     if md then md.MMRecalled = true end
     consumeAndReplace(player, item)
@@ -250,7 +279,8 @@ function MMServer.onRead(player, args)
     MMlog("READ applied (xpMode=" .. tostring(xpMode) .. ") + consumed item#" .. tostring(args.itemID))
     if MMAudit then
         local now = (getTimestamp and getTimestamp()) or 0
-        MMAudit.log(player, "READ_OK", {
+        local postProgress = MMAudit.sampleProgression(player)
+        MMAudit.log(player, "READ_OK", MMAudit.attachProgression({
             itemId  = args.itemID,
             xpMode  = xpMode,
             legacy  = (snap.lifeId == nil),
@@ -259,17 +289,14 @@ function MMServer.onRead(player, args)
             -- before/after proof: levels for the pipe timeline's compact diff,
             -- full per-perk XP for the schema - the OUTCOME of the recall is on
             -- record, not just the book (progression sheet + hand-fix material)
-            lvlsBefore = preLevels,
-            lvlsAfter  = MMAudit.perkLevels(player),
-            postXP     = MMAudit.perkXP(player),
             -- the exact snapshot that was applied - pre-audit books never logged a
             -- WRITE, so the read is the only place their contents get on record
             snap = snap,
-        })
+        }, preProgress, postProgress))
         -- ~2 min later a READ_RECHECK record reports per-perk XP drift vs this
         -- moment - the only server-side window into the client mirror-apply
         -- (big positive drift = double-add, big negative = mirror failed).
-        MMAudit.scheduleRecheck(player, args.itemID)
+        MMAudit.scheduleRecheck(player, args.itemID, postProgress)
     end
     reply(player, true, nil, "Character recalled.", { snap = snap, chosen = chosen, xpMode = xpMode })
 end
@@ -282,8 +309,15 @@ end
 function MMServer.pushFields(player)
     if sendSyncPlayerFields then sendSyncPlayerFields(player, 0x00000001) end
     -- Faith lives in player modData (ParanormalZ exorcistFaith), so a restored value must be
-    -- pushed to the client the same way ParanormalZ itself does. No-op when modData is unchanged.
-    if player.transmitModData then pcall(function() player:transmitModData() end) end
+    -- pushed to the client the same way ParanormalZ itself does.
+    --
+    -- No guard - same reading as the WRITE handler's call: IsoObject:4469-4479,
+    -- with the null square and dropped-connection cases handled inside the
+    -- engine and the udpEngine window unreachable from a player-driven path.
+    -- NOTE the old "no-op when modData is unchanged" claim was wrong: there is
+    -- no diffing - every call ships the WHOLE table (ObjectModDataPacket.java
+    -- :36-47), so this stays a deliberate, per-restore call, never per-tick.
+    player:transmitModData()
 end
 
 -- ========================

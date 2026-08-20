@@ -472,13 +472,9 @@ function LMDetailsView.layout(panel, x, y, w, h)
     -- Line pitch is the glyph, measured - the old fixed 20px was only true at
     -- the font it was tuned against; at a larger text-size preference the
     -- description drew into the heading and the note into the form.
-    local lh = 20
-    -- pcall: getFontHeight (TextManager:127) hands its argument to
-    -- getFontFromEnum and dereferences the result unguarded, so a font this
-    -- build does not carry is an NPE. The 20 above is the fallback that keeps.
-    pcall(function()
-        lh = getTextManager():getFontHeight(DFKit.font.small or UIFont.Small) + 4
-    end)
+    -- TextManager resolves nil or an unavailable enum slot to its default font
+    -- before reading line height (TextManager.java:119-130).
+    local lh = getTextManager():getFontHeight(DFKit.font.small or UIFont.Small) + 4
     ui.head:setX(rx); ui.head:setY(y + PAD)
     ui.desc:setX(rx); ui.desc:setY(y + PAD + lh)
     ui.note:setX(rx); ui.note:setY(y + h - lh)

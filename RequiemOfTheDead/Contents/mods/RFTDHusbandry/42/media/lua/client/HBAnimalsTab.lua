@@ -43,6 +43,7 @@ require "ISUI/ISScrollingListBox"
 require "ISUI/ISButton"
 require "ISUI/ISLabel"
 require "ISUI/ISUI3DModel"
+require "HBAnimalMenu"
 
 local FONT       = UIFont.Code    -- data: monospace so columns and cards align
 local LABEL_FONT = UIFont.Small   -- group headings
@@ -202,15 +203,10 @@ local function drawCard(el, row, x, y, w, h)
         else
             el:drawText(f.label, x, cy, dim.r, dim.g, dim.b, 1, FONT)
 
-            -- KEEP x2: f.get / f.bar are the CARD table's own closures, called
-            -- once per field per frame against a row that may be missing any of
-            -- them. The card's whole contract is that a field renders in its
-            -- fixed slot every time, so a bad accessor draws "-" and an empty
-            -- bar rather than taking the pane's layout down.
             local value = "-"
             if row then
-                local ok, v = pcall(f.get, row)
-                if ok and v ~= nil and tostring(v) ~= "" then value = tostring(v) end
+                local v = f.get(row)
+                if v ~= nil and tostring(v) ~= "" then value = tostring(v) end
             end
 
             if f.bar then
@@ -220,8 +216,8 @@ local function drawCard(el, row, x, y, w, h)
                 if barW < 24 then barW = 24 end
                 local frac = 0
                 if row then
-                    local ok, v = pcall(f.bar, row)
-                    if ok and type(v) == "number" then frac = v end
+                    local v = f.bar(row)
+                    if type(v) == "number" then frac = v end
                 end
                 drawBar(el, x + GUTTER, cy + math.floor((fh - BAR_H) / 2) + 1,
                         barW, frac, f.invert)
@@ -281,29 +277,24 @@ local function updateAvatar(row)
 
     if AnimalsTab.avatarOid ~= row.oid then
         AnimalsTab.avatarOid = row.oid
-        -- KEEP: setCharacter and the framing setters are ISUI3DModel's - vanilla
-        -- Lua over an engine model panel, not verifiable against the decompile,
-        -- and a species this build cannot skin must leave the pane blank rather
-        -- than break the tab's refresh.
-        pcall(function()
-            local def  = avatarDef(animal:getAnimalType())   -- IsoAnimal:1487, field
-            -- getData (IsoAnimal:1185) returns the raw field, which is nil on an
-            -- animal whose constructor bailed early - hence the nil-check, not a
-            -- guard. getSize (AnimalData:1389) is a field return.
-            local data = animal:getData()
-            local size = (data and data:getSize()) or 1
+        local def  = avatarDef(animal:getAnimalType())   -- IsoAnimal:1487, field
+        -- getData (IsoAnimal:1185) returns the raw field, which is nil on an
+        -- animal whose constructor bailed early - hence the nil-check.
+        local data = animal:getData()
+        local size = (data and data:getSize()) or 1
 
-            av:setAnimSetName(animal:GetAnimSetName())
-            av:setCharacter(animal)
-            av:setState("idle")
-            av:setIsometric(false)
-            av:setDirection(def.avatarDir or IsoDirections.S)
-            -- Per-species framing that TIS already hand-tuned, scaled by the
-            -- animal's own size so a calf frames like a calf.
-            av:setZoom((def.zoom or 0) * size)
-            av:setXOffset((def.xoffset or 0) * size)
-            av:setYOffset((def.yoffset or 0) * size)
-        end)
+        -- Vanilla animal and hutch portraits configure the same model directly
+        -- (ISAnimalUI.lua:368-376; ISHutchUI.lua:836-839).
+        av:setAnimSetName(animal:GetAnimSetName())
+        av:setCharacter(animal)
+        av:setState("idle")
+        av:setIsometric(false)
+        av:setDirection(def.avatarDir or IsoDirections.S)
+        -- Per-species framing that TIS already hand-tuned, scaled by the
+        -- animal's own size so a calf frames like a calf.
+        av:setZoom((def.zoom or 0) * size)
+        av:setXOffset((def.xoffset or 0) * size)
+        av:setYOffset((def.yoffset or 0) * size)
     end
     av:setVisible(true)
 end
@@ -386,30 +377,8 @@ function AnimalsList:onRightMouseUp(x, y)
     local player = getPlayer()
     if not player then return false end
 
-    -- KEEP: everything inside is vanilla Lua (ISAnimalContextMenu), which the
-    -- Java decompile cannot vouch for, and the cheat-flag swap below leaves the
-    -- menu builder in a state we must be able to log and walk away from.
-    local ok, err = pcall(function()
-        require "ISUI/Animal/ISAnimalContextMenu"
-        local pn      = player:getPlayerNum()
-        local context = ISContextMenu.get(pn, self:getAbsoluteX() + x,
-                                              self:getAbsoluteY() + y)
-        if context and AnimalContextMenu and AnimalContextMenu.doMenu then
-            -- Force cheat-mode for the duration of the menu BUILD. Two reasons:
-            --   1. Vanilla's distance check (ISAnimalContextMenu.lua:159) nil-
-            --      indexes when getCurrentSquare() is nil - a containerised or
-            --      edge-of-load animal. The `not cheat` guard short-circuits
-            --      that whole branch.
-            --   2. Cheat-mode surfaces the debug entries (set acceptance,
-            --      fertilize, set age) that are exactly what this panel wants.
-            -- Menu building is synchronous, so restoring after doMenu is safe;
-            -- note the option CALLBACKS run later, under the original flag.
-            local prevCheat = AnimalContextMenu.cheat
-            AnimalContextMenu.cheat = true
-            AnimalContextMenu.doMenu(pn, context, animal, false)
-            AnimalContextMenu.cheat = prevCheat
-        end
-    end)
+    local ok, err = HBAnimalMenu.openCaretakerMenu(
+        player, self:getAbsoluteX() + x, self:getAbsoluteY() + y, animal)
     if not ok then
         print("[HB] Animals right-click context menu error: " .. tostring(err))
     end

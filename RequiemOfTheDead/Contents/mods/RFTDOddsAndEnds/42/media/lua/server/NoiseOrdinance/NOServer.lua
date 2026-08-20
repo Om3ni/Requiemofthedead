@@ -108,8 +108,11 @@ end
 --
 -- No capability: honking is not staff-gated, and default-deny already means an
 -- unregistered command never runs.
-RDNet.register(OEShared.MODULE, "hornStart", { rate = 6 }, onStart)
-RDNet.register(OEShared.MODULE, "hornStop",  { rate = 6 }, onStop)
+-- public on purpose: sounding a vehicle horn is an ordinary player action. The
+-- rate limit is the whole control here, and the live capture shows it working -
+-- 15 refusals on these two commands over 3.28 days.
+RDNet.register(OEShared.MODULE, "hornStart", { public = true, rate = 6 }, onStart)
+RDNet.register(OEShared.MODULE, "hornStop",  { public = true, rate = 6 }, onStop)
 Events.OnTick.Add(reap)
 
 return NoiseOrdinanceSv

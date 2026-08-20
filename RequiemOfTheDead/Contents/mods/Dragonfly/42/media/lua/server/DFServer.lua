@@ -27,11 +27,12 @@ local function reply(player, ok, action, reasonOrMessage)
     sendServerCommand(player, DFCore.MODULE, "Result", args)
 end
 
--- Per-player command rate limit. 20 commands/sec is far above any human
+-- Per-action command rate limit. 20 commands/sec is far above any human
 -- clicking cadence but stops a scripted flood. Over-limit commands are dropped
--- with NO reply (a reply is itself a packet) and are never audited (audit
--- broadcasts to all clients, which would re-amplify the flood); we log to the
--- server console at most once per 10s per player instead.
+-- with NO reply (a reply is itself a packet) and are never audited - an audit
+-- line is relayed to every staff connection, so auditing a flood would still
+-- re-amplify it, one packet per admin per dropped command. We log to the server
+-- console at most once per 10s per player instead.
 local RATE_MAX       = 20
 local RATE_WINDOW_MS = 1000
 local lastWarnMs     = {}   -- username -> last console-warn time (ms), or true
@@ -64,7 +65,13 @@ local function onClientCommand(module, command, player, args)
     if module ~= DFCore.MODULE then return end
     if command == "Result" then return end  -- never bounce our own replies
 
-    if not DFCore.allow(player, RATE_MAX, RATE_WINDOW_MS) then
+    -- Scope the bucket to THIS action. By this line `command` has not yet been
+    -- looked up, so it is still wire-controlled - but RDRate keys on
+    -- username|scope and an unknown action simply gets its own bucket, which is
+    -- the correct outcome: a flood of invented names cannot drain the bucket a
+    -- real command depends on. See DFCore.allow for what the unscoped call cost.
+    if not DFCore.allow(player, RATE_MAX, RATE_WINDOW_MS,
+                        DFCore.MODULE .. "." .. tostring(command)) then
         noteThrottled(player)
         return
     end
@@ -83,8 +90,20 @@ local function onClientCommand(module, command, player, args)
     end
 
     DFCore.audit(command, player)
-    -- pcall: handler containment - consumer mods (Reaper etc.) register run
-    -- callbacks here, and a tenant's error must not take the dispatcher down.
+    -- RETAINED - the adapter boundary of a registration contract, which is the
+    -- one place §2 puts a guard on a callback we do not own the body of.
+    --
+    -- The OLD reason was wrong and worth naming: "a tenant's error must not take
+    -- the dispatcher down" is containment the engine already provides, since
+    -- every listener runs inside its own try/catch (Event.java:53-63). Losing
+    -- the guard would not cost another mod its OnClientCommand.
+    --
+    -- What it actually buys is the REPLY. This is a request/response boundary:
+    -- a client sent a command and is waiting on a Result. Let the throw escape
+    -- and the caller is answered by nothing at all - the admin's button stays
+    -- dead with no message, which is the silent failure this refactor exists to
+    -- delete. The recovery is specific and belongs to exactly this caller: log
+    -- the offending command, then answer the client honestly.
     local ok, result = pcall(handler.run, player, args or {})
     if not ok then
         print(string.format("[Dragonfly] handler error (%s): %s", tostring(command), tostring(result)))

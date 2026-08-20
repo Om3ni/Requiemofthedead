@@ -12,6 +12,8 @@
 
 if not isServer() then return end
 
+require "RCLoadedVehicles"
+
 RCSession = RCSession or {}
 
 -- Stamp every currently-online player's activity: claim rows (expiry clock)
@@ -28,24 +30,6 @@ local function stampOnline()
             RCRegistry.stampSeen(name)
             RCRegistry.notePresence(name)
         end
-    end
-end
-
--- Iterate loaded vehicles safely. getCell():getVehicles() is a Set - iterating
--- it with get(i) crashes; :iterator() is the supported path. This runs at most
--- hourly, so it is NOT the banned per-tick scan.
-local function forEachLoadedVehicle(fn)
-    local cell = getCell and getCell()
-    if not cell then return end
-    local vs = cell:getVehicles()
-    if not vs then return end
-    local it = vs:iterator()
-    if not it then return end
-    while it:hasNext() do
-        -- guarded: one vehicle that throws mid-reconcile (transmit, expiry)
-        -- must not abort the hourly pass for every car behind it
-        local v = it:next()
-        if v then pcall(fn, v) end
     end
 end
 
@@ -80,7 +64,7 @@ Events.EveryHours.Add(function()
     end
 
     local expired = 0
-    forEachLoadedVehicle(function(v)
+    local sweep = RCLoadedVehicles.each(function(v)
         if RCRegistry.syncFromVehicle(v) == "expired" then expired = expired + 1 end
         if RCJanitor then RCJanitor.consider(v) end
         -- Destruction accounting (§4) rides the SAME iteration. B42 fires no
@@ -90,6 +74,10 @@ Events.EveryHours.Add(function()
         -- be double-counted as a destruction.
         if RCRespawn then RCRespawn.observe(v) end
     end)
+    if sweep.failed > 0 then
+        print("[RC] hourly pass: " .. sweep.failed .. " of " .. sweep.visited
+            .. " vehicle(s) failed; first error: " .. tostring(sweep.firstError))
+    end
     if expired > 0 then RCShared.dbg("hourly pass: expired %d claim(s)", expired) end
 
     -- Redemption: spend a metered slice of the token pool back into the world.

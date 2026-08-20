@@ -56,8 +56,16 @@ end
 -- another). RDRate is server-only; these shims are only ever called from
 -- DFServer's dispatcher, and fail open client-side by design.
 -- ─────────────────────────────────────────────────────────────────────────
-function DFCore.allow(player, max, windowMs)
-    if RDRate then return RDRate.allow(player, max, windowMs) end
+-- `scope` isolates the bucket and callers must pass one. Until 2026-08-19 this
+-- forwarded no scope, which put every Dragonfly admin command into RDRate's
+-- legacy bare-username bucket (RDRate.lua:52) - the same bucket RCServer.lua:980
+-- still uses unscoped, so Dragonfly's entire admin surface and Reclamation's
+-- entire surface shared ONE 20/sec allowance per player. That is precisely the
+-- cross-contamination RDRate's own header describes as having eaten LMSync's
+-- join pulls and zone saves, and it meant a busy admin panel could throttle an
+-- unrelated mod's traffic for the same user.
+function DFCore.allow(player, max, windowMs, scope)
+    if RDRate then return RDRate.allow(player, max, windowMs, scope) end
     return true
 end
 
@@ -67,21 +75,36 @@ end
 
 -- Server-side audit line. Format matches Reaper's "[Reaper] forceScan
 -- requested by USERNAME" so logs across the family read the same way.
--- Also broadcasts the line to every connected client so admins see each
--- other's actions in the in-game Console tab without needing server-console
--- access. Non-admin clients receive but don't display (panel is gated).
+-- Also relays the line to VERIFIED STAFF so admins see each other's actions in
+-- the in-game Console tab without needing server-console access.
 function DFCore.audit(action, player, extra)
     local username = (player and player.getUsername and player:getUsername()) or "?"
     local tail = extra and (" " .. tostring(extra)) or ""
     local line = string.format("[Dragonfly] %s by %s%s", tostring(action), tostring(username), tail)
     print(line)
 
-    if isServer() and sendServerCommand then
+    -- Guard on RDNet, which is what the relay below actually uses. The old
+    -- `sendServerCommand` test guarded a global this branch no longer calls.
+    if isServer() and RDNet and RDNet.sendStaff then
         local text = string.format("%s by %s%s", tostring(action), tostring(username), tail)
-        -- pcall: the broadcast overload (GameServer:3209) walks
-        -- GameServer.udpEngine.connections - udpEngine is nil until the socket
-        -- is up, and the index walk can trip on a mid-loop disconnect.
-        pcall(sendServerCommand, DFCore.MODULE, "LogBroadcast", {
+        -- STAFF ONLY since 2026-08-19. This used the all-connections overload,
+        -- so every audit line - admin username, action, and target - reached
+        -- every connected client's Lua. The old comment justified it with
+        -- "non-admin clients receive but don't display", which is the exact
+        -- counter-example the audience rule names: a hidden panel on a
+        -- non-staff client is not confidentiality. The console tab still shows
+        -- admins each other's actions; nobody else is sent them at all.
+        -- Secondary sink, bare on purpose: the authoritative record is the
+        -- print() above, which has already happened. The failure the old guard
+        -- named is real - the per-connection send reaches the same
+        -- c.startPacket() with no null check (GameServer.java:3218 into :3197)
+        -- while RakNet disconnects mutate the connection list - but
+        -- sendServerCommand is an exposed global (LuaManager.java:7238-7243),
+        -- so that NPE is a Java BODY throw: MethodCaller swallows it and
+        -- stack-traces it before Lua can see anything (MethodCaller.java:
+        -- 33-56). The pcall that sat here could never fire and its failure
+        -- counter never counted; the engine's own trace is the diagnostic.
+        RDNet.sendStaff(DFCore.MODULE, "LogBroadcast", {
             source = "Admin",
             level  = "audit",
             text   = text,

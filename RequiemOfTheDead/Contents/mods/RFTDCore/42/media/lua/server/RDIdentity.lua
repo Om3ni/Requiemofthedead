@@ -92,25 +92,27 @@ function RDIdentity.sidApprox(player)
 end
 
 local function readLedgerFile(path)
-    -- file I/O: reader can fail mid-line; the ledger is best-effort (KEEP)
-    pcall(function()
-        local r = getFileReader(path, false)
-        if not r then return end
-        for _ = 1, 1000000 do   -- bounded: no while-true on a file we didn't write this session
-            local line = r:readLine()
-            if line == nil then break end
-            local dir, user = line:match("^([^\t]+)\t(.*)$")
-            -- A stray \r survives readLine on a CRLF-written ledger and would
-            -- otherwise become part of the username key.
-            if user then user = user:gsub("\r+$", "") end
-            if dir and user and user ~= "" and dirShapeOk(dir)
-               and ledgerSafe(user) and not dirOwner[dir] then
-                dirOwner[dir] = user
-                if not userToDir[user] then userToDir[user] = dir end
-            end
+    -- Bare. A reader fault mid-line is a Java BODY throw in an exposed class
+    -- (LuaManager.java:1651), swallowed to a nil readLine by MethodCaller
+    -- (MethodCaller.java:33-56) - so a failed read is early EOF and the
+    -- ledger keeps every row parsed so far, which is exactly the best-effort
+    -- the old guard promised.
+    local r = getFileReader(path, false)
+    if not r then return end
+    for _ = 1, 1000000 do   -- bounded: no while-true on a file we didn't write this session
+        local line = r:readLine()
+        if line == nil then break end
+        local dir, user = line:match("^([^\t]+)\t(.*)$")
+        -- A stray \r survives readLine on a CRLF-written ledger and would
+        -- otherwise become part of the username key.
+        if user then user = user:gsub("\r+$", "") end
+        if dir and user and user ~= "" and dirShapeOk(dir)
+           and ledgerSafe(user) and not dirOwner[dir] then
+            dirOwner[dir] = user
+            if not userToDir[user] then userToDir[user] = dir end
         end
-        r:close()
-    end)
+    end
+    r:close()
 end
 
 -- LEGACY FIRST, and the order is load-bearing: both readers keep the FIRST claim
@@ -131,15 +133,18 @@ local function appendClaim(dir, user)
             .. "directory still works; it will be re-minted next boot.")
         return
     end
-    -- getFileWriter allowlist I/O: write/close can fail on a full or locked
-    -- disk; a lost claim line is re-minted next boot (KEEP)
-    pcall(function()
-        local w = getFileWriter(FILE, true, true)
-        if w then
-            w:write(dir .. "\t" .. user .. "\n")
-            w:close()
-        end
-    end)
+    -- No guard. The old (KEEP) rested on "write/close can fail on a full or
+    -- locked disk" - which cannot reach Lua. getFileWriter returns nil for a
+    -- denied path or a failed open, catching both of its own IOException sites
+    -- (LuaManager.java:5523-5555), and LuaFileWriter.write/close delegate to
+    -- PrintWriter, which records exactly that full-or-locked-disk condition on
+    -- an internal flag rather than raising it (LuaManager.java:9850-9868).
+    -- A refused write is the nil below; a lost claim line is re-minted next boot.
+    local w = getFileWriter(FILE, true, true)
+    if w then
+        w:write(dir .. "\t" .. user .. "\n")
+        w:close()
+    end
 end
 
 local function usernameOf(subj)

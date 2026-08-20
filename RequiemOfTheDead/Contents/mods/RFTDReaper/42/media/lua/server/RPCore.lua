@@ -73,11 +73,14 @@ local function safeOutfit(z)
     -- Try persistent outfit ID first - integer, survives saves, twins share it.
     local id = z:getPersistentOutfitID()
     if id and id ~= 0 then return "o" .. tostring(id) end
-    -- getOutfitName guard stays: the 42.20.2 body routes through
-    -- ModelManager.dressInRandomOutfit on a per-zombie flag, so failure is
-    -- per-zombie state, not per-build - a cached verdict would be a gamble.
-    local ok2, name = pcall(z.getOutfitName, z)
-    if ok2 and name and name ~= "" then return tostring(name) end
+    -- No guard. The per-zombie failure the old comment named (the body routes
+    -- through ModelManager.dressInRandomOutfit on a per-zombie flag) is real,
+    -- but getOutfitName is an exposed method: the fault is swallowed and
+    -- logged by MethodCaller and the call returns nil (MethodCaller.java
+    -- :33-56). The name test below was always the recovery - a faulted zombie
+    -- answers "?outfit?" exactly as before, now without the inert wrapper.
+    local name = z:getOutfitName()
+    if name and name ~= "" then return tostring(name) end
     return "?outfit?"
 end
 
@@ -118,10 +121,14 @@ end
 
 local function cullZombie(z)
     z:removeFromSquare() -- null-checks every field it touches
-    -- removeFromWorld DOES throw: IsoZombie's override reaches
-    -- IsoMovingObject.removeFromWorld, which calls getCell().isSafeToAdd()
-    -- with no null check, and getCell() is null until a world exists.
-    pcall(z.removeFromWorld, z)
+    -- No guard - and this closes the old TODO question about this line. The
+    -- NPE the previous comment described (IsoMovingObject.removeFromWorld
+    -- derefs getCell() unguarded, null until a world exists) is a Java BODY
+    -- throw in an exposed method: MethodCaller swallows it, logs the trace,
+    -- and the call returns (MethodCaller.java:33-56). It could never reach a
+    -- Lua pcall, so the guard was inert - and the pre-world case cannot occur
+    -- here anyway, because a cull queue only ever drains against a live cell.
+    z:removeFromWorld()
     -- IsoObject.getCell and IsoCell.getZombieList are field returns
     -- (IsoObject.java:1842-1844, IsoCell.java:2339-2341). The fixed Build
     -- 42.20 list API does not need a compatibility probe.
@@ -262,11 +269,13 @@ end
 -- -------------------------------------------------------------------------
 
 local function loadedZombieList()
-    -- LuaManager.getCell dereferences IsoWorld.instance (LuaManager.java:
-    -- 4771-4774), which is nil before world construction. Both scan entry
-    -- points share that lifecycle boundary; a missing world means no scan.
-    local ok, cell = pcall(getCell)
-    if not ok or not cell then return nil end
+    -- No guard. The lifecycle boundary the old comment named is real -
+    -- LuaManager.getCell derefs IsoWorld.instance (LuaManager.java:4771-4774),
+    -- nil before world construction - but getCell is an exposed global, so
+    -- that NPE arrives here as nil, not as an error (MethodCaller.java:33-56).
+    -- The nil test was always the boundary; `ok` was always true.
+    local cell = getCell()
+    if not cell then return nil end
     return cell:getZombieList() -- IsoCell.java:2339-2341 field return
 end
 

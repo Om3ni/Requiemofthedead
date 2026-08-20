@@ -12,7 +12,7 @@
 # The exact final artifact then passes:
 #
 #   1. luacheck  --only 011 --std lua51   (the same syntax gate as check-lua)
-#   2. Lua 5.1   - every final file is compiled by tools\lua5.1.exe
+#   2. Lua 5.1   - every final file is compiled by tools\Gates\lua5.1.exe
 #   3. tokens    - every identifier, number, string and operator is compared in
 #      order with the repo original. Any join, split or changed literal aborts.
 #   4. payload   - non-Lua files remain byte-identical and only the approved GPL
@@ -29,8 +29,15 @@
 # The repo payload is never touched, and the destination is never a junction:
 # the copy is staged beside the target and only swapped in after both gates
 # pass. If the existing target contains ANY reparse point the script refuses -
-# deleting through a link that points back at the repo would eat the source
-# (see deploy.bat's header for how linked trees end).
+# deleting through a link that points back at the repo would eat the source.
+# That is not hypothetical: the linked-tree deploy scripts this replaced cost
+# 286 files on 2026-08-02 doing exactly that, and were deleted 2026-08-20.
+#
+# EXACTLY ONE STAGED ITEM. This script and deploy-workshop-testing.py write two
+# different folders into the same Workshop directory, and both contain the same
+# 13 mod ids. Whichever one runs last deletes the other, because two staged
+# copies of the same ids let the engine choose by enumeration order instead of
+# by intent - see remove_rival below.
 #
 # Usage:
 #   python "tools\Deploy Tools\deploy-workshop.py"            format, prove, swap
@@ -62,9 +69,15 @@ def _find_repo():
 REPO = _find_repo()
 PAYLOAD = os.path.join(REPO, "RequiemOfTheDead")
 DEFAULT_DEST = os.path.join(os.path.expanduser("~"), "Zomboid", "Workshop", "RequiemOfTheDead")
-LUACHECK = os.path.join(REPO, "tools", "luacheck.exe")
-LUA51 = os.path.join(REPO, "tools", "lua5.1.exe")
-sys.path.insert(0, os.path.join(REPO, "tools"))
+# Both binaries live with the gates - they ARE the gates' tools, and this script
+# runs the same two checks as check-lua and run-tests do (2026-08-20: they moved
+# from tools/ into tools/Gates/ with everything else that uses them).
+GATES = os.path.join(REPO, "tools", "Gates")
+LUACHECK = os.path.join(GATES, "luacheck.exe")
+LUA51 = os.path.join(GATES, "lua5.1.exe")
+# license_notice.py is a SIBLING now (moved 2026-08-20 to sit with its two
+# consumers, this file and stamp-license.py), so the path hop is gone.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from license_notice import FOOT, SPDX
 
 LONG_OPEN = re.compile(r"\[(=*)\[")
@@ -269,6 +282,57 @@ def refuse_reparse_points(root):
         sys.exit(f"REFUSING: {root} is a junction/symlink - remove it by hand first.")
 
 
+# The two staged items this repo can produce. Both land in the same Workshop
+# folder and both contain the SAME 13 mod ids, which is what makes them mutually
+# exclusive rather than merely redundant.
+PRODUCTION_ITEM = "RequiemOfTheDead"
+TESTING_ITEM = "RoTD-Testing"
+
+
+def rival_of(dest):
+    """The other staged item beside `dest`, or None if dest is neither of ours.
+
+    A custom --dest has no rival: the concept only means anything for the two
+    names above, sitting in one Workshop folder.
+    """
+    dest = os.path.abspath(dest)
+    base = os.path.basename(dest)
+    other = {PRODUCTION_ITEM: TESTING_ITEM, TESTING_ITEM: PRODUCTION_ITEM}.get(base)
+    if other is None:
+        return None
+    return os.path.join(os.path.dirname(dest), other)
+
+
+def remove_rival(dest, dry_run):
+    """Delete the OTHER staged item, so exactly one is ever on disk.
+
+    WHY THIS IS NOT TIDINESS. getAllModFolders searches "workshop,steam,mods"
+    and enumerates every staged Workshop item in the first pass; readModInfo
+    breaks duplicate-id ties by LOWEST INDEX. Both of our items carry the same
+    13 mod ids, so leaving both staged means the engine picks by enumeration
+    order rather than by intent - and the one it picks is usually the stale one
+    you were not testing. The symptom is the worst kind: your code appears to
+    deploy fine and the server runs something else, silently.
+
+    Runs AFTER a successful swap, never before: a failed deploy should cost you
+    nothing, and deleting the rival first would leave you with neither item if
+    the build then aborted.
+    """
+    rival = rival_of(dest)
+    if not rival or not os.path.exists(rival):
+        return
+    if dry_run:
+        print(f"would remove  {rival} (stale sibling item - only one may be staged)")
+        return
+    # Same refusal as the destination itself. Nothing this repo builds creates a
+    # junction, but a hand-made one here would send rmtree into the repo.
+    refuse_reparse_points(rival)
+    shutil.rmtree(rival)
+    print(f"removed   {rival}")
+    print("          (the other staged item - both carry the same mod ids, and")
+    print("           the engine would have picked between them by enumeration order)")
+
+
 # Compile the exact final files with the same Lua generation the game embeds.
 COMPILE_LUA = r"""
 local fails = 0
@@ -414,6 +478,7 @@ def main():
     if args.dry_run:
         shutil.rmtree(staging)
         print(f"dry run   OK - would deploy to {dest}")
+        remove_rival(dest, dry_run=True)
         return
 
     if os.path.exists(dest):
@@ -422,6 +487,7 @@ def main():
     os.rename(staging, dest)
     print(f"deployed  {dest}")
     print("          (repo untouched; upload from the in-game Workshop menu)")
+    remove_rival(dest, dry_run=False)
 
 
 if __name__ == "__main__":

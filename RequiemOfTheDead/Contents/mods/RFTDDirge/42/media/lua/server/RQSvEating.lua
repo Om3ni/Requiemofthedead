@@ -123,28 +123,36 @@ function RQSvEating.svCorpseStillThere(corpse, sq)
     return false
 end
 
+-- A cast may finalize because another actor already removed its corpse. That
+-- is an ordinary stale-state result, not an exception: only call the direct
+-- vanilla removal path for a body still owned by this live square.
+-- IsoGridSquare.java:2610-2628; IsoMovingObject.java:688-698.
+local function removeLiveBody(body, targetSq)
+    if not body or body:getSquare() ~= targetSq or not body:getCell() then return false end
+    if not RQSvEating.svCorpseStillThere(body, targetSq) then return false end
+    targetSq:removeCorpse(body, false)
+    return true
+end
+
 -- pull the body out of the world
 function RQSvEating.svRemoveCorpse(targetCorpse, targetSq)
-    if not targetCorpse or not targetSq then return end
+    if not targetCorpse or not targetSq then return false end
     RQDirgeLog.write("System","[RQEat:Sv] svRemoveCorpse at (" .. targetSq:getX() .. "," .. targetSq:getY() .. "," .. targetSq:getZ() .. ")")
-    -- guards stay: IsoGridSquare.removeCorpse:2610 sends a RemoveCorpseFromMap
-    -- packet and then calls body.removeFromWorld(), which reaches
-    -- getCell().isSafeToAdd() unguarded -- the corpse can already be gone from
-    -- an unloading chunk by the time the eater finalizes.
+
     if instanceof(targetCorpse, "IsoDeadBody") then
-        pcall(targetSq.removeCorpse, targetSq, targetCorpse, false)
+        return removeLiveBody(targetCorpse, targetSq)
     elseif instanceof(targetCorpse, "IsoZombie") then
-        local objs = targetSq:getObjects()
-        if objs then
-            for i = 0, objs:size() - 1 do
-                local obj = objs:get(i)
-                if instanceof(obj, "IsoDeadBody") then
-                    pcall(targetSq.removeCorpse, targetSq, obj, false)
-                    break
+        local bodies = targetSq:getDeadBodys()
+        if bodies then
+            for i = 0, bodies:size() - 1 do
+                local body = bodies:get(i)
+                if instanceof(body, "IsoDeadBody") and removeLiveBody(body, targetSq) then
+                    return true
                 end
             end
         end
     end
+    return false
 end
 
 -- kick the zombie back into normal AI mode after eating is done or cancelled

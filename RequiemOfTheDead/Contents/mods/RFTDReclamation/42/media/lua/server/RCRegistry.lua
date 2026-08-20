@@ -25,6 +25,8 @@
 
 if not isServer() then return end
 
+require "RCLoadedVehicles"
+
 RCRegistry = RCRegistry or {}
 
 local REG_NAME = "RC_ClaimRegistry"
@@ -252,21 +254,17 @@ end
 -- extra scan cost (one iterator pass serves both jobs).
 function RCRegistry.loadedClaimMap()
     local map = {}
-    local cell = getCell and getCell()
-    if not cell then return map end
-    local vs = cell:getVehicles()
-    if not vs then return map end
-    local it = vs:iterator()
-    if not it then return map end
-    while it:hasNext() do
-        local v = it:next()
-        if v then
-            -- guarded: the self-heal can transmit modData and finish deferred
-            -- releases; one bad car must not abort the whole index build
-            pcall(RCRegistry.syncFromVehicle, v)
-            local id = v:getModData()[RCClaim.KEY_ID]
-            if id and id ~= "" then map[id] = v end
-        end
+    -- A self-heal can transmit claim state or finish a deferred release. Only a
+    -- completed self-heal may publish the vehicle as editable; a failed one is
+    -- retried by the next request/hourly pass instead of exposing its stale id.
+    local sweep = RCLoadedVehicles.each(function(v)
+        RCRegistry.syncFromVehicle(v)
+        local id = v:getModData()[RCClaim.KEY_ID]
+        if id and id ~= "" then map[id] = v end
+    end)
+    if sweep.failed > 0 then
+        print("[RC] loaded-claim map: skipped " .. sweep.failed .. " of " .. sweep.visited
+            .. " vehicle(s); first error: " .. tostring(sweep.firstError))
     end
     return map
 end
@@ -476,11 +474,26 @@ end
 -- transmitted, flushed with the save like the rest of the index).
 -- ---------------------------------------------------------------------------
 function RCRegistry.addToken(kind)
+    if kind ~= "vehicle" and kind ~= "trailer" then
+        return nil, "invalid-kind"
+    end
+
+    -- Token currency is a secondary reward, not authority to remove a car.
+    -- Refuse malformed persisted state explicitly so a completed dismantle can
+    -- withhold the reward and remain auditable instead of throwing after the
+    -- irreversible world mutation.
     local m = ensure().meta
-    m.tokens = m.tokens or { vehicle = 0, trailer = 0 }
-    local k = (kind == "trailer") and "trailer" or "vehicle"
-    m.tokens[k] = (m.tokens[k] or 0) + 1
-    return m.tokens[k]
+    if type(m) ~= "table" then return nil, "registry-meta-invalid" end
+    if m.tokens == nil then m.tokens = { vehicle = 0, trailer = 0 } end
+    if type(m.tokens) ~= "table" then return nil, "token-pool-invalid" end
+
+    local current = m.tokens[kind]
+    if current ~= nil and (type(current) ~= "number" or current < 0
+        or current ~= math.floor(current)) then
+        return nil, "token-count-invalid"
+    end
+    m.tokens[kind] = (current or 0) + 1
+    return m.tokens[kind], nil
 end
 
 -- Returns vehicleTokens, trailerTokens.

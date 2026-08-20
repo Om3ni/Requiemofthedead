@@ -12,17 +12,10 @@
 
 if isServer() and not isClient() then return end
 
-RCDismantleMenu = RCDismantleMenu or {}
+require "RCDismantleRules"
 
--- Tool predicates. Vanilla's own (ISVehicleMenu / ISRemoveBurntVehicle) are
--- file-local, so we mirror them: tag OR type, torch needs 10 uses.
-local function predicateMask(item)
-    return item ~= nil and (item:hasTag(ItemTag.WELDING_MASK) or item:getType() == "WeldingMask")
-end
-local function predicateTorch(item)
-    return item ~= nil and (item:hasTag(ItemTag.BLOW_TORCH) or item:getType() == "BlowTorch")
-        and item:getCurrentUses() >= 10
-end
+RCDismantleMenu = RCDismantleMenu or {}
+local pendingVehicleId
 
 -- Visibility vs gates: the entry is HIDDEN only for states that cannot
 -- change while the menu is open (mod off, staff-only for a non-staff
@@ -38,14 +31,11 @@ end
 -- Second return marks an IN-CHARACTER thought (the engine-too-good line), so
 -- the radial can float it thought-styled instead of error-red.
 function RCDismantleMenu.blockReason(vehicle, playerObj)
-    local claim = RCShared.claimDismantleBlock(vehicle, playerObj)
-    if claim == "self" then return getText("IGUI_RC_DismReleaseFirst") end
-    if claim == "other" then return getText("IGUI_RC_DismClaimed") end
-    if not RCShared.isWreck(vehicle)
-        and RCShared.phunZoneBlocks(vehicle:getX(), vehicle:getY()) then
-        return getText("IGUI_RC_DismZoneBlocked")
-    end
-    if RCShared.engineBlocksDismantle(vehicle) then
+    local code = RCDismantleRules.check(vehicle, playerObj)
+    if code == "claim-self" then return getText("IGUI_RC_DismReleaseFirst") end
+    if code == "claim-other" then return getText("IGUI_RC_DismClaimed") end
+    if code == "zone" then return getText("IGUI_RC_DismZoneBlocked") end
+    if code == "engine" then
         -- Admin-customizable line (sandbox EngineTooGoodText, trimmed +
         -- capped at 120 chars in RCShared.cfg); blank = the translated
         -- in-character default. {threshold} inserts the threshold number via
@@ -55,9 +45,10 @@ function RCDismantleMenu.blockReason(vehicle, playerObj)
         local msg = c.engineTooGoodText or getText("IGUI_RC_EngineTooGood")
         return (msg:gsub("{threshold}", tostring(c.engineThreshold))), true
     end
-    local inv = playerObj:getInventory()
-    if not inv:containsEvalRecurse(predicateMask) then return getText("IGUI_RC_DismNoMask") end
-    if not inv:containsEvalRecurse(predicateTorch) then return getText("IGUI_RC_DismNoTorch") end
+    if code == "occupied" then return getText("IGUI_RC_DismOccupied") end
+    if code == "mask" then return getText("IGUI_RC_DismNoMask") end
+    if code == "torch" then return getText("IGUI_RC_DismNoTorch") end
+    if code then return getText("IGUI_RC_DismUnavailable") end
     return nil
 end
 
@@ -67,15 +58,28 @@ end
 
 -- Queue the action, mirroring vanilla onRemoveBurntVehicle: walk adjacent,
 -- auto-equip the torch, auto-wear the mask.
-local function queueDismantle(playerObj, vehicle)
+local function queueDismantle(playerObj, vehicle, permit)
     if luautils.walkAdj(playerObj, vehicle:getSquare()) then
-        ISWorldObjectContextMenu.equip(playerObj, playerObj:getPrimaryHandItem(), predicateTorch, true)
-        local mask = playerObj:getInventory():getFirstEvalRecurse(predicateMask)
+        ISWorldObjectContextMenu.equip(playerObj, playerObj:getPrimaryHandItem(),
+            RCDismantleRules.isTorch, true)
+        local mask = RCDismantleRules.findMask(playerObj)
         if mask then
             ISInventoryPaneContextMenu.wearItem(mask, playerObj:getPlayerNum())
         end
-        ISTimedActionQueue.add(RCDismantleAction:new(playerObj, vehicle))
+        ISTimedActionQueue.add(RCDismantleAction:new(playerObj, vehicle, "field", permit))
     end
+end
+
+local function requestDismantle(playerObj, vehicle)
+    if not isClient() then
+        queueDismantle(playerObj, vehicle, nil)
+        return
+    end
+    pendingVehicleId = vehicle:getId()
+    local eternal = RCEternalTorch and RCEternalTorch.active(playerObj)
+    sendClientCommand(playerObj, RCShared.MODULE, "dismantled", {
+        stage = "begin", vehicleId = pendingVehicleId, eternal = eternal == true,
+    })
 end
 
 -- Radial click: gate NOW (the slice can't grey), halo the reason on a block.
@@ -91,7 +95,7 @@ function RCDismantleMenu.onRadialDismantle(playerObj, vehicle)
         end
         return
     end
-    queueDismantle(playerObj, vehicle)
+    requestDismantle(playerObj, vehicle)
 end
 
 -- Right-click select re-gates too: a menu built moments ago can be clicked
@@ -99,6 +103,30 @@ end
 function RCDismantleMenu.onMenuDismantle(playerObj, vehicle)
     RCDismantleMenu.onRadialDismantle(playerObj, vehicle)
 end
+
+local function onServerCommand(module, command, args)
+    if module ~= RCShared.MODULE then return end
+    if command ~= "DismantlePermit" and command ~= "DismantleRefused" then return end
+    local playerObj = getSpecificPlayer(0)
+    if not playerObj then return end
+
+    local vehicleId = args and args.vehicleId
+    if vehicleId ~= pendingVehicleId then return end
+    pendingVehicleId = nil
+
+    if command == "DismantleRefused" then
+        RCShared.halo(playerObj, getText((args and args.key) or "IGUI_RC_DismUnavailable"), true)
+        return
+    end
+
+    local vehicle = getVehicleById(vehicleId)
+    if not vehicle or vehicle:isRemovedFromWorld() then
+        RCShared.halo(playerObj, getText("IGUI_RC_DismGone"), true)
+        return
+    end
+    queueDismantle(playerObj, vehicle, args and args.ticket)
+end
+Events.OnServerCommand.Add(onServerCommand)
 
 -- ---------------------------------------------------------------------------
 -- Radial: register as a slice provider on RCClaimMenu's single radial wrap

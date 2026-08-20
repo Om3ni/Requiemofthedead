@@ -99,6 +99,11 @@ end
 -- getName() fallback covers a stale registry object whose location has gone.
 local function traitsOf(p)
     local out = {}
+    -- Chain guard, and the catchable events are LUA: a faulted exposed getter
+    -- in the chain answers nil and the next index throws
+    -- (attempt-to-index-nil), and tostring below is a BaseLib builtin - the
+    -- one lane that propagates raw (KahluaUtil.java:320,
+    -- KahluaThread.java:1379-1382). Recovery: an empty list for this read.
     pcall(function()
         local known = p:getCharacterTraits():getKnownTraits()
         for i = 0, known:size() - 1 do
@@ -116,8 +121,9 @@ local function traitsOf(p)
 end
 
 local function professionOf(p)
-    -- same registry landmine as traitsOf above: tostring/getName on a stale
-    -- registry object resolve through the registry and can NPE
+    -- Same chain-guard shape and lanes as traitsOf above: nil-chain
+    -- follow-ons in Lua plus the BaseLib tostring, which propagates raw when
+    -- the registry NPEs on a stale object. Recovery: no profession recorded.
     local name
     pcall(function()
         local prof = p:getDescriptor() and p:getDescriptor():getCharacterProfession()
@@ -372,10 +378,12 @@ local function sampleSignature(p)
 end
 
 local function homePass(p, md)
-    -- guarded: hasSafehouse walks the safehouse list and NPEs on a record with
-    -- a null owner
-    local okSH, sh = pcall(SafeHouse.hasSafehouse, p)
-    if not okSH or not sh then return end
+    -- Bare: the null-owner NPE is real (getOwner().equals() unchecked,
+    -- SafeHouse.java:93-99) but hasSafehouse is an exposed static - the fault
+    -- is swallowed to a nil return by MethodCaller (MethodCaller.java:33-56),
+    -- so the nil test was always the whole gate.
+    local sh = SafeHouse.hasSafehouse(p)
+    if not sh then return end
     local key = tostring(sh:getX()) .. "," .. tostring(sh:getY())
     local payload = {
         x = sh:getX(), y = sh:getY(),

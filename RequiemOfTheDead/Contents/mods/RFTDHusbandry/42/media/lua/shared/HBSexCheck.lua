@@ -21,12 +21,24 @@ HBSexCheck = HBSexCheck or {}
 local function readDef(d)
     local t, female, male, baby = "?", "?", "?", "?"
     if d then t = d:getAnimalType() end  -- AnimalDefinitions:699, field return
-    -- KEEP x3: female / male / babyType are Java INSTANCE FIELDS, which Kahlua
-    -- does not expose - reading one is exactly the case these guards exist for,
-    -- and "?" in the dump is the honest answer when the read is refused.
-    pcall(function() female = tostring(d.female) end)
-    pcall(function() male   = tostring(d.male) end)
-    pcall(function() baby   = tostring(d.babyType) end)
+    -- No guards, and the premise is now READ rather than assumed. It is true
+    -- that female/male/babyType are Java instance fields and Kahlua exposes
+    -- only methods - but an unexposed key does not THROW, it reads nil.
+    -- LuaJavaClassExposer builds __index as a plain KahluaTable of exposed
+    -- methods, chained to the superclass metatable
+    -- (LuaJavaClassExposer.java:225-236), and KahluaThread.tableget walks that
+    -- chain and returns null when it runs out, because the last link IS a table
+    -- (:1089-1096). The throw at :1097-1102 is for indexing a NON-table, which
+    -- an exposed AnimalDefinition is not - proven by getAnimalType() resolving
+    -- one line above.
+    --
+    -- So the nil test does the work the guards were doing, and "?" still means
+    -- "this build does not surface that field".
+    if d then
+        if d.female   ~= nil then female = tostring(d.female)   end
+        if d.male     ~= nil then male   = tostring(d.male)     end
+        if d.babyType ~= nil then baby   = tostring(d.babyType) end
+    end
     return t, female, male, baby
 end
 
@@ -74,12 +86,16 @@ function HBSexCheck.run(oid)
     end
     local a = getAnimal(oid)
     if a then
-        -- KEEP: isFemale (IsoGameCharacter:9312) resolves through
-        -- getCharacterGender() -> this.descriptor, and an animal whose
-        -- constructor bailed early (IsoAnimal:259-275) has no descriptor. "?"
-        -- is the diagnostic's own answer for an unreadable sex.
-        local sex = "?"
-        pcall(function() sex = a:isFemale() and "FEMALE" or "MALE" end)
+        -- No guard - and the one that sat here was worse than inert: it made
+        -- this diagnostic LIE. isFemale's descriptor NPE (IsoGameCharacter:9312
+        -- through this.descriptor; constructor bail at IsoAnimal:259-275) is a
+        -- Java body throw, swallowed by MethodCaller into a nil return
+        -- (MethodCaller.java:33-56) - so the closure never errored,
+        -- `nil and "FEMALE" or "MALE"` evaluated to "MALE", and an unreadable
+        -- animal printed as MALE while the "?" fallback sat unreachable. The
+        -- three-way test restores the honest answer this tool existed to give.
+        local f = a:isFemale()
+        local sex = (f == true and "FEMALE") or (f == false and "MALE") or "?"
         print(string.format("[HBSexCheck] %s view: oid=%d sex=%s",
             isServer() and "server" or "client", oid, sex))
     else

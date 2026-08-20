@@ -82,22 +82,20 @@ local function beddingMax()        return (HBBedding and HBBedding.MAX) or 100 e
 -- CAPACITY IS THE ONE THING THAT CAN THROW HERE. getMaxAnimals() and
 -- getMaxNestBox() both do `this.def.rawgetInt(...)` with NO null guard
 -- (IsoHutch.java:910-922), and def is null for any hutch the definitions do not
--- cover. That is why the original scan was written "def-free". We do want the
--- denominator, so we pcall for it and render a bare count when it is missing -
--- an unknown capacity must never take the pane down with it.
+-- cover. That native NPE escapes Lua's pcall, so it must surface; the numeric
+-- checks below still retain the UI's ordinary unknown-capacity presentation.
 local function maxAnimals(hutch)
-    local ok, n = pcall(hutch.getMaxAnimals, hutch)
-    if ok and type(n) == "number" and n > 0 then return n end
+    local n = hutch:getMaxAnimals()
+    if type(n) == "number" and n > 0 then return n end
     return nil
 end
 
 -- Vanilla's own comment: "zero-based counting, max=3 means 4 boxes :-("
 -- (ISHutchUI.lua:238). getMaxNestBox() is a max INDEX, unlike getMaxAnimals()
--- which ISHutchMenu.lua:57 uses as an exclusive bound, i.e. a count. Same
--- def.rawgetInt hazard as maxAnimals above - the guard is why it is a pcall.
+-- which ISHutchMenu.lua:57 uses as an exclusive bound, i.e. a count.
 local function nestBoxCount(hutch)
-    local ok, n = pcall(hutch.getMaxNestBox, hutch)
-    if ok and type(n) == "number" and n >= 0 then return n + 1 end
+    local n = hutch:getMaxNestBox()
+    if type(n) == "number" and n >= 0 then return n + 1 end
     return nil
 end
 
@@ -154,7 +152,8 @@ end
 -- are field reads. haveEggHatchDoor (:938) is NOT - it reads
 -- this.def.rawgetStr("openHatchSprite"), and def is null for any hutch the
 -- definitions do not cover, which is the engine-internal NPE this file's header
--- describes. Treat an unreadable hatch the way the old code did: "none".
+-- describes. That native failure escapes Lua's pcall, so it must surface rather
+-- than pretending this renderer can turn it into a "none" hatch state.
 local function doorState(hutch)
     if hutch:isOpen() then return "open" end
     if hutch:isAllDoorClosed() then return "closed" end
@@ -162,8 +161,7 @@ local function doorState(hutch)
 end
 
 local function hatchState(hutch)
-    local ok, have = pcall(hutch.haveEggHatchDoor, hutch)
-    if not ok or not have then return "none" end
+    if not hutch:haveEggHatchDoor() then return "none" end
     return hutch:isEggHatchDoorOpen() and "open" or "closed"
 end
 
@@ -236,32 +234,29 @@ local function collectParts(row)
     local h = row and row.hutch
     if not h then return parts end
 
-    -- KEEP: getAllHutchObjects (IsoHutch:858) walks this.square.getCell() with
-    -- no null guard, so a hutch whose square has been unloaded under us NPEs.
-    pcall(function()
-        local all = h:getAllHutchObjects()
-        if not all then return end
-        local n = all:size() or 0
-        for i = 0, n - 1 do
-            -- KEEP: getTextureForCurrentFrame (IsoSprite:1544) is overloaded
-            -- three ways and dereferences this.def after initSpriteInstance();
-            -- one unresolvable tile must not lose the whole composite.
-            pcall(function()
-                local o = all:get(i)
-                if not o then return end
-                local sq = o:getSquare()
-                local sp = o:getSprite()
-                if not (sq and sp) then return end
+    -- A detached hutch's native square failure is not recoverable through Lua
+    -- pcall. For a live hutch, the bounded list and sprite getter are direct;
+    -- missing square, sprite, or texture is ordinary nil control flow.
+    local all = h:getAllHutchObjects()
+    if not all then return parts end
+    local n = all:size() or 0
+    for i = 0, n - 1 do
+        local o = all:get(i)
+        if o then
+            local sq = o:getSquare()
+            local sp = o:getSprite()
+            if sq and sp then
                 local tex = sp:getTextureForCurrentFrame(IsoDirections.N)
-                if not tex then return end
-                parts[#parts + 1] = {
-                    tex = tex,
-                    dx  = sq:getX() - row.x,
-                    dy  = sq:getY() - row.y,
-                }
-            end)
+                if tex then
+                    parts[#parts + 1] = {
+                        tex = tex,
+                        dx  = sq:getX() - row.x,
+                        dy  = sq:getY() - row.y,
+                    }
+                end
+            end
         end
-    end)
+    end
 
     -- Back to front, or the near tiles get painted over by the far ones.
     table.sort(parts, function(a, b) return (a.dx + a.dy) < (b.dx + b.dy) end)
@@ -393,13 +388,10 @@ local function drawCard(el, row, x, y, w, h)
         else
             el:drawText(f.label, x, cy, dim.r, dim.g, dim.b, 1, FONT)
 
-            -- KEEP x2: f.get / f.bar are the CARD table's own closures, run once
-            -- per field per frame. The card's contract is a fixed slot for every
-            -- field, so a bad accessor draws "-" rather than dropping the pane.
             local value = "-"
             if row then
-                local ok, v = pcall(f.get, row)
-                if ok and v ~= nil and tostring(v) ~= "" then value = tostring(v) end
+                local v = f.get(row)
+                if v ~= nil and tostring(v) ~= "" then value = tostring(v) end
             end
 
             if f.bar then
@@ -407,8 +399,8 @@ local function drawCard(el, row, x, y, w, h)
                 if barW < 24 then barW = 24 end
                 local frac = 0
                 if row then
-                    local ok, v = pcall(f.bar, row)
-                    if ok and type(v) == "number" then frac = v end
+                    local v = f.bar(row)
+                    if type(v) == "number" then frac = v end
                 end
                 drawBar(el, x + GUTTER, cy + math.floor((fh - BAR_H) / 2) + 1,
                         barW, frac, f.invert)
@@ -620,27 +612,24 @@ local function scanHutches()
 
     for dx = -SCAN_RANGE, SCAN_RANGE do
         for dy = -SCAN_RANGE, SCAN_RANGE do
-            -- KEEP: getGridSquare (IsoCell:2791) walks the per-player chunk maps
-            -- off the IsoWorld/ServerMap singletons; a square beyond the loaded
-            -- edge is exactly what a 41x41 sweep runs into. The def-reading
-            -- capacity calls below (maxAnimals/nestBoxCount) sit inside it too.
-            pcall(function()
-                local s = cell:getGridSquare(px + dx, py + dy, pz)
-                if not s then return end
+            -- A cold coordinate returns nil directly (IsoCell.java:2800-2818),
+            -- so the scan handles the loaded-edge case as ordinary control flow.
+            local s = cell:getGridSquare(px + dx, py + dy, pz)
+            if s then
                 local objs = s:getObjects()
-                if not objs then return end
-                for k = 0, objs:size() - 1 do
-                    local obj = objs:get(k)
-                    if obj and instanceof(obj, "IsoHutch") then
-                        -- Skip slave halves of multi-tile coops; they share the
-                        -- master's square (→ duplicate rows) and hold no real
-                        -- dirt/animals. isSlave (IsoHutch:827) is
-                        -- `linkedX > 0 && linkedY > 0` - two field reads.
-                        local slave = obj:isSlave()
-                        local key = tostring(obj)
-                        if not slave and not seen[key] then
-                            seen[key] = true
-                            local hx, hy, hz = s:getX(), s:getY(), s:getZ()
+                if objs then
+                    for k = 0, objs:size() - 1 do
+                        local obj = objs:get(k)
+                        if obj and instanceof(obj, "IsoHutch") then
+                            -- Skip slave halves of multi-tile coops; they share the
+                            -- master's square (→ duplicate rows) and hold no real
+                            -- dirt/animals. isSlave (IsoHutch:827) is
+                            -- `linkedX > 0 && linkedY > 0` - two field reads.
+                            local slave = obj:isSlave()
+                            local key = tostring(obj)
+                            if not slave and not seen[key] then
+                                seen[key] = true
+                                local hx, hy, hz = s:getX(), s:getY(), s:getZ()
 
                             -- Worst occupant, computed once per scan rather than
                             -- per frame: the stripe needs it and walking 64 slots
@@ -652,32 +641,30 @@ local function scanHutches()
                                 if lvl > worst then worst, why = lvl, w end
                             end)
 
-                            -- KEEP: getAllHutchObjects (IsoHutch:858) walks
-                            -- this.square.getCell() unguarded; tile count falls
-                            -- back to 1 rather than losing the row.
+                            -- A valid scanned hutch has a live square; an absent
+                            -- collection still presents as one master tile.
                             local tiles = 1
-                            pcall(function()
-                                local all = obj:getAllHutchObjects()
-                                if all then tiles = all:size() or 1 end
-                            end)
+                            local all = obj:getAllHutchObjects()
+                            if all then tiles = all:size() or 1 end
 
-                            rows[#rows + 1] = {
-                                key      = string.format("%d,%d,%d", hx, hy, hz),
-                                hutch    = obj,
-                                x = hx, y = hy, z = hz,
-                                animals  = occupantCount(obj),
-                                cap      = maxAnimals(obj),
-                                dead     = deadCount(obj),
-                                nest     = nestSurvey(obj),
-                                tiles    = tiles,
-                                occWorst = worst,
-                                occWhy   = why,
-                                dist     = math.max(math.abs(dx), math.abs(dy)),
-                            }
+                                rows[#rows + 1] = {
+                                    key      = string.format("%d,%d,%d", hx, hy, hz),
+                                    hutch    = obj,
+                                    x = hx, y = hy, z = hz,
+                                    animals  = occupantCount(obj),
+                                    cap      = maxAnimals(obj),
+                                    dead     = deadCount(obj),
+                                    nest     = nestSurvey(obj),
+                                    tiles    = tiles,
+                                    occWorst = worst,
+                                    occWhy   = why,
+                                    dist     = math.max(math.abs(dx), math.abs(dy)),
+                                }
+                            end
                         end
                     end
                 end
-            end)
+            end
         end
     end
 

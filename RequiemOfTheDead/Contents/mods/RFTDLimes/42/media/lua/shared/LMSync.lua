@@ -225,7 +225,9 @@ if isServer() then
     -- pull costs a session (empty store, every save refused on revision 0),
     -- so this route gets headroom, not a razor's edge. The real gate is that
     -- it fires once per observed revision; the rate is only flood cover.
-    RDNet.register(TOKEN, "pull", { rate = 10 }, function(player)
+    -- public: any client pulls the zone set on join; it is world data every
+    -- player already sees, and gating it would blind ordinary clients.
+    RDNet.register(TOKEN, "pull", { public = true, rate = 10 }, function(player)
         queueBaseline(player)
     end)
 

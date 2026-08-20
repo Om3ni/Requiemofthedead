@@ -64,17 +64,16 @@ local function cost(v, depth, seen, budget)
 end
 
 -- estimate(args) -> approxBytes, partial
--- Never throws. partial=true means the node budget ran out, so approxBytes is a
--- floor rather than an estimate - treat it as "at least this big".
+-- partial=true means the node budget ran out, so approxBytes is a floor rather
+-- than an estimate - treat it as "at least this big". `cost` is this module's
+-- own Lua walker over an already-table payload; its depth, cycle, and node
+-- limits are the recovery for pathological shape. Do not hide an unexpected
+-- walker fault by pretending the payload cost zero bytes.
 function RDWire.estimate(args)
     if type(args) ~= "table" then return 0, false end
     local budget = { n = RDWire.NODE_BUDGET, partial = false }
-    -- cost walks WIRE-CONTROLLED foreign tables: a pathological payload
-    -- (metatable tricks, extreme depth) must degrade to 0, not throw into
-    -- the meter; already the allocation-free direct form
-    local ok, n = pcall(cost, args, 0, {}, budget)
-    if not ok then return 0, false end
-    return n or 0, budget.partial
+    local n = cost(args, 0, {}, budget)
+    return n, budget.partial
 end
 
 -- ---------------------------------------------------------------------------

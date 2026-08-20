@@ -166,19 +166,26 @@ function InventoryCollapse.summarize(itemslist, group)
                 local it = v.items[i]
                 local w = nil
                 if it then
-                    -- guarded: the group accessor is looked up by name (a
-                    -- rename in a later 42.x indexes nil and throws on call),
-                    -- and both weight getters chain through getContentsWeight
-                    -- (InventoryItem.java:3137) into ammo-script and fluid
-                    -- lookups too deep to certify. Allocation-free direct
-                    -- form; a failed read degrades to the unequipped weight,
-                    -- then to skipping the item.
-                    local ok, r = pcall(it[group.weightOf], it)
-                    if ok and type(r) == "number" then
+                    -- No guards - the chain the old comment called "too deep
+                    -- to certify" is now certified end to end. Both group
+                    -- accessors and the fallback are trivial arithmetic over
+                    -- getActualWeight + getContentsWeight
+                    -- (InventoryItem.java:3137-3164), every branch of which
+                    -- is null-checked or reads final fields; the exotic
+                    -- residues (container self-cycle, a Lua-nulled bag
+                    -- container) are Java body faults, which an exposed
+                    -- method delivers as nil, never as an error. What CAN
+                    -- fail here is the by-name lookup itself - a future
+                    -- build renaming the accessor indexes nil - so the
+                    -- presence test carries that, and the number test
+                    -- carries the swallowed-fault nil.
+                    local wf = it[group.weightOf]
+                    local r = wf and wf(it)
+                    if type(r) == "number" then
                         w = r
-                    else
-                        ok, r = pcall(it.getUnequippedWeight, it)
-                        if ok and type(r) == "number" then w = r end
+                    elseif it.getUnequippedWeight then
+                        r = it:getUnequippedWeight()
+                        if type(r) == "number" then w = r end
                     end
                 end
                 if type(w) == "number" then weight = weight + w end

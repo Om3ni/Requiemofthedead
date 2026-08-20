@@ -293,15 +293,12 @@ local folderServer    = nil   -- basename -> true, seen ONLY under media/lua/ser
 local folderElsewhere = nil   -- basename -> true, seen anywhere else
 local folderCount     = -1    -- getLoadedLuaCount() the map was built from
 
--- PROBE-BY-DESIGN, here and in poll() below: every engine touch in this file
--- rides the same machinery that reports errors, so a poller fault must stay
--- invisible - each guard degrades to "no data this pass", never to a new error
--- for the poller to then report about itself.
+-- This poller reads stable engine-owned snapshots. A poller defect must surface
+-- through the normal event path; silently turning it into "no data" would hide
+-- the very observability failure this module exists to expose.
 local function folderMapReady()
     if folderMP == nil then
-        local mp = false
-        pcall(function() mp = isClient() == true end)
-        folderMP = mp
+        folderMP = isClient() == true
     end
     if not folderMP then return false end
 
@@ -314,11 +311,9 @@ local function folderMapReady()
 
     local srv, other = {}, {}
     for i = 0, count - 1 do
-        local path
-        -- guarded: getLoadedLua (LuaManager:3774) is loaded.get(n) - an unchecked List
-        -- index. reloadLuaFile appends to that list, so the count read above can be
-        -- stale by the time we walk it. One racing index must not lose the whole scan.
-        pcall(function() path = getLoadedLua(i) end)
+        -- reloadLuaFile removes and reloads synchronously (LuaManager.java:3521-3529).
+        -- This loop cannot yield, so its captured loaded.size() bounds every index.
+        local path = getLoadedLua(i)
         if path then
             path = string.lower(string.gsub(tostring(path), "\\", "/"))
             local base = string.match(path, "([^/]+)$")
@@ -403,12 +398,10 @@ local function poll()
     local errors = getLuaDebuggerErrors()
     if not errors then return end
 
-    local size = 0
-    pcall(function() size = errors:size() end)
+    local size = errors:size()
     if size <= 0 then return end
 
-    local tail
-    pcall(function() tail = tostring(errors:get(size - 1)) end)
+    local tail = tostring(errors:get(size - 1))
     if size == DFErrorPoller.lastSize and tail == DFErrorPoller.lastTail then return end
     DFErrorPoller.lastSize = size
     DFErrorPoller.lastTail = tail
@@ -425,8 +418,7 @@ local function poll()
     -- deduplicating fragments would defeat the grouping.
     local raw = {}
     for i = 0, size - 1 do
-        local entry
-        pcall(function() entry = errors:get(i) end)
+        local entry = errors:get(i)
         if entry then raw[#raw + 1] = tidy(entry) end
     end
     if #raw == 0 then return end
@@ -441,8 +433,7 @@ local function poll()
                 -- Fingerprint and dedup stay on the UNTAGGED event, so turning
                 -- this check on or off can never split one error into two rows.
                 local text, detail = headlineOf(event), event
-                local srvFiles
-                pcall(function() srvFiles = serverFolderFilesIn(event) end)
+                local srvFiles = serverFolderFilesIn(event)
                 if srvFiles then
                     text   = "[SERVER-FOLDER] " .. text
                     detail = "!! This trace names code from media/lua/server/ - "
@@ -472,7 +463,7 @@ Events.OnTickEvenPaused.Add(poll)
 -- chain is alive, and for anything else that wants a forced re-scan.
 function DFErrorPoller.pollNow()
     DFErrorPoller.tick = POLL_INTERVAL - 1
-    pcall(poll)   -- probe-by-design: a forced scan must not throw at its caller
+    poll()
 end
 
 -- ---------------------------------------------------------------------------

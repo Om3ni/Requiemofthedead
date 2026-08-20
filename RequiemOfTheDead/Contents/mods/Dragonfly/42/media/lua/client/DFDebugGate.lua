@@ -17,6 +17,8 @@
 
 if isServer() then return end
 
+require "RDSelect"   -- Core's one keyboard-modifier reader
+
 -- F10. NOT unbound in vanilla, whatever an earlier version of this comment said:
 -- media/lua/shared/keyBinding.lua:191 binds F10 to "Take screenshot". Pressing it
 -- therefore ALSO writes a ~10 MB png to Zomboid/Screenshots, which is the visible
@@ -60,13 +62,6 @@ local function setHidden(hidden)
     end
 end
 
-local function shiftDown()
-    -- isKeyDown (GameKeyboard:113) null-checks its key array and these two
-    -- constant keycodes are always in bounds. (Computed keycodes are NOT safe
-    -- there - the array index is unchecked.)
-    return isKeyDown(Keyboard.KEY_LSHIFT) or isKeyDown(Keyboard.KEY_RSHIFT)
-end
-
 -- Apply the starting state: hidden when enabled, vanilla (visible) when disabled.
 local function applyDefault()
     if enabled() then
@@ -97,7 +92,8 @@ local function onKeyPressed(key)
     local s = cfg()
     local bound = tonumber(s.DebugGateKey) or DEFAULT_KEY
     if bound <= 0 or key ~= bound then return end
-    if s.DebugGateRequiresShift == true and not shiftDown() then return end
+    local _, shiftHeld = RDSelect.modifiers()
+    if s.DebugGateRequiresShift == true and not shiftHeld then return end
     toggle()
 end
 

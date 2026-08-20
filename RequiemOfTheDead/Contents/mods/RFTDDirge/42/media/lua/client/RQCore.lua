@@ -163,14 +163,16 @@ function RQCore.playFalloffSound(name, x, y, z, baseGain)
     if falloff <= 0.05 then return end
     local vol = (baseGain or 1.0) * falloff
     if vol <= 0 then return end   -- volume knob at 0: nothing to play
-    -- guard stays: getWorld() is nil before a world exists, and getFreeEmitter
-    -- returns nothing when FMOD has no channel free -- a missing sound must
-    -- never take the caller's effect down with it.
-    pcall(function()
-        local emitter = getWorld():getFreeEmitter(x + 0.5, y + 0.5, z or 0)
-        local handle  = emitter:playSound(name)
-        emitter:setVolume(handle, vol)
-    end)
+    -- 42.20.3: getWorld returns IsoWorld.instance (LuaManager.java:4766-4769);
+    -- before world init this is a normal absent precondition. Once present,
+    -- IsoWorld.java:481-491 always returns a pooled/new emitter, and
+    -- FMODSoundEmitter.java:484-496 returns 0 for an unknown sound instead of
+    -- throwing; setVolume only walks the emitter's own sound lists (:280-294).
+    local world = getWorld()
+    if not world then return end
+    local emitter = world:getFreeEmitter(x + 0.5, y + 0.5, z or 0)
+    local handle  = emitter:playSound(name)
+    emitter:setVolume(handle, vol)
 end
 
 -- The Screamer howl. Three separate things play this exact clip -- a Screamer
@@ -376,19 +378,15 @@ local function onServerCommand(module, command, args)
                 local cfg = RQConfig.get()
                 local bz  = args.fixedZ or 0
                 local radius = args.radius or cfg.empRadius
-                -- guards stay: playDetonationVFX/stumbleZombies drive particle
-                -- and knockdown work over a whole blast radius; either failing
-                -- must not stop the other, nor the rest of castDone.
-                pcall(function()
-                    RQEMP.playDetonationVFX(bx, by, bz, radius)
-                end)
                 -- castDone reaches every client, so this is where each client
                 -- stumbles the blast zombies IT owns (empDebuff won't do: it
                 -- only goes to players caught in the blast, and a client can
                 -- own zeds near the blast while standing outside it).
-                pcall(function()
-                    RQEMP.stumbleZombies(bx, by, tonumber(bz) or 0, radius)
-                end)
+                -- Run the owned-zombie gameplay before presentation; if a
+                -- verified VFX/audio contract ever regresses, it should not
+                -- suppress the authoritative local stumble work.
+                RQEMP.stumbleZombies(bx, by, tonumber(bz) or 0, radius)
+                RQEMP.playDetonationVFX(bx, by, bz, radius)
             end
         end
 
@@ -443,11 +441,11 @@ local function onServerCommand(module, command, args)
         end
 
     elseif command == "empDebuff" then
-        -- Endurance drain is handled server-side (stat sets not authoritative on client).
-        -- Client handles: electronics drain, knockback, VFX already fired from castDone.
+        -- Health, endurance, and electronics are server-owned. The client only
+        -- drives local movement/sensory presentation; mutating inventory here
+        -- would race the authoritative drain already committed by RQSvShared.
         local player = getPlayer()
         if player then
-            RQEMP.drainPlayerElectronics(player, args.drain)
             if args.x and args.y then
                 local dx = player:getX() - (args.x or 0)
                 local dy = player:getY() - (args.y or 0)

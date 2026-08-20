@@ -26,6 +26,7 @@ if not isServer() then return end
 require "MMSvShared"
 require "MMSnapshotCodec"
 require "RDShared"   -- EXT_DOC / EXT_DOC_LEGACY, read at file scope below
+require "MMRoster"
 
 MMRestore = MMRestore or {}
 
@@ -161,49 +162,85 @@ MMRestore.decode = decode -- exposed for the future progression-sheet tooling
 -- ─────────────────────────────────────────────────────────────────────────
 
 local function readAll(path)
-    local content
-    pcall(function()
-        local br = getFileReader(DIR .. path, false)
-        if not br then return end
-        local lines = {}
-        while true do
-            local line = br:readLine()
-            if line == nil then break end
-            lines[#lines + 1] = line
-        end
-        br:close()
-        content = table.concat(lines, "\n")
-    end)
-    if content == "" then return nil end
-    return content
+    local fullPath = DIR .. path
+    -- cacheFileExists and getFileReader share cacheDir/Lua as their root
+    -- (LuaManager.java:4617-4623, 4894-4915). Existence lets a missing optional
+    -- layout remain ordinary while an existing-but-unopenable recovery point is
+    -- reported as damaged instead of silently becoming "no archive".
+    if not cacheFileExists(fullPath) then return nil, "missing", false end
+
+    -- No guard - corrected 2026-08-19: BufferedReader is an exposed class
+    -- (LuaManager.java:1651) and exposed method bodies cannot raise into Lua;
+    -- MethodCaller swallows the IOException, logs the stack trace, and returns
+    -- nil (MethodCaller.java:33-56). A read fault therefore reads as early
+    -- EOF: a fault before the first line lands in the "empty" branch below,
+    -- and a mid-stream fault yields TRUNCATED content that the decode step
+    -- rejects at the candidate level - the same per-candidate isolation the
+    -- pcall claimed to provide, now via the path the engine actually takes.
+    local br = getFileReader(fullPath, false)
+    if not br then return nil, "reader refused existing file", true end
+    local lines = {}
+    while true do
+        local line = br:readLine()
+        if line == nil then break end
+        lines[#lines + 1] = line
+    end
+    br:close()
+    local content = table.concat(lines, "\n")
+    if content == "" then return nil, "empty", true end
+    return content, nil, true
 end
 
 -- Four candidates, and every one of them is load-bearing. Two layouts (nested
--- preferred, flat fallback - mirrors MMAudit's userWriter) x two eras: the 42.20
+-- canonical, flat historical fallback) x two eras: the 42.20
 -- write allowlist forced ".json" -> ".json.txt" (see RDShared), so any player whose
 -- last WRITE predates that rename has their recovery point under the legacy name.
 -- Reads are NOT gated, so the old files open fine and nothing needs migrating.
--- CURRENT FIRST: if both exist the newer name is the fresher save, and silently
--- restoring an older snapshot over a newer one is the one failure this file must
--- never have. Drop the legacy pair only once no season on disk predates 42.20.
-local function readLatest(safe)
-    return readAll(safe .. "/latest" .. RDShared.EXT_DOC)
-        or readAll(safe .. ".latest" .. RDShared.EXT_DOC)
-        or readAll(safe .. "/latest" .. RDShared.EXT_DOC_LEGACY)
-        or readAll(safe .. ".latest" .. RDShared.EXT_DOC_LEGACY)
-end
+-- Candidate order breaks timestamp ties in favour of the canonical current path;
+-- it does not decide freshness. The old first-nonempty chain could let an older
+-- nested file mask a newer flat fallback, or let one corrupt file mask every valid
+-- alternative. Drop the legacy pair only once no season on disk predates 42.20.
+local function readLatest(safe, targetUsername)
+    local paths = {
+        safe .. "/latest" .. RDShared.EXT_DOC,
+        safe .. ".latest" .. RDShared.EXT_DOC,
+        safe .. "/latest" .. RDShared.EXT_DOC_LEGACY,
+        safe .. ".latest" .. RDShared.EXT_DOC_LEGACY,
+    }
+    local best, bestStamp
+    local problems, foreign = {}, {}
+    local sawExisting = false
 
-local function findOnlineByUsername(name)
-    local found
-    pcall(function()
-        local players = getOnlinePlayers()
-        if not players then return end
-        for i = 0, players:size() - 1 do
-            local p = players:get(i)
-            if p and p:getUsername() == name then found = p; break end
+    for _, path in ipairs(paths) do
+        local content, readErr, existed = readAll(path)
+        if existed then sawExisting = true end
+        if content then
+            local rec, decodeErr = decode(content)
+            if type(rec) ~= "table" or type(rec.snap) ~= "table" then
+                problems[#problems + 1] = path .. ": " .. tostring(decodeErr or "missing snapshot")
+            elseif rec.user and rec.user ~= targetUsername then
+                foreign[#foreign + 1] = tostring(rec.user)
+            else
+                local stamp = tonumber(rec.t) or tonumber(rec.snap.writtenAt) or 0
+                if not best or stamp > bestStamp then
+                    best, bestStamp = rec, stamp
+                end
+            end
+        elseif existed then
+            problems[#problems + 1] = path .. ": " .. tostring(readErr)
         end
-    end)
-    return found
+    end
+
+    if best then
+        if #problems > 0 then
+            MMwarn("RESTORE skipped unusable archive candidate(s) for " .. targetUsername
+                .. ": " .. table.concat(problems, "; "))
+        end
+        return best
+    end
+    if #foreign > 0 then return nil, "owner", foreign[1] end
+    if sawExisting then return nil, "unreadable", table.concat(problems, "; ") end
+    return nil, "missing"
 end
 
 -- ─────────────────────────────────────────────────────────────────────────
@@ -216,7 +253,7 @@ function MMRestore.run(admin, targetUsername, xpPercent)
     if targetUsername == "" then return { ok = false, reason = "No target username." } end
     local xpFrac, xpPct = restoreFraction(xpPercent)
 
-    local target = findOnlineByUsername(targetUsername)
+    local target = MMRoster.findOnline(targetUsername)
     if not target then
         return { ok = false, reason = targetUsername .. " must be online to restore." }
     end
@@ -224,19 +261,17 @@ function MMRestore.run(admin, targetUsername, xpPercent)
         return { ok = false, reason = targetUsername .. " is dead - restore after they respawn." }
     end
 
-    local content = readLatest(safeName(targetUsername))
-    if not content then
+    local rec, archiveState, archiveDetail = readLatest(safeName(targetUsername), targetUsername)
+    if archiveState == "missing" then
         return { ok = false, reason = "No memoir archive found for " .. targetUsername .. "." }
     end
-    local rec, derr = decode(content)
-    if type(rec) ~= "table" or type(rec.snap) ~= "table" then
-        MMwarn("RESTORE archive unreadable for " .. targetUsername .. ": " .. tostring(derr))
+    if archiveState == "unreadable" then
+        MMwarn("RESTORE archive unreadable for " .. targetUsername .. ": " .. tostring(archiveDetail))
         return { ok = false, reason = "Archive for " .. targetUsername .. " is unreadable - check server console." }
     end
-    -- safeName collisions map two usernames onto one file; the envelope's user
-    -- field is the tiebreaker - never apply someone else's character.
-    if rec.user and rec.user ~= targetUsername then
-        return { ok = false, reason = "Archive belongs to '" .. tostring(rec.user) .. "', not " .. targetUsername .. "." }
+    if archiveState == "owner" then
+        return { ok = false, reason = "Archive belongs to '" .. tostring(archiveDetail)
+            .. "', not " .. targetUsername .. "." }
     end
 
     local snap = rec.snap
@@ -257,18 +292,31 @@ function MMRestore.run(admin, targetUsername, xpPercent)
     end
 
     local chosen = { profession = snap.profession, traits = snap.traits }
-    local preLevels = MMAudit and MMAudit.perkLevels(target) or nil
-    local okApply, err = pcall(function()
-        -- fullRestore, with the dial as an explicit fraction. xpFrac is 1.0 when no
-        -- dial was sent, so this is byte-for-byte the old 100% behaviour by default.
-        MMSnapshotCodec.applyToCharacter(target, snap, chosen, "overwrite", true, xpFrac)
-    end)
-    if not okApply then
-        MMwarn("RESTORE apply FAILED for " .. targetUsername .. ": " .. tostring(err))
-        if MMAudit then MMAudit.log(target, "RESTORE_FAIL", {
+    local preProgress = MMAudit and MMAudit.sampleProgression(target) or nil
+    -- fullRestore, with the dial as an explicit fraction. xpFrac is 1.0 when no
+    -- dial was sent, so this is byte-for-byte the old 100% behaviour by default.
+    local apply = MMSnapshotCodec.applyToCharacter(target, snap, chosen, "overwrite", true, xpFrac)
+    if not apply.ok then
+        if apply.partial then
+            if md then md.MMRecalled = true end
+            if MMServer and MMServer.pushFields then MMServer.pushFields(target) end
+        end
+        MMwarn("RESTORE apply FAILED for " .. targetUsername .. " (phase="
+            .. tostring(apply.phase) .. ", partial=" .. tostring(apply.partial)
+            .. "): " .. tostring(apply.error))
+        if MMAudit then
+            local postProgress = MMAudit.sampleProgression(target)
+            MMAudit.log(target, "RESTORE_FAIL", MMAudit.attachProgression({
             admin = (admin and admin.getUsername and admin:getUsername()) or "?",
-            err = tostring(err) }) end
-        return { ok = false, reason = "Restore failed for " .. targetUsername .. " - check server console." }
+            phase = apply.phase, partial = apply.partial, err = tostring(apply.error)
+            }, preProgress, postProgress))
+        end
+        if apply.partial then
+            return { ok = false, reason = "Restore partially changed " .. targetUsername
+                .. ". Do not retry; have them relog and check the forensic record." }
+        end
+        return { ok = false, reason = "Restore preflight failed for " .. targetUsername
+            .. "; nothing changed. Check server console." }
     end
 
     if md then md.MMRecalled = true end
@@ -287,7 +335,8 @@ function MMRestore.run(admin, targetUsername, xpPercent)
     })
 
     if MMAudit then
-        MMAudit.log(target, "RESTORE_OK", {
+        local postProgress = MMAudit.sampleProgression(target)
+        MMAudit.log(target, "RESTORE_OK", MMAudit.attachProgression({
             admin      = (admin and admin.getUsername and admin:getUsername()) or "?",
             -- The dial is recorded because a restore at anything but 100% is a
             -- deliberate policy act (a season migration allowance, say), and
@@ -295,12 +344,9 @@ function MMRestore.run(admin, targetUsername, xpPercent)
             -- a month later without it.
             xpPct      = xpPct,
             archiveT   = rec.t,
-            lvlsBefore = preLevels,
-            lvlsAfter  = MMAudit.perkLevels(target),
-            postXP     = MMAudit.perkXP(target),
             snap       = snap,
-        })
-        MMAudit.scheduleRecheck(target, nil)
+        }, preProgress, postProgress))
+        MMAudit.scheduleRecheck(target, nil, postProgress)
     end
     local pctNote = (xpPct ~= 100) and (" at " .. xpPct .. "% of earned XP") or ""
     return { ok = true, message = "Restored " .. targetUsername .. pctNote

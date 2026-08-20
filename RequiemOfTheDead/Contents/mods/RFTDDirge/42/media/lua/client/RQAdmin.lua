@@ -257,6 +257,11 @@ local function onAdminServerCommand(module, command, args)
             showIdentifyResult("Dirge: Converted to " .. zType, zType)
         elseif status == "already" then
             showIdentifyResult("Dirge: Already " .. zType, zType)
+        elseif status == "outOfRange" then
+            -- The server refused an id-less convert aimed away from us. Said
+            -- plainly rather than folded into "not found": those are different
+            -- facts, and only one of them is worth retrying by walking closer.
+            showIdentifyResult("Dirge: Too far to convert - the target must be near you")
         else
             showIdentifyResult("Dirge: Zombie not found - may have moved")
         end

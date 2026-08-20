@@ -50,12 +50,10 @@ Limes.fields.register("LMSuppress", "weaponDebuffMult",
 -- for every player on every tick, for nothing.
 local function zoneMult(player)
     if not player then return nil end
-    -- pcall stays: this is called from inside RQSuppress's per-render-tick
-    -- composition, so a throw in the store walk would break Dirge's whole
-    -- suppression pass. Direct form and getX/getY hoisted out - both are field
-    -- returns on IsoMovingObject, and `player` is checked non-nil above.
-    local ok, zone = pcall(Limes.getLocation, player:getX(), player:getY())
-    if not ok or not zone or not zone.fields then return nil end
+    -- Limes owns this validated spatial-index read. Its normal absence is nil;
+    -- hiding an unexpected store fault would silently disable the zone term.
+    local zone = Limes.getLocation(player:getX(), player:getY())
+    if not zone or not zone.fields then return nil end
 
     local mult = zone.fields.weaponDebuffMult
     -- Unset inherits (the blank-inherits contract), and a value of 1 is "no

@@ -148,6 +148,13 @@ end
 -- this tab's id. Fails quiet by contract.
 function T.openFor(fullTypes, label)
     if not (fullTypes and #fullTypes > 0) then return end
+    -- RETAINED. route itself is total Lua over our index, but openCraft ends
+    -- in T.craft:refreshRecipeList(true) - vanilla panel Lua walking live
+    -- containers and recipe state (ISHandCraftPanel.lua:176-187 into
+    -- updateContainers) - and vanilla Lua is the lane where errors genuinely
+    -- propagate. This is the public door other RFTD mods call from their
+    -- context menus; a routing failure must cost the gesture, named in the
+    -- print below, never the caller's menu.
     local ok, routed = pcall(route, fullTypes, label)
     if not ok then
         print("[OE] Workshop route failed (" .. tostring(label) .. "): " .. tostring(routed))
@@ -167,6 +174,9 @@ end
 -- is already on this tab.
 function T.routeItem(row)
     if not row then return end
+    -- RETAINED - same surface as openFor: the throwing half is vanilla panel
+    -- Lua reached through refreshRecipeList, and the row click must cost
+    -- itself, not the tab.
     local ok, err = pcall(route, { row.full }, row.disp)
     if not ok then
         print("[OE] Workshop route failed (" .. tostring(row.disp) .. "): " .. tostring(err))
@@ -299,6 +309,17 @@ function T.build(spec, panel, x, y, w, h)
     T.header:addChild(T.btnAll)
 
     T.craft = nil
+    -- RETAINED, with the failure surface now read precisely. ISXuiSkin.build
+    -- itself cannot throw for this shape - nil skin falls back to the default,
+    -- a missing style downgrades to a print (ISXuiSkin.lua:41-110) - and the
+    -- one deterministic vanilla throw (ISHandCraftPanel.lua:181, craftBench
+    -- nil with a falsy recipeQuery) is closed by setting CATALOGUE_QUERY
+    -- before instantiate, the same order vanilla uses
+    -- (ISHandcraftWindow.lua:49-56). What remains is third-party: another
+    -- mod clobbering the shared ISTableLayout / ISWidgetRecipesPanel globals
+    -- breaks createChildren mid-build (ISHandCraftPanel.lua:14-15, :71) -
+    -- foreign code in the chain we cannot preflight. Recovery is honest:
+    -- T.craft stays nil and every consumer already tests it.
     local ok, err = pcall(function()
         local p = ISXuiSkin.build(nil, nil, ISHandCraftPanel, 0, HEADER_H, w, h - SUB_H - HEADER_H,
             getPlayer(), nil, nil)

@@ -48,10 +48,20 @@ local function collect(player)
         seen[id] = true
 
         local full = item:getFullType()
-        -- getFixes NPEs on any loaded fixing script with no Require line
-        -- (Fixing.require stays null) - the guard is load-bearing.
-        local okF, f = pcall(FixingManager.getFixes, item)
-        local fixes = (okF and f and f:size()) or 0
+        -- The NPE the old comment named is REAL and worse than it said: a
+        -- fixing script with no Require line leaves Fixing.require null
+        -- (Fixing.java:23, :99-108 - it is created only by addRequiredItem,
+        -- called only from the optional Require branch), and getFixes derefs
+        -- getRequiredItem() on EVERY loaded fixing before any item filtering
+        -- (FixingManager.java:25-34, the deref at :30). So one malformed
+        -- script from any mod breaks getFixes for every item in the game.
+        --
+        -- But the guard was never what saved us. getFixes is an exposed
+        -- method, so that NPE cannot reach Lua: MethodCaller logs the stack
+        -- trace and returns nil (MethodCaller.java:33-56). The nil test below
+        -- was always the whole mechanism, and the console keeps the evidence.
+        local f = FixingManager.getFixes(item)
+        local fixes = (f and f:size()) or 0
         local known, learnable = 0, 0
         for _, rec in ipairs(WSIndex.forOutput(full)) do
             if WSIndex.known(player, rec) then known = known + 1

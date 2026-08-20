@@ -225,8 +225,10 @@ Limes.onZoneEvent(function(event, name)
     -- Broadcast even when the server removed nothing. The server sweeps only
     -- what IT has loaded; a client can be standing in loaded ground the server
     -- is not simulating in this cell, and that client is exactly the one with a
-    -- ghost to clear. pcall: a wire failure must not unwind the sweep's books.
-    pcall(RDNet.broadcast, "RFTDLimes", "zedsSweep", { name = name })
+    -- ghost to clear. RDNet is a hard Core dependency; its broadcast delegates
+    -- directly to the nil-safe engine send path, so an unexpected send failure
+    -- must identify that broken contract instead of being silently discarded.
+    RDNet.broadcast("RFTDLimes", "zedsSweep", { name = name })
 end)
 
 -- ---------------------------------------------------------------------------
@@ -308,11 +310,12 @@ local function gridProbe(rects)
             local y = r[2]
             while y <= r[4] and budget > 0 do
                 budget = budget - 1
-                -- pcall stays: the server route walks ServerMap's cell arrays,
-                -- whose bounds handling is not verified throw-free. Direct form
-                -- because this loop runs up to PROBE_CAP times.
-                local okSq, sq = pcall(cell.getGridSquare, cell, x, y, 0)
-                if okSq and sq then return true end
+                -- IsoCell delegates server lookups to ServerMap, whose current
+                -- body returns nil for invalid coordinates, missing cells, and
+                -- unloaded cells (IsoCell.java:2800-2818; ServerMap.java:595-611).
+                -- This can run PROBE_CAP times, so use that direct nullable
+                -- contract rather than spending an exception boundary per tile.
+                if cell:getGridSquare(x, y, 0) then return true end
                 y = y + stepY
             end
             x = x + stepX

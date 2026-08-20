@@ -32,44 +32,6 @@ function RQEMP.applyDebuff(player)
     end
 end
 
--- Walks through the player's inventory and drains anything battery-powered.
--- Each item wrapped in pcall - B42 item API can throw for some DrainableComboItem
--- subtypes (radio stacks, worn items, etc.).
-function RQEMP.drainPlayerElectronics(player, drainPercent)
-    if not player then return end
-    local inv = player:getInventory()
-    if not inv then return end
-
-    local items = inv:getItems()
-    if not items then return end
-
-    local drainFraction = (drainPercent or 35) / 100.0
-    local totalItems = 0
-    local drainedItems = 0
-
-    for i = 0, items:size() - 1 do
-        local item = items:get(i)
-        if item and instanceof(item, "DrainableComboItem") then
-            totalItems = totalItems + 1
-            local getFn = item.getUsedDelta
-            local setFn = item.setUsedDelta
-            if getFn and setFn then
-                -- guards stay: getUsedDelta/setUsedDelta are overridden per item
-                -- subclass (DrainableComboItem:86/98, Clothing:1257,
-                -- WeaponPart:307) and the drainable path divides by the script's
-                -- useDelta -- unverifiable across all of them.
-                local ok, current = pcall(getFn, item)
-                if ok and type(current) == "number" and current < 1.0 then
-                    pcall(setFn, item, math.min(1.0, current + drainFraction))
-                    drainedItems = drainedItems + 1
-                end
-            end
-        end
-    end
-    RQDirgeLog.write("EMP", "[INFO] drainPlayerElectronics drain=" .. tostring(drainPercent) .. "%"
-        .. " drainable=" .. totalItems .. " drained=" .. drainedItems)
-end
-
 -- Scans tiles around the blast for generators, TVs, radios.
 local function damageWorldElectronics(x, y, z, radius, damagePercent)
     local cell = getCell()
@@ -159,19 +121,18 @@ function RQEMP.playDetonationVFX(x, y, z, radius)
     RQDirgeLog.write("EMP", "[INFO] playDetonationVFX at (" .. x .. "," .. y .. "," .. z .. ") radius=" .. tostring(radius))
     RQEMP.startExpandingRing(x, y, z, radius, RQConfig.COLORS.EMP)
 
-    -- guard stays: getClimateManager() is a vanilla Lua global and returns nil
-    -- before the climate sim exists; the failure drives the WARN line below.
-    local ok1 = pcall(function()
-        getClimateManager():getThunderStorm():triggerThunderEvent(x, y, false, true, false)
-    end)
-    if not ok1 then RQDirgeLog.write("EMP", "[WARN] triggerThunderEvent failed") end
+    -- getClimateManager returns the owned singleton and its ThunderStorm field;
+    -- on multiplayer clients triggerThunderEvent is intentionally a no-op, while
+    -- single-player queues the event through initialized climate state.
+    -- LuaManager.java:9048-9050; ClimateManager.java:645-647;
+    -- ThunderStorm.java:323-334.
+    getClimateManager():getThunderStorm():triggerThunderEvent(x, y, false, true, false)
 
-    -- guard stays: WorldFlares is vanilla Lua (not in the Java decompile) and
-    -- may be absent entirely; the failure drives the WARN line below.
-    local ok2 = pcall(function()
-        WorldFlares.launchFlare(60, x, y, radius, 0, 0.8, 0.9, 1.0, 0.5, 0.7, 1.0)
-    end)
-    if not ok2 then RQDirgeLog.write("EMP", "[WARN] WorldFlares.launchFlare failed") end
+    -- WorldFlares is an explicitly Lua-exposed Java class. launchFlare only
+    -- bounds its in-memory list and appends a populated flare, so valid blast
+    -- coordinates and radius use the direct client-render contract.
+    -- LuaManager.java:2122-2123; WorldFlares.java:23-27, 49-64.
+    WorldFlares.launchFlare(60, x, y, radius, 0, 0.8, 0.9, 1.0, 0.5, 0.7, 1.0)
 
     -- Falloff playback (RQCore.playFalloffSound): each client scales volume
     -- by its own distance to the blast and goes silent past 70 tiles. The old
@@ -186,8 +147,10 @@ function RQEMP.playDetonationVFX(x, y, z, radius)
 
     -- Zombie-attraction world sound (inaudible to players) is gameplay, not
     -- audio presentation: unchanged.
-    -- guard stays: addSound is a vanilla Lua global, not in the Java decompile.
-    pcall(addSound, nil, x, y, z, 100, 100)
+    -- addSound directly delegates to WorldSoundManager's final singleton; see
+    -- the equivalent Screamer path for why retrying a partial sound is unsafe.
+    -- LuaManager.java:9227-9229; WorldSoundManager.java:43, 73-82, 107-156.
+    addSound(nil, x, y, z, 100, 100)
 end
 
 -- Shockwave knockback - called by RQCore from the empDebuff handler.
@@ -200,15 +163,17 @@ function RQEMP.applyKnockback(player, distSq, radiusSq)
     RQDirgeLog.write("EMP", "[INFO] applyKnockback zone=" .. zone
         .. " dist=" .. string.format("%.1f", dist) .. " radius=" .. string.format("%.1f", radius))
 
-    -- guard stays: ISTimedActionQueue is vanilla Lua, not in the Java decompile,
-    -- and clear() runs every queued action's stop() - foreign-mod actions
-    -- included.
-    pcall(function() ISTimedActionQueue.clear(player) end)
+    -- Vanilla clears timed actions directly before forced actions of its own.
+    -- If a current action cannot stop cleanly, continuing into a partial EMP
+    -- knockback would leave worse state than surfacing the bad action.
+    -- ISTimedActionQueue.lua:236-242; IsoGameCharacter.java:5107-5119.
+    ISTimedActionQueue.clear(player)
 
     if dist <= halfRadius then
-        -- guard stays: BodyDamage.ReduceGeneralHealth:932 calls forceAwake() and
-        -- walks getBodyParts() by index, so it throws on a half-initialised body.
-        pcall(function() player:getBodyDamage():ReduceGeneralHealth(10) end)
+        -- The empDebuff path passes getPlayer(); IsoPlayer receives a complete BodyDamage
+        -- in construction, with all parts populated before Lua can call it.
+        -- IsoGameCharacter.java:796, 2803-2805; BodyDamage.java:132-155, 932-943.
+        player:getBodyDamage():ReduceGeneralHealth(10)
         player:setBumpType("stagger")
         player:setVariable("BumpDone", false)
         player:setVariable("BumpFall", true)
@@ -229,10 +194,11 @@ function RQEMP.applyKnockback(player, distSq, radiusSq)
     -- - the reported weapon-swap glitch. This mirrors the engine itself:
     -- IsoGameCharacter.attackFromWindowsLunge sets the same variables and then
     -- calls reportEvent("wasBumped"). It also makes the stagger actually play.
-    -- guard stays: reportEvent on the LOCAL player reaches
-    -- ActionContext:223 -> getNetworkCharacterAI().getState().reportEvent(),
-    -- and getState() is null until the network state machine has ticked once.
-    pcall(function() player:reportEvent("wasBumped") end)
+    -- IsoPlayer installs NetworkPlayerComponent during ECS registration; the
+    -- NetworkPlayerAI owns a final NetworkState, whose reportEvent only records
+    -- events on existing state packets.
+    -- IsoPlayer.java:680-685; NetworkCharacterAI.java:65-72; NetworkState.java:267-279.
+    player:reportEvent("wasBumped")
 end
 
 -- ========================
@@ -280,15 +246,14 @@ Events.OnPostUIDraw.Add(function()
         end
         alpha = (fadeEnd - now) / BLIND_FADE_MS
     end
-    -- guard stays: UIManager.DrawTexture/getBlack are static engine draw calls
-    -- and this runs inside OnPostUIDraw -- a throw here would kill the whole
-    -- UI draw pass, not just the blackout.
-    pcall(function()
-        local pn = sensory.playerNum or 0
-        UIManager.DrawTexture(UIManager.getBlack(),
-            getPlayerScreenLeft(pn), getPlayerScreenTop(pn),
-            getPlayerScreenWidth(pn), getPlayerScreenHeight(pn), alpha)
-    end)
+    -- UIManager.render initializes black.png before OnPostUIDraw, then the event
+    -- manager contains listener failures. Vanilla UI code calls these viewport
+    -- helpers directly.
+    -- UIManager.java:298-305, 351, 965; LuaManager.java:3433-3449; Event.java:53-63.
+    local pn = sensory.playerNum or 0
+    UIManager.DrawTexture(UIManager.getBlack(),
+        getPlayerScreenLeft(pn), getPlayerScreenTop(pn),
+        getPlayerScreenWidth(pn), getPlayerScreenHeight(pn), alpha)
 end)
 -- Reflection probe (RQReflect): is the blackout overlay armed right now?
 -- A live blind at hit time reads exactly as "invisible zombie" to the player.
@@ -306,10 +271,10 @@ local function restoreHearing(player)
     if not player then return end
     local md = player:getModData()
     if md.RQEMPDeafUntil ~= nil then
-        -- guard stays: CharacterTrait is a registry-backed global and
-        -- CharacterTraits:remove resolves the trait through it - the same
-        -- unregistered-trait throw MMSnapshotCodec guards on purpose.
-        pcall(function() player:getCharacterTraits():remove(CharacterTrait.DEAF) end)
+        -- 42.20.3: LuaManager.java:1783,2225 exposes CharacterTraits and
+        -- CharacterTrait; CharacterTrait.java:33 defines the base Deaf trait;
+        -- CharacterTraits.java:82-88 add/remove an already-resolved trait.
+        player:getCharacterTraits():remove(CharacterTrait.DEAF)
         md.RQEMPDeafUntil = nil
         RQDirgeLog.write("EMP", "[INFO] deafness lifted")
     end
@@ -340,16 +305,12 @@ function RQEMP.applySensoryEffects(player, distSq, radiusSq)
             sensory.deafUntil = math.max(sensory.deafUntil, now + deafMs)
             player:getModData().RQEMPDeafUntil = sensory.deafUntil
         elseif not player:hasTrait(CharacterTrait.DEAF) then
-            -- guard stays and is load-bearing: same registry-backed
-            -- CharacterTrait lookup as restoreHearing, and only a successful add
-            -- may arm the deafUntil timer below.
-            local ok = pcall(function() player:getCharacterTraits():add(CharacterTrait.DEAF) end)
-            if ok then
-                sensory.deafUntil = now + deafMs
-                -- Persisted seatbelt: traits save with the character, so a crash
-                -- mid-effect would otherwise leave this player deaf forever.
-                player:getModData().RQEMPDeafUntil = sensory.deafUntil
-            end
+            -- Same verified fixed-trait path as restoreHearing above.
+            player:getCharacterTraits():add(CharacterTrait.DEAF)
+            sensory.deafUntil = now + deafMs
+            -- Persisted seatbelt: traits save with the character, so a crash
+            -- mid-effect would otherwise leave this player deaf forever.
+            player:getModData().RQEMPDeafUntil = sensory.deafUntil
         end
     end
 

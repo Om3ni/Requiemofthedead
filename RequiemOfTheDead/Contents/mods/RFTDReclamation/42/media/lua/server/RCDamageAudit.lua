@@ -54,11 +54,14 @@ local function throttled(key)
     return false
 end
 
+-- Delegates to the family ledger sanitiser. This used to be a bare tostring
+-- with an empty-string default, which meant a newline inside args.vehicle,
+-- args.part or args.amount forged arbitrary complete lines in the damage
+-- ledger - including lines carrying somebody else's user= and steam=. That
+-- ledger is what an admin reads to adjudicate a griefing report, so a forgeable
+-- line was worse than no line at all.
 local function val(x)
-    if x == nil then return "-" end
-    local s = tostring(x)
-    if s == "" then return "-" end
-    return s
+    return RCShared.ledgerSafe(x)
 end
 
 -- getSteamID is a field return (IsoPlayer.java:5954); the existence check
@@ -70,15 +73,16 @@ local function steamIdOf(player)
     return "-"
 end
 
+-- No guards, same reading as RCAudit: getFileWriter returns nil rather than
+-- throwing (LuaManager.java:5523-5555), and LuaFileWriter.write/close delegate
+-- to PrintWriter, which records I/O errors internally rather than raising
+-- (:9850-9868). "A full disk must not break the damage path" described a throw
+-- that cannot happen.
 local function write(line)
-    -- guarded: file I/O through the getFileWriter allowlist can throw
-    local ok, writer = pcall(getFileWriter, FILE, true, true) -- createIfNull, append (never truncate)
-    if not ok or not writer then return end
-    -- guarded: disk write/close; a full disk must not break the damage path
-    pcall(function()
-        writer:write(line .. "\n")
-        writer:close()
-    end)
+    local writer = getFileWriter(FILE, true, true) -- createIfNull, append (never truncate)
+    if not writer then return end
+    writer:write(line .. "\n")
+    writer:close()
 end
 
 local function onClientCommand(module, command, player, args)
@@ -88,16 +92,24 @@ local function onClientCommand(module, command, player, args)
     if not how then return end
     if not player or not args then return end
 
-    local vehicle = nil
-    if args.vehicle then
-        -- args.vehicle comes off the wire: a non-number would blow the (short)
-        -- cast inside getVehicleById, so the guard stays.
-        local ok, v = pcall(getVehicleById, args.vehicle)
-        if ok then vehicle = v end
-    end
+    -- Wire value VALIDATED rather than guarded: getVehicleById takes an int
+    -- (LuaManager.java:8208-8211), so a non-number fails the Kahlua coercion at
+    -- the call boundary and tonumber() answers it deterministically. A bad id
+    -- leaves `vehicle` nil, which every branch below already handles - the
+    -- audit line still gets written, which matters, because a damage event with
+    -- an unresolvable vehicle id is exactly the shape a spoofed packet has.
+    local vid = tonumber(args.vehicle)
+    local vehicle = vid and getVehicleById(vid) or nil
 
+    -- Key on the RESOLVED id, not the raw wire string. The throttle is the only
+    -- volume control on this file writer - this listener sits on vanilla's
+    -- "vehicle" token rather than RCServer's dispatcher, so RDRate never runs on
+    -- it - and keying on tostring(args.vehicle) meant "1", "1.0", " 1", "0x1"
+    -- and any unresolvable garbage each opened a fresh bucket, one written line
+    -- per packet. Unresolvable ids still get audited (see the note above), but
+    -- they now share ONE bucket instead of minting a new one per spelling.
     local username = (player.getUsername and player:getUsername()) or "-"
-    local key = username .. "@" .. tostring(args.vehicle)
+    local key = username .. "@" .. (vid and tostring(vid) or "?")
     if throttled(key) then return end
 
     local owner, griefing, x, y, z, vname, part
@@ -118,15 +130,17 @@ local function onClientCommand(module, command, player, args)
     -- Dual-write (RFTDCore adoption): the same observation, structured, into
     -- Core's forensic archive. claimId included when the vehicle carries one so a
     -- reader can join damage rows onto the claim timeline.
-    -- guarded: foreign module doing file I/O; its failure must not break ours
-    pcall(function()
-        RDLog.forensic("rc-damage", "RC.DAMAGE", player, {
-            how = how, vehicle = vname, vid = args.vehicle,
-            owner = owner, griefing = griefing == true,
-            claimId = vehicle and RCClaim.getClaimId and RCClaim.getClaimId(vehicle) or nil,
-            x = x, y = y, z = z, part = part, amount = args.amount,
-        }, "RFTDReclamation")
-    end)
+    -- Bare. "Foreign module" was wrong twice over: RDLog is Core, which this
+    -- mod hard-requires, and its forensic path is total for a scalar payload
+    -- - buffered push, nil-safe writer, and the tally hook carries its own
+    -- boundary inside RDLog. A real fault in it would be our bug and should
+    -- be loud, not absorbed here after the primary write() already landed.
+    RDLog.forensic("rc-damage", "RC.DAMAGE", player, {
+        how = how, vehicle = vname, vid = args.vehicle,
+        owner = owner, griefing = griefing == true,
+        claimId = vehicle and RCClaim.getClaimId and RCClaim.getClaimId(vehicle) or nil,
+        x = x, y = y, z = z, part = part, amount = args.amount,
+    }, "RFTDReclamation")
 end
 
 Events.OnClientCommand.Add(onClientCommand)

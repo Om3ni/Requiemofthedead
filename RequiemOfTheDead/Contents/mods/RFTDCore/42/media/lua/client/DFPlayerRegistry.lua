@@ -95,6 +95,20 @@ function DFPlayerRegistry.registerPlayerSettings(spec)
         .. " (" .. tostring(spec.title or "?") .. ")")
 end
 
+-- A consumer mod's schema function that throws would otherwise drop its whole
+-- settings sheet silently - indistinguishable from a mod that registered none.
+-- Bounded to one line per sheet per session: the panel rebuilds on every open,
+-- so an unbounded report would fire every time the window is shown.
+local sheetFaults = {}
+
+local function noteSheetFault(id, err)
+    local key = tostring(id)
+    if sheetFaults[key] then return end
+    sheetFaults[key] = true
+    print("[Dragonfly] player-settings sheet '" .. key
+        .. "' failed to build its schema and was dropped: " .. tostring(err))
+end
+
 local function sortedSpecs(map, nameKey)
     local out = {}
     for _, spec in pairs(map) do out[#out + 1] = spec end
@@ -139,13 +153,22 @@ function DFPlayerRegistry.sheetForm()
     local route  = {}   -- nsKey -> { spec = tenant, key = original }
 
     local sheets = sortedSpecs(DFPlayerRegistry.sheets, "title")
+    -- (see noteSheetFault above: one line per faulting sheet per session)
     for i = 1, #sheets do
         local spec = sheets[i]
         local body = spec.schema
         if type(body) == "function" then
-            -- guarded: body is a schema function supplied by a CONSUMER mod, not ours -
-            -- unverifiable by construction. A bad sheet drops itself, not the registry.
+            -- RETAINED, foreign-callback class: body is a schema function
+            -- supplied by a CONSUMER mod, unverifiable by construction, and one
+            -- bad sheet must drop itself rather than the whole settings panel.
+            --
+            -- REPORTED now, once per sheet per session. It dropped silently,
+            -- which meant a mod whose schema threw simply had no settings - and
+            -- looked identical to a mod that registered none.
             local ok, r = pcall(body)
+            if not ok then
+                noteSheetFault(spec.id, r)
+            end
             body = ok and r or nil
         end
         if type(body) == "table" and #body > 0 then

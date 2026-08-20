@@ -14,14 +14,14 @@
 -- server-side hook at all, so they are unobservable. Foraging is the exception,
 -- which is precisely why it is worth wiring while it exists.
 --
--- REGISTRATION IS MANDATORY, and this is the subtle part. Neither event is
--- registered by the engine: LuaEventManager only AddEvent()s "preAddForageDefs"
--- and "onAddForageDefs", and vanilla's forageClient.lua registers "OnForagePool"
--- CLIENT-side only. An unregistered event still fires - LuaEventManager.checkEvent
--- auto-creates it (:239-249) - BUT checkEvent returns null while the callback list
--- is empty, so the FIRST trigger is swallowed and only later ones arrive. Calling
--- AddEvent here first means we never lose that first record. AddEvent is idempotent
--- (returns the existing Event if present), so this is safe regardless of load order.
+-- REGISTRATION IS MANDATORY, and this is the subtle part. Current vanilla server
+-- forageServer.lua also registers both events (:497-501), but cross-mod load order
+-- cannot promise it runs before this observer. An unregistered event still fires -
+-- LuaEventManager.checkEvent auto-creates it (:239-249) - BUT checkEvent returns
+-- null while the callback list is empty, so the FIRST trigger is swallowed and only
+-- later ones arrive. Calling AddEvent here first means we never lose that first
+-- record. AddEvent is idempotent (returns the existing Event if present), so this
+-- remains safe regardless of load order.
 --
 -- Why forensic and not chronicle: foraging is continuous sensor telemetry, not
 -- a declared life/season fact. Chronicle's enum is a domain contract; forensic
@@ -66,28 +66,33 @@ local function recordAt(player)
 end
 
 local function log(evt, player, key, value)
-    -- A sensor fault must never disturb the path it observes.
-    pcall(function()
-        -- player comes from PlayerID.getPlayer() and can be nil if the id does not
-        -- resolve; RDLog handles a nil subject, so record the event either way
-        -- rather than dropping it - an unattributable forage is still a data point.
-        local x, y, z = recordAt(player)
-        local payload = { x = x, y = y, z = z }
-        payload[key] = capped(value)
-        RDLog.forensic(STREAM, evt, player, payload, "RFTDCore")
-    end)
+    -- No guard. RDLog.forensic is total. The whole path
+    -- was read for the RCAudit slice and holds for every caller: envelope() is
+    -- RDJson.encode, which handles EVERY Lua type (cycles, depth and node count
+    -- bounded, non-table values falling through to escape(), RDJson.lua:103-139),
+    -- push/flushStream build on getFileWriter - which returns nil rather than
+    -- throwing (LuaManager.java:5523-5555) - and writes through PrintWriter,
+    -- which records I/O errors in an internal flag instead of raising them
+    -- (:9850-9868). Core itself calls appendLine BARE on that reading
+    -- (RDLog.lua:192-198). The one real boundary in there is around RDTally
+    -- (:459) and is owned there, not out here.
+    -- player comes from PlayerID.getPlayer() and can be nil if the id does not
+    -- resolve; RDLog handles a nil subject, so record the event either way
+    -- rather than dropping it - an unattributable forage is still a data point.
+    local x, y, z = recordAt(player)
+    local payload = { x = x, y = y, z = z }
+    payload[key] = capped(value)
+    RDLog.forensic(STREAM, evt, player, payload, "RFTDCore")
 end
 
 if not RDForage._hooked then
     RDForage._hooked = true
 
-    -- Register BEFORE listening - see the header. Wrapped because LuaEventManager
-    -- is an exposed Java class and a signature change upstream must not take the
-    -- whole file down with it.
-    pcall(function()
-        LuaEventManager.AddEvent("OnForageRequestZone")
-        LuaEventManager.AddEvent("OnForageSpot")
-    end)
+    -- Register before listening. The exact current Java body is idempotent and
+    -- reports a missing Events table rather than throwing (LuaEventManager.java:
+    -- 615-630); vanilla uses these same direct calls (forageServer.lua:497-498).
+    LuaEventManager.AddEvent("OnForageRequestZone")
+    LuaEventManager.AddEvent("OnForageSpot")
 
     if Events.OnForageRequestZone then
         Events.OnForageRequestZone.Add(function(player, focus)

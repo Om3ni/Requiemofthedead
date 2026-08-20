@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "check-network's record of what is allowed to answer the wire.",
+    "",
+    "Same job pcall-safe.json does for 'cannot throw': the checker is only as",
+    "honest as this file, so an entry is a claim you have READ the listener and",
+    "found it non-authoritative. An observer that later starts answering a",
+    "command silently becomes a second intake with the gate's blessing.",
+    "",
+    "observers          - listeners that watch traffic without executing a family",
+    "                     command. Exempt from the one-intake rules. Reason required.",
+    "rdnet_dispatcher   - RDNet's own listener. It IS the registry, not a tenant.",
+    "annotate           - token(s) for a listener whose filter the scanner cannot",
+    "                     resolve statically. Empty today; add only with the file",
+    "                     open in front of you."
+  ],
+
+  "observers": {
+    "RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/server/RDGuardian.lua":
+      "Family-wide forensic sensor. Filters on nothing by design - it records every module's traffic including vanilla and third-party. Records and measures; never answers, never mutates family state. CLAUDE.md S12 observability, and the Conductor's roles table names it observe-only.",
+
+    "RequiemOfTheDead/Contents/mods/RFTDReclamation/42/media/lua/server/RCDamageAudit.lua":
+      "Listens on VANILLA's 'vehicle' token, not a family token - it cannot be an intake for a family surface. Writes an audit line and a forensic record; sends nothing, mutates no world state. Note the survey flagged unescaped wire fields in its file write (RCDamageAudit.lua:78-118) - a validation item, not an intake violation.",
+
+    "RequiemOfTheDead/Contents/mods/RFTDReclamation/42/media/lua/server/RCJanitor.lua":
+      "Also on vanilla's 'vehicle' token. Attribution side effect only - stamps last-user modData so the reclamation sweep can see recent use. The survey flagged a missing proximity check (RCJanitor.lua:377-394) as an authority item; it is still not a family dispatcher."
+  },
+
+  "rdnet_dispatcher": [
+    "RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDNet.lua"
+  ],
+
+  "annotate": {}
+}

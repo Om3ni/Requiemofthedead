@@ -43,10 +43,11 @@ local function forEachLoadedZombie(visitor)
         end
     end
     for i = 1, #snapshot do
-        -- pcall: visitor containment - one zombie's error must not abort the
-        -- rest of the snapshot walk mid-cull.
-        local ok, err = pcall(visitor, snapshot[i].z, snapshot[i].id)
-        if not ok then print("[Dragonfly] visitor error: " .. tostring(err)) end
+        -- No guard. The visitors are the three local closures below - a
+        -- nil-checked getSquare, chunk arithmetic, and cull(), whose whole
+        -- engine chain is total on a live server (see cull). Batch isolation
+        -- is only owed to a failure that exists; none was read in any body.
+        visitor(snapshot[i].z, snapshot[i].id)
     end
 end
 
@@ -56,9 +57,19 @@ end
 -- the dangling reference too. Matches RPCore.cullZombie exactly.
 local function cull(z)
     z:removeFromSquare()
-    -- pcall: IsoZombie.removeFromWorld - the super chains getCell():isSafeToAdd()
-    -- unguarded, and getCell derefs IsoWorld.instance (IsoObject:1842).
-    pcall(z.removeFromWorld, z)
+    -- No guard on removeFromWorld. The whole chain was read: emitter is always
+    -- constructed on a server (DummyCharacterSoundEmitter,
+    -- IsoGameCharacter.java:784), imposter is field-initialized
+    -- (IsoZombie.java:316) and destroy() no-ops on the never-rendered card,
+    -- moveZombie(z, null, null) is null-safe for these args
+    -- (NetworkZombieManager.java:138-183), and every super
+    -- (IsoGameCharacter.java:3308, IsoMovingObject.java:688,
+    -- IsoObject.java:4174) null-checks what it touches. The one nullable deref
+    -- - IsoWorld.instance via getCell (IsoObject.java:1842), the old guard's
+    -- stated reason - cannot be nil while a command handler runs inside a
+    -- loaded world's tick. (Reaper's RPCore.lua:124 still guards this same
+    -- call on that same unreachable reading; logged in TODO.md.)
+    z:removeFromWorld()
     -- Stepped through IsoWorld.instance rather than z:getCell(): IsoObject.getCell
     -- derefs the instance unconditionally (:1842), this form yields nil instead.
     -- getZombieList is a field return (IsoCell:2339) and remove(Object) on the

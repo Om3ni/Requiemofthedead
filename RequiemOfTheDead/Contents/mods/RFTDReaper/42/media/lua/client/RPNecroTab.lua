@@ -26,6 +26,10 @@ require "ISUI/ISLabel"
 -- hard-requires Core so this is always resolvable.
 require "RDSelect"
 
+-- Core's world-focus claim: which zombie the operator has picked, painted white
+-- in the world so the row and the body can be confirmed to be the same thing.
+require "RDZombieFocus"
+
 local MODULE = "RFTDReaper"
 local FONT   = UIFont.Code  -- monospace; columns line up better
 
@@ -40,7 +44,7 @@ local NecroTab = {
     filterCombo      = nil,
     statsLabel       = nil,
     thresholdEntries = {},
-    highlightTarget  = nil,
+    localityCombo    = nil,
     radiusEntry      = nil,
     -- Whether `rows` includes clean zombies. The server withholds them by
     -- default, so a filter that needs them has to re-request rather than
@@ -77,32 +81,16 @@ local COLS = {
 -- Local helpers
 -- ─────────────────────────────────────────────────────────────────────────
 
-local function findZombieById(id)
-    local p = getPlayer()
-    if not p then return nil end
-    local cell = p:getCell()
-    if not cell then return nil end
-    local zlist = cell:getZombieList()
-    if not zlist then return nil end
-    for i = 0, zlist:size() - 1 do
-        local z = zlist:get(i)
-        if z and z:getOnlineID() == id then return z end
-    end
-    return nil
-end
-
-local function clearHighlight()
-    if NecroTab.highlightTarget then
-        NecroTab.highlightTarget:setOutlineHighlight(false)
-        NecroTab.highlightTarget = nil
-    end
-end
-
-local function applyHighlight(id)
-    clearHighlight()
-    local z = findZombieById(id)
-    if z then NecroTab.highlightTarget = z end
-end
+-- Selection highlight moved to Core (RDZombieFocus) 2026-08-19. What used to be
+-- here resolved the zombie itself and set an UNCOLOURED outline, which looked
+-- white only because IsoObject initialises outlineHighlightCol to -1
+-- (IsoObject.java:314) - an accident vanilla combat targeting overwrites the
+-- moment the admin swings at something (CombatManager.java:2616-2617). It also
+-- lost outright on any Dirge special, whose own per-frame painter runs later in
+-- the frame, and it never turned the outline back off when the deck closed.
+--
+-- Core owns the claim because Dirge has to be able to yield to it without
+-- either mod naming the other. See that file's header for the frame ordering.
 
 -- Ids in the order the list is currently DRAWN, which is what a shift range has
 -- to walk: the span the admin sees between two clicks, filter and all. Also
@@ -205,6 +193,60 @@ Events.OnTick.Add(function()
     end
 end)
 
+-- ─────────────────────────────────────────────────────────────────────────
+-- Locality
+--
+-- THE PANEL SHOWS MORE THAN THE OPERATOR CAN SEE, and that is the hazard this
+-- closes. RPCore.snapshot walks every LOADED zombie server-side, which on a
+-- dedicated server is the union of every player's chunk map - not this admin's.
+-- So a row can be perfectly real and forty tiles inside someone else's cell,
+-- where nothing this client does can confirm it is the right body. The white
+-- focus outline silently does nothing for those rows, because there is no local
+-- object to paint.
+--
+-- Narrowing to "my chunk" or "my cell" makes the list honest: what is left is
+-- what the operator can walk to, point at, and watch light up. That is the
+-- guarantee a manual convert needs, and it is a client-side view over rows we
+-- already hold - no second request, no wire cost.
+--
+-- Orthogonal to the verdict filter ON PURPOSE. "Cluster candidates in my chunk"
+-- is the actual triage question, and one combo carrying both axes could not ask
+-- it. Two combos compose; a merged list would have made every locality choice
+-- cost the verdict.
+--
+-- Sizes come from the engine rather than from the constants they currently
+-- return - 8 and 256 (LuaManager.java:4786-4789, :4781-4784). B41 chunks were
+-- 10 squares and B41 cells were 300, so hardcoding is exactly how this file
+-- would quietly start lying after a build bump.
+-- ─────────────────────────────────────────────────────────────────────────
+
+local function gridOf(x, y, size)
+    return math.floor(x / size), math.floor(y / size)
+end
+
+-- nil when there is nothing to compare against - no player, or a row with no
+-- coordinates. Callers treat nil as "cannot prove it is near", and drop the row.
+local function sameGrid(row, size)
+    local p = getPlayer()
+    if not p or not row or not row.x or not row.y then return false end
+    local px, py = gridOf(math.floor(p:getX()), math.floor(p:getY()), size)
+    local rx, ry = gridOf(row.x, row.y, size)
+    -- Z is deliberately NOT compared. A zombie one floor up is still inside the
+    -- chunk the operator is standing in and still on their screen; the question
+    -- this filter answers is "can I get to it", not "am I level with it".
+    return px == rx and py == ry
+end
+
+local function applyLocality(rows, locality)
+    if not locality or locality == "any" then return rows end
+    local size = (locality == "chunk") and getChunkSizeInSquares() or getCellSizeInSquares()
+    local out = {}
+    for _, e in ipairs(rows) do
+        if sameGrid(e, size) then out[#out + 1] = e end
+    end
+    return out
+end
+
 local function applyFilter(rows, filter)
     -- "suspects" and "all" are both already-scoped server-side, so neither
     -- filters again here - what came down is exactly what was asked for.
@@ -228,13 +270,21 @@ local function currentFilter()
     return combo:getOptionData(combo.selected) or "suspects"
 end
 
+local function currentLocality()
+    local combo = NecroTab.localityCombo
+    if not combo or not combo.getOptionData then return "any" end
+    return combo:getOptionData(combo.selected) or "any"
+end
+
 local function rebuildList()
     if not NecroTab.listBox then return end
     -- DFKit.refillList: a bare clear() leaves the scroll height behind and
     -- addItem stacks onto it, which eventually scrolls the list off its own
     -- rows. See that function's header.
     DFKit.refillList(NecroTab.listBox, function(box)
-        for _, row in ipairs(applyFilter(NecroTab.rows, currentFilter())) do
+        local shown = applyLocality(
+            applyFilter(NecroTab.rows, currentFilter()), currentLocality())
+        for _, row in ipairs(shown) do
             box:addItem("", row)
         end
     end)
@@ -251,6 +301,20 @@ local function onFilterChanged()
     else
         rebuildList()
     end
+end
+
+-- Narrowing the view must not leave a body lit that the list no longer offers:
+-- the outline is the panel's claim about ITS OWN selection, and a row filtered
+-- out has stopped being one. Purely local - locality never re-requests, because
+-- it can only ever remove rows we already hold.
+local function onLocalityChanged()
+    rebuildList()
+    local id = RDZombieFocus.id()
+    if not id then return end
+    for _, shownId in ipairs(orderedIds()) do
+        if shownId == id then return end
+    end
+    RDZombieFocus.clear()
 end
 
 local function updateStats(snap)
@@ -363,7 +427,11 @@ function NecroList:onMouseDown(x, y)
     -- resolves to one) behaves exactly as it did before this was shared out.
     if NecroTab.sel:count() == 1 and NecroTab.sel:has(id) then
         self.selected = idx
-        applyHighlight(id)
+        RDZombieFocus.set(id)
+    else
+        -- A multi-row selection has no single body to point at, so nothing
+        -- should stay lit from the click that preceded it.
+        RDZombieFocus.clear()
     end
 end
 
@@ -395,9 +463,13 @@ end
 
 function NecroList:prerender()
     ISScrollingListBox.prerender(self)
-    if NecroTab.highlightTarget then
-        NecroTab.highlightTarget:setOutlineHighlight(true)
-    end
+    -- Renew the lease. This is the ONLY thing keeping the outline alive: stop
+    -- rendering - close the deck, switch tabs, get torn down without warning -
+    -- and Core drops the claim within three ticks and unpaints. Cheap enough to
+    -- do per frame: set() with an unchanged id is a number compare and a
+    -- counter write.
+    local id = RDZombieFocus.id()
+    if id then RDZombieFocus.set(id) end
 end
 
 -- Wrap render with explicit stencil clipping. B42's ISScrollingListBox
@@ -593,7 +665,7 @@ end
 local function build(spec, panel, x, y, w, h)
     NecroTab.sel = RDSelect.new()
     NecroTab.thresholdEntries = {}
-    clearHighlight()
+    RDZombieFocus.clear()
 
     local PAD       = DFKit.metrics.pad
     local BTN_H     = DFKit.metrics.btnH
@@ -658,6 +730,22 @@ local function build(spec, panel, x, y, w, h)
     local origSelect = filterCombo.select
     filterCombo.select = function(self_, ...) origSelect(self_, ...); onFilterChanged() end
 
+    -- Locality. "Anywhere" leads and is the default because it is what the
+    -- snapshot means and what every earlier build showed - narrowing is an
+    -- explicit act, never something the tab does to an operator who did not ask.
+    local localityCombo = ISComboBox:new(PAD + 168, cursorY, 130, BTN_H, panel)
+    localityCombo:initialise(); localityCombo:instantiate()
+    localityCombo:addOptionWithData("Anywhere",  "any")
+    localityCombo:addOptionWithData("My cell",   "cell")
+    localityCombo:addOptionWithData("My chunk",  "chunk")
+    panel:addChild(localityCombo)
+    NecroTab.localityCombo = localityCombo
+
+    local origLocalitySelect = localityCombo.select
+    localityCombo.select = function(self_, ...)
+        origLocalitySelect(self_, ...); onLocalityChanged()
+    end
+
     -- Delegates to the shared primitive; call sites unchanged. Pass a `kind` to
     -- DFKit.button for the destructive ones - mass cull should not render with
     -- the same weight as Refresh.
@@ -667,10 +755,10 @@ local function build(spec, panel, x, y, w, h)
 
     -- Refresh re-asks for whatever the current view needs, not always the
     -- default scope, or refreshing out of "All zombies" would empty the list.
-    mkBtn("Refresh",       PAD + 170, 90, function()
+    mkBtn("Refresh",       PAD + 308, 90, function()
         requestSnapshot(NEEDS_CLEAN[currentFilter()] == true)
     end)
-    mkBtn("Cull selected", PAD + 270, 110, function()
+    mkBtn("Cull selected", PAD + 408, 110, function()
         local ids = selectedIdList()
         if #ids == 0 then
             if DFFeedback then DFFeedback.bad("No zombies selected.") end
@@ -679,7 +767,7 @@ local function build(spec, panel, x, y, w, h)
         sendCullIds(ids)
         NecroTab.sel:clear()
     end, "primary")   -- the scoped, intended action: it leads
-    mkBtn("Find siblings", PAD + 390, 110, function()
+    mkBtn("Find siblings", PAD + 528, 110, function()
         local ids = selectedIdList()
         if #ids == 0 then return end
         local seedRows = {}
@@ -701,7 +789,7 @@ local function build(spec, panel, x, y, w, h)
             DFFeedback.good("Selected " .. NecroTab.sel:count() .. " siblings.")
         end
     end)
-    mkBtn("Teleport to",   PAD + 510, 100, function()
+    mkBtn("Teleport to",   PAD + 648, 100, function()
         local ids = selectedIdList()
         local target
         for _, e in ipairs(NecroTab.rows) do
@@ -838,6 +926,7 @@ local function build(spec, panel, x, y, w, h)
     -- added after the combo so it overdraws the popup. bringToTop promotes
     -- the combo back above so its expanded options aren't hidden behind rows.
     filterCombo:bringToTop()
+    localityCombo:bringToTop()
 
     -- Fresh combo defaults to "Suspects only", so the opening request matches it.
     requestSnapshot(false)
@@ -849,7 +938,12 @@ Events.OnGameStart.Add(function()
         id         = "necro",
         label      = "Necro",
         capability = Capability.ChangeWeather,
-        order      = 5,
+        -- Deck nav order, set as one decision 2026-08-18 (live review):
+        -- Admin 10, Players 20, Necro 30, Vehicles 40, Husbandry 50,
+        -- Longstrider 60, Zones 70, Console 1000 (always last).
+        -- Spaced by ten so a new tab can land between two without
+        -- renumbering five files across five mods again.
+        order = 30,
         build      = build,
     }
     print("[Reaper] RPNecroTab registered into Dragonfly")

@@ -19,24 +19,11 @@ local TRAIT_INFO = {
     cowardly = { title = "Severely Disoriented", desc = "Completely disoriented. Hard to see anything." },
 }
 
--- ========================
--- Size helper mirroring the vanilla moodle scale behavior.
--- ========================
-
-local function getMoodleSize()
-    local core = getCore()
-    if not core then return 32 end
-    local ms = core:getOptionMoodleSize()
-    local scale
-    if ms < 5.5 then
-        scale = 0.5 + 0.5 * ms
-    elseif ms < 6.5 then
-        scale = 4
-    else
-        scale = 0.5 + 0.5 * core:getOptionFontSizeReal()
-    end
-    return math.floor(32 * scale)
-end
+-- Badge size comes from Core now (DFKit.moodleBadgeSize, 2026-08-19). The
+-- fourteen lines that used to sit here were the same fourteen in Last Rites'
+-- LRDangerHUD, and neither cited the vanilla ladder they were reproducing -
+-- MoodlesUI's texture table. One copy, one citation, and a badge that cannot
+-- drift out of step with the vanilla moodles beside it.
 
 -- ========================
 -- ISUIElement subclass
@@ -45,7 +32,7 @@ end
 local RQDazedMoodle = ISUIElement:derive("RQDazedMoodle")
 
 function RQDazedMoodle:new(player)
-    local size = getMoodleSize()
+    local size = DFKit.moodleBadgeSize()
     local o = ISUIElement:new(0, 0, size, size)
     setmetatable(o, self)
     self.__index = self
@@ -91,7 +78,7 @@ local function countVanillaMoodles(player)
 end
 
 function RQDazedMoodle:computePosition()
-    local size = getMoodleSize()
+    local size = DFKit.moodleBadgeSize()
     local step = size + 10
     local pn   = self.playerNum
     local x    = getPlayerScreenLeft(pn) + getPlayerScreenWidth(pn) - X_OFFSET - size

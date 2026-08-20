@@ -75,48 +75,44 @@ local function startDisorientation(player, fx, lingerMs)
     local pn = player:getPlayerNum()
     local sm = getSearchMode()
     RQDirgeLog.write("Screamer", "[INFO] startDisorientation effect=" .. tostring(fx.name)
-        .. " linger=" .. tostring(lingerMs) .. " smAvail=" .. tostring(sm ~= nil))
-    if not sm then
-        RQDirgeLog.write("Screamer", "[WARN] getSearchMode() returned nil - screen effect SKIPPED")
-    end
+        .. " linger=" .. tostring(lingerMs))
 
-    -- guard stays: SearchMode is a client-render subsystem reached through the
-    -- getSearchMode() vanilla Lua global; getSearchModeForPlayer and the
-    -- Blur/Darkness/Desat/Radius accessors under it are not in the Java
-    -- decompile, so none of this chain can be proven throw-free.
-    if sm then pcall(function()
-        local psm  = sm:getSearchModeForPlayer(pn)
-        local cfg  = RQConfig.get()
-        local blur = cfg.screamerBlurStrength or 1.0
-        local dark = cfg.screamerDarkStrength or 1.0
+    -- getSearchMode returns SearchMode's lazy singleton; its four player modes and
+    -- every float accessor are initialized in the constructor. A local player's slot
+    -- is one of IsoPlayer.MAX's four entries, so this validated client chain is direct.
+    -- LuaManager.java:9751-9753; SearchMode.java:13-36, 147-181, 242-318;
+    -- IsoPlayer.java:317-319, 964-971.
+    local psm  = sm:getSearchModeForPlayer(pn)
+    local cfg  = RQConfig.get()
+    local blur = cfg.screamerBlurStrength or 1.0
+    local dark = cfg.screamerDarkStrength or 1.0
 
-        psm:getBlur():setExterior(fx.blur_ext * blur)
-        psm:getBlur():setInterior(fx.blur_int * blur)
-        psm:getDarkness():setExterior(fx.dark_ext * dark)
-        psm:getDarkness():setInterior(fx.dark_int * dark)
-        psm:getDesat():setExterior(fx.desat_ext)
-        psm:getDesat():setInterior(fx.desat_int)
-        RQDirgeLog.write("Screamer", "[INFO] SearchMode params set"
-            .. " blur=(" .. string.format("%.2f", fx.blur_ext * blur) .. "/" .. string.format("%.2f", fx.blur_int * blur) .. ")"
-            .. " dark=(" .. string.format("%.2f", fx.dark_ext * dark) .. "/" .. string.format("%.2f", fx.dark_int * dark) .. ")"
-            .. " desat=(" .. string.format("%.2f", fx.desat_ext) .. "/" .. string.format("%.2f", fx.desat_int) .. ")")
+    psm:getBlur():setExterior(fx.blur_ext * blur)
+    psm:getBlur():setInterior(fx.blur_int * blur)
+    psm:getDarkness():setExterior(fx.dark_ext * dark)
+    psm:getDarkness():setInterior(fx.dark_int * dark)
+    psm:getDesat():setExterior(fx.desat_ext)
+    psm:getDesat():setInterior(fx.desat_int)
+    RQDirgeLog.write("Screamer", "[INFO] SearchMode params set"
+        .. " blur=(" .. string.format("%.2f", fx.blur_ext * blur) .. "/" .. string.format("%.2f", fx.blur_int * blur) .. ")"
+        .. " dark=(" .. string.format("%.2f", fx.dark_ext * dark) .. "/" .. string.format("%.2f", fx.dark_int * dark) .. ")"
+        .. " desat=(" .. string.format("%.2f", fx.desat_ext) .. "/" .. string.format("%.2f", fx.desat_int) .. ")")
 
-        -- Radius controls the gradient shape.
-        -- Interior=0 means effect starts right at the player position and
-        -- transitions outward. Exterior=12 sets the gradient outer edge.
-        -- Combined with high interior values this gives full-screen coverage
-        -- with no clear tunnel.
-        local radius   = psm:getRadius()
-        local gradient = psm:getGradientWidth()
-        radius:setExterior(RADIUS_EXT)
-        radius:setInterior(0)
-        gradient:setExterior(GRAD_EXT)
-        gradient:setInterior(0)
+    -- Radius controls the gradient shape.
+    -- Interior=0 means effect starts right at the player position and
+    -- transitions outward. Exterior=12 sets the gradient outer edge.
+    -- Combined with high interior values this gives full-screen coverage
+    -- with no clear tunnel.
+    local radius   = psm:getRadius()
+    local gradient = psm:getGradientWidth()
+    radius:setExterior(RADIUS_EXT)
+    radius:setInterior(0)
+    gradient:setExterior(GRAD_EXT)
+    gradient:setInterior(0)
 
-        sm:setFadeTime(FADE_IN)
-        sm:setOverride(pn, true)
-        sm:setEnabled(pn, true)
-    end) end
+    sm:setFadeTime(FADE_IN)
+    sm:setOverride(pn, true)
+    sm:setEnabled(pn, true)
 
     local now  = getTimestampMs()
     local base = (disorientation.active and disorientation.clearTime > now)
@@ -135,24 +131,17 @@ local function clearDisorientation()
     if player then
         local pn = player:getPlayerNum()
         local sm = getSearchMode()
-        if sm then
-            -- guard stays: same unverifiable SearchMode chain as
-            -- startDisorientation, and the release must never abort the
-            -- disorientation.active reset below it.
-            pcall(function()
-                local psm = sm:getSearchModeForPlayer(pn)
-                -- Zero all parameters before releasing so nothing lingers
-                psm:getBlur():setExterior(0);     psm:getBlur():setInterior(0)
-                psm:getDarkness():setExterior(0); psm:getDarkness():setInterior(0)
-                psm:getDesat():setExterior(0);    psm:getDesat():setInterior(0)
-                psm:getRadius():setExterior(0);   psm:getRadius():setInterior(0)
-                psm:getGradientWidth():setExterior(0)
-                psm:getGradientWidth():setInterior(0)
-                sm:setFadeTime(FADE_OUT)
-                sm:setEnabled(pn, false)
-                sm:setOverride(pn, false)
-            end)
-        end
+        local psm = sm:getSearchModeForPlayer(pn)
+        -- Zero all parameters before releasing so nothing lingers.
+        psm:getBlur():setExterior(0);     psm:getBlur():setInterior(0)
+        psm:getDarkness():setExterior(0); psm:getDarkness():setInterior(0)
+        psm:getDesat():setExterior(0);    psm:getDesat():setInterior(0)
+        psm:getRadius():setExterior(0);   psm:getRadius():setInterior(0)
+        psm:getGradientWidth():setExterior(0)
+        psm:getGradientWidth():setInterior(0)
+        sm:setFadeTime(FADE_OUT)
+        sm:setEnabled(pn, false)
+        sm:setOverride(pn, false)
     end
 
     disorientation.active    = false

@@ -24,7 +24,7 @@
 -- rename or delete, engine-file-io determination), so every save is
 -- truncate-overwrite with a writeLog journal line FIRST: a crash mid-write
 -- leaves a diagnosable journal entry, not a mystery. writeLog is the engine's
--- own rotating log machinery (LuaManager.java:7448) - the zone audit stream
+-- own rotating log machinery (LuaManager.java:7409-7412) - the zone audit stream
 -- ("who edited what") rides it by design.
 --
 -- BOOT ORDER (OnServerStarted): defaults <- RFTDLimes.ini <- editor deltas,
@@ -79,23 +79,24 @@ function LMPersist.serialize(rawZones)  return LMIni.serialize(rawZones) end
 -- Whole-file read from the Zomboid/Lua/ jail; nil if absent. Reads are not
 -- extension-gated (only writes are), so this opens .lua candidates too.
 function LMPersist.readAll(name)
-    local text = nil
-    -- pcall stays: file I/O. getFileReader can refuse the name outright and
-    -- readLine/close are IO calls on a handle the jail owns; an absent or
-    -- unreadable candidate must read as "no file", not as a boot failure.
-    pcall(function()
-        local reader = getFileReader(name, false)
-        if not reader then return end
-        local lines = {}
-        while true do
-            local line = reader:readLine()
-            if line == nil then break end
-            lines[#lines + 1] = line
-        end
-        reader:close()
-        text = table.concat(lines, "\n")
-    end)
-    return text
+    -- No guard. getFileReader returns nil for a refused name or failed open
+    -- (LuaManager.java:4894-4917) - the nil test IS that branch - and
+    -- readLine/close on the handle CANNOT raise into Lua: BufferedReader is an
+    -- exposed class (LuaManager.java:1651), and every exposed method body
+    -- routes through MethodCaller, which logs any IOException with a stack
+    -- trace and returns nil (MethodCaller.java:33-56). A mid-read fault
+    -- therefore reads as early EOF: truncated text, not an error - the ini
+    -- parser downstream is what rejects a half-file.
+    local reader = getFileReader(name, false)
+    if not reader then return nil end
+    local lines = {}
+    while true do
+        local line = reader:readLine()
+        if line == nil then break end
+        lines[#lines + 1] = line
+    end
+    reader:close()
+    return table.concat(lines, "\n")
 end
 
 local function forensic(evt, payload)
@@ -119,23 +120,25 @@ LMPersist.BACKUP = "RFTDLimes.backup.ini"
 
 function LMPersist.snapshot(why, who)
     local text = LMPersist.serialize(Limes.raw())
+    -- No guard. getFileWriter does NOT throw on a name it refuses - it returns
+    -- nil (LuaManager.java:5526), catching both of its own IOException sites,
+    -- and LuaFileWriter.write/close delegate to PrintWriter, which records I/O
+    -- errors internally rather than raising them (:9850-9868). `ok` staying
+    -- false on a nil writer is still the reported failure path.
+    local w = getFileWriter(LMPersist.BACKUP, true, false)
     local ok = false
-    -- pcall stays: getFileWriter enforces the 42.20 extension allowlist
-    -- (LuaManager:9884) and throws on a name it refuses; `ok` staying false is
-    -- the failure path this file reports on.
-    pcall(function()
-        local w = getFileWriter(LMPersist.BACKUP, true, false)
-        if not w then return end
+    if w then
         w:write(text)
         w:close()
         ok = true
-    end)
-    -- pcall stays: writeLog is the engine's rotating-log machinery and touches
-    -- disk; a journal line failing must not lose the snapshot's own verdict.
-    pcall(function()
-        writeLog("RFTDLimes", string.format("snapshot %s: %s by %s, %d bytes",
-            ok and "ok" or "FAILED", tostring(why), tostring(who), #text))
-    end)
+    end
+    -- No guard. writeLog cannot raise into Lua: ZLogger.write wraps the whole
+    -- write INCLUDING rotation in catch(Exception) (ZLogger.java:52-58,
+    -- :96-103), a failed open leaves a null stream whose writes are dropped by
+    -- a null test (:25-37, :112-120), and getLogger creates on miss
+    -- (LoggerManager.java:20-25). Disk trouble costs the journal line only.
+    writeLog("RFTDLimes", string.format("snapshot %s: %s by %s, %d bytes",
+        ok and "ok" or "FAILED", tostring(why), tostring(who), #text))
     forensic(ok and "LM.SNAPSHOT" or "LM.SNAPSHOT_FAIL",
         { why = tostring(why), who = tostring(who), bytes = #text })
     return ok
@@ -145,23 +148,23 @@ function LMPersist.save(rawZones, why, who)
     local text = LMPersist.serialize(rawZones)
     local n = 0
     for _ in pairs(rawZones or {}) do n = n + 1 end
-    -- pcall stays: writeLog touches disk, and the journal line must never be
-    -- the reason a save does not happen - it exists to explain one that did not.
-    pcall(function()
-        writeLog("RFTDLimes", string.format("save begin: %s by %s, %d zones, %d bytes",
-            tostring(why), tostring(who), n, #text))
-    end)
+    -- No guard - same reading as snapshot's journal line above: ZLogger
+    -- absorbs every failure internally (ZLogger.java:52-58), so this line can
+    -- be dropped by disk trouble but can never stop the save it explains.
+    writeLog("RFTDLimes", string.format("save begin: %s by %s, %d zones, %d bytes",
+        tostring(why), tostring(who), n, #text))
+    -- No guard. getFileWriter does NOT throw on a name it refuses - it returns
+    -- nil (LuaManager.java:5526), catching both of its own IOException sites,
+    -- and LuaFileWriter.write/close delegate to PrintWriter, which records I/O
+    -- errors internally rather than raising them (:9850-9868). `ok` staying
+    -- false on a nil writer is still the reported failure path.
+    local w = getFileWriter(LMPersist.FILE, true, false)
     local ok = false
-    -- pcall stays: getFileWriter enforces the 42.20 extension allowlist
-    -- (LuaManager:9884) and throws on a name it refuses; the SAVE FAILED branch
-    -- below is that throw's reported form.
-    pcall(function()
-        local w = getFileWriter(LMPersist.FILE, true, false)
-        if not w then return end
+    if w then
         w:write(text)
         w:close()
         ok = true
-    end)
+    end
     if ok then
         forensic("LM.SAVE", { why = tostring(why), who = tostring(who), zones = n, bytes = #text })
     else

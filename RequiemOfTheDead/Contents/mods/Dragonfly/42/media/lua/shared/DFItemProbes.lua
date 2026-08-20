@@ -57,8 +57,18 @@ DFItemProbes.LIST = {
     { label = "Proteins",      get = "getProteins",        set = "setProteins",        kind = "number", group = "Food", requires = "Food" },
     { label = "Carbs",         get = "getCarbohydrates",   set = "setCarbohydrates",   kind = "number", group = "Food", requires = "Food" },
     { label = "Lipids",        get = "getLipids",          set = "setLipids",          kind = "number", group = "Food", requires = "Food" },
-    { label = "Days Fresh",    get = "getDaysFresh",       set = "setDaysFresh",       kind = "int",    group = "Food", requires = "Food" },
-    { label = "Days Rotten",   get = "getDaysTotallyRotten", set = "setDaysTotallyRotten", kind = "int", group = "Food", requires = "Food" },
+    -- NO "Days Fresh" / "Days Rotten" ROWS, and they are not coming back as
+    -- writes. Both getters live on zombie/scripting/objects/Item.java (:611,
+    -- :619) - the SCRIPT definition - and not on the InventoryItem instance
+    -- these probes are handed, so the rows could never resolve and never
+    -- surfaced. They cost nothing while they sat here (read() presence-checks
+    -- with `type(fn) ~= "function"`, and a missing method on an exposed object
+    -- reads as nil rather than throwing), which is why they went unnoticed.
+    --
+    -- Reading them via item:getScriptItem() would work. WRITING must not: the
+    -- setters mutate the script definition, so a per-item editor would silently
+    -- change every item of that type on the server. A read-only pair could be
+    -- added deliberately one day; a read/write pair would be a trap.
     { label = "Poison Power",  get = "getPoisonPower",     set = "setPoisonPower",     kind = "int",    group = "Food", requires = "Food" },
     { label = "Cooked",        get = "isCooked",           set = "setCooked",          kind = "bool",   group = "Food", requires = "Food" },
     { label = "Burnt",         get = "isBurnt",            set = "setBurnt",           kind = "bool",   group = "Food", requires = "Food" },
@@ -78,15 +88,35 @@ DFItemProbes.LIST = {
     { label = "Current Ammo",  get = "getCurrentAmmoCount", set = "setCurrentAmmoCount", kind = "int", group = "Combat", requires = "HandWeapon" },
 
     -- Clothing
-    { label = "Bloody",        get = "getBloodLevel",      set = "setBloodLevel",      kind = "number", group = "Clothing", requires = "Clothing" },
-    { label = "Dirty",         get = "getDirtyness",       set = "setDirtyness",       kind = "number", group = "Clothing", requires = "Clothing" },
+    -- Bloody/Dirty are FUNCTION setters, not setBloodLevel/setDirtiness: those
+    -- scalars are derived caches the engine recomputes from the ItemVisual's
+    -- per-part arrays (BloodClothingType.calcTotalBloodLevel:319, called from
+    -- InventoryItem.synchWithVisual:2116-2119), and rendering reads only the
+    -- arrays. Writing the scalar looked applied and did nothing - found live
+    -- 2026-08-18 when adding blood in the editor had no effect. RDClothing
+    -- writes the arrays and keeps the scalar consistent.
+    { label = "Bloody",        get = "getBloodLevel",
+      set = function(item, value) return RDClothing.setVisualPercent(item, "blood", value) end,
+      kind = "number", group = "Clothing", requires = "Clothing", min = 0, max = 100 },
+    -- Dirt-i-ness, not dirt-y-ness. Clothing.java:695/704 spell it with an I,
+    -- and no class in 42.20.3 declares the Y form at all - so this row silently
+    -- read and wrote nothing from the day it was written (2026-08-18).
+    { label = "Dirty",         get = "getDirtiness",
+      set = function(item, value) return RDClothing.setVisualPercent(item, "dirt", value) end,
+      kind = "number", group = "Clothing", requires = "Clothing", min = 0, max = 100 },
     { label = "Wetness",       get = "getWetness",         set = "setWetness",         kind = "number", group = "Clothing", requires = "Clothing" },
     -- Holes have no engine setter (getHolesNumber counts the ItemVisual's per-part
-    -- hole array), so this is a function setter over RDClothing. Remove-only: it
-    -- refuses to raise the count rather than letting an admin punch new holes in
-    -- someone's coat. Writing 0 mends everything and credits the condition back.
+    -- hole array), so this is a function setter over RDClothing. BIDIRECTIONAL
+    -- since 2026-08-18: the write reaches here only through DFServer's gate,
+    -- which checks Capability.EditItem server-side and audits refusals
+    -- (DFServer.lua:79-81) - and a caller past that gate can already Dump
+    -- Contents and zero the condition through this same handler. Withholding
+    -- "add a hole" from a surface that grants "delete everything" was not a
+    -- safety boundary, just an inconsistency. Vanilla's admin health panel adds
+    -- holes to another player's clothing too (server/ClientCommands.lua:458-461).
+    -- Condition follows in both directions at the engine's getCondLossPerHole.
     { label = "Holes",         get = "getHolesNumber",
-      set = function(item, value) return RDClothing.mendHoles(item, value) end,
+      set = function(item, value) return RDClothing.setHoleCount(item, value) end,
       kind = "int", group = "Clothing", requires = "Clothing", min = 0 },
 
     -- Literature / book
@@ -102,65 +132,110 @@ DFItemProbes.ACTIONS = {
         id = "Repair",
         label = "Repair",
         detect = "getCondition",
+        -- No guards. These were four pcalls hiding two REAL defects, and they
+        -- bought no silence doing it: the engine writes a full Lua stack trace
+        -- at throw time (KahluaThread.flushErrorMessage) before any pcall sees
+        -- the error, so the "silent" failures were 60 stack-trace dumps per
+        -- Repair All on a live server. That flood is what surfaced them.
+        --
+        --   setDirtyness  - NO SUCH METHOD on any class in 42.20.3. The engine
+        --                   spells it setDirtiness (Clothing.java:695). Repair
+        --                   has therefore never cleared dirt, and nobody could
+        --                   tell, because the pcall ate the nil-call.
+        --   setWetness    - exists ONLY on Clothing (Clothing.java), not on
+        --                   base InventoryItem, so it threw for every weapon,
+        --                   food and container the pass touched.
+        --
+        -- Method presence is the deterministic precondition, exactly as
+        -- DFInventory_Server already gates getInventory() for bags. An absent
+        -- setter now means "this item has no such property", which is the
+        -- truth, instead of an exception.
         apply = function(item)
-            pcall(function()
-                local maxc = item.getConditionMax and item:getConditionMax() or 100
-                item:setCondition(maxc)
-            end)
-            pcall(function() item:setBloodLevel(0) end)
-            pcall(function() item:setDirtyness(0) end)
-            pcall(function() item:setWetness(0) end)
+            local maxc = item.getConditionMax and item:getConditionMax() or 100
+            if item.setCondition then item:setCondition(maxc) end
+            -- Garment blood/dirt live per-part on the ItemVisual; the scalar
+            -- setters write a derived cache the engine recomputes and rendering
+            -- ignores (see the Bloody/Dirty rows above). Route garments through
+            -- RDClothing so the clean actually lands - refusals (no visual, no
+            -- covered parts) mean there is nothing to clean, so best-effort is
+            -- honest here. Weapons keep the scalar: HandWeapon blood IS the
+            -- authoritative field (SyncItemFieldsPacket.java:153/:501 syncs it
+            -- directly, no per-part layer).
+            if type(item.getCoveredParts) == "function" then
+                RDClothing.setVisualPercent(item, "blood", 0)
+                RDClothing.setVisualPercent(item, "dirt", 0)
+            else
+                if item.setBloodLevel then item:setBloodLevel(0) end
+                if item.setDirtiness then item:setDirtiness(0) end
+            end
+            if item.setWetness   then item:setWetness(0) end
         end,
     },
     {
         id = "Refill",
         label = "Refill",
         detect = "getUsedDelta",
+        -- setUsedDelta is Clothing/DrainableComboItem/WeaponPart, not base
+        -- InventoryItem - and `detect` only proves the GETTER exists.
         apply = function(item)
-            pcall(function() item:setUsedDelta(1.0) end)
+            if item.setUsedDelta then item:setUsedDelta(1.0) end
         end,
     },
     {
         id = "Refresh",
         label = "Refresh",
         detect = "getAge",
+        -- THE SECOND FLOOD, had this shipped unchanged: `detect = "getAge"` is
+        -- satisfied by every InventoryItem, but setFrozen and setPoisonPower
+        -- are declared on Food ALONE. Every weapon, tool and container run
+        -- through Refresh threw twice - each throw dumping a Lua stack trace
+        -- before the pcall could swallow it. setAge and setBurnt are genuinely
+        -- InventoryItem-wide; presence-gating all four costs nothing and tells
+        -- the truth about which apply.
         apply = function(item)
-            pcall(function() item:setAge(0) end)
-            pcall(function() item:setFrozen(false) end)
-            pcall(function() item:setBurnt(false) end)
-            pcall(function() item:setPoisonPower(0) end)
+            if item.setAge         then item:setAge(0) end
+            if item.setFrozen      then item:setFrozen(false) end
+            if item.setBurnt       then item:setBurnt(false) end
+            if item.setPoisonPower then item:setPoisonPower(0) end
         end,
     },
     {
         id = "RestoreWeapon",
         label = "Restore Weapon",
         detect = "getMaxDamage",
+        -- Sharpness is HandWeapon's; condition is InventoryItem-wide. The old
+        -- pair already read the MAX getters through presence checks, then
+        -- called the setters behind a pcall - half the pattern, applied to the
+        -- wrong half.
         apply = function(item)
-            pcall(function()
-                local maxc = item.getConditionMax and item:getConditionMax() or 100
-                item:setCondition(maxc)
-            end)
-            pcall(function()
-                local maxs = item.getSharpnessMax and item:getSharpnessMax() or 10
-                item:setSharpness(maxs)
-            end)
+            local maxc = item.getConditionMax and item:getConditionMax() or 100
+            if item.setCondition then item:setCondition(maxc) end
+            local maxs = item.getSharpnessMax and item:getSharpnessMax() or 10
+            if item.setSharpness then item:setSharpness(maxs) end
         end,
     },
     {
         id = "DumpContainer",
         label = "Dump Contents",
         detect = "getInventory",
+        -- getInventory is InventoryContainer's alone, which `detect` already
+        -- establishes; the inner nil-checks were always the real contract.
         apply = function(item)
-            pcall(function()
-                local inv = item:getInventory()
-                if inv and inv.clear then inv:clear() end
-            end)
+            local inv = item.getInventory and item:getInventory()
+            if inv and inv.clear then inv:clear() end
         end,
     },
 }
 
 -- Read a single probe value off the item; returns (value, ok). ok=false means
 -- the getter doesn't exist or threw - skip rendering this field.
+--
+-- pcall-probe: the LIST above is a hand-maintained catalog, and this call is
+-- where its claims meet the build. The presence check answers "is it there";
+-- what the guard catches is the claim being SHAPED wrong - a cataloged getter
+-- that actually takes arguments raises through MethodArguments.assertValid, a
+-- call-shape failure, before any body runs. That is one of the four things
+-- that genuinely reach a Lua pcall and no decompile read of a body rules it out.
 function DFItemProbes.read(item, probe)
     if not item or not probe or not probe.get then return nil, false end
     local fn = item[probe.get]
@@ -212,11 +287,16 @@ function DFItemProbes.write(item, probeLabel, value)
     if type(probe.max) == "string" then
         local maxFn = item[probe.max]
         if type(maxFn) == "function" then
+            -- pcall-probe: same catalog-shape reason as read().
             local ok, mx = pcall(maxFn, item)
             if ok and mx and value > mx then value = mx end
         end
     end
 
+    -- pcall-probe: catalog-shape for method setters (wrong arity or no matching
+    -- overload for the coerced value raises before the body), and for function
+    -- setters `fn` is our own Lua, which throws natively. Both lanes are real;
+    -- the refusal path below is the recovery.
     local ok, res, resErr = pcall(fn, item, value)
     if not ok then return false, "setter threw: " .. tostring(res) end
     -- A function setter returning (false, reason) is a refusal we should show the
@@ -243,11 +323,17 @@ end
 
 -- Helper: probe applies to this item only if either (a) it declares no class
 -- requirement, or (b) the item passes instanceof for the named class.
--- Wrapped in pcall because instanceof can throw on unfamiliar class names.
+--
+-- No guard. The old comment claimed "instanceof can throw on unfamiliar class
+-- names" and the decompile refutes it: instanceof is @LuaMethod(global=true)
+-- (LuaManager.java:2836-2854) and its body has no throw path at all - an
+-- unknown name falls through the typeMap check to `return false`, and a null
+-- object returns false before that. A misspelled `requires` in the LIST above
+-- therefore reads as "does not apply", same as before, just without a guard
+-- implying a failure mode the engine does not have.
 local function probeAppliesTo(item, probe)
     if not probe.requires then return true end
-    local ok, isInst = pcall(instanceof, item, probe.requires)
-    return ok and isInst == true
+    return instanceof(item, probe.requires) == true
 end
 
 -- Serialize readable fields applicable to this item's actual class. Skips

@@ -34,6 +34,7 @@
 if not isServer() then return end
 
 require "MMSvShared"
+require "MMRoster"
 
 MMTraitRepair = MMTraitRepair or {}
 
@@ -42,19 +43,6 @@ MMTraitRepair = MMTraitRepair or {}
 -- replaces the client list wholesale with ours. That is exactly the semantics a
 -- repair wants, and it is why this file needs no client-side mirror-apply.
 local PF_TRAITS = 2
-
-local function findOnlineByUsername(name)
-    local found
-    pcall(function()
-        local players = getOnlinePlayers()
-        if not players then return end
-        for i = 0, players:size() - 1 do
-            local p = players:get(i)
-            if p and p:getUsername() == name then found = p; break end
-        end
-    end)
-    return found
-end
 
 -- Split "namespace:path" -> namespace, path. nil for anything that is not an id
 -- (a stale registry object, whose getLocation() is gone).
@@ -82,11 +70,8 @@ function MMTraitRepair.scan(player)
                 -- Seinar's placeholders are Cost=0 + IsProfessionTrait=true. Reported,
                 -- not enforced: it is a confidence hint for the admin, and a mod that
                 -- shadows vanilla with a REAL trait would (rightly) not match it.
-                local placeholder = false
-                pcall(function()
-                    local def = CharacterTraitDefinition.getCharacterTraitDefinition(t)
-                    if def then placeholder = (def:getCost() == 0) and (def:isFree() == true) end
-                end)
+                local def = CharacterTraitDefinition.getCharacterTraitDefinition(t)
+                local placeholder = def and (def:getCost() == 0) and (def:isFree() == true) or false
                 out[#out + 1] = { have = id, want = baseId, placeholder = placeholder,
                                   modTrait = t, baseTrait = baseTrait }
             end
@@ -96,13 +81,89 @@ function MMTraitRepair.scan(player)
     return out
 end
 
+-- CharacterTraits.add/remove are immediate map/list writes (CharacterTraits.java:
+-- 71-87), and trait XP bookkeeping mutates the live descriptor map as it walks
+-- boosts (IsoGameCharacter.java:10375-10396). Neither has a rollback. Preflight
+-- supplies fully resolved candidates; this one boundary reports whether a fault
+-- happened before any mutation or left a character that needs operator review.
+local function verifyCandidates(target, found)
+    local expected, removed = {}, {}
+    for _, c in ipairs(found) do
+        expected[c.want] = true
+        removed[c.have] = true
+    end
+
+    local present = {}
+    local known = target:getCharacterTraits():getKnownTraits()
+    for i = 0, (known and known:size() or 0) - 1 do
+        local id = MMShared.fqid(known:get(i))
+        if not id then
+            error("trait identity unavailable while verifying repair")
+        end
+        present[id] = true
+    end
+
+    local missing, lingering = {}, {}
+    for id in pairs(expected) do
+        if not present[id] then missing[#missing + 1] = id end
+    end
+    for id in pairs(removed) do
+        if present[id] then lingering[#lingering + 1] = id end
+    end
+    if #missing > 0 or #lingering > 0 then
+        table.sort(missing)
+        table.sort(lingering)
+        error("swap verification failed (missing=" .. table.concat(missing, ",")
+            .. ", lingering=" .. table.concat(lingering, ",") .. ")")
+    end
+end
+
+-- The mutation, and the reason it runs guarded - which was unstated until
+-- 2026-08-20, the last guard in the suite with no reason at its site.
+--
+-- The named throw is OUR OWN: verifyCandidates raises error() when the
+-- post-swap trait set does not match what the swap claimed (`swap verification
+-- failed`, and `trait identity unavailable` while reading it back). That is
+-- Lua-lane by construction, and it is raised mid-mutation on purpose - a swap
+-- that cannot be verified must not report success. The engine calls in the
+-- loop (remove/add/modifyTraitXPBoost) are exposed methods whose body faults
+-- read as nil and are exactly what verification exists to catch.
+--
+-- The recovery is the structured result, not a fallback: phase says how far it
+-- got, mutationStarted says whether the character was touched, and runOne
+-- reports both to the admin verbatim. A partial=true answer is the honest
+-- "this character now needs looking at" signal, which a bare throw would have
+-- turned into a dropped command.
+local function applyCandidates(target, found)
+    local phase, repaired, mutationStarted = "preflight", 0, false
+    local traits = target:getCharacterTraits()
+    local ok, err = pcall(function()
+        phase = "apply"
+        for _, c in ipairs(found) do
+            mutationStarted = true
+            traits:remove(c.modTrait)
+            target:modifyTraitXPBoost(c.modTrait, true)
+            traits:add(c.baseTrait)
+            target:modifyTraitXPBoost(c.baseTrait, false)
+            repaired = repaired + 1
+        end
+        phase = "verify"
+        verifyCandidates(target, found)
+    end)
+    if not ok then
+        return { ok = false, partial = mutationStarted, phase = phase,
+                 repaired = repaired, error = tostring(err) }
+    end
+    return { ok = true, partial = false, phase = "complete", repaired = repaired }
+end
+
 -- Swap one character's shadowed traits for the vanilla originals.
 -- Returns { ok, reason|message, found = n, repaired = n, items = {...} }.
 function MMTraitRepair.runOne(admin, targetUsername, apply)
     targetUsername = tostring(targetUsername or "")
     if targetUsername == "" then return { ok = false, reason = "No target username." } end
 
-    local target = findOnlineByUsername(targetUsername)
+    local target = MMRoster.findOnline(targetUsername)
     if not target then
         return { ok = false, reason = targetUsername .. " must be online to repair." }
     end
@@ -110,11 +171,7 @@ function MMTraitRepair.runOne(admin, targetUsername, apply)
         return { ok = false, reason = targetUsername .. " is dead - repair after they respawn." }
     end
 
-    local okScan, found = pcall(MMTraitRepair.scan, target)
-    if not okScan then
-        MMwarn("REPAIR scan failed for " .. targetUsername .. ": " .. tostring(found))
-        return { ok = false, reason = "Scan failed for " .. targetUsername .. " - check server console." }
-    end
+    local found = MMTraitRepair.scan(target)
 
     local items = {}
     for _, c in ipairs(found) do
@@ -131,40 +188,26 @@ function MMTraitRepair.runOne(admin, targetUsername, apply)
                      .. table.concat(items, ", ") .. " (dry run, nothing changed)" }
     end
 
-    -- Boost bookkeeping mirrors applyIdentity: modifyTraitXPBoost SUBTRACTS the
-    -- outgoing trait's boosts from the live map and ADDS the incoming one's, and it
-    -- null-guards a missing definition (IsoGameCharacter.java:10380), so a
-    -- definitionless trait is safe to pass. Remove before add, so a shared perk
-    -- entry nets out the way creation would have left it.
-    local repaired = 0
-    local okApply, err = pcall(function()
-        local traits = target:getCharacterTraits()
-        for _, c in ipairs(found) do
-            traits:remove(c.modTrait)
-            target:modifyTraitXPBoost(c.modTrait, true)
-            traits:add(c.baseTrait)
-            target:modifyTraitXPBoost(c.baseTrait, false)
-            repaired = repaired + 1
+    -- Boost bookkeeping mirrors applyIdentity: remove before add so shared perk
+    -- entries net out like character creation. applyCandidates verifies the final
+    -- trait set before any success is reported.
+    local applyResult = applyCandidates(target, found)
+    if not applyResult.ok then
+        MMwarn("REPAIR failed for " .. targetUsername .. " (phase="
+            .. tostring(applyResult.phase) .. ", partial=" .. tostring(applyResult.partial)
+            .. "): " .. tostring(applyResult.error))
+        if applyResult.partial then
+            return { ok = false, partial = true, found = #found, repaired = applyResult.repaired,
+                     items = items, reason = "Repair partially changed " .. targetUsername
+                         .. ". Do not retry automatically; inspect the character and server console." }
         end
-    end)
-    if not okApply then
-        MMwarn("REPAIR apply FAILED for " .. targetUsername .. ": " .. tostring(err))
-        return { ok = false, found = #found, repaired = repaired, items = items,
-                 reason = "Repair failed for " .. targetUsername .. " - check server console." }
-    end
-
-    -- VERIFY, same principle as applyIdentity: the engine's add() returns nothing
-    -- and validates nothing, so read the character back before reporting success.
-    local okVerify, still = pcall(MMTraitRepair.scan, target)
-    if okVerify and #still > 0 then
-        MMwarn("REPAIR incomplete for " .. targetUsername .. ": " .. tostring(#still)
-            .. " shadowed trait(s) survived the swap")
-        return { ok = false, found = #found, repaired = repaired, items = items,
-                 reason = "Repair incomplete for " .. targetUsername .. " - check server console." }
+        return { ok = false, partial = false, found = #found, repaired = applyResult.repaired,
+                 items = items, reason = "Repair preflight failed for " .. targetUsername
+                     .. "; nothing changed. Check server console." }
     end
 
     -- Push the authoritative trait list to the owning client (see PF_TRAITS above).
-    if sendSyncPlayerFields then pcall(function() sendSyncPlayerFields(target, PF_TRAITS) end) end
+    sendSyncPlayerFields(target, PF_TRAITS)
 
     if MMAudit then
         -- `admin` is an IsoPlayer for a manual repair and a plain string for an
@@ -177,8 +220,8 @@ function MMTraitRepair.runOne(admin, targetUsername, apply)
         MMAudit.log(target, "TRAIT_REPAIR", { admin = by, swaps = items })
     end
     MMwarn("REPAIR " .. targetUsername .. ": " .. table.concat(items, ", "))
-    return { ok = true, found = #found, repaired = repaired, items = items,
-             message = targetUsername .. ": repaired " .. repaired .. " trait(s) - "
+    return { ok = true, found = #found, repaired = applyResult.repaired, items = items,
+             message = targetUsername .. ": repaired " .. applyResult.repaired .. " trait(s) - "
                  .. table.concat(items, ", ") }
 end
 
@@ -275,9 +318,10 @@ Events.OnServerStarted.Add(function()
         -- Read the knob per connection, not once at boot: an admin who flips it
         -- mid-session for a migration should not have to restart again.
         if not MMShared.autoFixShadowedTraits() then return end
-        local ok, res = pcall(MMTraitRepair.runOne, "auto:login", p:getUsername(), true)
-        if not ok then
-            MMwarn("auto-repair threw for " .. MMname(p) .. ": " .. tostring(res))
+        local res = MMTraitRepair.runOne("auto:login", p:getUsername(), true)
+        if type(res) == "table" and not res.ok then
+            MMwarn("auto-repair refused for " .. MMname(p) .. ": "
+                .. tostring(res.reason or "unknown failure"))
         elseif type(res) == "table" and res.ok and (res.repaired or 0) > 0 then
             -- Loud on purpose. This edits a character without anyone asking, so
             -- the console must carry a record of every one it touched.

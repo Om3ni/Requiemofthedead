@@ -24,6 +24,7 @@ require "RDRate"
 require "RCTuning"
 require "RCParking"
 require "RCRespawn"
+require "RCDismantleAuthority"
 
 RCServer = RCServer or {}
 
@@ -72,10 +73,22 @@ local function flushTransmits()
     local batch = pendingTransmit
     pendingTransmit = {}
     for _, veh in pairs(batch) do
-        -- guarded: transmitModData serializes the whole modData table onto the
-        -- wire (GameServer.java:2666); foreign mods write into that table and
-        -- an unserializable value must not kill the flush loop
-        pcall(function() veh:transmitModData() end)
+        -- No guard, and the premise was refuted at both ends. The serialization
+        -- it feared is already contained: every packet send runs setData and
+        -- sendToConnection inside the engine's own try/catch, which logs and
+        -- swallows any Exception per connection (INetworkPacket.java:127-137),
+        -- so an unserializable modData value written by a foreign mod cannot
+        -- reach us. A vehicle removed between queue and flush is handled too -
+        -- transmitModData returns immediately for a null square
+        -- (IsoObject.java:4469-4471).
+        --
+        -- And the shape was wrong regardless: what remains unguarded in there
+        -- is the connections walk (INetworkPacket.java:174-181), whose failure
+        -- would be SYSTEMIC - null udpEngine, or a concurrent modification -
+        -- hitting every vehicle in the batch identically. Per-vehicle isolation
+        -- buys nothing against a failure that is not per-vehicle. §2: a guard
+        -- earns its place by granularity, and there is none here.
+        veh:transmitModData()
     end
 end
 
@@ -95,11 +108,15 @@ end
 -- no object to write, which is exactly why the panel greys its edit controls.
 local function resolveVehicle(args)
     if not args then return nil end
-    if args.vehicleId then
-        -- args.vehicleId comes off the wire: a non-number would blow the
-        -- (short) cast inside getVehicleById, so the guard stays.
-        local ok, v = pcall(getVehicleById, args.vehicleId)
-        if ok and v then return v end
+    -- Wire value VALIDATED rather than guarded: getVehicleById takes an int
+    -- (LuaManager.java:8208-8211), so a non-number fails the Kahlua coercion at
+    -- the call boundary. tonumber() is the deterministic precondition, and a
+    -- bad id now falls through to the claimId path exactly as an unknown id
+    -- already did.
+    local vid = tonumber(args.vehicleId)
+    if vid then
+        local v = getVehicleById(vid)
+        if v then return v end
     end
     if args.claimId then
         return RCRegistry.findLoadedByClaimId(args.claimId)
@@ -368,7 +385,22 @@ end
 -- catch a sync gap (client modData != server modData). Always responds (it is
 -- an explicit request), and also sends the string back so the requester sees
 -- the server view in their own console next to their client view.
+-- Gated on the server's own debug switch since 2026-08-19.
+--
+-- This returned a vehicle's full claim state - owner, every whitelisted
+-- username, and each of their permission flags - to any client that named an id,
+-- with no access check of ANY kind, and printed a console line per request
+-- besides. resolveVehicle also accepts args.claimId, so the surface was
+-- enumerable two ways.
+--
+-- The gate is cfg().debug rather than isAdmin deliberately. The client only
+-- offers this option when debug is on, and it offers it REGARDLESS of the
+-- caller's access on purpose, so a locked-out tester can inspect why a car
+-- refuses them (RCClaimMenu.lua:140-141). Mirroring the client's own gate
+-- server-side preserves that workflow exactly while closing the endpoint on
+-- every ordinary server, where debug is off and nothing legitimate calls it.
 local function hDumpClaim(player, args)
+    if not RCShared.cfg().debug then return end
     local v = resolveVehicle(args)
     local who = player and player.getUsername and player:getUsername() or "?"
     local line = v and RCClaim.describe(v) or ("vehicle not found id=" .. tostring(args and args.vehicleId))
@@ -429,42 +461,123 @@ local function hReleaseClaim(player, args)
 end
 
 -- ---------------------------------------------------------------------------
--- Dismantle + engine-lock telemetry (DESIGN §1/§2). Both are LEDGER events on
--- rare one-shot actions - the client-gate + audit model, not server veto (the
--- teardown itself is client-driven in MP; PZ offers no Lua veto). A forged
--- command therefore costs nothing but a ledger line naming its sender, and
--- the only state it can touch is the claim INDEX - which self-heals from
--- modData, the same safe failure direction as pruneOrphans.
+-- Dismantle authority + engine-lock telemetry (DESIGN §1/§2).
 -- ---------------------------------------------------------------------------
 
--- Client finished a vehicle removal: a FIELD dismantle (radial/right-click,
--- args.delete absent) or the admin tab's plain DELETE (args.delete=true -
--- vanilla remove semantics, no dismantle framing). Ledger it under the
--- matching verb; if the car carried a claim (staff paths only - field gates
--- block claimed cars for players), prune the index entry so the owner's cap
--- + fleet panel update - its modData died with the vehicle.
-local function hDismantled(player, args)
-    if args.claimId and args.owner then
-        -- guarded: owner/claimId are wire-typed values; the index prune must
-        -- not be able to abort the ledger write below
-        pcall(RCRegistry.remove, args.owner, args.claimId)
+local function hAuthoritativeDismantle(player, args)
+    -- One explicit permit request; completion travels through Build 42's native
+    -- NetTimedAction and is therefore absent from this client-command surface.
+    if not RDRate.allow(player, 6, 5000, M .. ".dismantled") then
+        sendServerCommand(player, M, "DismantleRefused", {
+            vehicleId = args.vehicleId,
+            key = RCDismantleAuthority.reasonKey("rate"),
+        })
+        return
     end
-    RCAudit.log(args.delete and "VEHICLE-DELETE" or "DISMANTLE", player, {
+
+    if args.stage == "begin" then
+        local result = RCDismantleAuthority.begin(player, args)
+        if result.ok then
+            sendServerCommand(player, M, "DismantlePermit", {
+                vehicleId = result.vehicleId,
+                ticket = result.ticket,
+                expiresAt = result.expiresAt,
+            })
+        else
+            sendServerCommand(player, M, "DismantleRefused", {
+                vehicleId = result.vehicleId or args.vehicleId,
+                key = RCDismantleAuthority.reasonKey(result.reason),
+            })
+            RCDismantleAuthority.auditRefusal(player, result)
+        end
+        return
+    end
+
+    local result = { stage = tostring(args.stage), reason = "stage" }
+    notify(player, RCDismantleAuthority.reasonKey(result.reason), true)
+    RCDismantleAuthority.auditRefusal(player, result)
+end
+
+-- Compatibility/report path for the admin tab's already-authorized deletes and
+-- old clients. New field dismantles request a permit above; engine-native timed
+-- action completion never returns through this client-command surface.
+local function hDismantledReport(player, args)
+    local staff = RCShared.isAdmin(player)
+    local reportedDelete = args.delete == true
+    local acceptedDelete = reportedDelete and staff
+
+    local claimMutation = "none"
+    if args.claimId ~= nil or args.owner ~= nil then
+        if not staff then
+            claimMutation = "refused-nonstaff"
+        elseif type(args.owner) ~= "string" or args.owner == ""
+            or type(args.claimId) ~= "string" or args.claimId == "" then
+            claimMutation = "refused-malformed"
+        elseif not RCRegistry.owns(args.owner, args.claimId) then
+            claimMutation = "refused-mismatch"
+        else
+            -- Local in-memory table mutation after exact owner/id proof;
+            -- RCRegistry.remove has no recoverable failure path.
+            RCRegistry.remove(args.owner, args.claimId)
+            claimMutation = "pruned"
+        end
+    end
+
+    local tokenMutation = "none"
+    if not reportedDelete and not args.wreck and type(args.vehicle) == "string"
+        and args.vehicle ~= "" then
+        if staff then
+            local kind = string.contains(args.vehicle, "Trailer") and "trailer" or "vehicle"
+            RCRegistry.addToken(kind)
+            tokenMutation = "minted-" .. kind
+        else
+            -- A plain report cannot prove the separate vanilla removal occurred.
+            tokenMutation = "refused-unverified"
+        end
+    end
+
+    RCAudit.log(acceptedDelete and "VEHICLE-DELETE" or "DISMANTLE", player, {
         vehicle = args.vehicle, wreck = args.wreck and true or false,
         via = args.via or "field", x = args.x, y = args.y, z = args.z,
         engine = args.engine, owner = args.owner, claimId = args.claimId,
         cheat = args.cheat,   -- e.g. "eternal-torch" (staff no-wear dismantle)
+        authority = staff and "staff" or "player-audit-only",
+        claimMutation = claimMutation,
+        tokenMutation = tokenMutation,
+        flag = (reportedDelete and not staff) and "UNAUTHORIZED-DELETE-REPORT" or nil,
     })
-    -- The §4 token trickle: a FIELD dismantle of a non-wreck mints one token
-    -- into the matching pool. Wrecks and panel deletes mint nothing (the
-    -- free-wreck-supply rule; deletion is cleanup, not economy). The wreck
-    -- flag is client-reported (the vehicle is already gone) - a forged mint
-    -- is possible but worthless-until-§4 and fully attributed in the ledger.
-    if not args.delete and not args.wreck and args.vehicle then
-        local kind = string.contains(tostring(args.vehicle), "Trailer") and "trailer" or "vehicle"
-        -- addToken is a plain table increment (RCRegistry.lua:476) - no guard
-        RCRegistry.addToken(kind)
+end
+
+-- THE STAGE-LESS SHAPE IS REFUSED FROM THE WIRE (2026-08-19, with approval).
+--
+-- `dismantled` has two shapes. The staged one carries args.stage and goes to
+-- hAuthoritativeDismantle, which is rate-limited per player. The stage-less one
+-- fell through to hDismantledReport, and a comment above that function called it
+-- a "compatibility path for the admin tab's already-authorized deletes and old
+-- clients". That comment is stale: the ONLY sender of this command anywhere in
+-- the suite is RCDismantleMenu.lua:80, and it always sends stage = "begin".
+-- The admin tab moved to dismantledMany; field completion goes server-side
+-- through RCDismantleAuthority.finish and never touches the wire.
+--
+-- What accepting it cost: every state change in hDismantledReport already
+-- refuses non-staff (claimMutation = "refused-nonstaff", tokenMutation =
+-- "refused-unverified"), so the world was never at risk - but the LEDGER ROW is
+-- written either way, from wire-supplied fields. Any player could hand-craft
+-- this message and mint audit entries of their choosing, including ones reading
+-- as though somebody defeated an engine lock. That ledger is what an admin
+-- reads to settle a griefing dispute, so a forgeable row is worse than none.
+--
+-- hDismantledReport itself is untouched and still called internally by
+-- hDismantledMany, which is staff-gated at its own door. Only the wire door
+-- closes here.
+local function hDismantled(player, args)
+    if args.stage == nil then
+        RCAudit.log("DISMANTLE-STAGELESS-REFUSED", player, {
+            vehicle = args and args.vehicle, via = args and args.via,
+        })
+        return
     end
+    hAuthoritativeDismantle(player, args)
 end
 
 -- Bulk sibling of the above, for the admin tab's multi-select delete. ONE
@@ -479,21 +592,17 @@ end
 -- sends those individually and this one line covers the whole set.
 --
 -- Capped independently of whatever the client believes: args arrive untrusted,
--- and hDismantled prunes claim-index entries, so an unbounded list is an
--- unbounded write loop on the tick thread.
+-- and each accepted staff report may prune one exact indexed claim, so an
+-- unbounded list would be an unbounded write loop on the tick thread.
 local DISMANTLE_BATCH_MAX = 16
 
 local function hDismantledMany(player, args)
     local list = args and args.reports
     if type(list) ~= "table" then return end
 
-    -- STAFF ONLY, unlike its single-report sibling. hDismantled is deliberately
-    -- ungated because a field dismantle is an ordinary player action, but it
-    -- also prunes a claim-index entry from client-supplied owner/claimId - so a
-    -- forged report can unclaim someone else's car in the index. That hole
-    -- predates this handler; what is new is that ONE bulk command could work it
-    -- sixteen times instead of once, and the only legitimate sender is the admin
-    -- panel. Gate the amplifier, leave the field path alone.
+    -- STAFF ONLY: this is the admin panel's destructive batch. The per-report
+    -- handler still verifies each exact owner/claim pair, but only a staff sender
+    -- may reach that mutation policy at all.
     if not RCShared.isAdmin(player) then
         RCAudit.log("VEHICLE-DELETE-REFUSED", player, { via = "panel-bulk", n = #list })
         return
@@ -508,9 +617,13 @@ local function hDismantledMany(player, args)
         end
         if type(rep) == "table" then
             n = n + 1
-            -- pcall per report: one malformed entry must not abandon the rest of
-            -- the batch, leaving cars destroyed in the world and unledgered.
-            local ok, err = pcall(hDismantled, player, rep)
+            -- RETAINED, one member of an independent batch, and the stakes are
+            -- named because they are unusually high: each entry ledgers a car
+            -- the client has ALREADY destroyed in the world. Abandoning the
+            -- batch on one malformed entry leaves the rest destroyed and
+            -- unledgered - a partial success that is genuinely valid here,
+            -- because a ledgered car and a lost one are not equally bad.
+            local ok, err = pcall(hDismantledReport, player, rep)
             if not ok then print("[RC] dismantledMany entry failed: " .. tostring(err)) end
         end
     end
@@ -520,11 +633,33 @@ end
 -- The lock should stop every non-staff player BEFORE this point, so a
 -- BYPASS-flagged line = a defeated client. admin is decided by OUR access
 -- check on the sender - the client's word is never consulted.
+-- The identity is RE-DERIVED, not believed. `flag` and `admin` were always
+-- server-computed, but everything describing WHICH engine was pulled came
+-- straight off the wire with no vehicle resolution at all - so any non-staff
+-- client could mint unlimited rows reading "BYPASS-block-defeated" against
+-- vehicles and coordinates of its choosing, and that flag is the whole
+-- evidentiary basis of the engine-lock design (RCEngineLock.lua:11-14).
+--
+-- Resolving the id first costs nothing legitimate: the one real sender
+-- (RCEngineLock.lua:94-95) reports a vehicle it has just finished working on,
+-- so it resolves. A row that cannot be resolved is still recorded - silence
+-- would be its own blind spot - but it is labelled as unresolved rather than
+-- dressed up with attacker-supplied coordinates.
 local function hEnginePull(player, args)
     local admin = RCShared.isAdmin(player)
     local bypass = RCShared.cfg().engineLockEnabled and not admin
+    local v = getVehicleById(tonumber(args and args.vid))
+    if not v then
+        RCAudit.log("ENGINE-PULL", player, {
+            vid = args and args.vid, resolved = "no",
+            admin = admin, flag = bypass and "BYPASS-block-defeated" or "-",
+        })
+        return
+    end
     RCAudit.log("ENGINE-PULL", player, {
-        vehicle = args.vehicle, vid = args.vid, x = args.x, y = args.y, z = args.z,
+        vehicle = v:getScriptName(), vid = v:getId(),
+        x = math.floor(v:getX()), y = math.floor(v:getY()), z = math.floor(v:getZ()),
+        resolved = "yes",
         admin = admin, flag = bypass and "BYPASS-block-defeated" or "-",
     })
 end
@@ -537,13 +672,41 @@ end
 -- key-holder's car. The vehicle is re-resolved from the trusted sender; a
 -- forged 'used' only refreshes an unclaimed car's clock in the sender's own
 -- name - worthless, and fully within the sender's own rights anyway.
+-- PROXIMITY IS THE PRECONDITION. Attribution decides which vehicles the
+-- reclamation sweep will spare, so naming any loaded id used to be enough to
+-- become a vehicle's recognised keeper AND restart its idle clock - one forged
+-- packet per id, and a client could immunise the server's entire reclaimable
+-- fleet against Presence Law.
+--
+-- Distance rather than a driver check, deliberately. The legitimate sender
+-- already filters to driver-only client-side (RCUsage.lua:33) and fires from
+-- OnEnterVehicle, which the file notes runs after the seat is set - so the
+-- server can process the packet before its own seat state agrees, or just after
+-- a fast exit. A strict getDriver() test would intermittently drop honest
+-- attributions and bring back the hotwired-daily-driver bug this feature exists
+-- to fix. Being NEAR the car you just got into is true in every legitimate case
+-- and false for an id you picked off a list, which is the distinction that
+-- matters. MAX_USE_DISTANCE_SQ matches RCDismantleAuthority's proven envelope.
+local MAX_USE_DISTANCE_SQ = 16
+
 local function hUsed(player, args)
     if not (player and args and args.vehicleId) then return end
     local name = player:getUsername()
     if not name then return end
     RCRegistry.notePresence(name)
+
+    local v = resolveVehicle(args)
+    if not v then return end
+    local dx = player:getX() - v:getX()
+    local dy = player:getY() - v:getY()
+    if (dx * dx + dy * dy) > MAX_USE_DISTANCE_SQ then
+        RCShared.dbg("used: %s named vehicle %s from %.1f tiles away - not attributed",
+            tostring(name), tostring(args.vehicleId), math.sqrt(dx * dx + dy * dy))
+        return
+    end
+
     if RCJanitor and RCJanitor.attribute then
-        RCJanitor.attribute(name, resolveVehicle(args))
+        RCJanitor.attribute(name, v)
     end
 end
 
@@ -892,9 +1055,16 @@ local function onClientCommand(module, command, player, args)
         return
     end
     if not RDRate.allow(player, RATE_MAX, 1000) then return end
-    -- guarded: wire args reach every handler; a throw is logged, not fatal
-    local ok, err = pcall(h, player, args or {})
-    if not ok then print("[RC] handler error (" .. tostring(command) .. "): " .. tostring(err)) end
+    -- No guard, and this is deliberately NOT the same call as Dragonfly's
+    -- dispatcher, which keeps one. There, a client is waiting on a Result and
+    -- an escaping throw answers it with nothing; that reply is the recovery.
+    -- Here nothing is owed back - RCServer's handlers reply for themselves when
+    -- they have something to say - so the guard bought only a one-line message
+    -- in place of the full Lua stack trace the engine already writes at throw
+    -- time (KahluaThread.java:865, :1100), and the listener itself is contained
+    -- per-listener regardless (Event.java:53-63). Strictly less information for
+    -- no protection.
+    h(player, args or {})
 end
 Events.OnClientCommand.Add(onClientCommand)
 

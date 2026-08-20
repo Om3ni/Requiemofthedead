@@ -8,8 +8,8 @@
 -- be wrapped from Lua, so this is a REFILL engine: a throttled tick keeps
 -- every carried torch topped up to max uses (setCurrentUses/getMaxUses,
 -- DrainableComboItem.java:75/80). Any drain snaps back within ~half a
--- second. RCDismantleAction additionally skips its own 10-use wear outright
--- (no bar flicker + the ledger's cheat=eternal-torch tag).
+-- second. The authoritative dismantle transaction additionally skips its own
+-- 10-use wear outright (no bar flicker + the ledger's cheat=eternal-torch tag).
 --
 -- Per-tick discipline (the house no-per-tick-scans rule): when the cheat is
 -- OFF the tick hook is a single boolean test and returns. The inventory
@@ -47,12 +47,23 @@ end
 
 -- Top up every carried torch (nested bags included) to max uses. Writes only
 -- when a torch actually lost fuel, so the idle steady state syncs nothing.
+-- No guard, and the hazard the old ones named is real - it is just a
+-- PRECONDITION, not an error state. predicateTorch matches on tag OR type, so a
+-- modded item merely TAGGED BlowTorch without being a DrainableComboItem has no
+-- getCurrentUses at all, and calling it is a nil-method throw. Kahlua answers
+-- that deterministically: an absent method is nil, so testing for it is exact.
+-- Same idiom the item editor uses for its optional setters, and it says the
+-- truth - "this torch has no uses to refill" - instead of erroring twice a
+-- second for the rest of the admin's session.
 local function refillTorches(playerObj)
     local list = playerObj:getInventory():getAllEvalRecurse(predicateTorch)
     for i = 0, list:size() - 1 do
         local it = list:get(i)
-        if it:getCurrentUses() < it:getMaxUses() then
-            it:setCurrentUses(it:getMaxUses())
+        if it.getCurrentUses and it.getMaxUses and it.setCurrentUses then
+            local max = it:getMaxUses()
+            if it:getCurrentUses() < max then
+                it:setCurrentUses(max)
+            end
         end
     end
 end
@@ -65,37 +76,50 @@ local function onPlayerUpdate(playerObj)
     if acc < REFILL_TICKS then return end
     acc = 0
     if not RCShared.isAdmin(playerObj) then return end
-    -- guarded: a BLOW_TORCH-tagged item that is not Drainable has no
-    -- getCurrentUses - a nil-method throw on someone's modded torch must not
-    -- error every half second of the admin's session
-    pcall(refillTorches, playerObj)
+    refillTorches(playerObj)
 end
 Events.OnPlayerUpdate.Add(onPlayerUpdate)
 
 -- ---------------------------------------------------------------------------
 -- Admin Powers panel registration + persistence
 -- ---------------------------------------------------------------------------
+-- ONLY speaks when the value actually moved. Vanilla's SAVE button does not
+-- apply "the option you changed" - it walks EVERY registered option, left and
+-- right, and calls setValue with that box's current state
+-- (ISAdminPowerUI.lua:397-403). So this ran, and haloed, every time an admin
+-- saved the panel for any reason at all: toggle invisibility, get a line about
+-- blowtorches. Reported from live play 2026-08-19.
+--
+-- The original intent survives intact. That halo exists because the 0.4.3
+-- version failed silently and nobody could tell whether SAVE had taken - but
+-- what needed confirming was a CHANGE, and when nothing changed there is
+-- nothing to confirm. Re-saving an already-ticked box is now silent; ticking or
+-- unticking it still says so.
 local function setCheat(playerObj, selected)
-    RCEternalTorch.cheat = selected == true
-    if playerObj then
-        playerObj:getModData()[KEY] = (selected == true) or nil
-        -- immediate, visible confirmation that SAVE took (the 0.4.3 version
-        -- failed silently - never again)
-        if selected then
-            RCShared.halo(playerObj, "Eternal Torch ON - your blowtorches will not drain.", false)
-            -- guarded: same modded-torch nil-method risk as the update loop
-            pcall(refillTorches, playerObj)   -- top up right now, not in 0.5s
-        else
-            RCShared.halo(playerObj, "Eternal Torch OFF.", true)
-        end
+    selected = selected == true
+    local changed = (RCEternalTorch.cheat ~= selected)
+    RCEternalTorch.cheat = selected
+    if not playerObj then return end
+
+    playerObj:getModData()[KEY] = selected or nil
+    if not changed then return end
+
+    if selected then
+        RCShared.halo(playerObj, "Eternal Torch ON - your blowtorches will not drain.", false)
+        refillTorches(playerObj)   -- top up right now, not in 0.5s
+    else
+        RCShared.halo(playerObj, "Eternal Torch OFF.", true)
     end
 end
 
+-- Returns ok, reason. It used to error() by design and be called through a
+-- pcall, which is throw-and-catch standing in for a return value - the
+-- condition is a plain table lookup we can just test.
 local function registerOption()
     if not (ISAdminPowerUI and ISAdminPowerUI.AddOption) then
-        error("ISAdminPowerUI.AddOption missing")
+        return false, "ISAdminPowerUI.AddOption missing"
     end
-    if ISAdminPowerUI.OptionById and ISAdminPowerUI.OptionById.EternalTorch then return end
+    if ISAdminPowerUI.OptionById and ISAdminPowerUI.OptionById.EternalTorch then return true end
     ISAdminPowerUI.AddOption("EternalTorch", "right", Capability.UseMechanicsCheat,
         function(self)
             return RCEternalTorch.cheat
@@ -104,6 +128,7 @@ local function registerOption()
             setCheat(self.player or getPlayer(), selected)
         end
     )
+    return true
 end
 
 local function onGameStart()
@@ -111,9 +136,7 @@ local function onGameStart()
     local p = getPlayer()
     if p then RCEternalTorch.cheat = p:getModData()[KEY] == true end
 
-    -- guarded: registerOption error()s by design when the Admin Powers panel
-    -- API is missing; the failure is printed, not fatal
-    local ok, err = pcall(registerOption)
+    local ok, err = registerOption()
     if ok then
         print("[RC] Eternal Torch registered on the Admin Powers panel (cheat="
             .. tostring(RCEternalTorch.cheat) .. ")")

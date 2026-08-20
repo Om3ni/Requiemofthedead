@@ -22,10 +22,9 @@ local DEBUG = false -- flip true for verbose [DF-Safehouse] tracing
 
 local function dbg(fmt, ...)
     if not DEBUG then return end
-    -- string.format throws on a specifier/argument mismatch; the raw format
-    -- string is an acceptable trace line when it does
-    local ok, msg = pcall(string.format, fmt, ...)
-    print("[DF-Safehouse] " .. (ok and msg or fmt))
+    -- Every template and argument pair is source-owned below. A mismatch is a
+    -- programming error that must surface when this deliberately enabled trace runs.
+    print("[DF-Safehouse] " .. string.format(fmt, ...))
 end
 
 local BLOCKED_MSG = "Cannot destroy here - safehouse protected."

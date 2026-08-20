@@ -184,46 +184,53 @@ end
 -- answer; anything else means records are being dropped RIGHT NOW.
 function RDLog.writeFailures() return writeFailCount end
 
+-- No guard on any of the three sinks below. getFileWriter returns nil for a
+-- denied path or a failed open (LuaManager.java:5523-5555) - that nil IS the
+-- refusal these count - and LuaFileWriter.write/close delegate to PrintWriter,
+-- which records I/O errors on an internal flag rather than raising them
+-- (LuaManager.java:9850-9868). writeFailCount still counts every refusal.
 local function appendLine(path, line)
-    local wrote = false
-    pcall(function()
-        local w = getFileWriter(path, true, true)
-        if w then w:write(line .. "\n"); w:close(); wrote = true end
-    end)
-    if not wrote then reportRefused(path) end
-    return wrote
+    local w = getFileWriter(path, true, true)
+    if not w then reportRefused(path); return false end
+    w:write(line .. "\n")
+    w:close()
+    return true
 end
 
 local function appendMany(path, lines)
-    local wrote = false
-    pcall(function()
-        local w = getFileWriter(path, true, true)
-        if w then
-            for i = 1, #lines do w:write(lines[i] .. "\n") end
-            w:close()
-            wrote = true
-        end
-    end)
-    if not wrote then reportRefused(path) end
-    return wrote
+    local w = getFileWriter(path, true, true)
+    if not w then reportRefused(path); return false end
+    for i = 1, #lines do w:write(lines[i] .. "\n") end
+    w:close()
+    return true
 end
 
 local function rewrite(path, content)
-    local wrote = false
-    pcall(function()
-        local w = getFileWriter(path, true, false)   -- truncate: the only "delete"
-        if w then w:write(content); w:close(); wrote = true end
-    end)
-    if not wrote then reportRefused(path) end
-    return wrote
+    local w = getFileWriter(path, true, false)   -- truncate: the only "delete"
+    if not w then reportRefused(path); return false end
+    w:write(content)
+    w:close()
+    return true
 end
 
+-- No guard - and the "reads throw, writes don't" asymmetry this comment used
+-- to document is DEAD, corrected 2026-08-19. The BufferedReader that
+-- getFileReader hands back is an EXPOSED class (LuaManager.java:1651), and
+-- every exposed method body routes through MethodCaller, which swallows the
+-- IOException, prints its stack trace to the console, and returns nil
+-- (MethodCaller.java:33-56). So readLine on a truncated file or one removed
+-- mid-read cannot raise into Lua any more than the writer can: it reads as
+-- early EOF. Reads and writes have the SAME answer here - nil - and the old
+-- guard was inert.
+--
+-- The recovery is unchanged because it never depended on catching anything: a
+-- head line we cannot read is indistinguishable from one that is not there,
+-- and both mean "rebuild it".
 local function readFirstLine(path)
-    local line
-    pcall(function()
-        local r = getFileReader(path, false)
-        if r then line = r:readLine(); r:close() end
-    end)
+    local r = getFileReader(path, false)
+    if not r then return nil end
+    local line = r:readLine()
+    r:close()
     return line
 end
 

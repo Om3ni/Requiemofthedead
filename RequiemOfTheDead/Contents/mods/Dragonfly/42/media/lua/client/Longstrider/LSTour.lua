@@ -112,7 +112,13 @@ end
 -- field-initialised PlayerCheats behind null-checked capability reads
 -- (IsoGameCharacter:10943-11068, IsoPlayer:1055-1064, Role.hasCapability:176)
 -- - they cannot throw on a non-nil player, and both callers check that.
-local function applyProtection(player)
+--
+-- EXPORTED (2026-08-20), not local: LSRoute walks a pasted waypoint list under
+-- the same god/invisible/ghost envelope, and a second copy of the snapshot
+-- shape is how the two would eventually restore different flag sets. The
+-- module boundary is honest - this file owns "teleport the admin around,
+-- protected", and the route is another consumer of exactly that.
+function LSTour.applyProtection(player)
     local snap = {}
     snap.god   = player:isGodMod()
     snap.invis = player:isInvisible()
@@ -123,12 +129,15 @@ local function applyProtection(player)
     return snap
 end
 
-local function restoreProtection(player, snap)
+function LSTour.restoreProtection(player, snap)
     if not player or not snap then return end
     player:setGodMod(snap.god == true)
     player:setInvisible(snap.invis == true)
     player:setGhostMode(snap.ghost == true)
 end
+
+local applyProtection   = LSTour.applyProtection
+local restoreProtection = LSTour.restoreProtection
 
 -- ---------------------------------------------------------------------------
 -- Tick driver
@@ -146,23 +155,40 @@ end
 
 local function finish(reason)
     local s = LSTour.state
-    -- Best-effort cleanup, guarded so a failure can NEVER skip the teardown
-    -- below - otherwise the tour stays "running" with the tick handler live and
-    -- the admin stuck in god/invisible. The teleport-back goes through Core's
-    -- RDTeleport (foreign Lua, capability-gated) and audit reaches family
-    -- plumbing; either throwing must not stop Events.OnTick.Remove.
-    -- restoreProtection nil-checks its inputs and its setters cannot throw
-    -- (see applyProtection), so it runs bare.
-    pcall(function() if s.start then teleportTo(s.start.x, s.start.y, s.start.z) end end)
-    restoreProtection(s.player, s.protect)
-    pcall(function()
-        DFCore.audit("Longstrider tour " .. tostring(reason), s.player,
-            string.format("(%d/%d cells)", s.idx, s.total))
-    end)
+
+    -- TEARDOWN FIRST, and unconditionally.
+    --
+    -- This used to run LAST, behind two guards whose only job was to ensure a
+    -- failure above could not skip it - the failure being an admin left in
+    -- god/invisible with a live tick handler, which is a genuinely bad outcome.
+    -- But that is an ORDERING problem wearing a guard as a disguise: Lua has no
+    -- `finally`, so pcall was standing in for one. Doing the teardown first
+    -- makes the property structural instead of caught. By the time anything
+    -- below can fail, the handler is already gone and the state is already
+    -- idle, so there is nothing left for a guard to protect.
+    local start, player, protect = s.start, s.player, s.protect
+    local idx, total = s.idx, s.total
     Events.OnTick.Remove(LSTour._onTick)
     s.running = false
     s.phase   = "idle"   -- resting state, ready for a clean next start()
     s.cells, s.centers, s.jobName = nil, nil, nil
+
+    -- Restoration and reporting, bare and loud. ORDER MATTERS in one place:
+    -- the teleport-back fires BEFORE protection drops, so the admin rides home
+    -- god/invisible instead of standing mortal in the cell this tour just
+    -- filled with zombies. (Review finding, 2026-08-18: the first rewrite
+    -- restored flags first and reopened exactly that window - the pre-refactor
+    -- code teleported first for a reason nobody had written down.)
+    -- RDTeleport.toCoords (RDTeleport.lua:31-49) coerces its coordinates,
+    -- nil-checks the player, nil-chains the capability test, and RETURNS
+    -- false+reason rather than throwing. restoreProtection nil-checks its
+    -- inputs and its setters cannot throw (see applyProtection). DFCore.audit
+    -- (DFCore.lua:73-77) nil-chains getUsername, tostring's every field and
+    -- prints - its only guarded work is server-side, and this is client code.
+    if start then teleportTo(start.x, start.y, start.z) end
+    restoreProtection(player, protect)
+    DFCore.audit("Longstrider tour " .. tostring(reason), player,
+        string.format("(%d/%d cells)", idx, total))
 end
 
 LSTour._onTick = function()
@@ -184,6 +210,15 @@ end
 -- jobs = list of { name, region }; opts = { dwellMs }
 function LSTour.start(jobs, cellSize, opts)
     if LSTour.state.running then return false, "A tour is already running." end
+    -- One admin has one body and one protection snapshot. A route holds the
+    -- god/invisible envelope too, and starting a tour on top would snapshot
+    -- the ROUTE's protected flags as "what to restore" - ending with the admin
+    -- permanently god. Read at call time: LSRoute loads before this file on
+    -- the alphabetical walk, but a nil LSRoute (route feature absent) must
+    -- mean "no route", not a crash.
+    if LSRoute and LSRoute.state and LSRoute.state.active then
+        return false, "A route is running - end it first."
+    end
     local player = getPlayer()
     if not player then return false, "No player." end
 
@@ -208,12 +243,11 @@ function LSTour.start(jobs, cellSize, opts)
     s.protect = applyProtection(player)
     s.running = true
 
-    -- Guarded: audit is family plumbing (log fan-out toward the wire); a
-    -- failure there must not abort a tour that is already marked running.
-    pcall(function()
-        DFCore.audit("Longstrider tour started", player,
-            string.format("(%d cells, %d region(s))", s.total, #jobs))
-    end)
+    -- No guard: on the client DFCore.audit is a nil-chained getUsername, a
+    -- string.format and a print (DFCore.lua:73-77). Its one guarded call is
+    -- inside the isServer() branch, which cannot be reached from here.
+    DFCore.audit("Longstrider tour started", player,
+        string.format("(%d cells, %d region(s))", s.total, #jobs))
 
     Events.OnTick.Remove(LSTour._onTick)
     Events.OnTick.Add(LSTour._onTick)

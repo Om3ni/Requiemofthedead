@@ -44,6 +44,7 @@ function RQGlutton.startEating(zombie, onlineID, corpseX, corpseY, corpseZ)
         corpseZ     = corpseZ,
         lastPath    = nil,
         arrivedSent = false,
+        pathFaultLogged = false,
     }
 end
 
@@ -165,10 +166,19 @@ local function onZombieUpdate(zombie)
             RQDirgeLog.write("Glutton","[RQEat:Cl] seeking oid=" .. oid
                 .. " dist=" .. string.format("%.2f", dist)
                 .. " -> pathToSound (" .. entry.corpseX .. "," .. entry.corpseY .. "," .. entry.corpseZ .. ")")
-            -- guard stays: IsoGameCharacter.pathToSound:5964 -> pathToAux:5912
-            -- dereferences IsoWorld.instance.currentCell and PolygonalMap2.instance
-            -- unguarded, so it throws across a cell swap.
-            pcall(zombie.pathToSound, zombie, entry.corpseX, entry.corpseY, entry.corpseZ)
+            -- No guard, and the fault branch that lived here was DEAD RECOVERY:
+            -- it had never fired and never could. The failure the old comment
+            -- named is real - the body reaches currentCell and PolygonalMap2
+            -- with no complete precondition (IsoGameCharacter.java:5912-5930,
+            -- 5964-5966; PathFindBehavior2.java:252-257) - but pathToSound is
+            -- an exposed method, so that fault is swallowed by MethodCaller,
+            -- stack-traced to the console, and the call simply returns
+            -- (MethodCaller.java:33-56). `ok` was always true; the pcall and
+            -- its logging arm were unreachable. The hint stays retryable
+            -- exactly as before: a faulted attempt no-ops and the next
+            -- interval is fresh valid work, with the engine's own trace as
+            -- the diagnostic.
+            zombie:pathToSound(entry.corpseX, entry.corpseY, entry.corpseZ)
             if zombie:getZ() ~= entry.corpseZ then
                 zombie:setVariable("bPathfind", true)
             end

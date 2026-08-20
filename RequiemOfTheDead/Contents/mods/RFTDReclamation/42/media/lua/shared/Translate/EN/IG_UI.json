@@ -101,6 +101,13 @@
     "IGUI_RC_EngineTooGood": "\"I shouldn't do this, it's still a really good engine...\"",
     "IGUI_RC_DismNoMask": "You need a welder mask.",
     "IGUI_RC_DismNoTorch": "You need a blowtorch with at least 10 uses.",
+    "IGUI_RC_DismOccupied": "Everyone must exit the vehicle before it can be dismantled.",
+    "IGUI_RC_DismUnavailable": "The server could not authorize this dismantle.",
+    "IGUI_RC_DismGone": "That vehicle is no longer available.",
+    "IGUI_RC_DismTooFar": "Stay beside the vehicle until dismantling is complete.",
+    "IGUI_RC_DismExpired": "Dismantling authorization expired. Try again.",
+    "IGUI_RC_DismRemoveFailed": "The server could not remove that vehicle. Nothing was charged.",
+    "IGUI_RC_DismBusy": "Too many dismantle requests. Wait a moment and try again.",
     "IGUI_RC_EngineLocked": "Engine salvage is disabled on this server.",
 
     "IGUI_CheatPanel_EternalTorch": "Eternal Torch",

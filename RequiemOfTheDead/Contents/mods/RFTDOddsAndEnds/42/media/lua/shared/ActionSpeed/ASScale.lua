@@ -144,17 +144,30 @@ local RECIPE_VAR = {
     CutUpLeather_Small  = "ASRipIt",
 }
 
--- Recipe name off a handcraft action, or nil. pcall because craftRecipe is a
--- Java object reached through a field a future build may rename - and any
--- action (foreign mods included) can carry a craftRecipe field of some other
--- shape whose getName is not CraftRecipe's - and a throw here would take out
--- adjustMaxTime for EVERY action in the game. Allocation-free direct form:
--- this runs once per action create.
+local warnedRecipeLookupFault = false
+
+-- Recipe name off a handcraft action, or nil. RETAINED, and the lane is the
+-- reason: `action` is ANY mod's action table, so `action.craftRecipe` can be a
+-- foreign LUA object whose getName is a foreign Lua function - and foreign Lua
+-- is the lane where errors really do propagate. On a genuine CraftRecipe the
+-- guard is inert (getName is a bare field read, CraftRecipe.java:146-148, and
+-- an exposed method's fault would arrive as nil anyway); it exists for the
+-- foreign-shape case alone, where a throw would take out adjustMaxTime for
+-- EVERY action in the game. Bounded report below; allocation-free direct
+-- form: this runs once per action create.
 local function recipeVarFor(action)
     local r = action and action.craftRecipe
     if not r or not r.getName then return nil end
     local ok, name = pcall(r.getName, r)
-    if not ok or type(name) ~= "string" then return nil end
+    if not ok then
+        if not warnedRecipeLookupFault then
+            warnedRecipeLookupFault = true
+            print("[RFTDOddsAndEnds] ActionSpeed recipe lookup failed; "
+                .. "affected actions stay vanilla-speed: " .. tostring(name))
+        end
+        return nil
+    end
+    if type(name) ~= "string" then return nil end
     return RECIPE_VAR[name]
 end
 
