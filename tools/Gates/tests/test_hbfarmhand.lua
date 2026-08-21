@@ -31,6 +31,25 @@ end
 function isServer() return true end
 require = function() return true end
 
+-- getOnlinePlayers returns an ArrayList on a server and an EMPTY list on every
+-- other branch - never null (LuaManager.java:3823-3832). The stub models that,
+-- so nothing here tempts production into carrying a guard the engine cannot
+-- justify. `online` is what makes the report line evidence rather than noise:
+-- coops serviced with nobody connected is the thing the old code could not do.
+local onlineCount = 0
+function getOnlinePlayers()
+    return { size = function() return onlineCount end }
+end
+
+-- The report path writes with print, so capturing it IS the observability test.
+local captured = {}
+print = function(s) captured[#captured + 1] = tostring(s) end
+local function saidSomething()
+    local n = #captured
+    captured = {}
+    return n
+end
+
 local world = {}     -- "x,y,z" -> hutch stub (or nil for "loaded, no hutch")
 local loaded = {}    -- "x,y,z" -> true when the square is loaded
 
@@ -164,6 +183,51 @@ check(type(cov) == "table" and cov.registered == HBFarmHand.stats.registered,
     "coverage disagrees with the registry")
 check(type(cov.note) == "string" and cov.note:find("restart"),
     "coverage does not state the in-memory restart limitation")
+
+-- ---- the report is bounded, and it speaks at all -------------------------
+-- Both directions are failures. A line every pass is ~144 an hour at the
+-- default day length (EveryTenMinutes is compressed GAME time), which trains
+-- an admin to filter the module out. No line ever is the state this module
+-- shipped in: counters incremented forever and read by nobody, which is
+-- indistinguishable from the pass not running.
+
+-- Settle whatever the churn above left pending, then measure a quiet stretch.
+HBFarmHand.pass()
+saidSomething()
+
+local quiet = 0
+for _ = 1, 30 do
+    HBFarmHand.pass()
+    quiet = quiet + saidSomething()
+end
+check(quiet == 0,
+    "the report spoke " .. quiet .. " times in 30 unchanged passes - at the "
+    .. "default day length that is roughly a line every 25 real seconds")
+
+-- A heartbeat must still arrive, or silence cannot be told from a dead tick.
+local beat = 0
+for _ = 1, 40 do
+    HBFarmHand.pass()
+    beat = beat + saidSomething()
+end
+check(beat >= 1, "no heartbeat in 70 unchanged passes - the pass is unobservable")
+
+-- Learning a coop is worth a line immediately: it is rare, and it is the
+-- number an admin checks after a restart.
+local fresh = mkHutch(120, 120, 0)
+world[key(120, 120, 0)] = fresh; loaded[key(120, 120, 0)] = true
+HBFarmHand.remember(fresh)
+captured = {}
+HBFarmHand.pass()
+local line = table.concat(captured, " | ")
+check(line ~= "", "learning a new coop did not report")
+check(line:find("known") and line:find("serviced") and line:find("online"),
+    "the report line omits one of known/serviced/online: " .. line)
+
+-- The restart limitation is stated once per run, not on every line.
+local notes = 0
+for _, l in ipairs(captured) do if l:find("restart") then notes = notes + 1 end end
+check(notes == 0, "the coverage note repeated after the first report")
 
 realPrint(string.format("HBFarmHand: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

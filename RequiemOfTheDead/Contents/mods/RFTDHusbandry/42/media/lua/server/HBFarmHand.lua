@@ -114,6 +114,68 @@ function HBFarmHand.coverage()
     }
 end
 
+-- ---------------------------------------------------------------------------
+-- OBSERVABILITY
+--
+-- The counters above shipped with the first version of this file and NOTHING
+-- READ THEM, which left the module exactly as invisible as the bug it replaced:
+-- a pass that either services coops or silently does not, with a symptom that
+-- takes days to surface. CLAUDE.md sect. 14 wants to know whether a feature ran,
+-- what it decided and why - "entered function" is not enough - and an unread
+-- field answers none of it. HBKeepAlive's `verbose` flag is the same trap one
+-- step on: off by default, with no way to turn it on mid-run on a dedicated
+-- server, so its instrumentation has never once been read either.
+--
+-- THE LINE IS BUILT AROUND ONE CLAIM. The old path could only reach a coop with
+-- a player inside twenty squares of it. So `serviced` above zero while `online`
+-- is zero is positive proof of the repair - the previous code could not have
+-- produced it - and that is why the player count belongs on the line rather
+-- than in another field nobody reads.
+--
+-- BOUNDED, because EveryTenMinutes is compressed GAME time: at the default day
+-- length ten game-minutes is roughly twenty-five real seconds, so a line per
+-- pass would be about 144 an hour. A line is emitted only when the registry
+-- CHANGES - a coop learned or forgotten, which is rare and bounded by how many
+-- coops exist - or as a heartbeat every REPORT_EVERY passes, so silence still
+-- separates "running quietly" from "not running at all".
+local REPORT_EVERY = 36   -- ~15 real minutes at the default day length
+
+local lastReportedCount  = -1
+local lastReportedPruned = -1
+local passesSinceReport  = 0
+local saidCoverage       = false
+
+local function report(serviced, skipped)
+    passesSinceReport = passesSinceReport + 1
+
+    local churned = registryCount ~= lastReportedCount
+                 or HBFarmHand.stats.pruned ~= lastReportedPruned
+    if not churned and passesSinceReport < REPORT_EVERY then return end
+
+    -- The honest limitation, once per server run and only where there is a line
+    -- to attach it to: the registry starts empty and fills as hutches are seen,
+    -- so a low count shortly after a restart is expected rather than a fault.
+    -- This is also the only consumer coverage() has ever had.
+    if not saidCoverage then
+        saidCoverage = true
+        print("[HB] farm hand: " .. HBFarmHand.coverage().note)
+    end
+
+    -- Plain nil-check, not a guard: getOnlinePlayers is an exposed method whose
+    -- body cannot throw into Lua (MethodCaller.java:33-56), and it returns an
+    -- empty list rather than null on every branch (LuaManager.java:3823-3832).
+    -- nil here would mean the call shape failed, and zero is the honest answer.
+    local online = getOnlinePlayers()
+    print(string.format(
+        "[HB] farm hand: %d known, %d serviced, %d out of reach, %d pruned, %d online (pass %d)",
+        registryCount, serviced, skipped, HBFarmHand.stats.pruned,
+        online and online:size() or 0, HBFarmHand.stats.passes))
+
+    lastReportedCount  = registryCount
+    lastReportedPruned = HBFarmHand.stats.pruned
+    passesSinceReport  = 0
+end
+
 -- One upkeep round over every hutch we know about.
 --
 -- Resolution is per-coordinate rather than by held reference on purpose: a
@@ -178,6 +240,8 @@ function HBFarmHand.pass()
     HBFarmHand.stats.lastServiced = serviced
     HBFarmHand.stats.lastSkipped  = skipped
     HBFarmHand.stats.passes       = HBFarmHand.stats.passes + 1
+
+    report(serviced, skipped)
     return serviced, skipped
 end
 
