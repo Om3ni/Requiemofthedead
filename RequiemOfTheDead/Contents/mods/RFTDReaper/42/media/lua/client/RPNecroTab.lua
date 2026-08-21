@@ -220,21 +220,34 @@ end)
 -- would quietly start lying after a build bump.
 -- ─────────────────────────────────────────────────────────────────────────
 
-local function gridOf(x, y, size)
-    return math.floor(x / size), math.floor(y / size)
-end
-
--- nil when there is nothing to compare against - no player, or a row with no
--- coordinates. Callers treat nil as "cannot prove it is near", and drop the row.
-local function sameGrid(row, size)
+-- CENTRED ON THE PLAYER, NOT SNAPPED TO THE WORLD GRID. This started as a
+-- bucket comparison - floor(x/size) == floor(px/size) - which asks whether two
+-- points fall in the same cell of the grid the WORLD draws, and that is not the
+-- question the filter is for.
+--
+-- The failure is not marginal. At chunk size 8, a zombie two tiles east shares
+-- your bucket only when your x mod 8 is 0-5, six cases in eight; across both
+-- axes that is 0.75 * 0.75, so roughly FOUR TIMES IN TEN a zombie two tiles
+-- away was correctly excluded from "My chunk" while standing in plain sight.
+-- Reported from play 2026-08-20. A boundary the operator cannot see, cutting
+-- through the area they are standing in, is indistinguishable from a bug.
+--
+-- A half-extent box centred on the player covers the same AREA - (size+1)^2
+-- against size^2 - and has no interior boundary at all, so the answer changes
+-- smoothly as they walk instead of jumping when they cross an invisible line.
+--
+-- Sizes still come from the engine rather than the constants they currently
+-- return; see the note above on why hardcoding 8 and 256 would quietly lie
+-- after a build bump.
+local function nearPlayer(row, size)
     local p = getPlayer()
     if not p or not row or not row.x or not row.y then return false end
-    local px, py = gridOf(math.floor(p:getX()), math.floor(p:getY()), size)
-    local rx, ry = gridOf(row.x, row.y, size)
+    local half = size / 2
     -- Z is deliberately NOT compared. A zombie one floor up is still inside the
-    -- chunk the operator is standing in and still on their screen; the question
+    -- area the operator is standing in and still on their screen; the question
     -- this filter answers is "can I get to it", not "am I level with it".
-    return px == rx and py == ry
+    return math.abs(math.floor(p:getX()) - row.x) <= half
+       and math.abs(math.floor(p:getY()) - row.y) <= half
 end
 
 local function applyLocality(rows, locality)
@@ -242,7 +255,7 @@ local function applyLocality(rows, locality)
     local size = (locality == "chunk") and getChunkSizeInSquares() or getCellSizeInSquares()
     local out = {}
     for _, e in ipairs(rows) do
-        if sameGrid(e, size) then out[#out + 1] = e end
+        if nearPlayer(e, size) then out[#out + 1] = e end
     end
     return out
 end
