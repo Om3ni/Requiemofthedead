@@ -192,15 +192,23 @@ function DFPlayerDeck:settleResize()
     local pref = (DFPrefs and DFPrefs.get and DFPrefs.get("fontScale")) or 1
     local fontMoved = DFKit.setFontScale(pref)
 
-    if fontMoved or not self:reflowContent() then
-        self:rebuild()
-    end
+    -- PERSIST BEFORE REBUILDING - see DFDeck.settleResize for the autopsy.
+    -- rebuild() ends in showTab(), which re-applies the REMEMBERED size, so
+    -- rebuilding first discarded the drag and the save then wrote the restored
+    -- old size back. Here the built-in Settings sheet is the tab that has no
+    -- resize hook to hide the fault, so it was the one that could not be
+    -- resized; the three registered tabs all declare one.
+    --
     -- Remembered PER TAB: a drag while My Vehicles is up is a statement about
     -- My Vehicles, and must not shrink the sheet or stretch the Workshop.
     self.sizes = self.sizes or {}
     self.sizes[DFPlayerDeck.sizeKey(self.activeId or SETTINGS_ID)] =
         { w = self.width, h = self.height }
     DFPlayerDeck.saveSizes(self.sizes)
+
+    if fontMoved or not self:reflowContent() then
+        self:rebuild()
+    end
 end
 
 -- ---------------------------------------------------------------------------

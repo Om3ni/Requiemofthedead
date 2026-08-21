@@ -211,14 +211,30 @@ function DFDeck:settleResize()
     local pref = (DFPrefs and DFPrefs.get and DFPrefs.get("fontScale")) or 1
     local fontMoved = DFKit.setFontScale(pref)
 
-    if fontMoved or not self:reflowContent() then
-        if self.activeId then self:showTab(self.activeId) end
-    end
+    -- PERSIST BEFORE REBUILDING, and the order is the whole fix.
+    --
+    -- showTab() opens with applyTabSize(), which restores the size REMEMBERED
+    -- for that tab. Rebuilding first therefore threw the drag away and put the
+    -- old size back, and the save below then wrote that restored old size to
+    -- disk - so the new size was lost twice over and the tab was pinned to
+    -- whatever it was first dragged to, for good.
+    --
+    -- Only tabs WITHOUT a resize hook were affected, which is why this looked
+    -- Necro-specific: a hook makes reflowContent() return true and showTab()
+    -- never runs, so the seven tabs that declare one always resized correctly.
+    -- Necro, Players and Longstrider declare none and could not be resized at
+    -- all. Saving first makes applyTabSize a no-op instead - it early-returns
+    -- when the remembered size already matches the current one.
+    --
     -- Remembered PER TAB: a drag while Zones is up is a statement about the
     -- Zones tab, not about every other room in the deck.
     self.sizes = self.sizes or {}
     self.sizes[DFDeck.sizeKey(self.activeId or "")] = { w = self.width, h = self.height }
     DFDeck.saveSizes(self.sizes)
+
+    if fontMoved or not self:reflowContent() then
+        if self.activeId then self:showTab(self.activeId) end
+    end
 end
 
 -- ---------------------------------------------------------------------------
