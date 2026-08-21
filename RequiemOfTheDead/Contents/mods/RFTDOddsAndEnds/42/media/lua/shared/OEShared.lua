@@ -63,6 +63,15 @@
 --                                       but the button registration never was,
 --                                       so every player carried it whether they
 --                                       used it or not.
+--   Triage         (Triage/TR*)         server-side diagnostic recorders for
+--                                       the 2026-08-20 phantom-wounds hunt:
+--                                       TRDamage attributes every health drop
+--                                       to a named vanilla lane or flags the
+--                                       silence, TRMood attributes sadness
+--                                       steps. Bounded rows into RDLog's
+--                                       forensic ring; changes nothing in
+--                                       play; meant to be dialed off when
+--                                       the hunt closes.
 --   Bookmark       (Bookmark/BM*)       a public-domain literature quote in a
 --                                       popup on login. Client-only with no
 --                                       counterpart on the other side, so it

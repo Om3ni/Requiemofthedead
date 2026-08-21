@@ -65,5 +65,9 @@
   "Sandbox_OE_ASpeed_option5": "4 - 20x mas rapido",
   "Sandbox_OE_ASpeed_option6": "5 - 30x mas rapido",
   "Sandbox_OE_ASpeed_option7": "6 - 40x mas rapido",
-  "Sandbox_OE_ASpeed_option8": "7 - Instantaneo"
+  "Sandbox_OE_ASpeed_option8": "7 - Instantaneo",
+
+  "Sandbox_OE_Triage": "Odds & Ends: Triage",
+  "Sandbox_OE_TriageEnable": "Activar Triage",
+  "Sandbox_OE_TriageEnable_tooltip": "Registro de diagnostico del lado del servidor para perdidas de salud y cambios de animo inexplicables. Escribe filas acotadas en el registro forense del servidor indicando que sistema del juego (hambre, enfermedad, sangrado, infeccion...) quito salud a cada jugador - o marcando que ninguno lo hizo, lo que senala a un mod escribiendo dano directamente. Tambien registra fracturas que aparecen en mundos donde las fracturas estan desactivadas, y que causa los cambios grandes de tristeza. No afecta al juego y no cuesta nada cuando esta apagado. Pensado para investigar un problema y apagarse despues."
 }

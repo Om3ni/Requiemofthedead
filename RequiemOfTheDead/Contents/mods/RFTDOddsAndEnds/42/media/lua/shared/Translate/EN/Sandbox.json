@@ -69,5 +69,9 @@
   "Sandbox_OE_ASpeed_option5": "4 - 20x faster",
   "Sandbox_OE_ASpeed_option6": "5 - 30x faster",
   "Sandbox_OE_ASpeed_option7": "6 - 40x faster",
-  "Sandbox_OE_ASpeed_option8": "7 - Instant"
+  "Sandbox_OE_ASpeed_option8": "7 - Instant",
+
+  "Sandbox_OE_Triage": "Odds & Ends: Triage",
+  "Sandbox_OE_TriageEnable": "Enable Triage",
+  "Sandbox_OE_TriageEnable_tooltip": "Server-side diagnostic recorder for unexplained health loss and mood swings. Writes bounded rows to the server's forensic log naming which game system (hunger, sickness, bleeding, infection...) took each player's health - or flagging that none did, which points at a mod writing damage directly. Also records fractures appearing on worlds where fractures are disabled, and what drives large sadness changes. Has no effect on gameplay and costs nothing when off. Meant to run while a problem is being investigated and be turned off afterwards."
 }

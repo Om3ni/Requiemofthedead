@@ -54,6 +54,7 @@ LUA_ROOT = os.path.join(REPO, "PZ_Vanilla_Lua_42.20.3-70207f62e0")
 # not a claim about a file.
 UNRESOLVABLE = {
     ("FaceManager_Server", "lua"): "third-party mod source (Spongies Character Customisation)",
+    ("EM_Core", "lua"): "third-party mod source (Expanded Moodles - Triage attributes its stat writes)",
     ("DBD_NearbyAnimals", "lua"): "third-party mod source (reference mod HBDebugPanel's animal context menu follows)",
     ("File", "lua"): "illustrative stack-frame example, not a real citation",
     ("SomeFile", "lua"): "illustrative stack-frame example, not a real citation",

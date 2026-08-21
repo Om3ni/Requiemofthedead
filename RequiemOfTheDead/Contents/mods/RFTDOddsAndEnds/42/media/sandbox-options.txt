@@ -321,3 +321,24 @@ option RFTDOddsAndEnds.WorkshopEnable
     page = OE_Workshop,
     translation = OE_WorkshopEnable,
 }
+
+/* ============================================================
+   Triage - the phantom-wounds instrument panel. Two server-side
+   recorders (Triage/TR*) writing bounded rows into RDLog's
+   forensic ring: TRDamage attributes every health drop to a
+   named vanilla lane or flags it unattributed (a direct mod
+   write), and audits for fractures on worlds where the sandbox
+   forbids them; TRMood attributes sadness steps, with a
+   fingerprint for Expanded Moodles' anger-driven dump.
+   Diagnostic only - changes nothing in play. Added 2026-08-20
+   for the phantom-wounds hunt; default ON so the hunt runs,
+   intended to be switched off when it closes.
+   ============================================================ */
+
+option RFTDOddsAndEnds.TriageEnable
+{
+    type = boolean,
+    default = true,
+    page = OE_Triage,
+    translation = OE_TriageEnable,
+}
