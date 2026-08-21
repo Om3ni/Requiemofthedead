@@ -108,7 +108,7 @@ require "RDShared"
 -- in this mod, from any module, travels under this one token and is
 -- dispatched by RDNet's default-deny registry.
 OEShared.MODULE  = "RFTDOddsAndEnds"
-OEShared.VERSION = "1.0.0"   -- keep in sync with mod.info
+OEShared.VERSION = "1.2.0"   -- keep in sync with mod.info
 
 RDShared.registerMod(OEShared.MODULE, OEShared.VERSION)
 

@@ -25,7 +25,7 @@
 RQCommon = RQCommon or {}
 
 RQCommon.MODULE  = "RFTDDirge"   -- wire token = mod id
-RQCommon.VERSION = "1.0.0"
+RQCommon.VERSION = "1.2.0"
 
 -- Receive-side gate. The legacy "RQ" token is DEAD: the bundle is a brand-new
 -- Workshop item, so no subscriber can ever hold old-wire clients, and
