@@ -50,6 +50,15 @@ local function newZombie(id)
     function z:setOutlineHighlightCol(idx, r, g, b, a)
         self.cols[#self.cols + 1] = { idx = idx, r = r, g = g, b = b, a = a }
     end
+    -- The blink bit is a real per-player mask on the engine object
+    -- (IsoObject.java:5213), so the stub keeps it per index: "left set on
+    -- release" is the leak worth catching, and a scalar could not show it.
+    z.blink = {}
+    function z:setOutlineHlBlink(idx, on) self.blink[idx] = on and true or false end
+    -- Thickness is per-OBJECT, not per-player (:275, :5227). Default 1.0.
+    z.thickness = 1.0
+    function z:getOutlineThickness() return self.thickness end
+    function z:setOutlineThickness(t) self.thickness = t end
     return z
 end
 
@@ -189,6 +198,31 @@ gameStart()
 check(RDZombieFocus.id() == nil,
     "a claim survived OnGameStart; next session it would paint whatever zombie "
     .. "the server hands that id to")
+
+-- ---- legibility: blink and thickness ------------------------------------
+-- A static full-alpha white line was reported as hard to see in play, and the
+-- alpha was never the lever: the renderer discards the stored alpha and takes
+-- it from the blink bit instead (IsoObject.java:3406). These assert the two
+-- channels that DO reach the shader.
+
+RDZombieFocus.clear()
+local vz = newZombie(9100)
+loaded = { vz }
+RDZombieFocus.set(9100)
+renderTick()
+
+check(vz.blink[PLAYER_INDEX] == true, "the focus outline does not blink - the engine owns "
+    .. "the alpha channel, so the blink bit is the only pulse available")
+check(vz.thickness > 1.0, "the focus outline was left at default thickness")
+
+-- Release must hand the zombie back exactly as it was found. A blink bit left
+-- set would give the next painter - a Dirge special - a pulse it never asked
+-- for and cannot turn off.
+RDZombieFocus.clear()
+check(vz.blink[PLAYER_INDEX] == false, "BLINK LEFT SET after release - a Dirge special "
+    .. "claiming this zombie would inherit a pulse it never asked for")
+check(vz.thickness == 1.0, "thickness was not restored on release, so the next "
+    .. "painter inherits our line weight")
 
 realPrint(string.format("RDZombieFocus: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -40,8 +40,37 @@ RDZombieFocus = RDZombieFocus or {}
 -- Dirge type colour at once rather than harmonise with a panel.
 local FOCUS_R, FOCUS_G, FOCUS_B, FOCUS_A = 1, 1, 1, 1
 
+-- FULL-ALPHA WHITE WAS NOT ENOUGH, and the alpha above is not why.
+--
+-- The renderer takes only the R/G/B of what we store and OVERWRITES the alpha:
+--   setOutlineColor(r, g, b, isOutlineHlBlink(idx) ? Core.blinkAlpha : 1.0f)
+-- (IsoObject.java:3406, and identically at :3426 and :3542). So FOCUS_A is
+-- discarded on every path, and fading or pulsing the colour by hand cannot
+-- work - the engine owns that channel outright.
+--
+-- What it hands over instead is a BLINK BIT, and the value behind it is a real
+-- pulse: Core.blinkAlpha walks 0.15 to 1.0 and back at 0.07 per 30fps frame
+-- (Core.java:944-951), roughly a 0.8s cycle. Motion is what the eye catches in
+-- a scene this desaturated, where a static white line competes with concrete,
+-- sky and the zombie's own pallor. setOutlineHlBlink(int, boolean) is
+-- index-scoped like everything else here (IsoObject.java:5213).
+--
+-- Thickness is the second half. The shader's step size comes from
+-- outlineThickness (:3409), default 1.0 (:275), and setOutlineThickness is a
+-- plain public setter (:5227). Unlike the colour and the blink bit it is NOT
+-- player-indexed, so on splitscreen a thickened outline is thick for both
+-- views - the colour and enable bits still are not, so player 2 sees nothing
+-- unless another painter claims the same zombie. Cosmetic, and worth the
+-- legibility; the previous value is captured and put back on release so a
+-- Dirge special does not inherit our line weight.
+--
+-- All three are public, non-static and unannotated, so the exposer publishes
+-- them like any other method (LuaJavaClassExposer.java:314-318).
+local FOCUS_THICKNESS = 2.0
+
 local focusId   = nil   -- claimed onlineID, or nil
 local painted   = nil   -- the IsoZombie we last turned an outline ON for
+local priorThickness = nil   -- what `painted` had before we thickened it
 local lease     = 0     -- render ticks the claim survives without renewal
 
 -- A FOCUS IS A LEASE, NOT A LATCH, and that is the whole lifecycle design.
@@ -112,7 +141,20 @@ end
 local function unpaint()
     if not painted then return end
     local idx = localIndex()
-    if idx then painted:setOutlineHighlight(idx, false) end
+    if idx then
+        painted:setOutlineHighlight(idx, false)
+        -- The blink bit is index-scoped and STICKS. Left set, the next painter
+        -- to claim this zombie - a Dirge special - would inherit a pulse it
+        -- never asked for and has no idea how to turn off.
+        painted:setOutlineHlBlink(idx, false)
+    end
+    -- Thickness is per-object, not per-player, so it is restored rather than
+    -- zeroed: putting back what was there keeps this honest even if something
+    -- else starts setting it.
+    if priorThickness then
+        painted:setOutlineThickness(priorThickness)
+        priorThickness = nil
+    end
     painted = nil
 end
 
@@ -181,9 +223,12 @@ local function onRenderTick()
     if not idx then return end
 
     if painted and painted ~= z then unpaint() end
+    if painted ~= z then priorThickness = z:getOutlineThickness() end
     painted = z
     z:setOutlineHighlight(idx, true)
     z:setOutlineHighlightCol(idx, FOCUS_R, FOCUS_G, FOCUS_B, FOCUS_A)
+    z:setOutlineHlBlink(idx, true)
+    z:setOutlineThickness(FOCUS_THICKNESS)
 end
 
 Events.OnRenderTick.Add(onRenderTick)
