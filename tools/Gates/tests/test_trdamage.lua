@@ -84,7 +84,8 @@ SandboxVars = { BoneFracture = true }
 
 local function mkPart()
     local part = { scratchT = 0, cutT = 0, deepT = 0, biteT = 0,
-                   burnT = 0, bleedT = 0, fracT = 0, splint = false }
+                   burnT = 0, bleedT = 0, fracT = 0, splint = false,
+                   infected = false, glass = false }
     part.getScratchTime   = function(self) return self.scratchT end
     part.getCutTime       = function(self) return self.cutT end
     part.getDeepWoundTime = function(self) return self.deepT end
@@ -93,6 +94,8 @@ local function mkPart()
     part.getBleedingTime  = function(self) return self.bleedT end
     part.getFractureTime  = function(self) return self.fracT end
     part.isSplint         = function(self) return self.splint end
+    part.IsInfected       = function(self) return self.infected end
+    part.haveGlass        = function(self) return self.glass end
     return part
 end
 
@@ -105,7 +108,7 @@ end
 
 local function mkPlayer(name, hp)
     local p = { __cls = "IsoPlayer", user = name, hp = hp, dead = false,
-                moodle = {} }
+                moodle = {}, vehicle = false, climbing = false }
     local parts = {}
     for i = 1, 21 do parts[i] = mkPart() end
     p.parts = parts
@@ -119,6 +122,8 @@ local function mkPlayer(name, hp)
     p.getMoodles     = function(self)
         return { getMoodleLevel = function(_, mt) return p.moodle[mt] or 0 end }
     end
+    p.getVehicle     = function(self) return self.vehicle and {} or nil end
+    p.isClimbing     = function(self) return self.climbing end
     return p
 end
 
@@ -149,6 +154,7 @@ eq("row evt", rows[1].evt, "TR.DAMAGE_MINUTE")
 eq("events counted", rows[1].payload.events, 3)
 eq("lanes sorted+summed", rows[1].payload.lanes, "HUNGRY=0.200 SICK=0.500")
 eq("drop recorded", rows[1].payload.drop, "0.700")
+eq("gap zero when lanes explain the drop", rows[1].payload.gap, "0.000")
 
 -- ---------------------------------------------------------------------------
 -- Quiet minute: no events, no drop -> no row
@@ -231,6 +237,85 @@ mox.hp = 80
 minuteHandler()
 eq("dial off emits nothing", #rows, 0)
 enabled = true
+
+-- ---------------------------------------------------------------------------
+-- Wound watcher: new / grew / jitter / decay / re-arm
+-- ---------------------------------------------------------------------------
+
+minuteHandler()   -- resync the hp baseline after the dial-off gap; discard
+rows = {}
+mox.parts[2].scratchT = 2.5
+minuteHandler()
+eq("new scratch logged", rows[1] and rows[1].evt, "TR.WOUND_NEW")
+eq("scratch type", rows[1].payload.type, "scratch")
+eq("scratch clock (the source fingerprint)", rows[1].payload.clock, "2.50")
+eq("infection state carried", rows[1].payload.infected, 0)
+eq("exactly one row", #rows, 1)
+
+rows = {}
+mox.parts[2].scratchT = 4.1
+minuteHandler()
+eq("growth logged", rows[1] and rows[1].evt, "TR.WOUND_GREW")
+eq("growth delta", rows[1].payload.delta, "1.60")
+
+rows = {}
+mox.parts[2].scratchT = 4.3
+minuteHandler()
+eq("sub-threshold jitter stays quiet", #rows, 0)
+
+rows = {}
+mox.parts[2].scratchT = 1.0
+minuteHandler()
+eq("healing stays quiet", #rows, 0)
+
+mox.parts[2].scratchT = 0
+minuteHandler()
+mox.parts[2].scratchT = 1.5
+rows = {}
+minuteHandler()
+eq("re-wound after clearing logs as new", rows[1] and rows[1].evt, "TR.WOUND_NEW")
+
+-- ---------------------------------------------------------------------------
+-- Bite with infection roll and context flags
+-- ---------------------------------------------------------------------------
+
+rows = {}
+mox.parts[2].scratchT = 0            -- retire the scratch quietly
+minuteHandler()
+mox.parts[7].biteT = 9.0
+mox.parts[7].infected = true
+mox.vehicle = true
+mox.climbing = true
+rows = {}
+minuteHandler()
+eq("bite logged", rows[1] and rows[1].payload.type, "bite")
+eq("bite part named", rows[1].payload.part, "Part6")
+eq("infection roll captured", rows[1].payload.infected, 1)
+eq("vehicle context", rows[1].payload.vehicle, 1)
+eq("climbing context", rows[1].payload.climbing, 1)
+mox.vehicle = false
+mox.climbing = false
+
+-- ---------------------------------------------------------------------------
+-- Glass flag
+-- ---------------------------------------------------------------------------
+
+rows = {}
+mox.parts[4].glass = true
+minuteHandler()
+eq("glass logged as new wound", rows[1] and rows[1].payload.type, "glass")
+
+-- ---------------------------------------------------------------------------
+-- The gap: wound DoT hiding behind a lane becomes visible
+-- ---------------------------------------------------------------------------
+
+rows = {}
+damageHandler(mox, "HEAVYLOAD", 0.5)
+mox.hp = mox.hp - 1.2
+minuteHandler()
+local dm
+for _, r in ipairs(rows) do if r.evt == "TR.DAMAGE_MINUTE" then dm = r end end
+eq("gap names the unexplained damage", dm and dm.payload.gap, "0.700")
 
 print(string.format("test_trdamage: %d passed, %d failed", pass, fail))
 if fail > 0 then os.exit(1) end
