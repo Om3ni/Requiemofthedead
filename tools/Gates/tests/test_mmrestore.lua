@@ -23,6 +23,14 @@ end
 function isServer() return true end
 function isClient() return false end
 require = function() end
+
+-- The REAL RDJson, not a stub. MMRestore's JSON decoder was promoted to Core on
+-- 2026-08-22 (RDConfigStore needed the same parser and a second copy would have
+-- been a pasted helper), so this file's archive-read path now runs Core's code.
+-- Stubbing it would test a fake parser and prove nothing about what ships - and
+-- the decoder's failure mode, returning (nil, message) on a truncated file, is
+-- exactly what the archive tests below depend on.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDJson.lua")
 Events = { OnServerStarted = { Add = function() end } }
 Capability = { CanModifyPlayerStatsInThePlayerStatsUI = "cap" }
 RDShared = { EXT_DOC = ".json.txt", EXT_DOC_LEGACY = ".json" }

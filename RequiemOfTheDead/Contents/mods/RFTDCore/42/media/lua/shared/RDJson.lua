@@ -142,6 +142,122 @@ function RDJson.encode(v)
     return enc(v, RDJson.MAX_DEPTH, {}, { n = RDJson.MAX_NODES })
 end
 
+-- ---------------------------------------------------------------------------
+-- DECODE
+--
+-- PROMOTED FROM MEMOIR 2026-08-22, unchanged but for its name. It was a private
+-- local in MMRestore - the only JSON decoder anywhere in the suite - and
+-- RDConfigStore needs to read back what RDJson.encode writes. A second copy
+-- would have been a pasted helper (check-helpers ignores names when comparing,
+-- so renaming it would not have hidden it), and Core already owns JSON. Two
+-- consumers, so it belongs here (CLAUDE.md sect. 5).
+--
+-- OWN-SCHEMA ONLY, and that limitation is inherited deliberately: it parses what
+-- RDJson.encode and MMAudit.jsonEncode emit - objects, arrays, strings with the
+-- five escapes those encoders produce, plain numbers, true/false/null. It is NOT
+-- a general JSON library. Do not point it at a foreign file: a \uXXXX escape is
+-- passed through as literal text and there is no surrogate handling.
+--
+-- Returns (value) on success, (nil, message) on malformed input. A caller that
+-- ignores the second return and treats nil as "empty" will silently swallow a
+-- truncated file - which is exactly the failure RDConfigStore's fixture asserts
+-- against.
+-- ---------------------------------------------------------------------------
+
+function RDJson.decode(s)
+    local pos = 1
+    local function fail(msg) error(msg .. " at " .. tostring(pos)) end
+    local function skipWs()
+        while pos <= #s do
+            local c = s:sub(pos, pos)
+            if c ~= " " and c ~= "\t" and c ~= "\r" and c ~= "\n" then break end
+            pos = pos + 1
+        end
+    end
+    local function isNumChar(c)
+        return c == "-" or c == "+" or c == "." or c == "e" or c == "E"
+            or (c >= "0" and c <= "9")
+    end
+    local function parseString()
+        pos = pos + 1 -- opening quote
+        local out = {}
+        while true do
+            if pos > #s then fail("unterminated string") end
+            local c = s:sub(pos, pos)
+            if c == '"' then pos = pos + 1; break end
+            if c == "\\" then
+                local n = s:sub(pos + 1, pos + 1)
+                if n == "n" then out[#out + 1] = "\n"
+                elseif n == "r" then out[#out + 1] = "\r"
+                elseif n == "t" then out[#out + 1] = "\t"
+                else out[#out + 1] = n end -- \" \\ and anything else: literal
+                pos = pos + 2
+            else
+                out[#out + 1] = c
+                pos = pos + 1
+            end
+        end
+        return table.concat(out)
+    end
+    local parseValue
+    parseValue = function()
+        skipWs()
+        local c = s:sub(pos, pos)
+        if c == "{" then
+            pos = pos + 1
+            local obj = {}
+            skipWs()
+            if s:sub(pos, pos) == "}" then pos = pos + 1; return obj end
+            while true do
+                skipWs()
+                if s:sub(pos, pos) ~= '"' then fail("expected object key") end
+                local k = parseString()
+                skipWs()
+                if s:sub(pos, pos) ~= ":" then fail("expected ':'") end
+                pos = pos + 1
+                obj[k] = parseValue()
+                skipWs()
+                local d = s:sub(pos, pos)
+                if d == "," then pos = pos + 1
+                elseif d == "}" then pos = pos + 1; break
+                else fail("expected ',' or '}'") end
+            end
+            return obj
+        elseif c == "[" then
+            pos = pos + 1
+            local arr = {}
+            skipWs()
+            if s:sub(pos, pos) == "]" then pos = pos + 1; return arr end
+            while true do
+                arr[#arr + 1] = parseValue()
+                skipWs()
+                local d = s:sub(pos, pos)
+                if d == "," then pos = pos + 1
+                elseif d == "]" then pos = pos + 1; break
+                else fail("expected ',' or ']'") end
+            end
+            return arr
+        elseif c == '"' then
+            return parseString()
+        elseif s:sub(pos, pos + 3) == "true" then pos = pos + 4; return true
+        elseif s:sub(pos, pos + 4) == "false" then pos = pos + 5; return false
+        elseif s:sub(pos, pos + 3) == "null" then pos = pos + 4; return nil
+        elseif isNumChar(c) then
+            local startPos = pos
+            while pos <= #s and isNumChar(s:sub(pos, pos)) do pos = pos + 1 end
+            local n = tonumber(s:sub(startPos, pos - 1))
+            if n == nil then fail("bad number") end
+            return n
+        end
+        fail("unexpected character '" .. tostring(c) .. "'")
+    end
+    -- guarded because error() IS this parser's control flow - fail() above raises on
+    -- malformed input, and this is where it is turned back into a return value.
+    local ok, result = pcall(parseValue)
+    if not ok then return nil, tostring(result) end
+    return result
+end
+
 return RDJson
 
 -- ---------------------------------------------------------------------------

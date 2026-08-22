@@ -102,7 +102,13 @@ RATCHET_REASON = ("Per-mod pcall ceiling. Lower is free; raising it is a deliber
     "retired, so DFItemProbes, HBDebugPanel and HBAPIProbe are scanned for "
     "the first time - this admits guards the tooling could not previously "
     "see, not new ones. 13 inert guards found by the first scan were deleted "
-    "the same day; what is counted here passed every rule.")
+    "the same day; what is counted here passed every rule. "
+    "RAISED 2026-08-22 (RFTDCore 37->38, RFTDMemoir -1): the suite's only JSON "
+    "decoder was promoted out of MMRestore into RDJson.decode so RDConfigStore "
+    "could reuse it rather than paste a second copy. The guard MOVED - it is the "
+    "parser's own control-flow pcall, whose reason ('error() IS this parser's "
+    "control flow') travelled with the code - so the suite-wide total is "
+    "unchanged and no new guard was written.")
 SAFE_FILE = os.path.join(HERE, "pcall-safe.json")
 BASE_FILE = os.path.join(HERE, "pcall-baseline.json")
 

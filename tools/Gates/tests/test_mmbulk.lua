@@ -62,6 +62,11 @@ end
 function isServer() return true end
 function isClient() return false end
 require = function() end            -- MMSvShared / MMSnapshotCodec: unused by the batch layer
+
+-- RDJson is NOT stubbed: MMRestore's decoder moved to Core on 2026-08-22, so the
+-- file under test now genuinely depends on it. Loading the real one keeps this
+-- fixture testing what ships.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDJson.lua")
 Events  = { OnServerStarted = { Add = function() end } }
 Capability = { CanModifyPlayerStatsInThePlayerStatsUI = "cap" }
 

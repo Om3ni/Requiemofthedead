@@ -25,6 +25,7 @@ if not isServer() then return end
 
 require "MMSvShared"
 require "MMSnapshotCodec"
+require "RDJson"     -- decode: promoted out of this file 2026-08-22
 require "RDShared"   -- EXT_DOC / EXT_DOC_LEGACY, read at file scope below
 require "MMRoster"
 
@@ -62,99 +63,10 @@ MMRestore.restoreFraction = restoreFraction   -- exposed for the test suite
 -- JSON decode (own-schema only; see header)
 -- ─────────────────────────────────────────────────────────────────────────
 
-local function decode(s)
-    local pos = 1
-    local function fail(msg) error(msg .. " at " .. tostring(pos)) end
-    local function skipWs()
-        while pos <= #s do
-            local c = s:sub(pos, pos)
-            if c ~= " " and c ~= "\t" and c ~= "\r" and c ~= "\n" then break end
-            pos = pos + 1
-        end
-    end
-    local function isNumChar(c)
-        return c == "-" or c == "+" or c == "." or c == "e" or c == "E"
-            or (c >= "0" and c <= "9")
-    end
-    local function parseString()
-        pos = pos + 1 -- opening quote
-        local out = {}
-        while true do
-            if pos > #s then fail("unterminated string") end
-            local c = s:sub(pos, pos)
-            if c == '"' then pos = pos + 1; break end
-            if c == "\\" then
-                local n = s:sub(pos + 1, pos + 1)
-                if n == "n" then out[#out + 1] = "\n"
-                elseif n == "r" then out[#out + 1] = "\r"
-                elseif n == "t" then out[#out + 1] = "\t"
-                else out[#out + 1] = n end -- \" \\ and anything else: literal
-                pos = pos + 2
-            else
-                out[#out + 1] = c
-                pos = pos + 1
-            end
-        end
-        return table.concat(out)
-    end
-    local parseValue
-    parseValue = function()
-        skipWs()
-        local c = s:sub(pos, pos)
-        if c == "{" then
-            pos = pos + 1
-            local obj = {}
-            skipWs()
-            if s:sub(pos, pos) == "}" then pos = pos + 1; return obj end
-            while true do
-                skipWs()
-                if s:sub(pos, pos) ~= '"' then fail("expected object key") end
-                local k = parseString()
-                skipWs()
-                if s:sub(pos, pos) ~= ":" then fail("expected ':'") end
-                pos = pos + 1
-                obj[k] = parseValue()
-                skipWs()
-                local d = s:sub(pos, pos)
-                if d == "," then pos = pos + 1
-                elseif d == "}" then pos = pos + 1; break
-                else fail("expected ',' or '}'") end
-            end
-            return obj
-        elseif c == "[" then
-            pos = pos + 1
-            local arr = {}
-            skipWs()
-            if s:sub(pos, pos) == "]" then pos = pos + 1; return arr end
-            while true do
-                arr[#arr + 1] = parseValue()
-                skipWs()
-                local d = s:sub(pos, pos)
-                if d == "," then pos = pos + 1
-                elseif d == "]" then pos = pos + 1; break
-                else fail("expected ',' or ']'") end
-            end
-            return arr
-        elseif c == '"' then
-            return parseString()
-        elseif s:sub(pos, pos + 3) == "true" then pos = pos + 4; return true
-        elseif s:sub(pos, pos + 4) == "false" then pos = pos + 5; return false
-        elseif s:sub(pos, pos + 3) == "null" then pos = pos + 4; return nil
-        elseif isNumChar(c) then
-            local startPos = pos
-            while pos <= #s and isNumChar(s:sub(pos, pos)) do pos = pos + 1 end
-            local n = tonumber(s:sub(startPos, pos - 1))
-            if n == nil then fail("bad number") end
-            return n
-        end
-        fail("unexpected character '" .. tostring(c) .. "'")
-    end
-    -- guarded because error() IS this parser's control flow - fail() above raises on
-    -- malformed input, and this is where it is turned back into a return value.
-    local ok, result = pcall(parseValue)
-    if not ok then return nil, tostring(result) end
-    return result
-end
+-- Promoted to Core 2026-08-22: RDConfigStore needed the same parser and a second
+-- copy would have been a pasted helper. Behaviour unchanged; the own-schema
+-- limitation documented on RDJson.decode still applies.
+local decode = RDJson.decode
 MMRestore.decode = decode -- exposed for the future progression-sheet tooling
 
 -- ─────────────────────────────────────────────────────────────────────────
