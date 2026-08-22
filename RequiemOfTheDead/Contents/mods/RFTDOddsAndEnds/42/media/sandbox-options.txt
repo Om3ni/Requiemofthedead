@@ -1,13 +1,31 @@
 VERSION = 1,
 
-/* PAGE ORDER IS THE ORDER OF THE BLOCKS BELOW. Verified in 42.20: the server
-   settings screen walks every option and creates a page the first time it sees
-   one naming it (ServerSettingsScreen.lua:5133-5147), appending to the end - so
-   first-encounter order is the only layout control that exists. There are no
-   sub-categories: CustomSandboxOption carries exactly id/page/translation and
-   the parser rejects any block that is not "option". Group modules by naming
-   the page "Odds & Ends: X" so they read as one family in a screen shared with
-   every other mod on the server.
+/* ONE PAGE, SECTIONS BY DECOY. Every option here lands on the single
+   RFTDOddsAndEnds page, and the *Header booleans below divide it into
+   sections. That is not a preference. Verified in 42.20: the server
+   settings screen creates a page the first time it sees an option naming
+   one (ServerSettingsScreen.lua:5133-5147) and appends it to the end, and
+   CustomSandboxOption carries exactly id/page/translation - there are no
+   sub-categories, and the parser rejects any block that is not "option".
+   A decoy boolean is the only sectioning the screen can express.
+
+   THIS FILE USED TO DECLARE A PAGE PER FEATURE - nine of them, seven
+   carrying a single option, so two dozen dials occupied nine entries in a
+   screen shared with every other mod on the server. Converged 2026-08-22
+   onto the shape Dirge has always used, now the suite convention. Page
+   names are presentational only: every option id here is already
+   namespaced RFTDOddsAndEnds.*, so nothing in this change moved a stored
+   value or a SandboxVars accessor.
+
+   SECTION ORDER IS DECLARATION ORDER - the only layout control there is.
+   The two substantial sections lead, then the single-option modules
+   alphabetically, then Triage last because it is temporary instrumentation
+   that leaves when the phantom-wounds hunt closes.
+
+   The headers are inert: false by default, read by nothing. Dragonfly's
+   admin panel renders them as dividers; the vanilla screen shows them as
+   checkboxes that do nothing, which is the price of the only mechanism
+   the engine offers.
 */
 
 /* ============================================================
@@ -48,11 +66,20 @@ VERSION = 1,
    promise one speed and deliver another.
    ============================================================ */
 
+option RFTDOddsAndEnds.ActionSpeedHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_ActionSpeedHeader,
+}
+
+
 option RFTDOddsAndEnds.ActionSpeedEnable
 {
     type = boolean,
     default = true,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ActionSpeedEnable,
 }
 option RFTDOddsAndEnds.ASReading
@@ -60,7 +87,7 @@ option RFTDOddsAndEnds.ASReading
     type = enum,
     numValues = 8,
     default = 5,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASReading,
     valueTranslation = OE_ASpeed,
 }
@@ -69,7 +96,7 @@ option RFTDOddsAndEnds.ASForaging
     type = enum,
     numValues = 8,
     default = 4,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASForaging,
     valueTranslation = OE_ASpeed,
 }
@@ -78,7 +105,7 @@ option RFTDOddsAndEnds.ASCleaning
     type = enum,
     numValues = 8,
     default = 4,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASCleaning,
     valueTranslation = OE_ASpeed,
 }
@@ -87,7 +114,7 @@ option RFTDOddsAndEnds.ASRepair
     type = enum,
     numValues = 8,
     default = 4,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASRepair,
     valueTranslation = OE_ASpeed,
 }
@@ -96,7 +123,7 @@ option RFTDOddsAndEnds.ASDismantle
     type = enum,
     numValues = 8,
     default = 4,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASDismantle,
     valueTranslation = OE_ASpeed,
 }
@@ -105,7 +132,7 @@ option RFTDOddsAndEnds.ASHood
     type = enum,
     numValues = 8,
     default = 5,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASHood,
     valueTranslation = OE_ASpeed,
 }
@@ -114,7 +141,7 @@ option RFTDOddsAndEnds.ASMechanics
     type = enum,
     numValues = 8,
     default = 1,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASMechanics,
     valueTranslation = OE_ASpeed,
 }
@@ -126,7 +153,7 @@ option RFTDOddsAndEnds.ASThread
     type = enum,
     numValues = 8,
     default = 2,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASThread,
     valueTranslation = OE_ASpeed,
 }
@@ -138,21 +165,9 @@ option RFTDOddsAndEnds.ASRipIt
     type = enum,
     numValues = 8,
     default = 2,
-    page = OE_ActionSpeed,
+    page = RFTDOddsAndEnds,
     translation = OE_ASRipIt,
     valueTranslation = OE_ASpeed,
-}
-
-/* ============================================================
-   RIPIT - rip and cut everything in the containers you have open
-   ============================================================ */
-
-option RFTDOddsAndEnds.RipItEnable
-{
-    type = boolean,
-    default = true,
-    page = OE_RipIt,
-    translation = OE_RipItEnable,
 }
 
 /* ============================================================
@@ -162,11 +177,20 @@ option RFTDOddsAndEnds.RipItEnable
    absolute and reversible. 1.0 = vanilla.
    ============================================================ */
 
+option RFTDOddsAndEnds.LumberjackHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_LumberjackHeader,
+}
+
+
 option RFTDOddsAndEnds.LumberjackEnable
 {
     type = boolean,
     default = true,
-    page = OE_Lumberjack,
+    page = RFTDOddsAndEnds,
     translation = OE_LumberjackEnable,
 }
 option RFTDOddsAndEnds.LumberjackBulkWeight
@@ -175,7 +199,7 @@ option RFTDOddsAndEnds.LumberjackBulkWeight
     min = 0.05,
     max = 5.0,
     default = 0.5,
-    page = OE_Lumberjack,
+    page = RFTDOddsAndEnds,
     translation = OE_LumberjackBulkWeight,
 }
 option RFTDOddsAndEnds.LumberjackWoodWeight
@@ -184,7 +208,7 @@ option RFTDOddsAndEnds.LumberjackWoodWeight
     min = 0.05,
     max = 5.0,
     default = 1.0,
-    page = OE_Lumberjack,
+    page = RFTDOddsAndEnds,
     translation = OE_LumberjackWoodWeight,
 }
 
@@ -197,7 +221,7 @@ option RFTDOddsAndEnds.LumberjackSweepEnable
 {
     type = boolean,
     default = true,
-    page = OE_Lumberjack,
+    page = RFTDOddsAndEnds,
     translation = OE_LumberjackSweepEnable,
 }
 option RFTDOddsAndEnds.LumberjackSweepRadius
@@ -206,7 +230,7 @@ option RFTDOddsAndEnds.LumberjackSweepRadius
     min = 2,
     max = 30,
     default = 8,
-    page = OE_Lumberjack,
+    page = RFTDOddsAndEnds,
     translation = OE_LumberjackSweepRadius,
 }
 option RFTDOddsAndEnds.LumberjackSweepAxeFloor
@@ -215,7 +239,7 @@ option RFTDOddsAndEnds.LumberjackSweepAxeFloor
     min = 0.0,
     max = 0.9,
     default = 0.05,
-    page = OE_Lumberjack,
+    page = RFTDOddsAndEnds,
     translation = OE_LumberjackSweepAxeFloor,
 }
 option RFTDOddsAndEnds.LumberjackSweepEnduranceFloor
@@ -224,8 +248,67 @@ option RFTDOddsAndEnds.LumberjackSweepEnduranceFloor
     min = 0.0,
     max = 0.9,
     default = 0.15,
-    page = OE_Lumberjack,
+    page = RFTDOddsAndEnds,
     translation = OE_LumberjackSweepEnduranceFloor,
+}
+
+/* ============================================================
+   Container Order - drag the container buttons in your own
+   inventory sidebar into the order you want.
+
+   Moved out of RFTDCore 2026-07-31. It is the only module here
+   whose kill switch exists for COMPATIBILITY rather than taste:
+   third-party container mods (Better Containers, Clean UI and
+   friends) reorder the same button column, and while COClient is
+   dormant until the player drags something, a player who wants
+   both should be able to say which one wins. Turn this off on a
+   server that ships one of those in its collection.
+   ============================================================ */
+
+option RFTDOddsAndEnds.ContainerOrderHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_ContainerOrderHeader,
+}
+
+
+option RFTDOddsAndEnds.ContainerOrderEnable
+{
+    type = boolean,
+    default = true,
+    page = RFTDOddsAndEnds,
+    translation = OE_ContainerOrderEnable,
+}
+
+/* ============================================================
+   Inventory Collapse - fold the equipped and hotbar blocks out
+   of your own inventory list, independently.
+
+   Moved out of RFTDCore 2026-07-31 with Container Order. Same
+   compatibility argument: it adds two buttons to the inventory
+   control row, which third-party UI mods pack and re-arrange,
+   and it patches Clean UI's pane classes by name. Off means the
+   buttons never appear and the row is laid out as if the module
+   were not installed.
+   ============================================================ */
+
+option RFTDOddsAndEnds.InventoryCollapseHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_InventoryCollapseHeader,
+}
+
+
+option RFTDOddsAndEnds.InventoryCollapseEnable
+{
+    type = boolean,
+    default = true,
+    page = RFTDOddsAndEnds,
+    translation = OE_InventoryCollapseEnable,
 }
 
 /* ============================================================
@@ -243,64 +326,62 @@ option RFTDOddsAndEnds.LumberjackSweepEnduranceFloor
    is visible as Noise Ordinance and receives its declared default.
    ============================================================ */
 
+option RFTDOddsAndEnds.NoiseOrdinanceHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_NoiseOrdinanceHeader,
+}
+
+
 option RFTDOddsAndEnds.NoiseOrdinanceEnable
 {
     type = boolean,
     default = true,
-    page = OE_NoiseOrdinance,
+    page = RFTDOddsAndEnds,
     translation = OE_NoiseOrdinanceEnable,
 }
 
 /* ============================================================
-   Container Order - drag the container buttons in your own
-   inventory sidebar into the order you want.
-
-   Moved out of RFTDCore 2026-07-31. It is the only module here
-   whose kill switch exists for COMPATIBILITY rather than taste:
-   third-party container mods (Better Containers, Clean UI and
-   friends) reorder the same button column, and while COClient is
-   dormant until the player drags something, a player who wants
-   both should be able to say which one wins. Turn this off on a
-   server that ships one of those in its collection.
+   RIPIT - rip and cut everything in the containers you have open
    ============================================================ */
 
-option RFTDOddsAndEnds.ContainerOrderEnable
+option RFTDOddsAndEnds.RipItHeader
 {
     type = boolean,
-    default = true,
-    page = OE_ContainerOrder,
-    translation = OE_ContainerOrderEnable,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_RipItHeader,
 }
 
-/* ============================================================
-   Inventory Collapse - fold the equipped and hotbar blocks out
-   of your own inventory list, independently.
 
-   Moved out of RFTDCore 2026-07-31 with Container Order. Same
-   compatibility argument: it adds two buttons to the inventory
-   control row, which third-party UI mods pack and re-arrange,
-   and it patches Clean UI's pane classes by name. Off means the
-   buttons never appear and the row is laid out as if the module
-   were not installed.
-   ============================================================ */
-
-option RFTDOddsAndEnds.InventoryCollapseEnable
+option RFTDOddsAndEnds.RipItEnable
 {
     type = boolean,
     default = true,
-    page = OE_InventoryCollapse,
-    translation = OE_InventoryCollapseEnable,
+    page = RFTDOddsAndEnds,
+    translation = OE_RipItEnable,
 }
 
 /* ============================================================
    Sticky Headwear - your hat stays on your head
    ============================================================ */
 
+option RFTDOddsAndEnds.StickyHeadwearHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_StickyHeadwearHeader,
+}
+
+
 option RFTDOddsAndEnds.StickyHeadwearEnable
 {
     type = boolean,
     default = true,
-    page = OE_StickyHeadwear,
+    page = RFTDOddsAndEnds,
     translation = OE_StickyHeadwearEnable,
 }
 
@@ -314,11 +395,20 @@ option RFTDOddsAndEnds.StickyHeadwearEnable
    domain-mod door into it goes silent.
    ============================================================ */
 
+option RFTDOddsAndEnds.WorkshopHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_WorkshopHeader,
+}
+
+
 option RFTDOddsAndEnds.WorkshopEnable
 {
     type = boolean,
     default = true,
-    page = OE_Workshop,
+    page = RFTDOddsAndEnds,
     translation = OE_WorkshopEnable,
 }
 
@@ -335,10 +425,19 @@ option RFTDOddsAndEnds.WorkshopEnable
    intended to be switched off when it closes.
    ============================================================ */
 
+option RFTDOddsAndEnds.TriageHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDOddsAndEnds,
+    translation = OE_TriageHeader,
+}
+
+
 option RFTDOddsAndEnds.TriageEnable
 {
     type = boolean,
     default = true,
-    page = OE_Triage,
+    page = RFTDOddsAndEnds,
     translation = OE_TriageEnable,
 }

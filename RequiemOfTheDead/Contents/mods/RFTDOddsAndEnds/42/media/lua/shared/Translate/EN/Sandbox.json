@@ -1,12 +1,25 @@
 {
-  "Sandbox_OE_RipIt": "Odds & Ends: RIPIT",
-  "Sandbox_OE_Lumberjack": "Odds & Ends: Lumberjack",
-  "Sandbox_OE_ContainerOrder": "Odds & Ends: Container Order",
-  "Sandbox_OE_InventoryCollapse": "Odds & Ends: Inventory Collapse",
-  "Sandbox_OE_StickyHeadwear": "Odds & Ends: Sticky Headwear",
-  "Sandbox_OE_ActionSpeed": "Odds & Ends: Action Speed",
-  "Sandbox_OE_NoiseOrdinance": "Odds & Ends: Noise Ordinance",
-  "Sandbox_OE_Workshop": "Odds & Ends: Workshop",
+  "Sandbox_RFTDOddsAndEnds": "Odds & Ends",
+
+  "Sandbox_OE_ActionSpeedHeader": "_________ Action Speed _________",
+  "Sandbox_OE_ActionSpeedHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+  "Sandbox_OE_LumberjackHeader": "_________ Lumberjack _________",
+  "Sandbox_OE_LumberjackHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+  "Sandbox_OE_ContainerOrderHeader": "_________ Container Order _________",
+  "Sandbox_OE_ContainerOrderHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+  "Sandbox_OE_InventoryCollapseHeader": "_________ Inventory Collapse _________",
+  "Sandbox_OE_InventoryCollapseHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+  "Sandbox_OE_NoiseOrdinanceHeader": "_________ Noise Ordinance _________",
+  "Sandbox_OE_NoiseOrdinanceHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+  "Sandbox_OE_RipItHeader": "_________ RIPIT _________",
+  "Sandbox_OE_RipItHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+  "Sandbox_OE_StickyHeadwearHeader": "_________ Sticky Headwear _________",
+  "Sandbox_OE_StickyHeadwearHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+  "Sandbox_OE_WorkshopHeader": "_________ Workshop _________",
+  "Sandbox_OE_WorkshopHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+  "Sandbox_OE_TriageHeader": "_________ Triage _________",
+  "Sandbox_OE_TriageHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+
 
   "Sandbox_OE_WorkshopEnable": "Enable Workshop",
   "Sandbox_OE_WorkshopEnable_tooltip": "The player panel's crafting home: the vanilla hand-craft panel with target filtering (Craft), a maintenance dashboard of carried gear that can be fixed or replaced (Gear), and a searchable recipe field guide - recipes you know in white, recipes you don't in grey with every way to learn them (Journal). Other panels open it pre-filtered: clicking a part on My Vehicles lands on that part's recipes. Off means the tab never appears and those doors quietly do nothing. Takes effect at the next world load.",
@@ -15,7 +28,7 @@
   "Sandbox_OE_NoiseOrdinanceEnable_tooltip": "Stops vehicle horns and sirens attracting zombies while preserving their normal sound and, for emergency vehicles, their lights. The engine, vehicle alarm, reversing beeper and radio are untouched. Turning it off restores the vanilla horn and the Siren Effects Zombies value that was active before Noise Ordinance took ownership. Takes effect immediately without a restart.",
 
   "Sandbox_OE_RipItEnable": "Enable RIPIT",
-  "Sandbox_OE_RipItEnable_tooltip": "Adds Rip All to the right-click menu, in both your inventory and the world. It works on the containers you currently have open - your own bags plus whatever is in the loot window - and never reaches further than that. Covers cloth, denim and leather clothing plus sheets; leather garments yield strips. Speed is set on the Action Speed page.",
+  "Sandbox_OE_RipItEnable_tooltip": "Adds Rip All to the right-click menu, in both your inventory and the world. It works on the containers you currently have open - your own bags plus whatever is in the loot window - and never reaches further than that. Covers cloth, denim and leather clothing plus sheets; leather garments yield strips. Speed is set in the Action Speed section.",
 
   "Sandbox_OE_LumberjackEnable": "Enable Lumberjack",
   "Sandbox_OE_LumberjackEnable_tooltip": "Master toggle for wooden-item weight scaling. Turning it off restores the vanilla weights exactly - the original values are kept, so nothing drifts however many times the dials are changed. Takes effect at the next world load.",
@@ -71,7 +84,6 @@
   "Sandbox_OE_ASpeed_option7": "6 - 40x faster",
   "Sandbox_OE_ASpeed_option8": "7 - Instant",
 
-  "Sandbox_OE_Triage": "Odds & Ends: Triage",
   "Sandbox_OE_TriageEnable": "Enable Triage",
-  "Sandbox_OE_TriageEnable_tooltip": "Server-side diagnostic recorder for unexplained health loss and mood swings. Writes bounded rows to the server's forensic log naming which game system (hunger, sickness, bleeding, infection...) took each player's health - or flagging that none did, which points at a mod writing damage directly. Also records fractures appearing on worlds where fractures are disabled, and what drives large sadness changes. Has no effect on gameplay and costs nothing when off. Meant to run while a problem is being investigated and be turned off afterwards."
+  "Sandbox_OE_TriageEnable_tooltip": "Server-side diagnostic recorder for unexplained health loss and mood swings. Writes bounded rows to the server's forensic log naming which game system (hunger, sickness, bleeding, infection...) took each player's health - or flagging that none did, which points at a mod writing damage directly. Also records the moment new wounds appear (with details that identify their source), fractures appearing on worlds where fractures are disabled, and what drives large sadness changes. Has no effect on gameplay and costs nothing when off. Meant to run while a problem is being investigated and be turned off afterwards."
 }
