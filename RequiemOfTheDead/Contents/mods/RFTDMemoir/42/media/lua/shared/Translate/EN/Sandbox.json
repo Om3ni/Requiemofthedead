@@ -1,6 +1,10 @@
 {
+    "Sandbox_DF_MemoirSettingsHeader": "_________ Mod Settings _________",
+    "Sandbox_DF_MemoirSettingsHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+    "Sandbox_DF_MemoirXPHeader": "_________ Per-skill XP Restore _________",
+    "Sandbox_DF_MemoirXPHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+
     "Sandbox_RFTDMemoir": "Memoir",
-    "Sandbox_RFTDMemoirXP": "Memoir: Skill XP",
     "Sandbox_DF_MemoirDebug": "Memoir: debug logging",
     "Sandbox_DF_MemoirDebug_tooltip": "Print [MM_DBG] record / recall / dump traces from the Memoir system to the server and client logs. Leave off for normal play.",
     "Sandbox_DF_MemoirAutoFixShadowedTraits": "Memoir: repair shadowed traits on login",

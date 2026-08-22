@@ -1,6 +1,5 @@
 {
     "Sandbox_RFTDBanBox": "BanBox",
-    "Sandbox_RFTDDragonflyBanBox": "Dragonfly: Item BanBox",
     "Sandbox_DF_BanBoxEnabled": "Enable item BanBox",
     "Sandbox_DF_BanBoxEnabled_tooltip": "Master switch for the item BanBox engine (default ON). When on, any item types registered by a ban-list mod (such as the optional BBLibrary submod, or your own) are stripped from loot distribution at server start so no new copies spawn. Prevention only - items already in the world are not removed. With no ban-list mod enabled the engine does nothing. Changes take effect on the next server restart.",
     "Sandbox_DF_BanBoxConfiscateOnLogin": "Confiscate banned items on login",

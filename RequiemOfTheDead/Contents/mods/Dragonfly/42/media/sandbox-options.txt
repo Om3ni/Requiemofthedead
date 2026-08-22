@@ -1,5 +1,25 @@
 VERSION = 1,
 
+/* ONE PAGE, SECTIONS BY DECOY - the suite convention, converged 2026-08-22.
+   The *Header booleans below are inert dividers, false by default and read by
+   nothing. They exist because the settings screen has no sub-categories:
+   CustomSandboxOption carries exactly id/page/translation and a page is
+   created the first time an option names it (ServerSettingsScreen.lua:
+   5133-5147), so a decoy option is the only sectioning it can express.
+   Section order is declaration order. Dragonfly's admin panel renders these
+   as dividers; the vanilla screen shows checkboxes that do nothing.
+   Page names are presentational - no option id or SandboxVars accessor moved.
+*/
+
+
+option RFTDDragonfly.PanelHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDragonfly,
+    translation = DF_DragonflyPanelHeader,
+}
+
 option RFTDDragonfly.Enabled
 {
     type = boolean,
@@ -39,11 +59,19 @@ option RFTDDragonfly.OpenKeyRequiresShift
     page = RFTDDragonfly,
     translation = DF_OpenKeyRequiresShift,
 }
+option RFTDDragonfly.DebugGateHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDragonfly,
+    translation = DF_DragonflyDebugHeader,
+}
+
 option RFTDDragonfly.DebugGateEnabled
 {
     type = boolean,
     default = true,
-    page = RFTDDragonflyDebug,
+    page = RFTDDragonfly,
     translation = DF_DebugGateEnabled,
 }
 option RFTDDragonfly.DebugGateKey
@@ -52,13 +80,13 @@ option RFTDDragonfly.DebugGateKey
     min = 0,
     max = 256,
     default = 68,
-    page = RFTDDragonflyDebug,
+    page = RFTDDragonfly,
     translation = DF_DebugGateKey,
 }
 option RFTDDragonfly.DebugGateRequiresShift
 {
     type = boolean,
     default = false,
-    page = RFTDDragonflyDebug,
+    page = RFTDDragonfly,
     translation = DF_DebugGateRequiresShift,
 }

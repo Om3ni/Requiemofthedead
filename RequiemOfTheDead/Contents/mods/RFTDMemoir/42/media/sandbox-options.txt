@@ -1,5 +1,25 @@
 VERSION = 1,
 
+/* ONE PAGE, SECTIONS BY DECOY - the suite convention, converged 2026-08-22.
+   The *Header booleans below are inert dividers, false by default and read by
+   nothing. They exist because the settings screen has no sub-categories:
+   CustomSandboxOption carries exactly id/page/translation and a page is
+   created the first time an option names it (ServerSettingsScreen.lua:
+   5133-5147), so a decoy option is the only sectioning it can express.
+   Section order is declaration order. Dragonfly's admin panel renders these
+   as dividers; the vanilla screen shows checkboxes that do nothing.
+   Page names are presentational - no option id or SandboxVars accessor moved.
+*/
+
+
+option RFTDMemoir.SettingsHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDMemoir,
+    translation = DF_MemoirSettingsHeader,
+}
+
 option RFTDMemoir.MemoirDebug
 {
     type = boolean,
@@ -46,13 +66,21 @@ option RFTDMemoir.MemoirXPRestoreMode
    Option name keys on perk:getId() so the codec lookup matches exactly - note several ids
    differ from the in-game name (Woodwork=Carpentry, Sneak=Sneaking, Lightfoot=Lightfooted,
    PlantScavenging=Foraging, Small*=Short *). Generated from PerkFactory's vanilla leaf skills. */
+option RFTDMemoir.XPHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDMemoir,
+    translation = DF_MemoirXPHeader,
+}
+
 option RFTDMemoir.MemoirXPRestore_Axe
 {
     type = integer,
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Axe,
 }
 option RFTDMemoir.MemoirXPRestore_Blunt
@@ -61,7 +89,7 @@ option RFTDMemoir.MemoirXPRestore_Blunt
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Blunt,
 }
 option RFTDMemoir.MemoirXPRestore_SmallBlunt
@@ -70,7 +98,7 @@ option RFTDMemoir.MemoirXPRestore_SmallBlunt
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_SmallBlunt,
 }
 option RFTDMemoir.MemoirXPRestore_LongBlade
@@ -79,7 +107,7 @@ option RFTDMemoir.MemoirXPRestore_LongBlade
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_LongBlade,
 }
 option RFTDMemoir.MemoirXPRestore_SmallBlade
@@ -88,7 +116,7 @@ option RFTDMemoir.MemoirXPRestore_SmallBlade
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_SmallBlade,
 }
 option RFTDMemoir.MemoirXPRestore_Spear
@@ -97,7 +125,7 @@ option RFTDMemoir.MemoirXPRestore_Spear
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Spear,
 }
 option RFTDMemoir.MemoirXPRestore_Maintenance
@@ -106,7 +134,7 @@ option RFTDMemoir.MemoirXPRestore_Maintenance
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Maintenance,
 }
 option RFTDMemoir.MemoirXPRestore_Aiming
@@ -115,7 +143,7 @@ option RFTDMemoir.MemoirXPRestore_Aiming
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Aiming,
 }
 option RFTDMemoir.MemoirXPRestore_Reloading
@@ -124,7 +152,7 @@ option RFTDMemoir.MemoirXPRestore_Reloading
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Reloading,
 }
 option RFTDMemoir.MemoirXPRestore_Woodwork
@@ -133,7 +161,7 @@ option RFTDMemoir.MemoirXPRestore_Woodwork
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Woodwork,
 }
 option RFTDMemoir.MemoirXPRestore_Carving
@@ -142,7 +170,7 @@ option RFTDMemoir.MemoirXPRestore_Carving
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Carving,
 }
 option RFTDMemoir.MemoirXPRestore_Cooking
@@ -151,7 +179,7 @@ option RFTDMemoir.MemoirXPRestore_Cooking
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Cooking,
 }
 option RFTDMemoir.MemoirXPRestore_Electricity
@@ -160,7 +188,7 @@ option RFTDMemoir.MemoirXPRestore_Electricity
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Electricity,
 }
 option RFTDMemoir.MemoirXPRestore_Glassmaking
@@ -169,7 +197,7 @@ option RFTDMemoir.MemoirXPRestore_Glassmaking
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Glassmaking,
 }
 option RFTDMemoir.MemoirXPRestore_FlintKnapping
@@ -178,7 +206,7 @@ option RFTDMemoir.MemoirXPRestore_FlintKnapping
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_FlintKnapping,
 }
 option RFTDMemoir.MemoirXPRestore_Masonry
@@ -187,7 +215,7 @@ option RFTDMemoir.MemoirXPRestore_Masonry
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Masonry,
 }
 option RFTDMemoir.MemoirXPRestore_Blacksmith
@@ -196,7 +224,7 @@ option RFTDMemoir.MemoirXPRestore_Blacksmith
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Blacksmith,
 }
 option RFTDMemoir.MemoirXPRestore_Mechanics
@@ -205,7 +233,7 @@ option RFTDMemoir.MemoirXPRestore_Mechanics
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Mechanics,
 }
 option RFTDMemoir.MemoirXPRestore_Pottery
@@ -214,7 +242,7 @@ option RFTDMemoir.MemoirXPRestore_Pottery
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Pottery,
 }
 option RFTDMemoir.MemoirXPRestore_Tailoring
@@ -223,7 +251,7 @@ option RFTDMemoir.MemoirXPRestore_Tailoring
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Tailoring,
 }
 option RFTDMemoir.MemoirXPRestore_MetalWelding
@@ -232,7 +260,7 @@ option RFTDMemoir.MemoirXPRestore_MetalWelding
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_MetalWelding,
 }
 option RFTDMemoir.MemoirXPRestore_Doctor
@@ -241,7 +269,7 @@ option RFTDMemoir.MemoirXPRestore_Doctor
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Doctor,
 }
 option RFTDMemoir.MemoirXPRestore_Fishing
@@ -250,7 +278,7 @@ option RFTDMemoir.MemoirXPRestore_Fishing
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Fishing,
 }
 option RFTDMemoir.MemoirXPRestore_PlantScavenging
@@ -259,7 +287,7 @@ option RFTDMemoir.MemoirXPRestore_PlantScavenging
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_PlantScavenging,
 }
 option RFTDMemoir.MemoirXPRestore_Tracking
@@ -268,7 +296,7 @@ option RFTDMemoir.MemoirXPRestore_Tracking
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Tracking,
 }
 option RFTDMemoir.MemoirXPRestore_Trapping
@@ -277,7 +305,7 @@ option RFTDMemoir.MemoirXPRestore_Trapping
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Trapping,
 }
 option RFTDMemoir.MemoirXPRestore_Fitness
@@ -286,7 +314,7 @@ option RFTDMemoir.MemoirXPRestore_Fitness
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Fitness,
 }
 option RFTDMemoir.MemoirXPRestore_Strength
@@ -295,7 +323,7 @@ option RFTDMemoir.MemoirXPRestore_Strength
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Strength,
 }
 option RFTDMemoir.MemoirXPRestore_Lightfoot
@@ -304,7 +332,7 @@ option RFTDMemoir.MemoirXPRestore_Lightfoot
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Lightfoot,
 }
 option RFTDMemoir.MemoirXPRestore_Nimble
@@ -313,7 +341,7 @@ option RFTDMemoir.MemoirXPRestore_Nimble
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Nimble,
 }
 option RFTDMemoir.MemoirXPRestore_Sprinting
@@ -322,7 +350,7 @@ option RFTDMemoir.MemoirXPRestore_Sprinting
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Sprinting,
 }
 option RFTDMemoir.MemoirXPRestore_Sneak
@@ -331,7 +359,7 @@ option RFTDMemoir.MemoirXPRestore_Sneak
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Sneak,
 }
 option RFTDMemoir.MemoirXPRestore_Farming
@@ -340,7 +368,7 @@ option RFTDMemoir.MemoirXPRestore_Farming
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Farming,
 }
 option RFTDMemoir.MemoirXPRestore_Husbandry
@@ -349,7 +377,7 @@ option RFTDMemoir.MemoirXPRestore_Husbandry
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Husbandry,
 }
 option RFTDMemoir.MemoirXPRestore_Butchering
@@ -358,6 +386,6 @@ option RFTDMemoir.MemoirXPRestore_Butchering
     min = 0,
     max = 100,
     default = 100,
-    page = RFTDMemoirXP,
+    page = RFTDMemoir,
     translation = DF_MemoirXPRestore_Butchering,
 }

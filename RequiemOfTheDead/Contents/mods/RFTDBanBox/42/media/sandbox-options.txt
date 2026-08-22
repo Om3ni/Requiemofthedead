@@ -4,20 +4,20 @@ option RFTDBanBox.BanBoxEnabled
 {
     type = boolean,
     default = true,
-    page = RFTDDragonflyBanBox,
+    page = RFTDBanBox,
     translation = DF_BanBoxEnabled,
 }
 option RFTDBanBox.BanBoxConfiscateOnLogin
 {
     type = boolean,
     default = false,
-    page = RFTDDragonflyBanBox,
+    page = RFTDBanBox,
     translation = DF_BanBoxConfiscateOnLogin,
 }
 option RFTDBanBox.BanBoxDebug
 {
     type = boolean,
     default = false,
-    page = RFTDDragonflyBanBox,
+    page = RFTDBanBox,
     translation = DF_BanBoxDebug,
 }

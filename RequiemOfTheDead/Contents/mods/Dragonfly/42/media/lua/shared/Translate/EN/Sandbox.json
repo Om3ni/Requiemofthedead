@@ -1,6 +1,10 @@
 {
+    "Sandbox_DF_DragonflyPanelHeader": "_________ Panel _________",
+    "Sandbox_DF_DragonflyPanelHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+    "Sandbox_DF_DragonflyDebugHeader": "_________ Debug Gate _________",
+    "Sandbox_DF_DragonflyDebugHeader_tooltip": "Cosmetic section divider. The checkbox does nothing.",
+
     "Sandbox_RFTDDragonfly": "Dragonfly",
-    "Sandbox_RFTDDragonflyDebug": "Dragonfly: Debug Menus",
     "Sandbox_DF_Enabled": "Enable Dragonfly admin panel",
     "Sandbox_DF_Enabled_tooltip": "Master toggle. When disabled, the panel keybind does nothing and consumer mods that register tabs/actions sit idle. Designed for dedicated multiplayer servers.",
     "Sandbox_DF_PanelAccess": "Admin panel access",
