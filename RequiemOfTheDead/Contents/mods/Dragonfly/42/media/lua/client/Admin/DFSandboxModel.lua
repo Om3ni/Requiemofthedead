@@ -29,6 +29,7 @@
 if isServer() then return end
 
 require "DFKit"
+require "DFOverlay"
 
 DFSandboxModel = DFSandboxModel or {}
 
@@ -226,7 +227,8 @@ function DFSandboxModel.buildServer()
 
     local count = 0
     for _, sec in ipairs(order) do count = count + #sec.options end
-    return { page = "__server", label = "Server", sections = order, count = count }
+    return { page = DFOverlay.SERVER_KEY, label = "Server",
+             sections = order, count = count }
 end
 
 function DFSandboxModel.serverValueOf(name)

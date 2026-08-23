@@ -84,6 +84,14 @@ DFOverlay.MAX_TITLE   = 48
 DFOverlay.MAX_NAME    = 96
 DFOverlay.MAX_KEY     = 64
 
+-- The server options page has no engine page name of its own - ServerOption
+-- carries no category of any kind - so the panel gives it one. It lives here
+-- rather than in the model because three files key on it (the model builds it,
+-- the store files a layout under it, and the write gate reads it to decide
+-- WHICH capability an edit needs), and a sentinel spelled out in three places
+-- is a sentinel that will one day be spelled two ways.
+DFOverlay.SERVER_KEY = "__server"
+
 local function trim(s)
     return (tostring(s):match("^%s*(.-)%s*$"))
 end
