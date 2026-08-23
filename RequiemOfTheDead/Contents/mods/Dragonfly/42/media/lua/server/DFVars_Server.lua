@@ -317,7 +317,7 @@ Events.OnServerStarted.Add(function()
         run = function(player, args)
             args = args or {}
             -- args.def goes STRAIGHT to RDVarDefs.validate, which refuses an
-            -- unknown field, a bad kind, a stringVar with no resetOnDeath and
+            -- unknown field, a bad kind, a counter with no resetOnDeath and
             -- a revoker outside the closed set. Re-checking any of that here
             -- would be a second copy of a rule that already has one home.
             local def, why = RDVars.define(args.def, player:getUsername())

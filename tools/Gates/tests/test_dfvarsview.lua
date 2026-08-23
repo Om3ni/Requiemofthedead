@@ -133,17 +133,17 @@ check(vOk ~= nil, "the form built a marker the store refuses: " .. tostring(vWhy
 
 -- ---- buildDef: counters --------------------------------------------------
 
-local counter = DFVarsView.buildDef{ name = "Loot", kind = "string", resetOnDeath = "yes" }
+local counter = DFVarsView.buildDef{ name = "Loot", kind = "counter", resetOnDeath = "yes" }
 check(counter ~= nil, "a counter was refused")
 check(counter.resetOnDeath == true, "'yes' did not become true")
-check(DFVarsView.buildDef{ name = "Loot", kind = "string",
+check(DFVarsView.buildDef{ name = "Loot", kind = "counter",
                            resetOnDeath = "no" }.resetOnDeath == false,
     "'no' did not become false")
 local cOk, cWhy = RDVarDefs.validate(counter)
 check(cOk ~= nil, "the form built a counter the store refuses: " .. tostring(cWhy))
 
 -- The one that matters. "" is the dial nobody moved.
-local unset, unsetWhy = DFVarsView.buildDef{ name = "Loot", kind = "string",
+local unset, unsetWhy = DFVarsView.buildDef{ name = "Loot", kind = "counter",
                                              resetOnDeath = "" }
 check(unset == nil,
     "A COUNTER WAS CREATED WITHOUT ANYBODY CHOOSING resetOnDeath. RDVarDefs "
@@ -152,9 +152,9 @@ check(unset == nil,
     .. "that decision back to whichever way the control happened to start.")
 check(tostring(unsetWhy):find("no default", 1, true) ~= nil,
     "the refusal did not explain itself: " .. tostring(unsetWhy))
-check(DFVarsView.buildDef{ name = "Loot", kind = "string" } == nil,
+check(DFVarsView.buildDef{ name = "Loot", kind = "counter" } == nil,
     "a counter with no resetOnDeath field at all was accepted")
-check(DFVarsView.buildDef{ name = "Loot", kind = "string",
+check(DFVarsView.buildDef{ name = "Loot", kind = "counter",
                            resetOnDeath = true } == nil,
     "a raw boolean was accepted where the form's three-way choice is expected - "
     .. "which would mean the dial and the builder disagree about the shape")
@@ -207,9 +207,9 @@ local life = DFVarsView.lifecycleOf{ kind = "char",
 check(life:find("on death", 1, true) and life:find("30 min", 1, true)
       and life:find("kit k", 1, true),
     "the lifecycle line dropped a revoker: " .. life)
-check(DFVarsView.lifecycleOf{ kind = "string", resetOnDeath = true } == "resets on death",
+check(DFVarsView.lifecycleOf{ kind = "counter", resetOnDeath = true } == "resets on death",
     "a resetting counter did not say so")
-check(DFVarsView.lifecycleOf{ kind = "string", resetOnDeath = false } == "survives death",
+check(DFVarsView.lifecycleOf{ kind = "counter", resetOnDeath = false } == "survives death",
     "a surviving counter did not say so - and 'no lifecycle' is not the same "
     .. "sentence as 'permanent', which is a marker's word")
 check(DFVarsView.lifecycleOf(nil) == "", "lifecycleOf(nil) faulted")
@@ -217,7 +217,7 @@ check(DFVarsView.lifecycleOf(nil) == "", "lifecycleOf(nil) faulted")
 -- ---- the late reply ------------------------------------------------------
 
 DFVarsView.defs = { { name = "Anomaly", kind = "char", holders = 2 },
-                    { name = "Loot", kind = "string" } }
+                    { name = "Loot", kind = "counter" } }
 DFVarsView.selected = "Anomaly"
 DFVarsView.holders  = nil
 
@@ -237,7 +237,7 @@ check(DFVarsView.holders == nil,
     .. "appear beneath Loot's heading, which reads as fact and is false.")
 
 DFVarsView.receive("AdminVarHolders",
-    { name = "Loot", kind = "string", rows = { { user = "B", value = 0 } }, total = 1 })
+    { name = "Loot", kind = "counter", rows = { { user = "B", value = 0 } }, total = 1 })
 check(DFVarsView.holders ~= nil and DFVarsView.holders.name == "Loot",
     "the reply that DID match was dropped too")
 
@@ -247,7 +247,7 @@ check(DFVarsView.receive("SomethingElse", {}) == false, "an unrelated command wa
 -- the panel pointed at a var that no longer exists.
 DFVarsView.selected = "Anomaly"
 sent = {}
-DFVarsView.receive("AdminVars", { defs = { { name = "Loot", kind = "string" } } })
+DFVarsView.receive("AdminVars", { defs = { { name = "Loot", kind = "counter" } } })
 check(DFVarsView.selected == "Loot",
     "the selection stayed on a var that was removed from under it: "
     .. tostring(DFVarsView.selected))
@@ -336,7 +336,7 @@ DFVarsView.selectedUser = nil
 
 -- Selecting a different var drops the player selection with it.
 DFVarsView.selectedUser = "Alice"
-DFVarsView.defs = { { name = "Anomaly", kind = "char" }, { name = "Loot", kind = "string" } }
+DFVarsView.defs = { { name = "Anomaly", kind = "char" }, { name = "Loot", kind = "counter" } }
 DFVarsView.receive("AdminVarHolders",
     { name = "Anomaly", kind = "char", rows = { { user = "Alice", holds = true } }, total = 1 })
 check(DFVarsView.targetUser() == "Alice", "the target was dropped by its own var's reply")
@@ -390,7 +390,7 @@ check(wrong.holds == nil,
 -- The row is derived for the SELECTED var only. A record carries everything
 -- that player holds; a row that showed another var's value would be a number
 -- under the wrong heading.
-DFVarsView.holders = { name = "Loot", kind = "string", rows = {} }
+DFVarsView.holders = { name = "Loot", kind = "counter", rows = {} }
 DFVarsView.spliceRecord{ username = "Zed", chars = {},
     numbers = { { key = "loot", name = "Loot", value = 0 },
                 { key = "other", name = "Other", value = 99 } } }

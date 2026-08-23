@@ -106,7 +106,7 @@ function DFVarsView.buildDef(model)
         return { kind = RDVarDefs.CHAR, name = display, revokers = revokers }
     end
 
-    if model.kind == RDVarDefs.STRING then
+    if model.kind == RDVarDefs.COUNTER then
         -- The three-way choice. "" is the unmoved dial, and it is refused rather
         -- than read as false - see the header.
         if model.resetOnDeath ~= "yes" and model.resetOnDeath ~= "no" then
@@ -114,7 +114,7 @@ function DFVarsView.buildDef(model)
                 .. "no default - a counter that quietly picked one would be "
                 .. "behaviour nobody chose."
         end
-        return { kind = RDVarDefs.STRING, name = display,
+        return { kind = RDVarDefs.COUNTER, name = display,
                  resetOnDeath = model.resetOnDeath == "yes" }
     end
 
@@ -135,7 +135,7 @@ end
 -- vars is asking "what happens to this one", and the lifecycle IS the answer.
 function DFVarsView.lifecycleOf(d)
     if not d then return "" end
-    if d.kind == RDVarDefs.STRING then
+    if d.kind == RDVarDefs.COUNTER then
         return d.resetOnDeath and "resets on death" or "survives death"
     end
     local r = d.revokers or {}
@@ -264,7 +264,7 @@ local function defineSchema(model)
               return true
           end },
         { key = "kind", kind = "choice", label = "Kind",
-          values = { RDVarDefs.CHAR, RDVarDefs.STRING },
+          values = { RDVarDefs.CHAR, RDVarDefs.COUNTER },
           labels = { "Marker", "Counter" },
           help = "A MARKER is present or absent and has a lifecycle - it can be "
               .. "cleared on death, after an interval, or when a kit is claimed. "
@@ -289,7 +289,7 @@ local function defineSchema(model)
             help = "Cleared when that kit is claimed. Leave empty for none. "
                 .. "With none of these three set, the marker is permanent "
                 .. "until an admin removes it." }
-    elseif model.kind == RDVarDefs.STRING then
+    elseif model.kind == RDVarDefs.COUNTER then
         out[#out + 1] = { key = "resetOnDeath", kind = "choice",
             label = "Reset on death",
             values = { "", "yes", "no" },

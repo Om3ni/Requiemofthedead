@@ -20,11 +20,35 @@
 -- ABSENT with ZERO, which is the exact distinction a repeatable quest needs:
 -- "never started" and "started, back to nothing" are different answers.
 --
--- WHY "string" HOLDS A NUMBER. Every genuine string case collapses into
--- something else: "Faction = Anomaly" is the charVar `Anomaly`; "most-killed
--- type" is `Kills_Screamer = 4`. Quest stages want to be ordinal so `stage >= 3`
--- works. Player-authored text is content, not a variable. The kind is named for
--- the admin-facing concept, not the Lua type.
+-- WHY THERE IS NO STRING KIND, and why the numeric one is not called one.
+--
+-- This kind was called "string" until 2026-08-23, after the Conan vocabulary
+-- the design borrows from - and it never held a string. It is stored in
+-- `numbers`, its verbs are get/set/add/reset, and set() refuses anything that is
+-- not a finite number. One word in the subsystem described something other than
+-- what it named, which is how a future reader ends up "fixing" the wrong half.
+--
+-- Every genuine string case collapses into something else, and each collapse
+-- BUYS something a string cannot do:
+--
+--   "Faction = Anomaly"     -> the charVar `Anomaly`. Now "is this player in any
+--                              faction" is a set test rather than a list of
+--                              every string the field might hold.
+--   "most-killed type"      -> `Kills_Screamer = 4`. Now they can be ranked.
+--   "stage = chamber"       -> `Stage = 3`. Now `stage >= 3` works at all.
+--   "kit they claimed"      -> the kit id already lives in a marker's revoker.
+--
+-- The one real string case is PLAYER-AUTHORED TEXT - a base name, an epitaph, a
+-- submitted answer - and it is out of scope on purpose rather than by omission.
+-- It is the only value that could originate from a player rather than an admin,
+-- so it needs length bounds, control-character handling and moderation that no
+-- other var needs; folding it in here would hand every consumer of vars the
+-- problem of "this might be arbitrary player text".
+--
+-- If that case ever arrives it gets a THIRD kind of its own, not a widened
+-- second one - different validation, a value that cannot be counted, sorted or
+-- summarised, and different exposure rules. Which is the other reason for the
+-- rename: "string" was squatting on the only good name that kind would want.
 --
 -- ---------------------------------------------------------------------------
 -- NAMES ARE MATCHED CASE-INSENSITIVELY, DISPLAYED AS AUTHORED.
@@ -47,7 +71,7 @@
 RDVarDefs = RDVarDefs or {}
 
 RDVarDefs.CHAR   = "char"
-RDVarDefs.STRING = "string"
+RDVarDefs.COUNTER = "counter"
 
 RDVarDefs.NAME_MAX = 32
 
@@ -160,9 +184,9 @@ function RDVarDefs.validate(def)
     end
 
     local kind = def.kind
-    if kind ~= RDVarDefs.CHAR and kind ~= RDVarDefs.STRING then
+    if kind ~= RDVarDefs.CHAR and kind ~= RDVarDefs.COUNTER then
         return nil, "kind must be '" .. RDVarDefs.CHAR .. "' or '"
-            .. RDVarDefs.STRING .. "', got " .. tostring(kind)
+            .. RDVarDefs.COUNTER .. "', got " .. tostring(kind)
     end
 
     local key, display = RDVarDefs.normalizeName(def.name)
@@ -218,7 +242,7 @@ function RDVarDefs.isPermanent(def)
 end
 
 function RDVarDefs.isChar(def)   return type(def) == "table" and def.kind == RDVarDefs.CHAR   end
-function RDVarDefs.isString(def) return type(def) == "table" and def.kind == RDVarDefs.STRING end
+function RDVarDefs.isString(def) return type(def) == "table" and def.kind == RDVarDefs.COUNTER end
 
 -- Does this definition expire on its own, and when, relative to a grant?
 -- Returns nil for a var that does not expire, so a caller cannot accidentally

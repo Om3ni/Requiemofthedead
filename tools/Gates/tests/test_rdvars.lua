@@ -104,7 +104,7 @@ local function defineAnomaly(revokers)
     return RDVars.define{ kind = "char", name = "Anomaly", revokers = revokers }
 end
 local function defineLoot(resetOnDeath)
-    return RDVars.define{ kind = "string", name = "AnomalyLoot", resetOnDeath = resetOnDeath }
+    return RDVars.define{ kind = "counter", name = "AnomalyLoot", resetOnDeath = resetOnDeath }
 end
 
 -- ---- definitions ---------------------------------------------------------
@@ -112,7 +112,7 @@ end
 reset()
 check(defineAnomaly({ death = true }) ~= nil, "a valid char var was refused")
 check(defineLoot(true) ~= nil, "a valid string var was refused")
-check(RDVars.define{ kind = "string", name = "Bad" } == nil,
+check(RDVars.define{ kind = "counter", name = "Bad" } == nil,
     "a string var with no resetOnDeath reached the store - RDVarDefs' rule "
     .. "must not be bypassable through define()")
 check(RDVars.definition("ANOMALY") ~= nil,
@@ -124,7 +124,7 @@ check(fs[DEFS_FILE] ~= nil, "defining a var did not write the defs file immediat
 
 -- Changing kind under a live name would strand every holder's state in the
 -- wrong half of their record, silently.
-check(RDVars.define{ kind = "string", name = "Anomaly", resetOnDeath = true } == nil,
+check(RDVars.define{ kind = "counter", name = "Anomaly", resetOnDeath = true } == nil,
     "a char var was silently converted to a string var")
 
 -- ---- markers -------------------------------------------------------------
@@ -290,8 +290,8 @@ check(RDVars.has("Kriegan", "Anomaly") == true, "a permanent marker was swept aw
 reset()
 RDVars.define{ kind = "char", name = "Temporary", revokers = { death = true } }
 RDVars.define{ kind = "char", name = "Keeper" }
-RDVars.define{ kind = "string", name = "Fragile", resetOnDeath = true }
-RDVars.define{ kind = "string", name = "Durable", resetOnDeath = false }
+RDVars.define{ kind = "counter", name = "Fragile", resetOnDeath = true }
+RDVars.define{ kind = "counter", name = "Durable", resetOnDeath = false }
 
 RDVars.grant("Kriegan", "Temporary")
 RDVars.grant("Kriegan", "Keeper")

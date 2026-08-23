@@ -307,7 +307,7 @@ end
 function RDVars.get(subject, name)
     local user = userKey(subject)
     if not user then return nil, "no player" end
-    local key, def = resolve(name, RDVarDefs.STRING)
+    local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
     local r = record(user, false)
     return r and r.numbers[key] or nil
@@ -318,7 +318,7 @@ function RDVars.set(subject, name, value)
     if not user then return nil, "no player" end
     local why = badNumber(value)
     if why then return nil, why end
-    local key, def = resolve(name, RDVarDefs.STRING)
+    local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
     record(user, true).numbers[key] = value
     ensure():touchState()
@@ -334,7 +334,7 @@ function RDVars.add(subject, name, delta)
     if not user then return nil, "no player" end
     local why = badNumber(delta)
     if why then return nil, why end
-    local key, def = resolve(name, RDVarDefs.STRING)
+    local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
     local r = record(user, true)
     local now = (r.numbers[key] or 0) + delta
@@ -347,7 +347,7 @@ end
 function RDVars.reset(subject, name)
     local user = userKey(subject)
     if not user then return nil, "no player" end
-    local key, def = resolve(name, RDVarDefs.STRING)
+    local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
     local r = record(user, false)
     if not r or r.numbers[key] == nil then return true end
@@ -365,7 +365,7 @@ end
 -- ABSENT PLAYERS ARE ABSENT. A username with no record does not appear with a
 -- zero, because zero is a value somebody was set to and absent is not.
 function RDVars.valuesOf(name)
-    local key, def = resolve(name, RDVarDefs.STRING)
+    local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
     local out = {}
     for user, r in pairs(state()) do

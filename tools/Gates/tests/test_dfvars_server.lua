@@ -214,7 +214,7 @@ local badKind = run("varDefine", schemaAdmin, { def = { kind = "wat", name = "X"
 check(badKind.ok == false, "an unknown kind was defined")
 check(tostring(badKind.reason):find("kind", 1, true) ~= nil,
     "the refusal did not name the field: " .. tostring(badKind.reason))
-check(run("varDefine", schemaAdmin, { def = { kind = "string", name = "NoFlag" } }).ok == false,
+check(run("varDefine", schemaAdmin, { def = { kind = "counter", name = "NoFlag" } }).ok == false,
     "a counter with no resetOnDeath was defined - the missing default is the "
     .. "thing RDVarDefs refuses on purpose")
 check(run("varDefine", schemaAdmin, {}).ok == false, "a define with no payload was accepted")
@@ -245,7 +245,7 @@ check(run("varRevoke", statAdmin, { user = "Kriegan", name = "Anomaly" }).ok == 
 -- Counters. ABSENT IS NOT ZERO, and reset goes back to absent - the panel has
 -- to be able to express both or the two-kind split buys nothing.
 run("varDefine", schemaAdmin,
-    { def = { kind = "string", name = "AnomalyLoot", resetOnDeath = false } })
+    { def = { kind = "counter", name = "AnomalyLoot", resetOnDeath = false } })
 local setRes = run("varSet", statAdmin, { user = "Kriegan", name = "AnomalyLoot", value = 5 })
 check(setRes.ok == true, "set was refused: " .. tostring(setRes.reason))
 check(RDVars.get("Kriegan", "AnomalyLoot") == 5, "set did not take")
@@ -401,7 +401,7 @@ check(run("varHolders", moderator, { name = "NoSuchVar" }).ok == false,
 
 -- A counter answers the same question from the other side, values included.
 run("varDefine", schemaAdmin,
-    { def = { kind = "string", name = "Progress", resetOnDeath = false } })
+    { def = { kind = "counter", name = "Progress", resetOnDeath = false } })
 run("varSet", statAdmin, { user = "A", name = "Progress", value = 0 })
 directSends = {}
 run("varHolders", moderator, { name = "Progress" })

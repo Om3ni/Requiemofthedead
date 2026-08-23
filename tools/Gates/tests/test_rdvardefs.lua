@@ -119,24 +119,24 @@ refuses({ kind = "char", name = "X", revokers = { expires = nan } }, "expires = 
 
 -- ---- string vars ---------------------------------------------------------
 
-local loot = accepts({ kind = "string", name = "AnomalyLoot", resetOnDeath = true },
+local loot = accepts({ kind = "counter", name = "AnomalyLoot", resetOnDeath = true },
                      "a string var")
 check(loot.resetOnDeath == true, "resetOnDeath was not carried through")
 check(not D.isPermanent(loot), "a string var read as permanent - it is reset, not revoked")
 check(D.expiryMs(loot) == nil, "a string var reported an expiry")
-accepts({ kind = "string", name = "Stages", resetOnDeath = false }, "resetOnDeath = false")
+accepts({ kind = "counter", name = "Stages", resetOnDeath = false }, "resetOnDeath = false")
 
 -- The rule the whole file exists for: no default. An unset default is how
 -- behaviour nobody chose gets found months later.
-local why = refuses({ kind = "string", name = "AnomalyLoot" }, "a string var with no resetOnDeath")
+local why = refuses({ kind = "counter", name = "AnomalyLoot" }, "a string var with no resetOnDeath")
 check(tostring(why):find("resetOnDeath", 1, true) ~= nil,
     "the refusal did not name the missing field: " .. tostring(why))
-refuses({ kind = "string", name = "X", resetOnDeath = "true" }, "resetOnDeath as a string")
-refuses({ kind = "string", name = "X", resetOnDeath = 1 }, "resetOnDeath as a number")
+refuses({ kind = "counter", name = "X", resetOnDeath = "true" }, "resetOnDeath as a string")
+refuses({ kind = "counter", name = "X", resetOnDeath = 1 }, "resetOnDeath as a number")
 
 -- The two kinds do not borrow each other's lifecycle vocabulary. Two spellings
 -- of one concept is how they drift apart.
-refuses({ kind = "string", name = "X", resetOnDeath = true, revokers = { death = true } },
+refuses({ kind = "counter", name = "X", resetOnDeath = true, revokers = { death = true } },
         "a string var with revokers")
 refuses({ kind = "char", name = "X", resetOnDeath = true }, "a char var with resetOnDeath")
 
