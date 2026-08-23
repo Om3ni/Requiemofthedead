@@ -5,8 +5,8 @@
 -- attributes and Dragonfly's admin layout overlay - which is what puts it in
 -- Core rather than in either of them (CLAUDE.md sect. 5). It holds NO domain
 -- knowledge: it does not know what a var or a layout is, only that a consumer
--- has two documents, that one is cold and one is hot, and that both must
--- survive a crash. Swapping the backing store later stays a one-file change.
+-- has a cold document, may have a hot one, and that both must survive a crash.
+-- Swapping the backing store later stays a one-file change.
 --
 -- ---------------------------------------------------------------------------
 -- WHY TWO LAYERS, AND WHICH ONE IS AUTHORITATIVE
@@ -38,8 +38,8 @@
 -- ---------------------------------------------------------------------------
 -- COLD AND HOT
 --
--- Two documents, always, because they have opposite write profiles and opposite
--- restore semantics:
+-- Two documents where a consumer has two, because they have opposite write
+-- profiles and opposite restore semantics:
 --
 --   defs   rare writes, exported IMMEDIATELY. Definitions - what a var IS, what
 --          a kit CONTAINS. This is the half an admin wants back after a wipe.
@@ -47,6 +47,11 @@
 --          who holds what, what has been claimed. Restoring this across a wipe
 --          would hand players back one-time grants they already consumed, so
 --          the normal wipe move is defs only.
+--
+-- defs is mandatory; state is not. A consumer whose whole subject is authored
+-- configuration - Dragonfly's layout overlay - has no hot half at all, and
+-- giving it an empty one would put a document on disk that exists only to be
+-- explained. See the note on stateFile under Construction.
 --
 -- That is why import is TWO calls and why the envelope carries `kind`: an admin
 -- restoring after a wipe reaches for whichever file is in front of them, and
@@ -174,9 +179,26 @@ end
 -- spec:
 --   modKey     ModData tag. Required.
 --   defsFile   path under the Lua cache dir. Required.
---   stateFile  ditto. Required, and must differ from defsFile.
+--   stateFile  ditto. OPTIONAL, and must differ from defsFile. See below.
 --   flushMs    state write budget in real milliseconds. Default 30000.
 --   label      console prefix. Defaults to modKey.
+--
+-- OMITTING stateFile makes a DEFS-ONLY store, and that is a real shape rather
+-- than a convenience: Dragonfly's admin layout overlay is entirely definition -
+-- an authored order and authored headers, cold, and precisely the half an admin
+-- wants back after a wipe. It has no per-player progress and never will, because
+-- there is no per-player anything in a column of settings.
+--
+-- The alternative was to hand it a state file it would never write into, and
+-- that is worse in a specific way rather than merely untidy: an empty document
+-- is still exported, so after a wipe it trips the foreign hold and the console
+-- tells an admin to import or discard a file with nothing in it. A store must
+-- not manufacture a decision nobody has to make.
+--
+-- A defs-only store REFUSES state(), touchState() and import("state") rather
+-- than quietly doing nothing with them - a consumer reaching for a document it
+-- declared it does not have is a programming error, and this file's whole
+-- subject is persistence that fails where somebody can see it.
 --
 -- Filenames are the CALLER'S, deliberately - the store does not append an
 -- extension, because picking one is a decision with an engine constraint
@@ -213,17 +235,23 @@ function RDConfigStore.new(spec)
     if type(modKey) ~= "string" or modKey == "" then
         error("RDConfigStore.new: modKey is required")
     end
-    if type(defsFile) ~= "string" or type(stateFile) ~= "string" then
-        error("RDConfigStore.new: defsFile and stateFile are required (" .. modKey .. ")")
+    if type(defsFile) ~= "string" then
+        error("RDConfigStore.new: defsFile is required (" .. modKey .. ")")
     end
-    if defsFile == stateFile then
+    -- Absent is legal; present-but-not-a-string is a typo in the spec table,
+    -- and silently reading it as absent would build a defs-only store the
+    -- consumer did not ask for and then lose every state write it made.
+    if stateFile ~= nil and type(stateFile) ~= "string" then
+        error("RDConfigStore.new: stateFile must be a string or absent (" .. modKey .. ")")
+    end
+    if stateFile and defsFile == stateFile then
         error("RDConfigStore.new: defsFile and stateFile must differ (" .. modKey .. ")")
     end
     if not extAllowed(defsFile) then
         error("RDConfigStore.new: getFileWriter will refuse '" .. defsFile
             .. "' - use RDShared.EXT_DOC (" .. modKey .. ")")
     end
-    if not extAllowed(stateFile) then
+    if stateFile and not extAllowed(stateFile) then
         error("RDConfigStore.new: getFileWriter will refuse '" .. stateFile
             .. "' - use RDShared.EXT_DOC (" .. modKey .. ")")
     end
@@ -233,6 +261,10 @@ function RDConfigStore.new(spec)
         label     = spec.label or modKey,
         flushMs   = spec.flushMs or 30000,
         files     = { defs = defsFile, state = stateFile },
+        -- The documents this store actually has, in write order. Every loop
+        -- below walks THIS rather than a literal pair, so a defs-only store
+        -- cannot reach a nil filename by way of a hard-coded list.
+        docs      = stateFile and { "defs", "state" } or { "defs" },
         held      = {},           -- doc -> "corrupt" | "foreign"; see THE HOLD
         suppressed= {},           -- doc -> exports refused while held
         pending   = {},           -- doc -> true when the mirror is behind
@@ -266,7 +298,16 @@ function RDConfigStore:root()
 end
 
 function RDConfigStore:defs()  return self:root().defs  end
-function RDConfigStore:state() return self:root().state end
+
+-- Refused rather than empty on a defs-only store. Handing back a live table
+-- that is never mirrored would persist nothing while looking exactly like a
+-- store that does, which is this file's own definition of the worst outcome.
+function RDConfigStore:state()
+    if not self.files.state then
+        error("RDConfigStore: " .. self.modKey .. " is defs-only and has no state document")
+    end
+    return self:root().state
+end
 
 -- Has this store ever written the live table? Distinguishes a fresh or wiped
 -- world from one whose ModData merely lags the mirror. See BOOT RESOLUTION.
@@ -387,8 +428,8 @@ end
 -- merge would need to know what a key MEANS to resolve a conflict, and this
 -- file is the half that does not know.
 function RDConfigStore:import(doc)
-    if doc ~= "defs" and doc ~= "state" then
-        return false, "unknown document '" .. tostring(doc) .. "'"
+    if not self.files[doc] then
+        return false, "this store has no '" .. tostring(doc) .. "' document"
     end
     local env, err = loadFile(self, doc)
     if not env then
@@ -416,8 +457,8 @@ function RDConfigStore:importState() return self:import("state") end
 -- and since Lua cannot delete, overwriting is the only "delete" available - so
 -- this is deliberately a separate verb from import rather than a flag on it.
 function RDConfigStore:discard(doc)
-    if doc ~= "defs" and doc ~= "state" then
-        return false, "unknown document '" .. tostring(doc) .. "'"
+    if not self.files[doc] then
+        return false, "this store has no '" .. tostring(doc) .. "' document"
     end
     if not self.held[doc] then return false, doc .. " is not held" end
     say(self, "discarding the held " .. doc .. " file '" .. self.files[doc]
@@ -442,6 +483,9 @@ end
 -- State is hot: stamped now, written when the budget says so. The lazy check
 -- means a store that is being written to steadily never waits for the sweep.
 function RDConfigStore:touchState()
+    if not self.files.state then
+        error("RDConfigStore: " .. self.modKey .. " is defs-only and has no state document")
+    end
     self:root().meta.stateMs = RDShared.nowMs()
     self.pending.state = true
     if budgetExpired(self.lastWrite.state, self.flushMs) then
@@ -453,7 +497,7 @@ end
 -- Write anything outstanding regardless of budget.
 function RDConfigStore:flush()
     local ok = true
-    for _, doc in ipairs({ "defs", "state" }) do
+    for _, doc in ipairs(self.docs) do
         if self.pending[doc] then
             local wrote = writeDoc(self, doc)
             ok = ok and wrote
@@ -478,7 +522,7 @@ function RDConfigStore:boot()
     if self.booted then return end
     self.booted = true
 
-    for _, doc in ipairs({ "defs", "state" }) do
+    for _, doc in ipairs(self.docs) do
         local live = hasLive(self, doc)
         local env, err = loadFile(self, doc)
 

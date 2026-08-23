@@ -55,7 +55,22 @@ local function clearLog() log = {} end
 -- "the file was not touched" is directly assertable rather than inferred.
 local fs, writes = {}, {}
 
+-- A nil path is a FIXTURE ERROR, not a nil return, and the distinction is the
+-- whole reason this stub is not lenient. getFileReader(null, true) passes
+-- Kahlua's argument check unharmed - a Lua nil arrives as Java null and
+-- LuaJavaInvoker only fails a conversion when the value was non-nil
+-- (LuaJavaInvoker.java:90-93) - and then runs the body, where
+-- GlobalObject.hasRelativePath dereferences it (LuaManager.java:4896, :6922-6927).
+-- That is a Java BODY throw: MethodCaller swallows it and stack-traces it
+-- (MethodCaller.java:33-56), so Lua reads nil and a server console gets a Java
+-- trace at every boot. A stub that quietly returned nil would model the return
+-- value correctly and the observable consequence not at all, which is how a
+-- store reaching for a document it does not have would pass a green suite.
 function getFileReader(path, _)
+    if path == nil then
+        error("engine call with a nil path - the store reached for a document "
+            .. "it does not have; in game this is a logged Java stack trace")
+    end
     local content = fs[path]
     if content == nil then return nil end
     local lines, i = {}, 1
@@ -76,6 +91,9 @@ end
 local refuseWrite = nil
 
 function getFileWriter(path, _, append)
+    if path == nil then
+        error("engine call with a nil path - see the note on getFileReader")
+    end
     if refuseWrite == path then return nil end
     if not append then fs[path] = "" end
     writes[path] = (writes[path] or 0) + 1
@@ -145,8 +163,27 @@ end
 
 check(not pcall(RDConfigStore.new, { defsFile = DEFS, stateFile = STATE }),
     "a store with no modKey was accepted")
-check(not pcall(RDConfigStore.new, { modKey = "X", defsFile = DEFS }),
-    "a store with no stateFile was accepted")
+-- stateFile is OPTIONAL - a defs-only store is a real shape (the admin layout
+-- overlay is all definition). A TYPO in it is not: reading a non-string as
+-- "absent" would build a defs-only store the consumer never asked for and then
+-- lose every state write it made, silently, which is this module's whole
+-- subject.
+check(pcall(RDConfigStore.new, { modKey = "X", defsFile = DEFS }),
+    "a defs-only store was refused")
+-- Asserted on the MESSAGE, not merely on the throw. The extension check
+-- refuses a number too, by accident, so a test that only asked "did it throw"
+-- could not tell a deliberate type check from that coincidence - and the
+-- coincidence gives an admin the wrong diagnosis ("getFileWriter will refuse
+-- '7'") for what is a typo in a spec table.
+local okNum, whyNum = pcall(RDConfigStore.new,
+    { modKey = "X", defsFile = DEFS, stateFile = 7 })
+check(okNum == false, "a non-string stateFile was accepted")
+check(tostring(whyNum):find("string or absent", 1, true) ~= nil,
+    "a typo'd stateFile was diagnosed as a bad extension rather than as a bad "
+    .. "type: " .. tostring(whyNum))
+check(not pcall(RDConfigStore.new,
+        { modKey = "X", defsFile = DEFS, stateFile = "RFTD/a.jsonl" }),
+    "a bad stateFile extension was accepted")
 check(not pcall(RDConfigStore.new, { modKey = "X", defsFile = DEFS, stateFile = DEFS }),
     "defs and state were allowed to share one file - the second would overwrite the first")
 check(not pcall(RDConfigStore.new,
@@ -409,6 +446,57 @@ s16:boot()
 local after = writes[DEFS]
 s16:boot()
 check(writes[DEFS] == after, "boot is not idempotent - the second call wrote again")
+
+-- ---- the defs-only store -------------------------------------------------
+-- One document, because the consumer genuinely has one. The risks are the two
+-- ways this could go wrong quietly: a loop that still walks a literal
+-- {defs,state} pair and touches a nil filename, and a state call that appears
+-- to work while persisting nothing.
+
+reset()
+local s17 = RDConfigStore.new{ modKey = "SOLO", defsFile = DEFS, label = "TEST" }
+s17:defs().layout = { "A", "B" }
+check(s17:touchDefs() == true, "a defs-only store could not write its one document")
+check(fs[DEFS] ~= nil, "the defs document was not mirrored")
+check(fs[STATE] == nil,
+    "a defs-only store wrote a state file anyway - an empty document on disk "
+    .. "exists only to be explained, and after a wipe it trips the foreign "
+    .. "hold and asks an admin to decide about nothing")
+
+-- boot() walks the store's OWN document list. If it still walked a literal
+-- pair it would call getFileWriter(nil) here, which returns nil and reports a
+-- CRITICAL refusal about a file the consumer never asked for.
+clearLog()
+reset()
+local s18 = RDConfigStore.new{ modKey = "SOLO", defsFile = DEFS, label = "TEST" }
+s18:defs().layout = { "A" }
+s18:root().meta.defsMs = 10
+local okBoot, bootErr = pcall(function() s18:boot() end)
+check(okBoot,
+    "boot on a defs-only store reached for its absent state document: "
+    .. tostring(bootErr))
+check(not logged("CRITICAL"), "boot reported a refusal about a file nobody asked for")
+check(writes[DEFS] == 1, "boot did not mirror the live defs table")
+check(writes[STATE] == nil, "boot touched a state file that does not exist")
+RDConfigStore.flushAll()
+check(writes[STATE] == nil, "flushAll touched a state file that does not exist")
+
+-- Reaching for the absent document is a PROGRAMMING error and throws. It does
+-- not return an empty table: a live table that is never mirrored looks exactly
+-- like a store that works.
+check(not pcall(function() return s18:state() end),
+    "state() on a defs-only store handed back a table nothing will ever persist")
+check(not pcall(function() return s18:touchState() end),
+    "touchState() on a defs-only store reported success")
+local okImp, whyImp = s18:import("state")
+check(okImp == false, "import('state') on a defs-only store did not refuse")
+check(tostring(whyImp):find("state", 1, true) ~= nil,
+    "the refusal did not name the document: " .. tostring(whyImp))
+check(s18:import("nonsense") == false, "an unknown document name was imported")
+check(s18:discard("state") == false, "discard('state') on a defs-only store did not refuse")
+-- defs still works on the same store, so the refusals above are about the
+-- missing document and not about the store having given up.
+check(s18:touchDefs() == true, "the defs document stopped working")
 
 realPrint = realPrint
 print = realPrint
