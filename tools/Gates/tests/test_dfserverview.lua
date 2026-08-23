@@ -88,6 +88,13 @@ function getSandboxOptions() return nil end
 local sent = {}
 function SendCommandToServer(line) sent[#sent + 1] = line end
 
+-- The REAL DFOverlay, not a stub. It is pure Lua with no engine surface, the
+-- model now keys the server page on its SERVER_KEY sentinel, and stubbing a
+-- constant is how the fixture and the module end up disagreeing about it.
+local okOv, errOv = pcall(dofile,
+    ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua/shared/DFOverlay.lua")
+check(okOv, "DFOverlay loads: " .. tostring(errOv))
+
 DFSandboxModel = nil; DFSandboxView = nil; DFServerFlags = nil; DFServerView = nil
 for _, f in ipairs({ "DFStaged", "DFSandboxModel", "DFSandboxView", "DFServerFlags", "DFServerView" }) do
     local ok, err = pcall(dofile, DIR .. "/" .. f .. ".lua")

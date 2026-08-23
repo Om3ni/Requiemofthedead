@@ -65,6 +65,7 @@ require "Admin/DFSandboxModel"
 require "Admin/DFSandboxView"
 require "Admin/DFServerFlags"
 require "Admin/DFStaged"
+require "Admin/DFLayout"
 
 DFServerView = DFServerView or {}
 local V = DFServerView
@@ -222,7 +223,13 @@ end
 
 function DFServerView.rebuild()
     if not V.form then return end
-    local schema = DFSandboxView.schemaFor(V.page)
+    -- Shaped by the admin layout first, exactly as the Sandbox half is. The
+    -- server page needs it more, not less: 144 options in one flat list with no
+    -- category metadata of any kind is precisely the page somebody will want to
+    -- put the twelve they actually touch at the top of.
+    local shaped, stats = DFLayout.shape(V.page)
+    V.shapeStats = stats
+    local schema = DFSandboxView.schemaFor(shaped)
     -- The restart mark rides DFForm's own `live` field, which draws the label
     -- dimmed and adds a line to the help popout. Only a VERIFIED restart entry
     -- sets it false; an unread option is left alone rather than claimed either
@@ -241,11 +248,23 @@ end
 
 local function reload()
     V.page = DFSandboxModel.buildServer()
+    DFLayout.request(DFOverlay.SERVER_KEY)
     DFServerView.rebuild()
 end
 
 function DFServerView.attach(panel)
     V.staged = DFStaged.new(DFServerView.liveValue)
+
+    -- Once; see the same note in DFSandboxView.
+    if not V.subscribed then
+        V.subscribed = true
+        DFLayout.onChanged(function(key)
+            if key == nil or key == DFOverlay.SERVER_KEY then
+                DFLayout.request(DFOverlay.SERVER_KEY)
+                DFServerView.rebuild()
+            end
+        end)
+    end
 
     V.form = DFForm.new{
         title      = "Server",
@@ -344,11 +363,20 @@ function DFServerView.draw(el)
     else
         text, col = "No changes staged.", d
     end
+    -- Head, not tail - fitText cuts the end. See the same note in DFSandboxView.
+    local note = DFLayout.noteFor(DFOverlay.SERVER_KEY, V.shapeStats)
+    if note then
+        text = note .. "   -   " .. text
+        if DFLayout.held(DFOverlay.SERVER_KEY) then col = DFKit.col.accent end
+    end
     el:drawText(DFKit.fitText(text, FONT, V.footTextW or r.w),
                 r.x, r.y + 5, col.r, col.g, col.b, 1, FONT)
 end
 
-function DFServerView.onShow() reload() end
+function DFServerView.onShow()
+    DFLayout.forget(DFOverlay.SERVER_KEY)
+    reload()
+end
 
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.

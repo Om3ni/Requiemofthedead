@@ -47,6 +47,9 @@ DFSandboxModel = { build = function() return {} end }
 ISScrollingListBox = { derive = function() return {} end }
 function getSandboxOptions() return nil end
 
+-- Real, not stubbed: pure Lua, and the model reads its SERVER_KEY.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua/shared/DFOverlay.lua")
+
 local DIR = ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua/client/Admin"
 DFStaged = nil
 local okS, errS = pcall(dofile, DIR .. "/DFStaged.lua")

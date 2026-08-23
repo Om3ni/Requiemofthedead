@@ -74,6 +74,7 @@ require "DFForm"
 -- and fails in game (CLAUDE.md sect. 1).
 require "Admin/DFSandboxModel"
 require "Admin/DFStaged"
+require "Admin/DFLayout"
 require "ISUI/ISScrollingListBox"
 
 DFSandboxView = DFSandboxView or {}
@@ -280,6 +281,10 @@ function NavList:onMouseDown(x, y)
     if item and item.item then
         V.selected = item.item.page
         self.selected = idx
+        -- One request per page per session; DFLayout drops a repeat itself.
+        -- Asking on selection rather than up front means nine requests only
+        -- ever go out if an admin visits all nine mods.
+        DFLayout.request(V.selected)
         DFSandboxView.rebuildForm()
     end
 end
@@ -293,7 +298,12 @@ local function selectedMod()
 end
 
 function DFSandboxView.rebuildForm()
-    local schema, skipped = DFSandboxView.schemaFor(selectedMod())
+    -- Shaped, not raw. DFLayout hands back the reflected page untouched when
+    -- the server holds no layout for it, so there is one path here rather than
+    -- a branch that could drift.
+    local shaped, stats = DFLayout.shape(selectedMod())
+    V.shapeStats = stats
+    local schema, skipped = DFSandboxView.schemaFor(shaped)
     V.skipped = skipped
     V.form.schema = schema
     -- The wrap cache is keyed on width and font, neither of which changed - but
@@ -308,6 +318,7 @@ end
 local function reload()
     V.mods = DFSandboxModel.build() or {}
     if not V.selected and V.mods[1] then V.selected = V.mods[1].page end
+    DFLayout.request(V.selected)
     DFKit.refillList(V.navBox, function(box)
         for _, mod in ipairs(V.mods) do
             local i = box:addItem(mod.label or mod.page, mod)
@@ -327,6 +338,20 @@ function DFSandboxView.attach(panel)
     V.navBox = nav
 
     V.staged = DFStaged.new(DFSandboxView.liveValue)
+
+    -- Once. attach runs when the tab is built, and a second registration would
+    -- rebuild the form twice for every broadcast.
+    if not V.subscribed then
+        V.subscribed = true
+        -- key == nil means "every page" - a recover replaced the whole
+        -- document, so there is no page-shaped correction to match against.
+        DFLayout.onChanged(function(key)
+            if key == nil or key == V.selected then
+                DFLayout.request(V.selected)
+                DFSandboxView.rebuildForm()
+            end
+        end)
+    end
 
     V.form = DFForm.new{
         title      = "Sandbox",
@@ -401,6 +426,15 @@ function DFSandboxView.draw(el)
     if (V.skipped or 0) > 0 then
         text = text .. "   (" .. V.skipped .. " option(s) of an unsupported type hidden)"
     end
+    -- The layout note goes at the HEAD, not the tail: fitText truncates the
+    -- end, and the states this reports - a stranded layout file, options the
+    -- arrangement has never seen - are the ones that must not be the part that
+    -- gets cut.
+    local note = DFLayout.noteFor(V.selected, V.shapeStats)
+    if note then
+        text = note .. "   -   " .. text
+        if DFLayout.held(V.selected) then col = DFKit.col.accent end
+    end
     el:drawText(DFKit.fitText(text, FONT, V.footTextW or r.w),
                 r.x, r.y + 5, col.r, col.g, col.b, 1, FONT)
 
@@ -413,7 +447,13 @@ end
 -- Hotspot panel over the whole form, and that panel already owns mouse down,
 -- move, up and wheel (DFForm.lua:175-215). Adding a second router in the host
 -- would double-handle every click.
-function DFSandboxView.onShow() reload() end
+function DFSandboxView.onShow()
+    -- Forget first. `asked` is what stops a redraw re-sending a request sixty
+    -- times a second, and it is also what would strand a page whose reply never
+    -- came back; reopening the tab is the retry.
+    DFLayout.forget(V.selected)
+    reload()
+end
 
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
