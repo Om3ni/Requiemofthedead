@@ -29,20 +29,6 @@ require "DFViews"
 HBHusbandryTab = HBHusbandryTab or {}
 local T = HBHusbandryTab
 
-local function layout(panel, x, y, w, h)
-    if not T.views then return end
-    local m = DFKit.metrics
-    local R = DFKit.layout(panel, x, y, w, h)
-
-    -- The strip is claimed FIRST, above anything either view owns, so it stays
-    -- put while the body underneath changes completely.
-    local strip = R:header(m.btnH + m.gap)
-    T.views:layoutStrip(strip.x, strip.y)
-
-    local body = R:rest()
-    T.views:layoutActive(panel, body.x, body.y, body.w, body.h)
-end
-
 local function build(spec, panel, x, y, w, h)
     -- Animals leads: it is what an admin opens this tab to look at, and Hutches
     -- is where you go deliberately once an animal looks wrong.
@@ -53,8 +39,13 @@ local function build(spec, panel, x, y, w, h)
             { id = "hutches", label = "Hutches", w = 82, view = HBHutchesView,
               tip = "Coops and hutches near you: dirt, nest-box dirt and how much bedding is left. Hay eats dirt and decays, so this is the view that tells you what needs topping up." },
         },
+        -- Was thirteen lines of strip-then-body here and thirteen identical
+        -- lines in the Admin tab until 2026-08-23; DFViews owns the shape now,
+        -- and is called directly rather than through a per-host wrapper.
         relayout = function()
-            if T.host then layout(T.host, T.hostX, T.hostY, T.hostW, T.hostH) end
+            if T.host then
+                T.views:layoutHost(T.host, T.hostX, T.hostY, T.hostW, T.hostH)
+            end
         end,
     }
 
@@ -78,7 +69,7 @@ local function build(spec, panel, x, y, w, h)
     -- performs the FIRST visibility pass, so the inactive view starts hidden
     -- rather than drawn on top of the active one until somebody clicks.
     T.views:set("animals")
-    layout(panel, x, y, w, h)
+    T.views:layoutHost(panel, x, y, w, h)
 end
 
 Events.OnGameStart.Add(function()
@@ -95,7 +86,9 @@ Events.OnGameStart.Add(function()
         -- renumbering five files across five mods again.
         order = 50,
         build  = build,
-        resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
+        resize = function(_, panel, w, h)
+            if T.views then T.views:layoutHost(panel, 0, 0, w, h) end
+        end,
     }
     print("[Husbandry] HBHusbandryTab registered into Dragonfly (Animals | Hutches)")
 end)
