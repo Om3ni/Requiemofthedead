@@ -269,6 +269,25 @@ end
 -- collapsing them is the single thing the two-kind split exists to prevent.
 -- ---------------------------------------------------------------------------
 
+-- Why this is not a number, phrased for an admin panel to show verbatim.
+--
+-- The TYPE is named, not just the value, because tostring alone cannot tell the
+-- string "5" from the number 5 - both print as `5` - and "a counter takes a
+-- number, got 5" is a sentence that reads like a bug in the panel. An admin
+-- typing into a text field is exactly the caller who hits this.
+--
+-- NaN is separated out for the same reason: its type IS number, so the generic
+-- sentence would be self-contradicting. It is refused because a NaN compares
+-- false against every bound afterwards, so every threshold set on the counter
+-- silently stops firing.
+local function badNumber(v)
+    if v ~= v then return "a counter cannot be NaN" end
+    if type(v) ~= "number" then
+        return "a counter takes a number, got " .. type(v) .. " (" .. tostring(v) .. ")"
+    end
+    return nil
+end
+
 function RDVars.get(subject, name)
     local user = userKey(subject)
     if not user then return nil, "no player" end
@@ -281,9 +300,8 @@ end
 function RDVars.set(subject, name, value)
     local user = userKey(subject)
     if not user then return nil, "no player" end
-    if type(value) ~= "number" or value ~= value then
-        return nil, "a counter takes a number, got " .. tostring(value)
-    end
+    local why = badNumber(value)
+    if why then return nil, why end
     local key, def = resolve(name, RDVarDefs.STRING)
     if not key then return nil, def end
     record(user, true).numbers[key] = value
@@ -298,9 +316,8 @@ end
 function RDVars.add(subject, name, delta)
     local user = userKey(subject)
     if not user then return nil, "no player" end
-    if type(delta) ~= "number" or delta ~= delta then
-        return nil, "a counter takes a number, got " .. tostring(delta)
-    end
+    local why = badNumber(delta)
+    if why then return nil, why end
     local key, def = resolve(name, RDVarDefs.STRING)
     if not key then return nil, def end
     local r = record(user, true)

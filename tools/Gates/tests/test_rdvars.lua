@@ -188,6 +188,20 @@ check(RDVars.get("Kriegan", "AnomalyLoot") == nil, "reset left a value instead o
 check(RDVars.set("Kriegan", "AnomalyLoot", "5") == nil, "set() accepted a string")
 check(RDVars.add("Kriegan", "AnomalyLoot", 0 / 0) == nil, "add() accepted NaN")
 
+-- The REASON, not just the refusal. These reach an admin panel verbatim, and
+-- both of them used to be one sentence built with tostring - which prints the
+-- string "5" and the number 5 identically, so "a counter takes a number, got 5"
+-- read like a bug in the panel rather than like an answer. NaN is separated
+-- because its type IS number, so the generic sentence contradicted itself.
+check(tostring(select(2, RDVars.set("Kriegan", "AnomalyLoot", "5"))):find("string", 1, true),
+    "the refusal did not name the type: "
+    .. tostring(select(2, RDVars.set("Kriegan", "AnomalyLoot", "5"))))
+check(tostring(select(2, RDVars.add("Kriegan", "AnomalyLoot", 0 / 0))):find("NaN", 1, true),
+    "NaN was refused with the generic type message: "
+    .. tostring(select(2, RDVars.add("Kriegan", "AnomalyLoot", 0 / 0))))
+check(tostring(select(2, RDVars.set("Kriegan", "AnomalyLoot", nil))):find("nil", 1, true),
+    "a nil value gave no usable reason")
+
 -- ---- expiry --------------------------------------------------------------
 
 reset()
