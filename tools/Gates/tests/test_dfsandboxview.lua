@@ -1,17 +1,23 @@
--- DFSandboxView fixture - the row builder behind the Admin tab's Sandbox pane.
+-- DFSandboxView fixture - schema translation and the apply transaction.
 --
--- WHY ONLY THIS PART. The view is ISUI and most of it cannot be tested without
--- a running client. But `rowsFor` is pure arithmetic over the model, and it
--- decides ROW HEIGHTS - which ISScrollingListBox trusts absolutely. Get a
--- height wrong and the list draws correctly while hit-testing the wrong row:
--- clicking one option expands another, and nothing about the picture says why.
+-- WHAT IS ACTUALLY AT RISK. This surface writes to a LIVE server's sandbox
+-- configuration, and the packet carries the whole option set, so a mistake here
+-- does not corrupt one dial - it rewrites every option on the server. Two
+-- specific ways that happens, and both are pinned below:
 --
--- This is the shape TODO.md asks for after RPNecroTab shipped a locality bug
--- that no fixture could reach, because the predicate was a file-local inside a
--- 950-line UI module. Here the arithmetic is a named function taking a model, a
--- width and a selection, and the one engine call it needs (text measurement) is
--- injected - so the fixture supplies a deterministic measurer instead of a
--- stubbed TextManager whose numbers would be fiction anyway.
+--   1. Apply builds its copy from a SNAPSHOT rather than from the live options,
+--      and silently reverts everything another admin changed in between. This
+--      is not hypothetical: it is what vanilla's own editor does
+--      (ISServerSandboxOptionsUI.lua:790 snapshots at open, :763 pushes at
+--      apply), and avoiding it is the reason this view stages deltas.
+--   2. A type maps to the wrong dial and writes the wrong shape into an option.
+--      A `double` through an integer stepper cannot express 0.6 at all.
+--
+-- Neither is visible in a screenshot, and both are only observable on a live
+-- server after the damage.
+--
+-- The engine surfaces are INJECTED into applyTo rather than stubbed globally,
+-- because what the function does with them IS the behaviour under test.
 
 local ROOT = arg[1] or "."
 local SOURCE = ROOT
@@ -34,132 +40,167 @@ DFKit = {
     col     = { text = {}, textDim = {}, line = {}, accent = {}, accentDim = {} },
     rowHeight = function() return 22 end,
     wrapText  = function() return {} end,
+    fitText   = function(s) return s end,
 }
+DFForm = { new = function(o) return o end }
 DFSandboxModel = { build = function() return {} end }
-ISScrollingListBox = { derive = function() return { new = function() end } end }
+ISScrollingListBox = { derive = function() return {} end }
+function getSandboxOptions() return nil end
 
 DFSandboxView = nil
 local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
 
-local ROWH = 22
-local LINEH = ROWH - 6
+-- ---- schema translation --------------------------------------------------
 
--- A measurer with no engine in it: one "line" per eight characters, so the
--- clamp can be driven precisely instead of hoped at.
-local function wrap(text, _, _)
-    local out = {}
-    text = tostring(text or "")
-    if text == "" then return out end
-    local i = 1
-    while i <= #text do
-        out[#out + 1] = text:sub(i, i + 7)
-        i = i + 8
-    end
-    return out
-end
-
--- Modelled on what DFSandboxModel.readOption actually produces: `name` is the
--- namespaced id ("RFTDDirge.DebugMode") and `short` is the tail. They are kept
--- DISTINCT here even for unqualified inputs, because making them equal is what
--- silently turned the namespacing assertion below into a tautology - caught by
--- a mutation run, not by the test passing.
-local function opt(name, tooltip)
+local function opt(name, otype, extra)
     local short = name:match("%.(.+)$") or name
-    return { name = name, short = short, label = short,
-             type = "boolean", tooltip = tooltip }
+    local o = { name = name, short = short, label = short, type = otype,
+                tooltip = short .. " does a thing" }
+    for k, v in pairs(extra or {}) do o[k] = v end
+    return o
 end
 
-local function rowsFor(mod, selected)
-    return DFSandboxView.rowsFor(mod, 100, selected, ROWH, wrap)
+local mod = { page = "RFTDDirge", sections = {
+    { title = nil,       options = { opt("RFTDDirge.Debug", "boolean") } },
+    { title = "Visuals", options = {
+        opt("RFTDDirge.Mode",  "enum", { values = { "Off", "Some", "All" } }),
+        opt("RFTDDirge.Count", "integer"),
+        opt("RFTDDirge.Rate",  "double"),
+        opt("RFTDDirge.Name",  "string"),
+        opt("RFTDDirge.Blurb", "text"),
+    } },
+} }
+
+local schema, skipped = DFSandboxView.schemaFor(mod)
+check(skipped == 0, "a supported type was skipped")
+
+local by = {}
+for _, e in ipairs(schema) do if e.key then by[e.key] = e end end
+
+check(schema[1].group == nil, "an untitled section emitted a group header")
+local groups = 0
+for _, e in ipairs(schema) do if e.group then groups = groups + 1 end end
+check(groups == 1, "expected exactly 1 group header, got " .. groups)
+
+check(by["RFTDDirge.Debug"].kind == "bool", "boolean did not map to a bool dial")
+check(by["RFTDDirge.Name"].kind == "text", "string did not map to a text dial")
+check(by["RFTDDirge.Blurb"].kind == "text", "text did not map to a text dial")
+check(by["RFTDDirge.Count"].kind == "int", "integer did not map to an int dial")
+
+-- enum: both sides store a 1-based INDEX, so nothing is translated. Mapping it
+-- to `choice` (which stores the STRING) would write "Some" into an option that
+-- expects 2.
+local en = by["RFTDDirge.Mode"]
+check(en.kind == "enum", "enum did not map to an enum dial")
+check(en.numValues == 3, "enum lost its value count")
+check(en.values[2] == "Some", "enum lost its value labels")
+
+-- double is the one that must NOT be an int: DFForm's int is a whole-number
+-- stepper, and a sandbox double is routinely 0.6.
+local dbl = by["RFTDDirge.Rate"]
+check(dbl.kind == "text",
+    "double mapped to '" .. tostring(dbl.kind) .. "' - an integer stepper "
+    .. "cannot express 0.6, so every fractional option becomes unreachable")
+check(type(dbl.validate) == "function", "double got no validator")
+check(select(1, dbl.validate("0.6")) == true, "the validator refused a decimal")
+check(select(1, dbl.validate("abc")) == false, "the validator accepted 'abc'")
+
+check(by["RFTDDirge.Debug"].help ~= nil, "the engine tooltip was not carried into help")
+
+-- An unknown type is skipped, not guessed. Writing the wrong shape into a live
+-- server option is worse than the dial being absent.
+local weird = { sections = { { options = {
+    opt("X.Ok", "boolean"), opt("X.Odd", "colour") } } } }
+local ws, wskip = DFSandboxView.schemaFor(weird)
+check(wskip == 1, "an unknown option type was not counted as skipped")
+local kinds = 0
+for _, e in ipairs(ws) do if e.kind then kinds = kinds + 1 end end
+check(kinds == 1, "an unknown option type produced a dial anyway")
+
+check(#DFSandboxView.schemaFor(nil) == 0, "a nil mod produced a schema")
+
+-- ---- the apply transaction ----------------------------------------------
+-- A fake SandboxOptions pair: `live` is what the server has right now, `copy`
+-- is what applyTo builds and pushes.
+
+local function mkOptions(values)
+    local self = { values = {}, types = {}, sent = false, copiedFrom = nil }
+    for k, v in pairs(values or {}) do self.values[k] = v end
+    self.types = { ["a.Bool"] = "boolean", ["a.Int"] = "integer",
+                   ["a.Dbl"] = "double",  ["a.Str"] = "string",
+                   ["a.Enum"] = "enum" }
+    function self:getOptionByName(n)
+        if self.types[n] == nil then return nil end
+        local o = {}
+        function o:getType() return self.owner.types[n] end
+        function o:setValue(v) self.owner.values[n] = v end
+        function o:parse(s) self.owner.values[n] = "parsed:" .. tostring(s) end
+        o.owner = self
+        return o
+    end
+    function self:copyValuesFrom(other)
+        self.copiedFrom = other
+        for k, v in pairs(other.values) do self.values[k] = v end
+    end
+    function self:sendToServer() self.sent = true end
+    function self:set(n, v) self.values[n] = v end
+    return self
 end
 
--- ---- shape ---------------------------------------------------------------
+local live = mkOptions{ ["a.Bool"] = false, ["a.Int"] = 1, ["a.Str"] = "old" }
+local built
+local function mk() built = mkOptions{}; return built end
 
-check(#DFSandboxView.rowsFor(nil, 100, nil, ROWH, wrap) == 0, "a nil mod produced rows")
-check(#rowsFor({ sections = {} }) == 0, "a mod with no sections produced rows")
+local okA, n = DFSandboxView.applyTo(live, mk, { ["a.Bool"] = true }, function() return true end)
+check(okA == true and n == 1, "apply reported " .. tostring(okA) .. "/" .. tostring(n))
+check(built.sent == true, "the copy was never sent to the server")
+check(built.copiedFrom == live,
+    "THE COPY WAS NOT BUILT FROM THE LIVE OPTIONS - this is the vanilla "
+    .. "lost-update bug: a snapshot taken earlier reverts every change another "
+    .. "admin made in between, across the whole option set")
+check(built.values["a.Bool"] == true, "the staged change did not reach the copy")
+check(built.values["a.Str"] == "old",
+    "an untouched option did not carry the live value through")
+check(live.sent ~= true, "the LIVE options object was sent instead of the copy")
 
--- The model emits a LEADING section with no title for options declared before a
--- mod's first header - and for a mod that uses no headers at all, that untitled
--- section holds everything. It must contribute its options and no divider.
-local flat = rowsFor({ sections = { { title = nil, options = { opt("A"), opt("B") } } } })
-check(#flat == 2, "an untitled section did not emit exactly its options, got " .. #flat)
-check(flat[1].kind == "option" and flat[2].kind == "option",
-    "an untitled section emitted a divider row - a mod that declines the header "
-    .. "convention must render flat, not with a blank rule above it")
+-- Numbers go through parse(), which is what vanilla does for both numeric
+-- types - the option owns its own string-to-number rules.
+local live2 = mkOptions{}
+DFSandboxView.applyTo(live2, mk, { ["a.Int"] = 7, ["a.Dbl"] = 0.6 },
+                      function() return true end)
+check(built.values["a.Int"] == "parsed:7", "integer did not go through parse()")
+check(built.values["a.Dbl"] == "parsed:0.6", "double did not go through parse()")
 
--- ---- sections ------------------------------------------------------------
+-- Strings and booleans go through setValue, not parse.
+local live3 = mkOptions{}
+DFSandboxView.applyTo(live3, mk, { ["a.Str"] = "new" }, function() return true end)
+check(built.values["a.Str"] == "new", "a string was parsed instead of set")
 
-local mod = {
-    sections = {
-        { title = nil,       options = { opt("Debug") } },
-        { title = "Visuals", options = { opt("Bar"), opt("Width") } },
-    },
-}
-local rows = rowsFor(mod)
-check(#rows == 4, "expected 4 rows (1 option, 1 section, 2 options), got " .. #rows)
-check(rows[1].kind == "option", "the pre-header option was not emitted first")
-check(rows[2].kind == "section" and rows[2].title == "Visuals", "the section row is wrong")
-check(rows[3].opt.name == "Bar" and rows[4].opt.name == "Width",
-    "declaration order was not preserved - it is the only ordering the engine "
-    .. "keeps, and section membership depends on it")
-check(rows[2].height == ROWH, "a section row is not one row tall")
+-- An option the copy does not know is skipped rather than faulting the whole
+-- apply - a mod unloaded since the panel opened must not cost the other edits.
+local live4 = mkOptions{}
+local ok4 = DFSandboxView.applyTo(live4, mk,
+    { ["a.Bool"] = true, ["ghost.Gone"] = 1 }, function() return true end)
+check(ok4 == true, "an unknown option name aborted the whole apply")
+check(built.values["a.Bool"] == true, "the good edit was lost alongside the unknown one")
 
--- ---- heights -------------------------------------------------------------
--- ISScrollingListBox hit-tests on item.height (:66-69). A row whose stated
--- height disagrees with what it draws sends the click to a neighbour.
+-- Nothing staged must not push. sendToServer serialises the ENTIRE set, so an
+-- empty apply is a full-set write for no reason.
+local live5 = mkOptions{}
+local ok5, why5 = DFSandboxView.applyTo(live5, mk, {}, function() return true end)
+check(ok5 == false, "an empty apply pushed the whole option set anyway")
+check(tostring(why5):find("nothing", 1, true) ~= nil, "the empty apply gave no reason")
 
-local none = rowsFor({ sections = { { options = { opt("Bare", nil) } } } })[1]
-check(none.height == ROWH,
-    "an option with NO description got extra height - a phantom gap under every "
-    .. "undocumented option, and every row below it hit-tests short")
-check(#none.lines == 0, "an absent tooltip produced description lines")
-
-local one = rowsFor({ sections = { { options = { opt("One", "12345678") } } } })[1]
-check(#one.lines == 1, "expected 1 wrapped line, got " .. #one.lines)
-check(one.height == ROWH + LINEH, "a one-line description has the wrong height")
-
-local two = rowsFor({ sections = { { options = { opt("Two", string.rep("x", 16)) } } } })[1]
-check(#two.lines == 2 and two.height == ROWH + 2 * LINEH, "a two-line description is mis-sized")
-
--- ---- the clamp -----------------------------------------------------------
--- Measured across the suite: median 207 characters, p90 461. Three lines shows
--- most of them in full; unclamped, Dirge's 64 options are a wall of prose.
-
-local long = string.rep("y", 8 * 6)          -- six lines
-local clamped = rowsFor({ sections = { { options = { opt("Long", long) } } } })[1]
-check(#clamped.lines == 3, "the description was not clamped to 3 lines, got " .. #clamped.lines)
-check(clamped.clamped == true, "a clamped row did not say so, so nothing marks it as cut")
-check(clamped.height == ROWH + 3 * LINEH, "a clamped row is sized for its full text")
-
--- Exactly at the clamp is NOT clamped - an off-by-one here puts an ellipsis on
--- a description that is complete, which is a lie about the content.
-local exact = rowsFor({ sections = { { options = { opt("Exact", string.rep("z", 24)) } } } })[1]
-check(#exact.lines == 3 and exact.clamped == false,
-    "a description of exactly 3 lines was marked as truncated")
-
--- ---- selection expands ---------------------------------------------------
-
-local sel = rowsFor({ sections = { { options = { opt("Long", long) } } } }, "Long")[1]
-check(#sel.lines == 6, "the selected row did not expand, got " .. #sel.lines .. " lines")
-check(sel.clamped == false, "the expanded row is still marked truncated")
-check(sel.height == ROWH + 6 * LINEH,
-    "the expanded row kept its collapsed height - the list would draw six lines "
-    .. "into three lines of space and every row below would hit-test wrong")
-
--- Selection is by the namespaced NAME, never the short one. Both of these are
--- `Debug` after the namespace is stripped, which is the collision the whole
--- registry-id rule exists for (CLAUDE.md sect. 6), and it reaches this far:
--- keying on `short` expands BOTH rows and only one of them was clicked.
-local twoMods = { sections = { { options = { opt("RFTDDirge.Debug", long),
-                                             opt("RFTDCore.Debug", long) } } } }
-check(twoMods.sections[1].options[1].short == twoMods.sections[1].options[2].short,
-    "precondition: both options must share a short name or the next assertion "
-    .. "proves nothing")
-local sels = rowsFor(twoMods, "RFTDCore.Debug")
-check(sels[1].clamped == true and sels[2].clamped == false,
-    "selection matched the wrong option - it must key on the full namespaced "
-    .. "name, since two mods can ship the same short name")
+-- Singleplayer / listen host: no packet, write straight through. Same branch
+-- vanilla takes at ISServerSandboxOptionsUI.lua:737-739.
+local live6 = mkOptions{ ["a.Bool"] = false }
+local ok6 = DFSandboxView.applyTo(live6, mk, { ["a.Bool"] = true },
+                                  function() return false end)
+check(ok6 == true, "the non-client branch failed")
+check(built.sent == false, "a packet was sent with no client")
+check(live6.values["a.Bool"] == true,
+    "the non-client branch did not write through to the live options")
 
 print(string.format("DFSandboxView: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

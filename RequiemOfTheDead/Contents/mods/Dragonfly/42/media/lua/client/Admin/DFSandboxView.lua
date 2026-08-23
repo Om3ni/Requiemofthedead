@@ -1,120 +1,277 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- DFSandboxView - the suite's sandbox options, rendered. Read-only for now.
+-- DFSandboxView - the suite's sandbox options, rendered and editable.
 --
 -- Pairs with DFSandboxModel, which does the reflection and the grouping. This
--- file owns nothing but presentation: what a row looks like, how tall it is,
--- and which mod is selected. Keeping the split means the part with all the
--- engine assumptions in it stays testable, and the part that cannot be tested
--- stays small.
+-- file owns the left nav, the schema translation, and the apply transaction.
+-- The dials themselves are DFForm's.
 --
 -- ---------------------------------------------------------------------------
--- WHAT THIS IMPROVES ON, because "a prettier vanilla screen" is not a reason to
--- build one. Three things the settings screen does not do:
+-- WHY DFForm AND NOT A BESPOKE LIST. The first version of this view drew its
+-- own rows in an ISScrollingListBox, and that was wrong twice over: DFForm's
+-- own header says it exists because two surfaces had already grown "roughly two
+-- hundred lines of bespoke drawing, hit-testing and value formatting" and a
+-- third copy would drift from both. It also already had, unbuilt-here, three
+-- things this view needs:
 --
---   1. ONE PAGE PER MOD, side by side. Vanilla nests every mod page in a combo
---      and shows one at a time, so comparing Dirge's rate against Reaper's is
---      two navigations and a memory test.
---   2. THE DESCRIPTION IS VISIBLE. Vanilla hides it in a hover tooltip, which
---      means an admin scanning forty options either knows what they all do
---      already or hovers forty times. Measured across the suite: median 207
---      characters, 72% under 300. A three-line clamp shows ~87% in full, and
---      the selected row expands to the rest.
---   3. CHANGED-FROM-DEFAULT IS MARKED. "What has this server actually changed"
---      is the first question when debugging one, and neither vanilla screen
---      can answer it.
+--   enum stores an INDEX          exactly how a sandbox enum works -
+--                                 getValue() is the index and
+--                                 getValueTranslationByIndex(k) is 1-based
+--   group = "Name"                the section header our *Header decoys mean
+--   live = false                  the restart mark, needed the moment the
+--                                 Server sub-tab lands
 --
--- ---------------------------------------------------------------------------
--- READ-ONLY, DELIBERATELY, FOR NOW. Editing is the next slice and it is a
--- bigger one than it looks: SandboxOptions.sendToServer() serialises the ENTIRE
--- option set, so instant-apply would let two admins editing different options
--- clobber each other across every option on the server. That needs batching and
--- a re-read before push, which is its own change with its own failure modes.
--- Shipping the read half first means the reflection is proven against a live
--- server before anything can write through it.
+-- What it did NOT have was help ON the page rather than behind a ? glyph, which
+-- is the whole point of this surface: an admin scanning forty options they have
+-- never seen is asking "what does this do" about every one of them, and forty
+-- hovers is not an answer. So DFForm grew an opt-in `inlineHelp`, off by
+-- default, and every other form is untouched.
 --
 -- ---------------------------------------------------------------------------
--- ROW HEIGHTS VARY, which ISScrollingListBox supports but does not advertise:
--- addItem stamps i.height from self.itemheight (ISScrollingListBox.lua:141-150)
--- and everything downstream reads v.height, not the box default - rowAt (:66-69),
--- the scroll accumulation (:519, :540) and doDrawItem's own skip test (:305-310).
--- So a row is free to be taller as long as its height is stamped after the add.
--- Get that wrong and the list draws correctly while hit-testing the wrong row,
--- which is the worst of both.
+-- THE APPLY TRANSACTION, which is the part worth reading.
+--
+-- SandboxOptions.sendToServer serialises the ENTIRE option set - it is
+-- save(bb) of every option, not a delta (SandboxOptions.java:1059,
+-- GameClient.java:2643). The server loads the lot, applies it, writes its own
+-- Lua file and re-broadcasts to every connection (GameServer.java:1617-1634).
+--
+-- Vanilla's own editor therefore has a lost-update race, and it is not subtle:
+-- ISServerSandboxOptionsUI snapshots a COPY when the window opens
+-- (`o.options:copyValuesFrom(getSandboxOptions())`, :790) and pushes that whole
+-- copy on Apply (:763-766). Two admins with the panel open, one changes zombie
+-- count, the other changes a Dirge rate ten minutes later - and the second
+-- Apply reverts the first, silently, along with anything else that moved in
+-- between.
+--
+-- We do not snapshot. Edits are held as a PENDING SET of deltas, and Apply
+-- builds its copy at the moment of pushing, from the live options this client
+-- holds right then, and lays only our own changes over it. Everything we did
+-- not touch carries whatever the server currently has. The re-broadcast above
+-- is what makes that safe: another admin's Apply reaches this client and
+-- updates getSandboxOptions() before ours is built.
+--
+-- It is not a transaction in the database sense - there is no compare-and-swap
+-- on the wire and there cannot be, because the packet has no room for one. Two
+-- admins editing THE SAME option within a frame of each other still resolves
+-- last-write-wins. It removes the collateral, which is the part that loses work
+-- nobody was editing.
+--
+-- ---------------------------------------------------------------------------
+-- AUTHORITY. The tab is gated on Capability.SandboxOptions and so is the
+-- packet: PacketTypes.java:393 declares it, and onServerPacket runs the handler
+-- only inside `if (PacketAuthorization.isAuthorized(...))` (:666, test at
+-- :830). So this is not a client-side courtesy over an open door - the same
+-- capability is enforced at the server's packet gate, and a client without it
+-- gets an AntiCheat report instead of a write. Our gate exists so the UI does
+-- not offer an action the server will refuse.
 
 if isServer() then return end
 
 require "DFKit"
+require "DFForm"
 -- Path-relative to the lua TIER root, not a bare name: this module sits in
 -- client/Admin/, so a bare "DFSandboxModel" does not resolve and the require
--- throws at load. Same form as Longstrider's `require "Longstrider/LSTour"`.
--- check-lua is syntax only, so a wrong path here parses clean and fails in game
--- (CLAUDE.md sect. 1).
+-- throws at load. check-lua is syntax only, so a wrong path here parses clean
+-- and fails in game (CLAUDE.md sect. 1).
 require "Admin/DFSandboxModel"
 require "ISUI/ISScrollingListBox"
 
 DFSandboxView = DFSandboxView or {}
 local V = DFSandboxView
 
-local FONT      = DFKit.font.small
-local DESC_FONT = DFKit.font.small
-local NAV_MIN   = 160
-local DESC_CLAMP = 3          -- lines shown on an unselected row
-local MARK_W    = 14          -- gutter for the changed-from-default mark
-local VALUE_W   = 110
+local FONT    = DFKit.font.small
+local NAV_MIN = 150
 
-V.mods       = {}
-V.selected   = nil            -- page name of the chosen mod
-V.selectedRow= nil            -- option name of the chosen row, or nil
+V.mods    = {}
+V.selected = nil     -- page name of the chosen mod
+V.pending  = {}      -- option name -> the value an admin has staged
 
 -- ---------------------------------------------------------------------------
--- Row building - PURE, and separated from drawing on purpose.
+-- Model -> DFForm schema. PURE, and separated from every widget on purpose.
 --
--- This is the half with the arithmetic in it, and the RPNecroTab lesson says a
--- file-local predicate inside a UI module is a predicate no fixture will ever
--- load (see TODO.md). So it takes a model, a width and a selection, returns
--- plain tables, and touches no widget. DFKit.wrapText is the one engine-facing
--- call and it is injected, so a fixture supplies its own measurer.
+-- This is the arithmetic-and-mapping half, and the RPNecroTab lesson says a
+-- file-local inside a UI module is one no fixture will ever load (TODO.md). It
+-- takes a model page and returns plain tables.
+--
+-- TYPE MAPPING, and the one that matters is `double`:
+--
+--   boolean          -> bool
+--   enum             -> enum, numValues + values. Both store a 1-based INDEX,
+--                       so no translation is needed in either direction.
+--   integer          -> int, with a stepper
+--   double           -> TEXT, not int. DFForm's int is a stepper over whole
+--                       numbers; a sandbox double is commonly 0.6 or 1.35, and
+--                       a stepper would make those unreachable. Text with a
+--                       numeric validator keeps them typeable and still
+--                       refuses "abc" at the door.
+--   string / text    -> text
+--
+-- An unknown type is SKIPPED rather than guessed at. A dial that writes the
+-- wrong shape into a live server option is worse than a dial that is absent,
+-- and the count line tells the admin some were left out.
 -- ---------------------------------------------------------------------------
-
--- Returns a flat list of rows:
---   { kind = "section", title = str, height = n }
---   { kind = "option", opt = <model row>, lines = {str,...}, clamped = bool, height = n }
---
--- `wrap` is DFKit.wrapText's signature (text, font, maxW) -> lines.
-function DFSandboxView.rowsFor(mod, descW, selectedName, rowH, wrap)
-    local out = {}
-    if not mod then return out end
-    rowH = rowH or 22
-    wrap = wrap or DFKit.wrapText
+function DFSandboxView.schemaFor(mod)
+    local out, skipped = {}, 0
+    if not mod then return out, skipped end
 
     for _, sec in ipairs(mod.sections or {}) do
-        if sec.title then
-            out[#out + 1] = { kind = "section", title = sec.title, height = rowH }
-        end
+        if sec.title then out[#out + 1] = { group = sec.title } end
         for _, opt in ipairs(sec.options or {}) do
-            local selected = (selectedName ~= nil and opt.name == selectedName)
-            local lines = wrap(opt.tooltip or "", DESC_FONT, descW) or {}
-            local clamped = false
-            -- The selected row shows everything; every other row stops at the
-            -- clamp. Unclamped, Dirge's 64 options are a wall of prose and the
-            -- list stops being scannable, which is the thing it is for.
-            if not selected and #lines > DESC_CLAMP then
-                local cut = {}
-                for i = 1, DESC_CLAMP do cut[i] = lines[i] end
-                lines, clamped = cut, true
-            end
-            out[#out + 1] = {
-                kind = "option", opt = opt, lines = lines, clamped = clamped,
-                -- One row for the label/value line, then the description.
-                height = rowH + (#lines * (rowH - 6)),
+            local row = {
+                key   = opt.name,
+                label = opt.label or opt.short,
+                help  = opt.tooltip,
             }
+            local t = opt.type
+            if t == "boolean" then
+                row.kind = "bool"
+            elseif t == "enum" then
+                row.kind = "enum"
+                row.numValues = #(opt.values or {})
+                row.values = opt.values
+            elseif t == "integer" then
+                row.kind = "int"
+                row.min, row.max, row.step = -999999, 999999, 1
+            elseif t == "double" then
+                row.kind = "text"
+                row.rule = "A number, decimals allowed."
+                row.validate = function(s)
+                    if tonumber(s) == nil then return false, "Not a number." end
+                    return true
+                end
+            elseif t == "string" or t == "text" then
+                row.kind = "text"
+            end
+            if row.kind then out[#out + 1] = row else skipped = skipped + 1 end
         end
     end
-    return out
+    return out, skipped
 end
 
 -- ---------------------------------------------------------------------------
--- The two lists
+-- Values. Reads go LIVE to the engine unless an edit is staged over them, so a
+-- knob turned in the vanilla screen (or by another admin, via the server's
+-- re-broadcast) moves on this panel without anything having to notice.
+-- ---------------------------------------------------------------------------
+
+local function optionType(name)
+    local so = getSandboxOptions()
+    local o = so and so:getOptionByName(name)
+    return o and o:getType() or nil
+end
+
+function DFSandboxView.readValue(name)
+    if V.pending[name] ~= nil then return V.pending[name] end
+    local t = optionType(name)
+    if not t then return nil end
+    local so = getSandboxOptions()
+    local o = so:getOptionByName(name)
+    if t == "boolean" or t == "enum" then return o:getValue() end
+    if t == "string" or t == "text" then return o:getValue() end
+    -- Numbers reach DFForm as strings for text dials and numbers for int ones.
+    if t == "integer" then return tonumber(o:getValueAsString()) end
+    return o:getValueAsString()
+end
+
+-- Staging, not writing. Nothing reaches the engine until Apply.
+function DFSandboxView.stage(name, value)
+    local live = DFSandboxView.liveValue(name)
+    if tostring(live) == tostring(value) then
+        -- Edited back to where it started: drop it rather than push a no-op.
+        -- Otherwise "3 pending" counts changes that change nothing, and Apply
+        -- writes options the admin did not decide to write.
+        V.pending[name] = nil
+    else
+        V.pending[name] = value
+    end
+end
+
+-- The engine's current value, ignoring anything staged.
+function DFSandboxView.liveValue(name)
+    local t = optionType(name)
+    if not t then return nil end
+    local o = getSandboxOptions():getOptionByName(name)
+    if t == "boolean" or t == "enum" then return o:getValue() end
+    if t == "string" or t == "text" then return o:getValue() end
+    if t == "integer" then return tonumber(o:getValueAsString()) end
+    return o:getValueAsString()
+end
+
+function DFSandboxView.pendingCount()
+    local n = 0
+    for _ in pairs(V.pending) do n = n + 1 end
+    return n
+end
+
+function DFSandboxView.discard()
+    V.pending = {}
+end
+
+-- ---------------------------------------------------------------------------
+-- Apply
+--
+-- Split from the button so a fixture can drive it. `so` and `mk` are injected -
+-- the live options and a constructor for a fresh set - because both are engine
+-- surfaces and the whole point of the test is what this does with them.
+--
+-- Returns (pushed, count) or (false, reason).
+-- ---------------------------------------------------------------------------
+function DFSandboxView.applyTo(so, mk, pending, isClientFn)
+    local n = 0
+    for _ in pairs(pending) do n = n + 1 end
+    if n == 0 then return false, "nothing staged" end
+    if not so then return false, "no sandbox options" end
+
+    -- Built HERE, not when the panel opened. See THE APPLY TRANSACTION.
+    local copy = mk()
+    if not copy then return false, "could not build an options set" end
+    copy:copyValuesFrom(so)
+
+    for name, value in pairs(pending) do
+        local o = copy:getOptionByName(name)
+        if o then
+            local t = o:getType()
+            if t == "integer" or t == "double" then
+                -- parse(), not setValue(): vanilla's own editor uses parse for
+                -- both numeric types (ISServerSandboxOptionsUI.lua:726, :730)
+                -- because the option owns its own string-to-number rules.
+                o:parse(tostring(value))
+            else
+                o:setValue(value)
+            end
+        end
+    end
+
+    if isClientFn() then
+        copy:sendToServer()
+    else
+        -- Singleplayer or a listen host: no packet, write straight through.
+        -- Same branch vanilla takes (ISServerSandboxOptionsUI.lua:737-739).
+        for name, value in pairs(pending) do
+            so:set(name, value)
+        end
+    end
+    return true, n
+end
+
+function DFSandboxView.apply()
+    local ok, res = DFSandboxView.applyTo(
+        getSandboxOptions(),
+        function() return SandboxOptions.new() end,
+        V.pending,
+        isClient)
+    if ok then
+        print("[Dragonfly] sandbox: applied " .. tostring(res) .. " change(s).")
+        V.pending = {}
+        V.status = tostring(res) .. " change(s) applied."
+    else
+        V.status = tostring(res)
+    end
+    DFSandboxView.rebuildForm()
+    return ok
+end
+
+-- ---------------------------------------------------------------------------
+-- The left nav
 -- ---------------------------------------------------------------------------
 
 local NavList = ISScrollingListBox:derive("DFSandboxNav")
@@ -130,12 +287,21 @@ function NavList:doDrawItem(y, item, alt)
         self:drawRect(0, y, self.width, item.height - 1, 0.10, 1, 1, 1)
     end
     local c = on and DFKit.col.text or DFKit.col.textDim
-    local label = DFKit.fitText(mod.label or mod.page, FONT, self.width - 40)
-    self:drawText(label, 6, y + 3, c.r, c.g, c.b, 1, FONT)
-    local n = tostring(mod.count or 0)
-    local nw = getTextManager():MeasureStringX(FONT, n)
-    local d = DFKit.col.textDim
-    self:drawText(n, self.width - nw - 6, y + 3, d.r, d.g, d.b, 1, FONT)
+    self:drawText(DFKit.fitText(mod.label or mod.page, FONT, self.width - 46),
+                  6, y + 3, c.r, c.g, c.b, 1, FONT)
+
+    -- Staged edits on a mod the admin is not currently looking at are the
+    -- easiest thing to lose track of, so the count is on the nav row.
+    local staged = 0
+    for _, sec in ipairs(mod.sections or {}) do
+        for _, opt in ipairs(sec.options or {}) do
+            if V.pending[opt.name] ~= nil then staged = staged + 1 end
+        end
+    end
+    local txt = staged > 0 and ("+" .. staged) or tostring(mod.count or 0)
+    local col = staged > 0 and DFKit.col.accent or DFKit.col.textDim
+    local w = getTextManager():MeasureStringX(FONT, txt)
+    self:drawText(txt, self.width - w - 6, y + 3, col.r, col.g, col.b, 1, FONT)
     return y + item.height
 end
 
@@ -144,151 +310,44 @@ function NavList:onMouseDown(x, y)
     if idx <= 0 then return end
     local item = self.items[idx]
     if item and item.item then
-        V.selected    = item.item.page
-        V.selectedRow = nil
+        V.selected = item.item.page
         self.selected = idx
-        V.refillOptions()
+        DFSandboxView.rebuildForm()
     end
 end
-
-local OptList = ISScrollingListBox:derive("DFSandboxOpts")
-
-function OptList:doDrawItem(y, item, alt)
-    local row = item.item
-    if not row then return y + item.height end
-    local m = DFKit.metrics
-
-    if row.kind == "section" then
-        -- A real divider, which is the whole reason the model strips the
-        -- underscore scenery off the header decoy's translation: the vanilla
-        -- screen can only draw a checkbox, so a section there has to be faked
-        -- with punctuation. Here it can just be a rule.
-        local l = DFKit.col.line
-        local t = DFKit.col.textDim
-        local tw = getTextManager():MeasureStringX(FONT, row.title)
-        local ty = y + math.floor((item.height - 14) / 2)
-        self:drawText(row.title, 4, ty, t.r, t.g, t.b, 1, FONT)
-        self:drawRect(tw + 10, ty + 7, self.width - tw - 16, 1, 0.5, l.r, l.g, l.b)
-        return y + item.height
-    end
-
-    local opt = row.opt
-    if V.selectedRow == opt.name then
-        local a = DFKit.col.accentDim
-        self:drawRect(0, y, self.width, item.height - 1, 0.40, a.r, a.g, a.b)
-    elseif alt then
-        self:drawRect(0, y, self.width, item.height - 1, 0.08, 1, 1, 1)
-    end
-
-    -- The changed-from-default mark, read LIVE rather than cached with the row:
-    -- another admin can turn a knob in the vanilla screen while this panel is
-    -- open, and the mark going stale would be a lie about server state.
-    if not DFSandboxModel.isDefault(opt.name) then
-        local a = DFKit.col.accent
-        self:drawRect(4, y + 8, 5, 5, 1, a.r, a.g, a.b)
-    end
-
-    local c = DFKit.col.text
-    local label = DFKit.fitText(opt.label or opt.short, FONT,
-                                self.width - MARK_W - VALUE_W - 12)
-    self:drawText(label, MARK_W, y + 3, c.r, c.g, c.b, 1, FONT)
-
-    local value = DFSandboxModel.valueOf(opt.name)
-    if value ~= nil then
-        local vs = DFKit.fitText(tostring(value), FONT, VALUE_W)
-        local vw = getTextManager():MeasureStringX(FONT, vs)
-        local vc = DFKit.col.textDim
-        self:drawText(vs, self.width - vw - 8, y + 3, vc.r, vc.g, vc.b, 1, FONT)
-    end
-
-    local d  = DFKit.col.textDim
-    local ly = y + DFKit.rowHeight() - 4
-    local lh = DFKit.rowHeight() - 6
-    for i, line in ipairs(row.lines) do
-        local text = line
-        if row.clamped and i == #row.lines then text = text .. " ..." end
-        self:drawText(text, MARK_W + 4, ly, d.r * 0.9, d.g * 0.9, d.b * 0.9, 1, DESC_FONT)
-        ly = ly + lh
-    end
-    return y + item.height
-end
-
-function OptList:onMouseDown(x, y)
-    local idx = self:rowAt(x, y)
-    if idx <= 0 then return end
-    local item = self.items[idx]
-    local row = item and item.item
-    if not row or row.kind ~= "option" then return end
-    -- Clicking the selected row again collapses it. Without that, the only way
-    -- to shrink an expanded description is to expand a different one.
-    V.selectedRow = (V.selectedRow == row.opt.name) and nil or row.opt.name
-    self.selected = idx
-    V.refillOptions()
-end
-
--- NO render() OVERRIDE HERE, and that is deliberate rather than forgotten -
--- seven other lists in the family carry one and every copy is inert.
---
--- The override is the four-line "set a full-size stencil, call up, clear it"
--- shape, written to stop rows drawing outside the list. Rows never could:
--- ISScrollingListBox:prerender draws EVERY row itself, inside a stencil it sets
--- at :505 and clears at :541, clamped to the scrollbar edge when one is visible
--- (:494-496). ISScrollingListBox:render (:642-647) draws no rows at all - it
--- clears a stencil if useStencilForChildren is set, then draws a joypad focus
--- border. So the override clips a focus rectangle and nothing else.
---
--- check-helpers is what surfaced this: adding an eighth copy tripped Dragonfly's
--- ratchet, and the copy turned out to be unnecessary rather than promotable.
--- The seven existing ones are noted in TODO.md; sweeping them is not this slice.
 
 -- ---------------------------------------------------------------------------
--- Refills
+-- Wiring
 -- ---------------------------------------------------------------------------
 
-local function refillNav()
+local function selectedMod()
+    for _, m in ipairs(V.mods) do if m.page == V.selected then return m end end
+end
+
+function DFSandboxView.rebuildForm()
+    local schema, skipped = DFSandboxView.schemaFor(selectedMod())
+    V.skipped = skipped
+    V.form.schema = schema
+    -- The wrap cache is keyed on width and font, neither of which changed - but
+    -- the SCHEMA did, and a stale entry would size a row for another mod's
+    -- description. Cleared rather than versioned: it refills in one frame.
+    V.form._helpCache = nil
+    if V.form.rect then
+        V.form:layout(V.form.rect.x, V.form.rect.y, V.form.rect.w, V.form.rect.h)
+    end
+end
+
+local function reload()
+    V.mods = DFSandboxModel.build() or {}
+    if not V.selected and V.mods[1] then V.selected = V.mods[1].page end
     DFKit.refillList(V.navBox, function(box)
         for _, mod in ipairs(V.mods) do
             local i = box:addItem(mod.label or mod.page, mod)
             i.height = DFKit.rowHeight()
         end
     end)
+    DFSandboxView.rebuildForm()
 end
-
--- Public because both mouse handlers call it, and because layout calls it after
--- a width change - the description wrap depends on the pane width, so a resize
--- genuinely changes how tall every row is.
-function DFSandboxView.refillOptions()
-    if not V.optBox then return end
-    local mod
-    for _, m in ipairs(V.mods) do if m.page == V.selected then mod = m end end
-
-    local descW = math.max(80, (V.optW or 400) - MARK_W - 20)
-    local rows = DFSandboxView.rowsFor(mod, descW, V.selectedRow,
-                                       DFKit.rowHeight(), DFKit.wrapText)
-    DFKit.refillList(V.optBox, function(box)
-        for _, row in ipairs(rows) do
-            local i = box:addItem("", row)
-            -- Stamped AFTER the add: addItem writes itemheight, and every
-            -- consumer downstream reads the item's own value.
-            i.height = row.height
-        end
-    end)
-end
-
-local function reload()
-    V.mods = DFSandboxModel.build() or {}
-    if not V.selected and V.mods[1] then V.selected = V.mods[1].page end
-    refillNav()
-    DFSandboxView.refillOptions()
-end
-
--- ---------------------------------------------------------------------------
--- The DFViews contract - attach / layout / draw / onShow.
---
--- Implemented in full even though nothing hosts a strip yet: the Server sub-tab
--- lands next and the host swaps a direct call for a DFViews registration, with
--- nothing here changing.
--- ---------------------------------------------------------------------------
 
 function DFSandboxView.attach(panel)
     local nav = NavList:new(0, 0, 10, 10)
@@ -299,53 +358,87 @@ function DFSandboxView.attach(panel)
     panel:addChild(nav)
     V.navBox = nav
 
-    local opts = OptList:new(0, 0, 10, 10)
-    opts.itemheight = DFKit.rowHeight()
-    opts.drawBorder = true
-    DFKit.well(opts)
-    opts:initialise(); opts:instantiate()
-    panel:addChild(opts)
-    V.optBox = opts
+    V.form = DFForm.new{
+        title      = "Sandbox",
+        inlineHelp = true,
+        schema     = {},
+        get        = DFSandboxView.readValue,
+        set        = DFSandboxView.stage,
+        -- The accent tick in the gutter. NOT "differs from default" - that is
+        -- DFSandboxModel.isDefault and it is a different question. This marks
+        -- what YOU have staged and not yet pushed, which is the one thing a
+        -- reader cannot recover by looking anywhere else.
+        moved      = function(key) return V.pending[key] ~= nil end,
+        enabled    = function() return true end,
+    }
+    local formWidgets = V.form:attach(panel)
+
+    V.applyBtn = DFKit.button(panel, 0, 0, 90, "Apply", panel,
+        function() DFSandboxView.apply() end, "action",
+        { tooltip = "Push staged changes to the server. Only the options you "
+                 .. "changed are written; everything else keeps whatever the "
+                 .. "server has right now." })
+    V.discardBtn = DFKit.button(panel, 0, 0, 90, "Discard", panel,
+        function() DFSandboxView.discard(); V.status = nil; DFSandboxView.rebuildForm() end)
 
     reload()
-    return { nav, opts }
+
+    local out = { nav, V.applyBtn, V.discardBtn }
+    for _, wdg in ipairs(formWidgets or {}) do out[#out + 1] = wdg end
+    return out
 end
 
 function DFSandboxView.layout(panel, x, y, w, h)
     if not V.navBox then return end
     local R = DFKit.layout(panel, x, y, w, h)
-    local legend = R:footer(DFKit.rowHeight())
-    V.legendRect = { x = legend.x, y = legend.y, w = legend.w, h = legend.h }
 
-    local navR, optR = R:splitH(0.22, NAV_MIN, 300)
+    local foot = R:footer(DFKit.metrics.btnH + DFKit.metrics.pad)
+    V.footRect = { x = foot.x, y = foot.y, w = foot.w, h = foot.h }
+    local bx = foot.x + foot.w
+    for _, b in ipairs({ V.applyBtn, V.discardBtn }) do
+        if b then
+            bx = bx - b:getWidth()
+            b:setX(bx); b:setY(foot.y)
+            bx = bx - DFKit.metrics.gap
+        end
+    end
+    V.footTextW = bx - foot.x - DFKit.metrics.gap
+
+    local navR, formR = R:splitH(0.20, NAV_MIN, 300)
     DFKit.sizeList(V.navBox, navR.x, navR.y, navR.w, navR.h)
-
-    -- A width change alters the description wrap, which alters every row's
-    -- height, so the list is genuinely stale after a resize rather than merely
-    -- differently shaped.
-    local changed = (V.optW ~= optR.w)
-    V.optW = optR.w
-    DFKit.sizeList(V.optBox, optR.x, optR.y, optR.w, optR.h)
-    if changed then DFSandboxView.refillOptions() end
+    V.form:layout(formR.x, formR.y, formR.w, formR.h)
 end
 
 function DFSandboxView.draw(el)
-    local r = V.legendRect
+    V.form:draw(el)
+
+    local r = V.footRect
     if not r then return end
-    local a, d = DFKit.col.accent, DFKit.col.textDim
-    el:drawRect(r.x, r.y + 7, 5, 5, 1, a.r, a.g, a.b)
-    el:drawText("changed from default", r.x + 12, r.y + 2, d.r, d.g, d.b, 1, FONT)
+    local n = DFSandboxView.pendingCount()
+    local text, col
+    if n > 0 then
+        text = n .. " change" .. (n == 1 and "" or "s") .. " staged - not applied"
+        col = DFKit.col.accent
+    elseif V.status then
+        text, col = V.status, DFKit.col.textDim
+    else
+        text, col = "No changes staged.", DFKit.col.textDim
+    end
+    if (V.skipped or 0) > 0 then
+        text = text .. "   (" .. V.skipped .. " option(s) of an unsupported type hidden)"
+    end
+    el:drawText(DFKit.fitText(text, FONT, V.footTextW or r.w),
+                r.x, r.y + 5, col.r, col.g, col.b, 1, FONT)
 
     if #V.mods == 0 then
-        DFKit.drawEmpty(el, r.x, r.y - 40, r.w, 30,
-            "No RFTD sandbox options found.")
+        DFKit.drawEmpty(el, r.x, r.y - 40, r.w, 30, "No RFTD sandbox options found.")
     end
 end
 
--- Rebuilt on show rather than cached: the SHAPE cannot change while a world is
--- running, but a mod list read once at boot would miss nothing and cost the
--- same, so this is really about values - and those are read live per draw
--- anyway. What onShow buys is the mod list after a font-tier rebuild.
+-- No hit routing here, deliberately: DFForm:attach installs its own invisible
+-- Hotspot panel over the whole form, and that panel already owns mouse down,
+-- move, up and wheel (DFForm.lua:175-215). Adding a second router in the host
+-- would double-handle every click.
 function DFSandboxView.onShow() reload() end
 
 -- ---------------------------------------------------------------------------
