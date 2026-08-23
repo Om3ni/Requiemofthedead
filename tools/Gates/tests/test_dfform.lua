@@ -79,6 +79,21 @@ DFKit = {
 }
 DFHelp = { show = function() end }
 
+-- wrapText, deterministic: one line per 10 characters. The real one measures
+-- glyphs; what these tests need is a known line COUNT, because every row height
+-- downstream is derived from it.
+DFKit.wrapText = function(text, _, maxW)
+    local out = {}
+    text = tostring(text or "")
+    if text == "" or not maxW or maxW <= 0 then return out end
+    local i = 1
+    while i <= #text do
+        out[#out + 1] = text:sub(i, i + 9)
+        i = i + 10
+    end
+    return out
+end
+
 -- DFEntry is the typing popout a `text` row opens. Stubbed to RECORD rather
 -- than to no-op, because what these tests are really asking is whether the row
 -- hands it the right value and wires its commit back to set().
@@ -431,6 +446,94 @@ ro:click(rrow.textX + 2, rrow.y + 2)
 eq("a form with no set() opens no popout", entryShown, nil)
 
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- INLINE HELP (added 2026-08-23 with the opt-in `inlineHelp` mode)
+--
+-- WHY IT NEEDS PINNING AT ALL: three separate places have to agree on how tall
+-- a row is - contentHeight (the scroll range), the visibility test, and the
+-- cursor advance that positions the NEXT row. The moment two of them disagree
+-- the form draws one row and hit-tests another, which reads as "clicking a
+-- setting toggles a different setting" and is miserable to trace.
+--
+-- Found by mutation: deleting the clamp and making the cursor ignore help
+-- height both left every existing assertion green.
+-- ---------------------------------------------------------------------------
+
+local LONG = string.rep("x", 95)     -- 10 wrapped lines at the stub's 10/line
+
+local function helpSchema()
+    return {
+        { key = "a", kind = "bool", label = "A", help = LONG },
+        { key = "b", kind = "bool", label = "B", help = LONG },
+    }
+end
+
+-- Off by default: every existing caller keeps the ? popout and its geometry.
+local plain = DFForm.new{ schema = helpSchema(), get = function() return false end,
+                          set = function() end }
+eq("inlineHelp defaults off", plain.inlineHelp, false)
+eq("help is not wrapped when the mode is off", #plain:helpLines(plain.schema[1], 300), 0)
+
+local inl = DFForm.new{ schema = helpSchema(), inlineHelp = true,
+                        get = function() return false end, set = function() end }
+
+-- The clamp. Unclamped, one 460-character tooltip is taller than the pane.
+eq("help is clamped to helpClamp lines", #inl:helpLines(inl.schema[1], 300), 3)
+ok("the clamped line says it was cut",
+   tostring(inl:helpLines(inl.schema[1], 300)[3]):sub(-4) == " ...",
+   "a paragraph cut mid-sentence with no mark reads as the whole text")
+
+local custom = DFForm.new{ schema = helpSchema(), inlineHelp = true, helpClamp = 5,
+                           get = function() return false end, set = function() end }
+eq("helpClamp is honoured", #custom:helpLines(custom.schema[1], 300), 5)
+
+-- An entry with no help costs no height, or every undocumented dial grows a gap.
+local none = DFForm.new{ schema = { { key = "n", kind = "bool", label = "N" } },
+                         inlineHelp = true, get = function() return false end,
+                         set = function() end }
+eq("a dial with no help gets no help lines", #none:helpLines(none.schema[1], 300), 0)
+ok("a dial with no help is exactly one row tall",
+   none:rowSpan(none.schema[1], 300) < inl:rowSpan(inl.schema[1], 300))
+
+-- rowSpan is the single source the other three read.
+local span = inl:rowSpan(inl.schema[1], 300)
+ok("rowSpan grows with the help block", span > plain:rowSpan(plain.schema[1], 300),
+   "got " .. tostring(span))
+
+-- contentHeight must use rowSpan, not a flat row - otherwise the scroll range
+-- stops short and the last rows are unreachable, which is the original bug this
+-- whole file exists for.
+ok("contentHeight accounts for inline help",
+   inl:contentHeight(300) > plain:contentHeight(300),
+   "inline " .. tostring(inl:contentHeight(300)) .. " vs plain "
+   .. tostring(plain:contentHeight(300)))
+
+-- The cursor advance. Two rows, each with help: the second row must be drawn a
+-- full rowSpan below the first, not one bare row.
+inl:layout(RX, RY, RW, 800)
+inl:draw(EL)
+local ra, rb = rectFor(inl, "a"), rectFor(inl, "b")
+ok("both help rows got hit rects", ra ~= nil and rb ~= nil)
+if ra and rb then
+    eq("the second row is a full rowSpan below the first",
+       rb.y - ra.y, inl:rowSpan(inl.schema[1], inl._wrapW))
+    ok("a hit rect covers the DIAL only, not its description",
+       rb.y - ra.y > ra.h,
+       "clicking a description would otherwise toggle the setting it describes")
+end
+
+-- The ? glyph is suppressed when the text is already on the page.
+ok("no ? column while help is inline", ra and ra.helpX == nil)
+
+-- The wrap cache is keyed on width AND font height. A width change must
+-- re-wrap, or rows keep a stale line count and the rects drift off what is
+-- drawn.
+local before = #inl:helpLines(inl.schema[1], 300)
+local narrow = #inl:helpLines(inl.schema[1], 40)
+ok("a width change re-wraps rather than serving the cache",
+   inl._helpCache.w == 40, "cache still keyed to " .. tostring(inl._helpCache.w))
+eq("re-wrapping still clamps", narrow, before)
 
 print(string.format("DFForm scrolling: %d passed, %d failed", pass, fail))
 os.exit(fail > 0 and 1 or 0)

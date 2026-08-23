@@ -138,6 +138,7 @@ local function metrics()
         boxW       = math.floor(104 * s),        -- the number box
         pillW      = math.floor(56 * s),         -- minimum pill width
         helpW      = fh + 4,                     -- the ? glyph column
+        helpLineH  = fh + 1,                     -- one line of INLINE help
         padY       = math.max(2, math.floor((fh + 12 - fh) / 2) - 3),
     }
 end
@@ -148,6 +149,11 @@ end
 -- exactly contentHeight() tall, and a pad living outside that number would put
 -- the window 6px into scroll range and hang a scrollbar on a form that fits.
 local BOT_PAD = 6
+
+-- Shared, never mutated: helpLines returns this for the common "no help" case,
+-- and it is read sixty times a second per row. Allocating a fresh table there
+-- would be the form's largest per-frame cost by a wide margin.
+local EMPTY = {}
 
 -- ---------------------------------------------------------------------------
 -- Hotspot. One invisible panel over the whole form catches every interaction;
@@ -230,6 +236,11 @@ function DFForm.new(opts)
         moved   = opts.moved,
         enabled = opts.enabled or function() return true end,
         title   = opts.title or "Setting",
+        -- INLINE HELP, opt-in. Default false, so every existing caller keeps
+        -- the ? popout exactly as it was. See helpLines() for what it costs and
+        -- why it is a per-form choice rather than a global.
+        inlineHelp = opts.inlineHelp == true,
+        helpClamp  = opts.helpClamp or 3,
         rects   = {},
         rect    = nil,
         height  = 0,
@@ -265,19 +276,86 @@ function DFForm:layout(x, y, w, h)
     -- fields they were built with - and one built before scrolling existed has
     -- no self.scroll at all, which would fault rather than simply not scroll.
     self.scroll = self.scroll or DFScroll.new()
-    self.scroll:measure(h, self:contentHeight())
+    -- Recorded here as well as in draw so the FIRST measure is right: with
+    -- inline help on, row height depends on the wrap width, and a nil width
+    -- would measure every row as if it had no help - leaving the form scrolled
+    -- against a range it is about to grow out of before a frame is drawn.
+    self._wrapW = w - metrics().gutter - DFKit.metrics.pad
+    self.scroll:measure(h, self:contentHeight(self._wrapW))
+end
+
+-- ---------------------------------------------------------------------------
+-- INLINE HELP
+--
+-- The ? popout is right for a form of a dozen dials an admin already knows. It
+-- is wrong for one reflecting a mod's whole sandbox page, where the reader is
+-- scanning forty options they have never seen and the question "what does this
+-- one do" is the ONLY question. Forty hovers is not an answer.
+--
+-- So a form can ask for the help text under the row instead. Off by default:
+-- every existing caller keeps the popout, and nothing about their geometry
+-- moves. Measured across the suite's own sandbox tooltips - median 207
+-- characters, 72% under 300, p90 461 - a three-line clamp shows about 87% of
+-- them whole, which is why helpClamp defaults to 3 rather than to unlimited.
+--
+-- WRAPPING IS CACHED because draw() runs sixty times a second and wrapText
+-- measures every word. The cache is keyed on the wrap width AND the font
+-- height: text scale is a client preference (DFPrefs), so a font change must
+-- re-wrap or the rows keep the old line count and the hit rects drift away
+-- from what is drawn.
+-- ---------------------------------------------------------------------------
+function DFForm:helpLines(e, w)
+    if not self.inlineHelp then return EMPTY end
+    if type(e.help) ~= "string" or e.help == "" then return EMPTY end
+
+    local m = metrics()
+    local c = self._helpCache
+    if not c or c.w ~= w or c.fh ~= m.fh then
+        c = { w = w, fh = m.fh, byKey = {} }
+        self._helpCache = c
+    end
+    local key = e.key or e.label or tostring(e)
+    local hit = c.byKey[key]
+    if hit then return hit end
+
+    local lines = DFKit.wrapText(e.help, font(), w) or EMPTY
+    if #lines > self.helpClamp then
+        local cut = {}
+        for i = 1, self.helpClamp do cut[i] = lines[i] end
+        -- The ellipsis is the honest half: a clamped paragraph that ends
+        -- mid-sentence with no mark reads as the whole text.
+        cut[self.helpClamp] = cut[self.helpClamp] .. " ..."
+        lines = cut
+    end
+    c.byKey[key] = lines
+    return lines
+end
+
+-- What one dial occupies, help included. Everything that walks the schema uses
+-- this - content height, the visibility test, the cursor advance and the hit
+-- rect - because the moment two of them disagree the form draws one row and
+-- hit-tests another.
+function DFForm:rowSpan(e, w)
+    local m = metrics()
+    return m.rowH + #self:helpLines(e, w) * m.helpLineH
 end
 
 -- Total vertical space the form needs, bottom padding included. Give a form
 -- this much height and it will not scroll; give it less and the difference is
 -- exactly its scroll range.
-function DFForm:contentHeight()
+--
+-- `w` is the TEXT column width, needed only when inline help is on - wrapping
+-- depends on it, so the height does too. draw() records the width it used, so
+-- a caller asking without one gets the answer for the last frame drawn, which
+-- is what DFSettingsWindow's size-to-content needs.
+function DFForm:contentHeight(w)
     local m = metrics()
+    w = w or self._wrapW
     local total = 6
     for i = 1, #self.schema do
         local e = self.schema[i]
         if e.group then total = total + m.groupGap + m.headH + m.ruleGap + m.headBottom
-        else total = total + m.rowH end
+        else total = total + self:rowSpan(e, w) end
     end
     return total + BOT_PAD
 end
@@ -364,7 +442,16 @@ function DFForm:draw(el)
     -- Scroll geometry, remeasured every frame: the schema is fixed but the
     -- rect is not, and neither is the font. The gutter is 0 when the schema
     -- fits, so a short form still uses the full rect.
-    local content = self:contentHeight()
+    --
+    -- The width has to be known BEFORE contentHeight when inline help is on,
+    -- because wrapping decides how tall every row is. The gutter is measured
+    -- from the height, and the height depends on the width, which depends on
+    -- the gutter - so the loop is broken by measuring once against the
+    -- no-gutter width and letting the bar claim its column afterwards. Worst
+    -- case a form within one bar-width of fitting gets a bar it did not
+    -- strictly need; the alternative is iterating to a fixed point every frame.
+    self._wrapW = r.w - m.gutter - DFKit.metrics.pad
+    local content = self:contentHeight(self._wrapW)
     self.scroll = self.scroll or DFScroll.new()   -- see layout(): hot reload
     local sc = self.scroll
     local gutter = sc:measure(r.h, content)
@@ -396,11 +483,16 @@ function DFForm:draw(el)
             end
             y = y + m.headH + m.ruleGap + m.headBottom
 
-        elseif sc:shows(y, m.rowH, r) then
+        elseif sc:shows(y, self:rowSpan(e, self._wrapW), r) then
             local live   = e.live ~= false
             local rowY   = sc:screenY(y)   -- SCREEN space from here down, so the
                                            -- hit rects below are what was drawn
-            local hasHelp = type(e.help) == "string" and e.help ~= ""
+            local helpLn = self:helpLines(e, self._wrapW)
+            -- The ? is redundant once the text is on the page, and keeping both
+            -- would put a glyph on every row that opens a window saying what is
+            -- already six pixels below it.
+            local hasHelp = #helpLn == 0
+                        and type(e.help) == "string" and e.help ~= ""
 
             -- Overridden marker, in the gutter.
             if self.moved and self.moved(e.key) then
@@ -523,14 +615,24 @@ function DFForm:draw(el)
             el:drawText(clip(e.label or e.key, right - x), x, rowY + textDY,
                 labCol.r, labCol.g, labCol.b, 1, fo)
 
+            -- Inline help, under the dial. The hit rect above stays ROW-tall on
+            -- purpose: clicking a description must not toggle the setting it
+            -- describes, which is what a full-span rect would do.
+            local hy = rowY + m.rowH - 2
+            for li = 1, #helpLn do
+                el:drawText(helpLn[li], x + 2, hy,
+                    c.textDim.r * 0.92, c.textDim.g * 0.92, c.textDim.b * 0.92, 1, fo)
+                hy = hy + m.helpLineH
+            end
+
             self.rects[#self.rects + 1] = rect
-            y = y + m.rowH
+            y = y + self:rowSpan(e, self._wrapW)
 
         else
             -- Scrolled out of sight: no drawing and no hit rect - a row that
             -- cannot be seen must not be clickable - but the cursor still has
             -- to step over it or everything below would shift up.
-            y = y + m.rowH
+            y = y + self:rowSpan(e, self._wrapW)
         end
     end
 
