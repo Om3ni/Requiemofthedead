@@ -40,7 +40,7 @@ MMShared = MMShared or {}
 -- file scope needs this line.
 require "RDShared"
 
-RDShared.registerMod("RFTDMemoir", "1.2.0")   -- keep in sync with mod.info
+RDShared.registerMod("RFTDMemoir", "1.2.1")   -- keep in sync with mod.info
 
 MMShared.MODULE = "RFTDMemoir"   -- wire token = mod id (was "RFTDDragonflyMemoir" pre-shakeout; client+server ship atomically in the bundle, so the flip needs no dual-accept)
 

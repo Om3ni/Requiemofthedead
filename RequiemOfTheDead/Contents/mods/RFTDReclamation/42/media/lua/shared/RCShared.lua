@@ -11,7 +11,7 @@ RCShared = RCShared or {}
 -- Net-command module string. Every client<->server command for this mod
 -- travels under this token: sendClientCommand(player, RCShared.MODULE, cmd, args).
 RCShared.MODULE  = "RFTDReclamation"
-RCShared.VERSION = "1.2.0"   -- 1.0.0: suite lockstep; NoVanilla - vanilla-spawn suppression
+RCShared.VERSION = "1.2.1"   -- 1.0.0: suite lockstep; NoVanilla - vanilla-spawn suppression
                              -- (zone strip + story burnt-swap). 0.7.0: RFTDCore adoption
                              -- (hard require) - dual-write audit + RC.* chronicle events.
 

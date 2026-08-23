@@ -13,7 +13,7 @@
 
 require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
 
-RDShared.registerMod("RFTDLastRites", "1.2.0")   -- keep in sync with mod.info
+RDShared.registerMod("RFTDLastRites", "1.2.1")   -- keep in sync with mod.info
 
 require "ISUI/ISCollapsableWindow"
 require "ISUI/ISTabPanel"

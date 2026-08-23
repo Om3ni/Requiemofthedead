@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Triage Cards</title>
+<style>
+  /* Tokens: the dataviz reference palette, light + dark, both explicit. */
+  :root {
+    color-scheme: light;
+    --page:      #f9f9f7;
+    --surface:   #fcfcfb;
+    --ink:       #0b0b0b;
+    --ink-2:     #52514e;
+    --muted:     #898781;
+    --grid:      #e1e0d9;
+    --axis:      #c3c2b7;
+    --border:    rgba(11,11,11,0.10);
+    --seq:       #2a78d6;   /* sequential blue 450 */
+    --seq-soft:  #9ec5f4;   /* sequential blue 200 */
+    --good:      #0ca30c;
+    --warning:   #fab219;
+    --serious:   #ec835a;
+    --critical:  #d03b3b;
+    --chip-on:   #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page:      #0d0d0d;
+      --surface:   #1a1a19;
+      --ink:       #ffffff;
+      --ink-2:     #c3c2b7;
+      --muted:     #898781;
+      --grid:      #2c2c2a;
+      --axis:      #383835;
+      --border:    rgba(255,255,255,0.10);
+      --seq:       #3987e5;
+      --seq-soft:  #1c5cab;
+      --chip-on:   #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:      #0d0d0d;
+    --surface:   #1a1a19;
+    --ink:       #ffffff;
+    --ink-2:     #c3c2b7;
+    --muted:     #898781;
+    --grid:      #2c2c2a;
+    --axis:      #383835;
+    --border:    rgba(255,255,255,0.10);
+    --seq:       #3987e5;
+    --seq-soft:  #1c5cab;
+    --chip-on:   #3987e5;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: 14px 20px 10px; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--ink-2); font-size: 13px; }
+  header .spacer { flex: 1; }
+  button, select, input[type="search"] {
+    font: inherit; color: var(--ink); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--axis); }
+
+  #drop {
+    margin: 0 20px; padding: 18px; border: 2px dashed var(--axis); border-radius: 12px;
+    text-align: center; color: var(--ink-2); background: var(--surface);
+  }
+  #drop.hot { border-color: var(--seq); color: var(--ink); }
+  #drop input { display: none; }
+  #drop .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  #pasteBox { width: 100%; height: 60px; margin-top: 8px; display: none;
+    background: var(--page); color: var(--ink); border: 1px solid var(--border);
+    border-radius: 8px; font: 12px ui-monospace, Consolas, monospace; padding: 6px; }
+
+  #summary {
+    margin: 12px 20px 0; display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 8px 14px; min-width: 110px;
+  }
+  .tile .v { font-size: 20px; font-weight: 650; }
+  .tile .k { font-size: 12px; color: var(--ink-2); }
+  .tile.crit .v { color: var(--critical); }
+  .tile.warn .v { color: var(--ink); }
+
+  #lanes {
+    margin: 12px 20px 0; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 14px;
+  }
+  #lanes h2, #controls h2 { font-size: 13px; margin: 0 0 6px; color: var(--ink-2); font-weight: 600; }
+  .laneRow { display: grid; grid-template-columns: 150px 1fr 170px; gap: 10px;
+    align-items: center; padding: 2px 0; cursor: pointer; border-radius: 6px; }
+  .laneRow:hover { background: var(--page); }
+  .laneRow.on .laneName { color: var(--chip-on); font-weight: 650; }
+  .laneName { font-size: 13px; }
+  .laneBarWrap { height: 14px; background: var(--page); border-radius: 4px; position: relative; }
+  .laneBar { height: 100%; border-radius: 4px; background: var(--seq); min-width: 2px; }
+  .laneMeta { font-size: 12px; color: var(--ink-2); text-align: right;
+    font-variant-numeric: tabular-nums; }
+
+  #controls {
+    margin: 12px 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  }
+  .chip {
+    border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px;
+    cursor: pointer; background: var(--surface); font-size: 13px; color: var(--ink-2);
+    user-select: none;
+  }
+  .chip.on { color: #fff; background: var(--chip-on); border-color: var(--chip-on); }
+
+  #cards { margin: 0 20px 40px; display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .card h3 { margin: 0; font-size: 15px; display: flex; align-items: baseline; gap: 8px; }
+  .card h3 .seen { font-size: 11px; color: var(--muted); font-weight: 400; margin-left: auto; }
+  .badges { display: flex; gap: 6px; margin: 6px 0 2px; flex-wrap: wrap; }
+  .badge { font-size: 11.5px; border-radius: 6px; padding: 2px 8px; font-weight: 600;
+    display: inline-flex; gap: 5px; align-items: center; }
+  .badge.crit { background: var(--critical); color: #fff; }
+  .badge.warn { background: var(--warning); color: #1a1a19; }
+  .badge.info { background: var(--page); color: var(--ink-2); border: 1px solid var(--border); font-weight: 500; }
+  .hpRow { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+  .hpNum .v { font-size: 22px; font-weight: 650; }
+  .hpNum .k { font-size: 11px; color: var(--ink-2); }
+  .spark { flex: 1; }
+  .spark svg { display: block; width: 100%; height: 56px; }
+  .sect { margin-top: 10px; }
+  .sect .t { font-size: 11.5px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.04em; margin-bottom: 4px; }
+  .miniLane { display: grid; grid-template-columns: 120px 1fr 110px; gap: 8px;
+    align-items: center; padding: 1px 0; }
+  .miniLane .n { font-size: 12.5px; }
+  .miniLane .n.hl { color: var(--chip-on); font-weight: 650; }
+  .miniBarWrap { height: 10px; background: var(--page); border-radius: 4px; }
+  .miniBar { height: 100%; border-radius: 4px; background: var(--seq); min-width: 2px; }
+  .miniLane .m { font-size: 11.5px; color: var(--ink-2); text-align: right;
+    font-variant-numeric: tabular-nums; }
+  .kv { font-size: 12.5px; color: var(--ink-2); }
+  .kv b { color: var(--ink); font-weight: 600; }
+  .fracLine { font-size: 12.5px; color: var(--critical); font-weight: 600; }
+  .zeroNote { font-size: 11.5px; color: var(--muted); }
+
+  #tableWrap { margin: 0 20px 40px; display: none; overflow-x: auto;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--grid);
+    white-space: nowrap; font-variant-numeric: tabular-nums; }
+  th { color: var(--ink-2); position: sticky; top: 0; background: var(--surface); }
+  #tableNote { padding: 8px 10px; color: var(--muted); font-size: 12px; }
+
+  #tip {
+    position: fixed; pointer-events: none; display: none; z-index: 10;
+    background: var(--surface); border: 1px solid var(--axis); border-radius: 8px;
+    padding: 5px 9px; font-size: 12px; color: var(--ink);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.18);
+  }
+  .empty { margin: 30px 20px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Triage Cards</h1>
+  <span class="sub">per-player breakdown of the <code>triage</code> forensic stream</span>
+  <span class="spacer"></span>
+  <button id="pasteToggle" title="Paste log lines instead of loading a file">Paste</button>
+  <button id="tableToggle">Table view</button>
+  <button id="themeToggle" title="Theme: auto / light / dark">Theme: auto</button>
+  <button id="clearBtn" title="Forget all loaded rows">Clear</button>
+</header>
+
+<div id="drop">
+  <label for="fileInput"><b>Drop</b> triage <code>.jsonl</code> / <code>.txt</code> files here, or <u style="cursor:pointer">browse</u>.
+  <input id="fileInput" type="file" multiple accept=".jsonl,.txt,.log,.json"></label>
+  <div class="hint">Everything stays in this browser tab - nothing is uploaded anywhere. Load more files any time; duplicate lines are dropped.</div>
+  <textarea id="pasteBox" placeholder="Paste JSONL lines here and press Ctrl+Enter"></textarea>
+</div>
+
+<div id="summary"></div>
+<div id="lanes" style="display:none">
+  <h2>Damage by lane - click a lane to focus every card on it</h2>
+  <div id="laneRows"></div>
+</div>
+
+<div id="controls" style="display:none">
+  <input id="q" type="search" placeholder="Search player..." size="18">
+  <select id="sort">
+    <option value="severity">Sort: most concerning</option>
+    <option value="damage">Sort: total damage</option>
+    <option value="name">Sort: name</option>
+    <option value="seen">Sort: last seen</option>
+  </select>
+  <span class="chip on" data-kind="damage">Damage</span>
+  <span class="chip on" data-kind="wounds">Wounds</span>
+  <span class="chip on" data-kind="mood">Mood</span>
+  <span class="chip on" data-kind="em">EM writes</span>
+  <span class="chip on" data-kind="flags">Flags</span>
+  <span class="chip on" id="hideZero" title="Zero-amount EM proc rows stay counted but hidden">Hide zero EM</span>
+  <span id="dateChips"></span>
+</div>
+
+<div id="cards"></div>
+<div id="tableWrap">
+  <div id="tableNote"></div>
+  <table id="table"><thead></thead><tbody></tbody></table>
+</div>
+<div id="tip"></div>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------- state
+const S = {
+  rows: [],                 // parsed TR.* rows
+  seen: new Set(),          // dedupe raw lines
+  filters: { q: "", lane: null, dates: new Set(),
+             kinds: { damage: true, wounds: true, mood: true, em: true, flags: true },
+             hideZero: true, sort: "severity" },
+  tableMode: false,
+};
+const MAX_ROWS = 500000;
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n, d) => Number(n).toFixed(d === undefined ? 1 : d);
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;" }[c]));
+
+function wallDate(t) {          // stable YYYY-MM-DD local label
+  const d = new Date(t * 1000);
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function wallTime(t) {
+  const d = new Date(t * 1000);
+  return wallDate(t) + " " + String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0");
+}
+
+// ---------------------------------------------------------------- parsing
+function ingestText(text) {
+  let added = 0, bad = 0;
+  for (const line of text.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s || S.seen.has(s)) continue;
+    let j;
+    try { j = JSON.parse(s); } catch (e) { bad++; continue; }
+    if (!j || typeof j.e !== "string" || j.e.indexOf("TR.") !== 0) continue;
+    S.seen.add(s);
+    const x = j.x || {};
+    const r = { t: +j.t || 0, d: +j.d || 0, u: String(j.u || "?"), e: j.e, x: x };
+    r.date = wallDate(r.t);
+    if (j.e === "TR.DAMAGE_MINUTE" || j.e === "TR.UNATTRIBUTED_DROP") r.kind = "damage";
+    else if (j.e === "TR.MOOD_STEP") r.kind = "mood";
+    else if (j.e === "TR.EM_WRITE") r.kind = "em";
+    else if (j.e === "TR.IMPOSSIBLE_FRACTURE") r.kind = "flags";
+    else if (j.e === "TR.WOUND_NEW" || j.e === "TR.WOUND_GREW") r.kind = "wounds";
+    else r.kind = "other";
+    S.rows.push(r);
+    added++;
+  }
+  if (S.rows.length > MAX_ROWS) {
+    S.rows.sort((a, b) => a.t - b.t);
+    S.rows = S.rows.slice(S.rows.length - MAX_ROWS);
+  }
+  return { added, bad };
+}
+
+// ---------------------------------------------------------------- aggregation
+function activeRows() {
+  const f = S.filters;
+  return S.rows.filter(r => (f.dates.size === 0 || f.dates.has(r.date)));
+}
+
+function aggregate(rows) {
+  const players = new Map();
+  const laneTotals = new Map();   // lane -> {amt, events, players:Set}
+  let fracRows = 0, unattrRows = 0, woundRows = 0, woundInfected = 0;
+
+  const P = (u) => {
+    let p = players.get(u);
+    if (!p) {
+      p = { u, first: Infinity, last: 0, hp: [], lastHP: null, minHP: null,
+            lanes: new Map(), unattr: { n: 0, total: 0 },
+            fractures: [], mood: { steps: 0, emProc: 0, maxUp: null, maxDown: null, lastU: null },
+            em: new Map(), emZero: 0,
+            wounds: [], woundInfected: 0, gapPos: 0 };
+      players.set(u, p);
+    }
+    return p;
+  };
+
+  for (const r of rows) {
+    const p = P(r.u);
+    if (r.t < p.first) p.first = r.t;
+    if (r.t >= p.last) { p.last = r.t; p.lastD = r.d; }
+    const x = r.x;
+
+    if (r.e === "TR.DAMAGE_MINUTE" || r.e === "TR.UNATTRIBUTED_DROP") {
+      const hp = parseFloat(x.hp);
+      if (!isNaN(hp)) {
+        p.hp.push([r.t, hp]);
+        p.lastHP = hp;
+        if (!p.minHP || hp < p.minHP[1]) p.minHP = [r.t, hp];
+      }
+    }
+    if (r.e === "TR.DAMAGE_MINUTE" && x.lanes) {
+      for (const part of String(x.lanes).split(" ")) {
+        const i = part.indexOf("=");
+        if (i < 1) continue;
+        const lane = part.slice(0, i), amt = parseFloat(part.slice(i + 1)) || 0;
+        const L = p.lanes.get(lane) || { amt: 0, minutes: 0 };
+        L.amt += amt; L.minutes++;
+        p.lanes.set(lane, L);
+        const G = laneTotals.get(lane) || { amt: 0, events: 0, players: new Set() };
+        G.amt += amt; G.events += (+x.events || 0); G.players.add(r.u);
+        laneTotals.set(lane, G);
+      }
+    }
+    if (r.e === "TR.DAMAGE_MINUTE") {
+      const g = parseFloat(x.gap);
+      if (!isNaN(g) && g > 0) p.gapPos += g;
+    }
+    if (r.e === "TR.UNATTRIBUTED_DROP") {
+      unattrRows++;
+      p.unattr.n++;
+      p.unattr.total += parseFloat(x.drop) || 0;
+    }
+    if (r.e === "TR.WOUND_NEW" || r.e === "TR.WOUND_GREW") {
+      woundRows++;
+      const inf = String(x.infected) === "1";
+      if (inf) { p.woundInfected++; woundInfected++; }
+      p.wounds.push({ t: r.t, grew: r.e === "TR.WOUND_GREW", part: x.part,
+                      type: x.type, clock: parseFloat(x.clock) || 0,
+                      delta: parseFloat(x.delta) || 0, infected: inf,
+                      vehicle: String(x.vehicle) === "1",
+                      climbing: String(x.climbing) === "1" });
+    }
+    if (r.e === "TR.IMPOSSIBLE_FRACTURE") {
+      fracRows++;
+      p.fractures.push({ t: r.t, part: x.part, clock: x.clock, splint: x.splint });
+    }
+    if (r.e === "TR.MOOD_STEP") {
+      p.mood.steps++;
+      const du = parseFloat(x.du) || 0;
+      p.mood.lastU = parseFloat(x.u);
+      if (x.shape === "em-proc") p.mood.emProc++;
+      if (du > 0 && (!p.mood.maxUp || du > p.mood.maxUp.du)) p.mood.maxUp = { du, t: r.t };
+      if (du < 0 && (!p.mood.maxDown || du < p.mood.maxDown.du)) p.mood.maxDown = { du, t: r.t };
+    }
+    if (r.e === "TR.EM_WRITE") {
+      const amt = parseFloat(x.amount) || 0;
+      if (amt === 0) { p.emZero++; }
+      else {
+        const E = p.em.get(x.stat) || { total: 0, n: 0 };
+        E.total += amt; E.n++;
+        p.em.set(x.stat, E);
+      }
+    }
+  }
+  return { players, laneTotals, fracRows, unattrRows, woundRows, woundInfected };
+}
+
+function severity(p) {
+  let dmg = 0;
+  for (const L of p.lanes.values()) dmg += L.amt;
+  return p.fractures.length * 10000 + p.woundInfected * 800 +
+         p.unattr.total * 50 + p.unattr.n * 25 + p.gapPos * 10 +
+         p.wounds.length * 3 + dmg;
+}
+function totalDamage(p) {
+  let dmg = 0;
+  for (const L of p.lanes.values()) dmg += L.amt;
+  return dmg + p.unattr.total;
+}
+
+// ---------------------------------------------------------------- render
+function render() {
+  const rows = activeRows();
+  const agg = aggregate(rows);
+  renderSummary(rows, agg);
+  renderLanes(agg);
+  renderDateChips();
+  renderCards(agg);
+  renderTable(rows);
+  $("controls").style.display = S.rows.length ? "flex" : "none";
+  $("lanes").style.display = (S.rows.length && agg.laneTotals.size) ? "block" : "none";
+}
+
+function renderSummary(rows, agg) {
+  const el = $("summary");
+  if (!S.rows.length) { el.innerHTML = ""; return; }
+  let t0 = Infinity, t1 = 0, d0 = Infinity, d1 = 0;
+  for (const r of rows) {
+    if (r.t < t0) t0 = r.t; if (r.t > t1) t1 = r.t;
+    if (r.d < d0) d0 = r.d; if (r.d > d1) d1 = r.d;
+  }
+  const tiles = [
+    { v: rows.length.toLocaleString(), k: "rows in view" },
+    { v: agg.players.size, k: "players" },
+    { v: rows.length ? wallTime(t0) + " → " + wallTime(t1) : "-", k: "wall clock" },
+    { v: rows.length ? "day " + fmt(d0, 1) + " → " + fmt(d1, 1) : "-", k: "game time" },
+    { v: agg.fracRows, k: "impossible fractures", cls: agg.fracRows ? "crit" : "" },
+    { v: agg.unattrRows, k: "unattributed drops", cls: "" },
+    { v: agg.woundRows, k: "wounds appeared", cls: "" },
+    { v: agg.woundInfected, k: "infection rolls", cls: agg.woundInfected ? "crit" : "" },
+  ];
+  el.innerHTML = tiles.map(t =>
+    '<div class="tile ' + (t.cls || "") + '"><div class="v">' + esc(t.v) + '</div><div class="k">' + esc(t.k) + "</div></div>").join("");
+}
+
+function renderLanes(agg) {
+  const lanes = [...agg.laneTotals.entries()].sort((a, b) => b[1].amt - a[1].amt);
+  const max = lanes.length ? lanes[0][1].amt : 1;
+  $("laneRows").innerHTML = lanes.map(([lane, g]) =>
+    '<div class="laneRow' + (S.filters.lane === lane ? " on" : "") + '" data-lane="' + esc(lane) + '">' +
+      '<span class="laneName">' + esc(lane) + "</span>" +
+      '<span class="laneBarWrap"><span class="laneBar" style="width:' + Math.max(1, 100 * g.amt / max) + '%"></span></span>' +
+      '<span class="laneMeta">' + fmt(g.amt) + " dmg · " + g.players.size + " players</span>" +
+    "</div>").join("");
+  for (const el of $("laneRows").querySelectorAll(".laneRow")) {
+    el.onclick = () => {
+      S.filters.lane = (S.filters.lane === el.dataset.lane) ? null : el.dataset.lane;
+      render();
+    };
+  }
+}
+
+function renderDateChips() {
+  const dates = [...new Set(S.rows.map(r => r.date))].sort();
+  $("dateChips").innerHTML = dates.length > 1
+    ? dates.map(d => '<span class="chip' + (S.filters.dates.has(d) ? " on" : "") + '" data-date="' + d + '">' + d + "</span>").join(" ")
+    : "";
+  for (const el of $("dateChips").querySelectorAll(".chip")) {
+    el.onclick = () => {
+      const d = el.dataset.date;
+      if (S.filters.dates.has(d)) S.filters.dates.delete(d); else S.filters.dates.add(d);
+      render();
+    };
+  }
+}
+
+function sparkSVG(p) {
+  if (p.hp.length < 2) return '<div class="kv">not enough samples for a trend</div>';
+  // decimate to <=120 buckets, keeping the LAST sample per bucket for the line;
+  // the global minimum gets its own labeled dot so dips are never hidden
+  const pts = p.hp, n = pts.length, buckets = Math.min(120, n);
+  const t0 = pts[0][0], t1 = pts[n - 1][0], span = Math.max(1, t1 - t0);
+  const line = [];
+  let bi = -1;
+  for (const [t, hp] of pts) {
+    const b = Math.min(buckets - 1, Math.floor((t - t0) / span * buckets));
+    if (b === bi) line[line.length - 1] = [t, hp]; else { line.push([t, hp]); bi = b; }
+  }
+  const lo = Math.max(0, Math.floor(p.minHP[1] - 3)), hi = 100;
+  const W = 260, H = 56, PAD = 4;
+  const X = t => PAD + (W - 2 * PAD) * (t - t0) / span;
+  const Y = v => PAD + (H - 2 * PAD) * (1 - (v - lo) / (hi - lo));
+  const path = line.map((pt, i) => (i ? "L" : "M") + fmt(X(pt[0]), 1) + " " + fmt(Y(pt[1]), 1)).join(" ");
+  const mx = X(p.minHP[0]), my = Y(p.minHP[1]);
+  return '<svg viewBox="0 0 ' + W + " " + H + '" data-u="' + esc(p.u) + '">' +
+    '<line x1="' + PAD + '" y1="' + fmt(Y(75), 1) + '" x2="' + (W - PAD) + '" y2="' + fmt(Y(75), 1) +
+      '" stroke="var(--grid)" stroke-width="1" stroke-dasharray="3 3"/>' +
+    '<path d="' + path + '" fill="none" stroke="var(--seq)" stroke-width="2" stroke-linejoin="round"/>' +
+    '<circle cx="' + fmt(mx, 1) + '" cy="' + fmt(my, 1) + '" r="3" fill="var(--seq)"/>' +
+    '<text x="' + fmt(Math.min(W - 30, Math.max(14, mx)), 1) + '" y="' + fmt(Math.min(H - 2, my + 12), 1) +
+      '" font-size="9" fill="var(--ink-2)" text-anchor="middle">min ' + fmt(p.minHP[1]) + "</text>" +
+    "</svg>";
+}
+
+function renderCards(agg) {
+  const f = S.filters;
+  let list = [...agg.players.values()];
+  if (f.q) list = list.filter(p => p.u.toLowerCase().includes(f.q));
+  if (f.lane) list = list.filter(p => p.lanes.has(f.lane));
+  const sorters = {
+    severity: (a, b) => severity(b) - severity(a),
+    damage:   (a, b) => totalDamage(b) - totalDamage(a),
+    name:     (a, b) => a.u.localeCompare(b.u),
+    seen:     (a, b) => b.last - a.last,
+  };
+  list.sort(sorters[f.sort] || sorters.severity);
+  if (f.lane && f.sort === "severity") {
+    list.sort((a, b) => (b.lanes.get(f.lane) || { amt: 0 }).amt - (a.lanes.get(f.lane) || { amt: 0 }).amt);
+  }
+
+  const cards = list.map(p => {
+    const laneList = [...p.lanes.entries()].sort((a, b) => b[1].amt - a[1].amt);
+    const laneMax = laneList.length ? laneList[0][1].amt : 1;
+    const badges = [];
+    if (p.fractures.length) badges.push('<span class="badge crit">✖ ' + p.fractures.length + " impossible fracture" + (p.fractures.length > 1 ? "s" : "") + "</span>");
+    if (p.woundInfected) badges.push('<span class="badge crit">☣ ' + p.woundInfected + " infection roll" + (p.woundInfected > 1 ? "s" : "") + "</span>");
+    if (p.unattr.n) badges.push('<span class="badge warn">⚠ ' + p.unattr.n + " unattributed (" + fmt(p.unattr.total) + " hp)</span>");
+    if (p.gapPos > 0.5) badges.push('<span class="badge warn">⚠ ' + fmt(p.gapPos) + " hp beyond lanes</span>");
+    if (p.mood.emProc) badges.push('<span class="badge info">em-proc ×' + p.mood.emProc + "</span>");
+
+    const sects = [];
+    if (f.kinds.damage && laneList.length) {
+      sects.push('<div class="sect"><div class="t">Damage by lane</div>' +
+        laneList.map(([lane, L]) =>
+          '<div class="miniLane" title="' + esc(lane) + ": " + fmt(L.amt, 3) + " over " + L.minutes + ' minutes">' +
+            '<span class="n' + (f.lane === lane ? " hl" : "") + '">' + esc(lane) + "</span>" +
+            '<span class="miniBarWrap"><span class="miniBar" style="width:' + Math.max(1, 100 * L.amt / laneMax) + '%"></span></span>' +
+            '<span class="m">' + fmt(L.amt) + " · " + L.minutes + "m</span>" +
+          "</div>").join("") + "</div>");
+    }
+    if (f.kinds.wounds && p.wounds.length) {
+      const recent = p.wounds.slice(-8).reverse();
+      sects.push('<div class="sect"><div class="t">Wounds appeared (' + p.wounds.length + ")</div>" +
+        recent.map(w => {
+          let src = "";
+          if (!w.grew && w.type === "scratch") {
+            src = w.clock <= 0.5 ? "shrunk clock — beehive-like"
+                : w.clock <= 3.5 ? "likely vegetation"
+                : w.clock <= 16  ? "attack / mod"
+                : "window / severe";
+          }
+          const ctx = [];
+          if (w.vehicle)  ctx.push("in vehicle");
+          if (w.climbing) ctx.push("climbing");
+          return '<div class="kv">' +
+            (w.infected ? '<span style="color:var(--critical);font-weight:650">☣ </span>' : "") +
+            "<b>" + esc(w.type) + "</b> " + esc(w.part || "?") +
+            (w.grew ? " grew +" + fmt(w.delta, 2) : " · clock " + fmt(w.clock, 2)) +
+            (src ? " · " + src : "") +
+            (ctx.length ? " · " + ctx.join(", ") : "") +
+            ' <span class="zeroNote">' + wallTime(w.t) + "</span></div>";
+        }).join("") +
+        (p.wounds.length > 8 ? '<div class="zeroNote">…' + (p.wounds.length - 8) + " older not shown</div>" : "") +
+        "</div>");
+    }
+    if (f.kinds.flags && p.fractures.length) {
+      sects.push('<div class="sect"><div class="t">Fractures despite BoneFracture=off</div>' +
+        p.fractures.map(fr => '<div class="fracLine">' + esc(fr.part || "?") + " · clock " + esc(fr.clock || "?") +
+          (String(fr.splint) === "1" ? " (splinted)" : "") + ' <span class="kv">' + wallTime(fr.t) + "</span></div>").join("") + "</div>");
+    }
+    if (f.kinds.mood && p.mood.steps) {
+      const bits = ['<b>' + p.mood.steps + "</b> steps"];
+      if (p.mood.lastU !== null && !isNaN(p.mood.lastU)) bits.push("last u <b>" + fmt(p.mood.lastU) + "</b>");
+      if (p.mood.maxUp) bits.push("worst +<b>" + fmt(p.mood.maxUp.du) + "</b>");
+      if (p.mood.maxDown) bits.push("best <b>" + fmt(p.mood.maxDown.du) + "</b>");
+      sects.push('<div class="sect"><div class="t">Mood</div><div class="kv">' + bits.join(" · ") + "</div></div>");
+    }
+    if (f.kinds.em && (p.em.size || p.emZero)) {
+      const emBits = [...p.em.entries()].sort((a, b) => b[1].total - a[1].total)
+        .map(([stat, E]) => esc(stat) + " <b>+" + fmt(E.total, 2) + "</b> (×" + E.n + ")");
+      sects.push('<div class="sect"><div class="t">Expanded Moodles writes</div><div class="kv">' +
+        (emBits.length ? emBits.join(" · ") : "no non-zero writes") +
+        (S.filters.hideZero ? ' <span class="zeroNote">· ' + p.emZero + " zero procs hidden</span>"
+                            : ' <span class="zeroNote">· ' + p.emZero + " zero procs</span>") +
+        "</div></div>");
+    }
+
+    return '<div class="card">' +
+      "<h3>" + esc(p.u) + '<span class="seen">' + wallTime(p.last) + " · day " + fmt(p.lastD || 0, 1) + "</span></h3>" +
+      (badges.length ? '<div class="badges">' + badges.join("") + "</div>" : "") +
+      '<div class="hpRow">' +
+        '<div class="hpNum"><div class="v">' + (p.lastHP !== null ? fmt(p.lastHP) : "—") + '</div><div class="k">last hp</div></div>' +
+        '<div class="spark">' + sparkSVG(p) + "</div>" +
+      "</div>" + sects.join("") +
+    "</div>";
+  });
+  $("cards").innerHTML = cards.length ? cards.join("")
+    : (S.rows.length ? '<div class="empty">No players match the current filters.</div>' : "");
+  bindSparkHover(agg);
+}
+
+// ---------------------------------------------------------------- table view
+function renderTable(rows) {
+  if (!S.tableMode) { $("tableWrap").style.display = "none"; $("cards").style.display = "grid"; return; }
+  $("cards").style.display = "none";
+  $("tableWrap").style.display = "block";
+  const f = S.filters;
+  let list = rows.filter(r => f.kinds[r.kind] !== false);
+  if (f.q) list = list.filter(r => r.u.toLowerCase().includes(f.q));
+  if (f.lane) list = list.filter(r => r.kind !== "damage" || String(r.x.lanes || "").indexOf(f.lane) >= 0);
+  if (f.hideZero) list = list.filter(r => !(r.e === "TR.EM_WRITE" && parseFloat(r.x.amount) === 0));
+  list.sort((a, b) => b.t - a.t);
+  const CAP = 2000;
+  const shown = list.slice(0, CAP);
+  $("tableNote").textContent = list.length > CAP
+    ? "Newest " + CAP.toLocaleString() + " of " + list.length.toLocaleString() + " matching rows."
+    : list.length.toLocaleString() + " matching rows, newest first.";
+  $("table").querySelector("thead").innerHTML =
+    "<tr><th>wall</th><th>day</th><th>player</th><th>event</th><th>detail</th></tr>";
+  $("table").querySelector("tbody").innerHTML = shown.map(r => {
+    const detail = Object.entries(r.x).map(([k, v]) => k + "=" + v).join("  ");
+    return "<tr><td>" + wallTime(r.t) + "</td><td>" + fmt(r.d, 3) + "</td><td>" + esc(r.u) +
+      "</td><td>" + esc(r.e.replace("TR.", "")) + "</td><td>" + esc(detail) + "</td></tr>";
+  }).join("");
+}
+
+// ---------------------------------------------------------------- hover tooltip
+function bindSparkHover(agg) {
+  const tip = $("tip");
+  for (const svg of $("cards").querySelectorAll(".spark svg")) {
+    const p = agg.players.get(svg.dataset.u);
+    if (!p || p.hp.length < 2) continue;
+    svg.addEventListener("mousemove", (ev) => {
+      const rect = svg.getBoundingClientRect();
+      const frac = (ev.clientX - rect.left) / rect.width;
+      const t0 = p.hp[0][0], t1 = p.hp[p.hp.length - 1][0];
+      const target = t0 + frac * (t1 - t0);
+      let best = p.hp[0];
+      for (const pt of p.hp) if (Math.abs(pt[0] - target) < Math.abs(best[0] - target)) best = pt;
+      tip.style.display = "block";
+      tip.style.left = (ev.clientX + 14) + "px";
+      tip.style.top = (ev.clientY + 14) + "px";
+      tip.textContent = wallTime(best[0]) + " · hp " + fmt(best[1]);
+    });
+    svg.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  }
+}
+
+// ---------------------------------------------------------------- wiring
+$("fileInput").addEventListener("change", async (ev) => {
+  for (const f of ev.target.files) ingestText(await f.text());
+  ev.target.value = "";
+  render();
+});
+const drop = $("drop");
+drop.addEventListener("dragover", (ev) => { ev.preventDefault(); drop.classList.add("hot"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("hot"));
+drop.addEventListener("drop", async (ev) => {
+  ev.preventDefault(); drop.classList.remove("hot");
+  for (const f of ev.dataTransfer.files) ingestText(await f.text());
+  render();
+});
+$("pasteToggle").onclick = () => {
+  const box = $("pasteBox");
+  box.style.display = box.style.display === "block" ? "none" : "block";
+  if (box.style.display === "block") box.focus();
+};
+$("pasteBox").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && ev.ctrlKey) {
+    ingestText($("pasteBox").value);
+    $("pasteBox").value = "";
+    render();
+  }
+});
+$("q").addEventListener("input", (ev) => { S.filters.q = ev.target.value.trim().toLowerCase(); render(); });
+$("sort").addEventListener("change", (ev) => { S.filters.sort = ev.target.value; render(); });
+for (const chip of document.querySelectorAll("#controls .chip[data-kind]")) {
+  chip.onclick = () => {
+    const k = chip.dataset.kind;
+    S.filters.kinds[k] = !S.filters.kinds[k];
+    chip.classList.toggle("on", S.filters.kinds[k]);
+    render();
+  };
+}
+$("hideZero").onclick = () => {
+  S.filters.hideZero = !S.filters.hideZero;
+  $("hideZero").classList.toggle("on", S.filters.hideZero);
+  render();
+};
+$("tableToggle").onclick = () => {
+  S.tableMode = !S.tableMode;
+  $("tableToggle").textContent = S.tableMode ? "Card view" : "Table view";
+  render();
+};
+$("clearBtn").onclick = () => {
+  S.rows = []; S.seen = new Set(); S.filters.lane = null; S.filters.dates.clear();
+  render();
+};
+const THEMES = ["auto", "light", "dark"];
+let themeIdx = 0;
+try { themeIdx = Math.max(0, THEMES.indexOf(localStorage.getItem("triageTheme") || "auto")); } catch (e) {}
+function applyTheme() {
+  const t = THEMES[themeIdx];
+  if (t === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+  $("themeToggle").textContent = "Theme: " + t;
+  try { localStorage.setItem("triageTheme", t); } catch (e) {}
+}
+$("themeToggle").onclick = () => { themeIdx = (themeIdx + 1) % THEMES.length; applyTheme(); };
+applyTheme();
+render();
+</script>
+</body>
+</html>
