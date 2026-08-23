@@ -2,11 +2,12 @@
 --
 -- WHAT IS AT RISK, in order.
 --
--- 1. AUTHORITY, and again the dispatcher is not carrying it. Two different
---    gates on one command set - server-wide schema on
+-- 1. AUTHORITY. Two different gates on one command set - server-wide schema on
 --    ChangeAndReloadServerOptions, per-player state on
---    CanModifyPlayerStatsInThePlayerStatsUI - so every handler gates itself and
---    these tests are the only thing between a role and a verb it must not have.
+--    CanModifyPlayerStatsInThePlayerStatsUI - and each verb DECLARES its own,
+--    which the dispatcher enforces (pinned separately in test_dfserver.lua).
+--    `run` below applies the declared capability the way DFServer does, so these
+--    stay behaviour tests rather than becoming declaration tests.
 --    Written as CROSSED PAIRS: each role is asserted allowed its own verbs and
 --    refused the others, because a gate that says yes to everybody passes any
 --    test that only checks the yes.
@@ -138,13 +139,37 @@ check(ok, "module loads: " .. tostring(err))
 check(started ~= nil, "registration was not deferred to OnServerStarted")
 check(handlers.varGrant == nil, "a handler registered at file scope")
 started()
-for _, a in ipairs({ "varsList", "varsOfPlayer", "varHolders", "varDefine",
-                     "varUndefine", "varGrant", "varRevoke", "varSet",
-                     "varReset" }) do
-    check(handlers[a] ~= nil, a .. " did not register")
-    check(handlers[a].capability == nil,
-        a .. " grew a dispatcher capability; the gates here differ per verb and "
-        .. "one name cannot express them")
+-- Every verb's DECLARED gate, asserted by name. A verb that silently loses its
+-- declaration would still pass every behaviour test below, because `run` applies
+-- whatever is declared - so the declaration is pinned on its own.
+--
+-- The three reads declare nothing on purpose: their gate is "any capability at
+-- all", which is not a capability name. They are the handlers that must audit
+-- their own refusals, because the dispatcher logs an undeclared command as
+-- accepted (DFServer.lua:92).
+local EXPECTED_GATE = {
+    varsList     = false, varsOfPlayer = false, varHolders = false,
+    varDefine    = "ChangeAndReloadServerOptions",
+    varUndefine  = "ChangeAndReloadServerOptions",
+    varGrant     = "CanModifyPlayerStatsInThePlayerStatsUI",
+    varRevoke    = "CanModifyPlayerStatsInThePlayerStatsUI",
+    varSet       = "CanModifyPlayerStatsInThePlayerStatsUI",
+    varReset     = "CanModifyPlayerStatsInThePlayerStatsUI",
+}
+for action, want in pairs(EXPECTED_GATE) do
+    check(handlers[action] ~= nil, action .. " did not register")
+    if want == false then
+        check(handlers[action] and handlers[action].capability == nil,
+            action .. " declared a capability; its gate is 'any capability at "
+            .. "all', which no single name expresses")
+    else
+        check(handlers[action] and handlers[action].capability == want,
+            action .. " declares '" .. tostring(handlers[action]
+                and handlers[action].capability) .. "', expected '" .. want
+            .. "'. A verb that checks inside its own body instead loses the "
+            .. "dispatcher's refusal reply AND has its refused attempts logged "
+            .. "as accepted commands.")
+    end
 end
 
 -- ---- the roles -----------------------------------------------------------
@@ -154,7 +179,18 @@ local statAdmin   = player("Petra",  { "CanModifyPlayerStatsInThePlayerStatsUI" 
 local moderator   = player("Mo",     { "KickUser" })
 local nobody      = player("Nobody", {})
 
-local function run(action, who, args) return handlers[action].run(who, args or {}) end
+-- Dispatch the way DFServer does: apply the DECLARED capability first, then the
+-- body. Mirrored here rather than loading the real dispatcher because these
+-- assertions read a handler's return value, which DFServer converts into a reply
+-- packet - and the dispatcher's own enforcement is pinned in test_dfserver.lua,
+-- so this is standing in for tested behaviour rather than for an assumption.
+local function run(action, who, args)
+    local h = handlers[action]
+    if h.capability and not RDAccess.roleHas(who, h.capability) then
+        return { ok = false, reason = "Missing capability for " .. action }
+    end
+    return h.run(who, args or {})
+end
 
 -- ---- schema verbs --------------------------------------------------------
 
@@ -299,7 +335,13 @@ directSends = {}
 check(run("varsList", moderator).ok == true,
     "a moderator could not READ the var list - a panel that cannot show you "
     .. "the state before you change it is worse than one a moderator can see")
+audits = {}
 check(run("varsList", nobody).ok == false, "a non-staff caller read the var list")
+check(#audits == 1 and audits[1]:find("REFUSED", 1, true) ~= nil,
+    "a read refused INSIDE the handler was not audited. These three declare no "
+    .. "capability, so the dispatcher logs the attempt as an ordinary accepted "
+    .. "command - if the handler stays quiet the refusal is invisible: "
+    .. table.concat(audits, " | "))
 check(#directSends == 1 and directSends[1].command == "AdminVars", "the list reply is wrong")
 
 local defs = directSends[1].args.defs

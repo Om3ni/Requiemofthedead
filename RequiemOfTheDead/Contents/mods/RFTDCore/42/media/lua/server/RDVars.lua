@@ -276,14 +276,30 @@ end
 -- number, got 5" is a sentence that reads like a bug in the panel. An admin
 -- typing into a text field is exactly the caller who hits this.
 --
--- NaN is separated out for the same reason: its type IS number, so the generic
--- sentence would be self-contradicting. It is refused because a NaN compares
--- false against every bound afterwards, so every threshold set on the counter
--- silently stops firing.
+-- NaN and infinity are separated out for the same reason: their type IS number,
+-- so the generic sentence would be self-contradicting. Both are refused, and
+-- for different reasons that both end in silence:
+--
+--   NaN       compares false against every bound afterwards, so every threshold
+--             a consumer sets on the counter simply stops firing.
+--   infinity  survives in ModData and then DISAPPEARS. RDJson has no
+--             representation for it and encodes it as `null` (RDJson.lua:66,
+--             fmtNum's non-finite branch), which decodes back to nil - so the
+--             counter reads normally until the mirror is replayed after a crash
+--             or a restart, and is then absent. A value that is present until
+--             the next reboot and gone afterwards is the worst shape a stored
+--             number can have.
+--
+-- The finite test is `v - v == 0`, which is false for both infinities and for
+-- NaN. NaN is tested first only so its message is the specific one.
 local function badNumber(v)
     if v ~= v then return "a counter cannot be NaN" end
     if type(v) ~= "number" then
         return "a counter takes a number, got " .. type(v) .. " (" .. tostring(v) .. ")"
+    end
+    if v - v ~= 0 then
+        return "a counter must be finite - infinity is stored but cannot be "
+            .. "written to the JSON mirror, so it would vanish on the next restart"
     end
     return nil
 end

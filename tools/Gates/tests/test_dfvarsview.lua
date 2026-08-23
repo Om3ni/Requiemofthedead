@@ -21,7 +21,18 @@
 --    drawn - rendering one var's holders under another var's heading is the most
 --    misleading thing this panel could do, and it would look completely normal.
 --
--- The widgets are not covered; they need ISUI and a Mosaic boot.
+-- 4. THE SELECTION SURVIVING A REFRESH, which is the one that modifies the
+--    wrong player. Every verb is followed by a server push, the push rebuilds
+--    the list, and refillList calls the widget's clear() - which sets
+--    `selected = 1` (ISScrollingListBox.lua:340-345). A panel that read its
+--    target off the widget would therefore act on Alice, refresh, silently
+--    point at whoever is first, and modify THEM on the next click.
+--
+--    The fake list box below reproduces that clear() faithfully, on purpose:
+--    a stub that preserved the selection would test the fixture's idea of a
+--    list widget rather than the one PZ ships.
+--
+-- The drawing is not covered; it needs ISUI and a Mosaic boot.
 
 local ROOT = arg[1] or "."
 local CORE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua"
@@ -45,10 +56,30 @@ local function stubClass()
 end
 ISScrollingListBox  = stubClass()
 ISCollapsableWindow = stubClass()
+-- A list box that behaves like the one PZ ships, in the one respect that
+-- matters here: clear() drops the selection to row 1.
+local function fakeBox()
+    local box = { items = {}, selected = 1 }
+    function box:clear() self.items = {}; self.selected = 1 end
+    function box:addItem(name, item)
+        local i = { text = name, item = item }
+        self.items[#self.items + 1] = i
+        return i
+    end
+    return box
+end
+
 DFKit = { font = { small = "small" }, metrics = { btnH = 24, pad = 8, gap = 6 },
           col = { text = {}, textDim = {}, accent = {}, accentDim = {}, line = {} },
           rowHeight = function() return 22 end,
-          refillList = function() end, fitText = function(s) return s end }
+          -- Faithful to DFKit.refillList in the one respect under test: it
+          -- clears before it fills.
+          refillList = function(box, fill)
+              box:clear()
+              if fill then fill(box) end
+              return box
+          end,
+          fitText = function(s) return s end }
 DFForm   = { new = function(o) return o end }
 DFConfirm = { ask = function() end }
 DFCore   = { MODULE = "RFTDDragonfly" }
@@ -222,6 +253,151 @@ check(DFVarsView.selected == "Loot",
     .. tostring(DFVarsView.selected))
 check(#sent >= 1 and sent[1].command == "varHolders",
     "moving the selection did not fetch the new var's holders")
+
+-- ---- the selection, across a refresh ------------------------------------
+
+DFVarsView.defBox    = fakeBox()
+DFVarsView.holderBox = fakeBox()
+DFVarsView.defs      = { { name = "Anomaly", kind = "char", holders = 2 } }
+DFVarsView.selected  = "Anomaly"
+DFVarsView.holders   = { name = "Anomaly", kind = "char", rows = {
+    { user = "Alice", holds = true, online = true },
+    { user = "Bob",   online = true },
+    { user = "Carol", holds = true },
+} }
+DFVarsView.selectedUser = "Carol"
+DFVarsView.rebuild()
+
+check(DFVarsView.holderBox.selected == 3,
+    "the widget index was not re-derived from the remembered username: "
+    .. tostring(DFVarsView.holderBox.selected))
+check(DFVarsView.targetUser() == "Carol", "the target was lost by a rebuild")
+
+-- The refresh that follows every action. Carol is still present but the list
+-- came back in a different order, which is exactly what happens when somebody
+-- logs in or out between one action and the next.
+DFVarsView.holders.rows = {
+    { user = "Bob",   online = true },
+    { user = "Carol", holds = true, online = true },
+    { user = "Alice", holds = true, online = true },
+}
+DFVarsView.rebuild()
+check(DFVarsView.targetUser() == "Carol",
+    "THE SELECTION MOVED TO ANOTHER PLAYER ACROSS A REFRESH. Every verb here is "
+    .. "followed by a push that rebuilds the list, and clear() drops the widget "
+    .. "to row 1 - so the second click of a grant/revoke pair would modify "
+    .. "whoever happened to be first. Got: " .. tostring(DFVarsView.targetUser()))
+check(DFVarsView.holderBox.selected == 2,
+    "the highlight and the target disagree, so the panel would draw the "
+    .. "selection on one row and act on another")
+
+-- Carol logs off and drops out of the list. That must become NO target, not
+-- row one: guessing here modifies somebody the admin never chose.
+DFVarsView.holders.rows = {
+    { user = "Bob",   online = true },
+    { user = "Alice", holds = true, online = true },
+}
+DFVarsView.rebuild()
+check(DFVarsView.targetUser() == nil,
+    "a player who left the list was replaced by whoever is now first, instead "
+    .. "of the panel simply having no target: " .. tostring(DFVarsView.targetUser()))
+check(DFVarsView.holderBox.selected == -1,
+    "the widget kept a highlight on a row the verbs will not act on")
+
+-- ...and when she logs back IN she must not be silently re-selected. This is
+-- what the rebuild's cleanup buys that targetUser's own check does not: without
+-- it the remembered name simply waits, and a player reappearing in the list
+-- becomes the target of the next click without the admin ever choosing them.
+DFVarsView.holders.rows = {
+    { user = "Bob",   online = true },
+    { user = "Carol", holds = true, online = true },
+    { user = "Alice", holds = true, online = true },
+}
+DFVarsView.rebuild()
+check(DFVarsView.targetUser() == nil,
+    "A PLAYER WHO LEFT AND CAME BACK WAS SILENTLY RE-SELECTED. The admin "
+    .. "chose them before they logged off; the next click would act on them "
+    .. "again with nobody having pointed at them: "
+    .. tostring(DFVarsView.targetUser()))
+check(DFVarsView.holderBox.selected == -1, "the stale highlight came back too")
+
+-- The other half of the pair. targetUser confirms against the CURRENT rows
+-- rather than trusting the remembered name, which is what covers a change to
+-- the list that has not been through a rebuild - the state spliceRecord itself
+-- passes through on its way in.
+DFVarsView.holders.rows = { { user = "Dave", online = true } }
+DFVarsView.selectedUser = "Dave"
+check(DFVarsView.targetUser() == "Dave", "a present player was not the target")
+DFVarsView.holders.rows = { { user = "Erin", online = true } }
+check(DFVarsView.targetUser() == nil,
+    "targetUser trusted the remembered name against a list that no longer "
+    .. "holds it, without waiting for a rebuild to notice")
+DFVarsView.selectedUser = nil
+
+-- Selecting a different var drops the player selection with it.
+DFVarsView.selectedUser = "Alice"
+DFVarsView.defs = { { name = "Anomaly", kind = "char" }, { name = "Loot", kind = "string" } }
+DFVarsView.receive("AdminVarHolders",
+    { name = "Anomaly", kind = "char", rows = { { user = "Alice", holds = true } }, total = 1 })
+check(DFVarsView.targetUser() == "Alice", "the target was dropped by its own var's reply")
+
+-- ---- By name splices a player in ----------------------------------------
+-- The escape hatch has to make ALL FOUR verbs reachable, not two. Firing one
+-- verb by name left a holder past the row bound grantable forever and never
+-- revocable.
+
+DFVarsView.holders = { name = "Anomaly", kind = "char", rows = {
+    { user = "Alice", holds = true, online = true },
+} }
+DFVarsView.selectedUser = nil
+
+check(DFVarsView.spliceRecord{ username = "Offline",
+        chars = { { key = "anomaly", name = "Anomaly" } }, numbers = {} } == true,
+    "a fetched record was not spliced into the list")
+check(#DFVarsView.holders.rows == 2, "the fetched player did not become a row")
+check(DFVarsView.targetUser() == "Offline",
+    "the fetched player was not selected, so the verbs still have no target "
+    .. "for them - which is the whole point of fetching them")
+local spliced
+for _, r in ipairs(DFVarsView.holders.rows) do if r.user == "Offline" then spliced = r end end
+check(spliced.holds == true, "the record's marker did not reach the row")
+check(spliced.pinned == true, "the fetched row was not marked as fetched")
+
+
+-- A player who IS already listed must be selected, not duplicated: two rows for
+-- one player is two answers to one question.
+check(DFVarsView.spliceRecord{ username = "Alice", chars = {}, numbers = {} } == true,
+    "splicing an already-listed player failed")
+check(#DFVarsView.holders.rows == 2, "an already-listed player was duplicated")
+check(DFVarsView.targetUser() == "Alice", "the already-listed player was not selected")
+
+-- A record carries EVERYTHING that player holds. Only the selected var's entry
+-- may reach the row, or the panel reports somebody as holding the var on screen
+-- because they hold a different one entirely.
+DFVarsView.spliceRecord{ username = "Elsewhere",
+    chars = { { key = "other", name = "Other" } }, numbers = {} }
+local wrong
+for _, r in ipairs(DFVarsView.holders.rows) do
+    if r.user == "Elsewhere" then wrong = r end
+end
+check(wrong ~= nil, "the record was not spliced at all")
+check(wrong.holds == nil,
+    "A PLAYER WHO HOLDS A DIFFERENT MARKER WAS SHOWN AS HOLDING THIS ONE. The "
+    .. "record lists everything they have; only the selected var's entry "
+    .. "belongs in a row under the selected var's heading.")
+
+
+-- The row is derived for the SELECTED var only. A record carries everything
+-- that player holds; a row that showed another var's value would be a number
+-- under the wrong heading.
+DFVarsView.holders = { name = "Loot", kind = "string", rows = {} }
+DFVarsView.spliceRecord{ username = "Zed", chars = {},
+    numbers = { { key = "loot", name = "Loot", value = 0 },
+                { key = "other", name = "Other", value = 99 } } }
+check(DFVarsView.holders.rows[1].value == 0,
+    "the spliced row took the wrong var's value: "
+    .. tostring(DFVarsView.holders.rows[1].value))
+check(DFVarsView.spliceRecord(nil) == false, "spliceRecord faulted on nothing")
 
 print(string.format("DFVarsView: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -51,6 +51,20 @@
 -- taken here: a new sandbox option is a compatibility decision and this slice
 -- did not have approval for one. Filed in TODO.md so the choice stays open.
 --
+-- WHERE THE GATE IS CHECKED, which is a separate question and was got wrong
+-- first time round. Every verb below has ONE fixed capability, so every one of
+-- them DECLARES it and the dispatcher enforces it (DFServer.lua:87-91). An
+-- earlier draft checked them all inside the handlers on the theory that "the
+-- gates differ per verb" - which is true and irrelevant, because handlers
+-- register individually and each carries its own `capability`. That draft cost
+-- three things: the dispatcher's refusal reply, its distinct "(refused: missing
+-- capability)" audit line, and - worst - a refused attempt being logged by
+-- DFServer.lua:92 as an ordinary ACCEPTED command.
+--
+-- The three READS are the exception and still gate inside, because their gate is
+-- "any capability at all" and `handler.capability` takes one name. They audit
+-- their own refusals for the reason just given.
+--
 -- ---------------------------------------------------------------------------
 -- TARGETS ARE USERNAMES, AND A USERNAME OFF THE WIRE IS A TABLE KEY.
 --
@@ -221,38 +235,35 @@ Events.OnServerStarted.Add(function()
         return
     end
 
-    -- Every handler below registers with NO dispatcher capability and gates
-    -- itself, because two of the three gates differ from each other and the
-    -- dispatcher takes one name. See WHO MAY, and TODO.md for the cost.
-    local function staffOnly(run)
+    -- The reads. "Any capability at all" is not a capability NAME, so these
+    -- cannot declare one and are the only handlers here that decide their own
+    -- answer. They audit the refusal themselves because the dispatcher records a
+    -- command with no declared capability as accepted (DFServer.lua:92), so a
+    -- refusal reached this way would read in the log as a success.
+    local function staffOnly(action, run)
         return function(player, args)
             if not DFCore.hasAnyCapability(player) then
+                DFCore.audit(action, player, "REFUSED: not staff")
                 return { ok = false, reason = "not permitted" }
             end
             return run(player, args or {})
         end
     end
 
-    local function gated(capability, run)
-        return function(player, args)
-            if not RDAccess.roleHas(player, capability) then
-                return { ok = false, reason = "not permitted" }
-            end
-            return run(player, args or {})
-        end
-    end
-
-    -- A per-player verb, minus the four lines every one of them repeats: the
-    -- capability, the username bound, the audit line, and the refreshed record
-    -- that goes back so the panel never has to guess what it did.
+    -- A per-player verb, minus the three lines every one of them repeats: the
+    -- username bound, the audit line, and the refreshed record that goes back so
+    -- the panel never has to guess what it did. The capability is DECLARED, not
+    -- repeated here - see WHERE THE GATE IS CHECKED.
     --
     -- `run` returns (true, message) or (nil, reason). Both halves are used -
     -- the message reaches the admin's feedback line and the reason reaches the
     -- audit log - so neither verb has to build a reply table of its own.
     local function playerVerb(action, run)
         DFServer.registerHandler{
-            action = action,
-            run = gated(CAP_PLAYER, function(player, args)
+            action     = action,
+            capability = CAP_PLAYER,
+            run = function(player, args)
+                args = args or {}
                 local user = args.user
                 if not DFVars_Server.validUser(user) then
                     return { ok = false, reason = "bad username" }
@@ -267,13 +278,13 @@ Events.OnServerStarted.Add(function()
                 pushPlayer(player, user)
                 if not ok then return { ok = false, reason = tostring(detail) } end
                 return { ok = true, message = detail }
-            end),
+            end,
         }
     end
 
     DFServer.registerHandler{
         action = "varsList",
-        run = staffOnly(function(player)
+        run = staffOnly("varsList", function(player)
             pushSummary(player)
             return { ok = true }
         end),
@@ -281,7 +292,7 @@ Events.OnServerStarted.Add(function()
 
     DFServer.registerHandler{
         action = "varHolders",
-        run = staffOnly(function(player, args)
+        run = staffOnly("varHolders", function(player, args)
             local payload, why = DFVars_Server.holdersOf(args.name)
             if not payload then return { ok = false, reason = tostring(why) } end
             sendServerCommand(player, DFCore.MODULE, "AdminVarHolders", payload)
@@ -291,7 +302,7 @@ Events.OnServerStarted.Add(function()
 
     DFServer.registerHandler{
         action = "varsOfPlayer",
-        run = staffOnly(function(player, args)
+        run = staffOnly("varsOfPlayer", function(player, args)
             if not DFVars_Server.validUser(args.user) then
                 return { ok = false, reason = "bad username" }
             end
@@ -301,8 +312,10 @@ Events.OnServerStarted.Add(function()
     }
 
     DFServer.registerHandler{
-        action = "varDefine",
-        run = gated(CAP_SCHEMA, function(player, args)
+        action     = "varDefine",
+        capability = CAP_SCHEMA,
+        run = function(player, args)
+            args = args or {}
             -- args.def goes STRAIGHT to RDVarDefs.validate, which refuses an
             -- unknown field, a bad kind, a stringVar with no resetOnDeath and
             -- a revoker outside the closed set. Re-checking any of that here
@@ -315,12 +328,14 @@ Events.OnServerStarted.Add(function()
             DFCore.audit("varDefine", player, "var=" .. def.name .. " kind=" .. def.kind)
             RDNet.sendStaff(DFCore.MODULE, "AdminVarsStale", {})
             return { ok = true, message = "Defined " .. def.name .. "." }
-        end),
+        end,
     }
 
     DFServer.registerHandler{
-        action = "varUndefine",
-        run = gated(CAP_SCHEMA, function(player, args)
+        action     = "varUndefine",
+        capability = CAP_SCHEMA,
+        run = function(player, args)
+            args = args or {}
             -- The purge is the point, not a side effect - RDVars' own comment
             -- explains why leaving orphaned state behind is worse - so the
             -- count comes back and goes in the audit line. An admin deleting a
@@ -336,7 +351,7 @@ Events.OnServerStarted.Add(function()
             return { ok = true, message = string.format(
                 "Removed %s, and cleared it from %d player(s).",
                 tostring(args.name), touched or 0) }
-        end),
+        end,
     }
 
     playerVerb("varGrant", function(player, args, user)

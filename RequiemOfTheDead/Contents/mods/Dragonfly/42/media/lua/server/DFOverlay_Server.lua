@@ -116,6 +116,14 @@ function DFOverlay_Server.set(key, entries, who)
     if not DFOverlay.validKey(key) then
         return false, "bad page key"
     end
+    -- ABSENT IS NOT EMPTY, and here the difference is destructive. sanitize()
+    -- answers `{}` for anything that is not a list, and `{}` means RESET - so a
+    -- payload with no `entries` field at all, or one whose entries arrived as a
+    -- string, would silently wipe the page's layout for every admin. The editor
+    -- sends `{}` deliberately when it means reset; nothing else may.
+    if type(entries) ~= "table" then
+        return false, "entries must be a list"
+    end
     local clean, dropped = DFOverlay.sanitize(entries)
     local p = pages()
     if #clean == 0 then
@@ -184,6 +192,11 @@ Events.OnServerStarted.Add(function()
         -- the absence of a caller.
         run = function(player, args)
             if not DFCore.hasAnyCapability(player) then
+                -- Audited HERE because the dispatcher cannot. It logs a command
+                -- with no declared capability as an ordinary accepted one
+                -- (DFServer.lua:92), so a refusal decided inside the handler
+                -- would otherwise appear in the log as a success.
+                DFCore.audit("layoutGet", player, "REFUSED: not staff")
                 return { ok = false, reason = "not permitted" }
             end
             local key = tostring(args.key or "")
@@ -207,6 +220,11 @@ Events.OnServerStarted.Add(function()
             -- here; it IS the correct gate, because the answer depends on the
             -- payload (CLAUDE.md sect. 13).
             if not RDAccess.roleHas(player, capabilityFor(key)) then
+                -- Audited here for the same reason as layoutGet: this is the one
+                -- handler in the suite whose gate genuinely cannot be declared,
+                -- because the answer depends on the payload.
+                DFCore.audit("layoutSet", player,
+                    "REFUSED: missing " .. capabilityFor(key) .. " for " .. key)
                 return { ok = false, reason = "missing capability for " .. key }
             end
 
@@ -245,12 +263,14 @@ Events.OnServerStarted.Add(function()
     -- by accident.
     DFServer.registerHandler{
         action = "layoutRecover",
+        -- DECLARED, unlike its two neighbours, because this gate does not depend
+        -- on anything in the payload: recovering replaces every page's layout at
+        -- once, so it is the stricter of the two capabilities regardless of what
+        -- was sent. Declaring it puts the check back where the dispatcher can
+        -- refuse it, log the refusal as a refusal, and answer the caller - none
+        -- of which a check inside the body gets.
+        capability = "ChangeAndReloadServerOptions",
         run = function(player, args)
-            -- Recovering replaces every page's layout at once, so this is gated on
-            -- the stricter of the two capabilities rather than on either.
-            if not RDAccess.roleHas(player, "ChangeAndReloadServerOptions") then
-                return { ok = false, reason = "not permitted" }
-            end
             local s = ensure()
             if not s:report().heldDefs then
                 return { ok = false, reason = "nothing is held" }
@@ -258,6 +278,13 @@ Events.OnServerStarted.Add(function()
             local ok, why
             if args.take then ok, why = s:import("defs") else ok, why = s:discard("defs") end
             if not ok then return { ok = false, reason = tostring(why) } end
+            -- FLUSHED, not left to the sweep. Neither exit writes on its own -
+            -- discard() only releases the latch and marks the document pending
+            -- (RDConfigStore's own comment: "the next write will overwrite it")
+            -- - so a hard kill before the next save or sweep leaves the old file
+            -- untouched and the hold comes straight back on the next boot. The
+            -- admin was told it was dealt with, so it has to be dealt with.
+            s:flush()
             DFCore.audit("layoutRecover", player, args.take and "imported" or "discarded")
             -- Everyone's copy of whatever page they are on is now wrong. There is
             -- no per-page broadcast that fixes that, so tell the panels to re-ask.

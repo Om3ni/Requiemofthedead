@@ -29,6 +29,20 @@
 -- that begins on "- choose -" and Create refuses until it moves.
 --
 -- ---------------------------------------------------------------------------
+-- THE SELECTED PLAYER IS A USERNAME, NEVER A ROW INDEX, and that is a bug fix
+-- rather than a preference. Every action here is followed by a server push, the
+-- push rebuilds the list, and DFKit.refillList calls the widget's clear() -
+-- which sets `selected = 1` (ISScrollingListBox.lua:340-345). Reading the verb's
+-- target off the widget therefore meant: act on Alice, list refreshes,
+-- selection silently lands on whoever is first, click again and modify THEM. On
+-- a surface whose whole job is granting and revoking, that is the worst
+-- available failure and it leaves no trace on screen.
+--
+-- So `V.selectedUser` is the truth, the widget index is re-derived from it after
+-- every rebuild, and a selection whose player has left the list becomes NO
+-- selection rather than row one. The verbs refuse rather than guess.
+--
+-- ---------------------------------------------------------------------------
 -- THE NAME IS VALIDATED BY THE SERVER'S OWN FUNCTION. RDVarDefs is shared, so
 -- the form calls RDVarDefs.normalizeName - the same code the store will run -
 -- rather than carrying a second pattern that agrees with it today. This is not
@@ -52,9 +66,11 @@ local FONT    = DFKit.font.small
 local NAV_MIN = 180
 
 V.defs     = {}      -- summary rows from the server
-V.selected = nil     -- var NAME
-V.holders  = nil     -- { name, kind, rows, total }
-V.status   = nil
+V.selected     = nil   -- var NAME
+V.selectedUser = nil   -- holder USERNAME; see the header - never an index
+V.holders      = nil   -- { name, kind, rows, total }
+V.status       = nil
+V.pending      = nil   -- username fetched by name, waiting for its record
 
 local function selectedDef()
     for _, d in ipairs(V.defs) do if d.name == V.selected then return d end end
@@ -165,9 +181,20 @@ function DFVarsView.receive(command, args)
         end
         return true
     elseif command == "AdminVarsPlayer" then
-        -- A per-player push follows every grant/revoke/set, including a refused
-        -- one. This panel is organised by VAR rather than by player, so the
-        -- useful part is simply that something changed for somebody.
+        -- Two callers, one reply. A per-player push follows every grant, revoke,
+        -- set and reset - including a refused one - and this panel is organised
+        -- by VAR, so for those the useful part is simply that something changed
+        -- and the holder list should be re-read.
+        --
+        -- The other caller is "By name": a player who is offline AND past the
+        -- row bound appears in no list, so the panel fetches their record and
+        -- SPLICES them in. That is what makes every verb reachable for them
+        -- rather than only the two an ask-and-send button could perform.
+        if args and args.username and args.username == V.pending then
+            V.pending = nil
+            DFVarsView.spliceRecord(args)
+            return true
+        end
         if V.selected then send("varHolders", { name = V.selected }) end
         return true
     elseif command == "AdminVarsStale" then
@@ -175,6 +202,38 @@ function DFVarsView.receive(command, args)
         return true
     end
     return false
+end
+
+-- One player's record -> a row in the current var's holder list, selected.
+--
+-- PURE apart from the two module fields it writes, so a fixture can drive it.
+-- The row is derived for the SELECTED var only: the record carries everything
+-- that player holds, and the list is about one var.
+function DFVarsView.spliceRecord(record)
+    if not record or not record.username or not V.holders then return false end
+
+    local row = { user = record.username, pinned = true }
+    for _, c in ipairs(record.chars or {}) do
+        if c.name == V.holders.name then row.holds = true end
+    end
+    for _, n in ipairs(record.numbers or {}) do
+        if n.name == V.holders.name then row.value = n.value end
+    end
+
+    -- Already listed - online, or a holder inside the bound. Select, do not
+    -- duplicate: two rows for one player is two answers to one question.
+    for _, existing in ipairs(V.holders.rows) do
+        if existing.user == row.user then
+            V.selectedUser = row.user
+            DFVarsView.rebuild()
+            return true
+        end
+    end
+
+    table.insert(V.holders.rows, row)
+    V.selectedUser = row.user
+    DFVarsView.rebuild()
+    return true
 end
 
 Events.OnServerCommand.Add(function(module, command, args)
@@ -308,8 +367,11 @@ local function openDefine()
     local w, h = 460, 420
     local win = Define:new(getCore():getScreenWidth() / 2 - w / 2,
                            getCore():getScreenHeight() / 2 - h / 2, w, h)
-    -- No kind chosen and no name: every field the admin has to decide starts
-    -- undecided, including the one the form will refuse to submit without.
+    -- Kind DOES start on Marker, and that is not a hidden default: it is a
+    -- two-way visible choice whose position is on screen and whose two answers
+    -- shape the rest of the form, so there is nothing for a reader to fail to
+    -- notice. resetOnDeath is the opposite case - a third state that means "not
+    -- answered", which the form will refuse to submit - and name starts empty.
     win.model = { name = "", kind = RDVarDefs.CHAR, death = false,
                   expires = 0, kit = "", resetOnDeath = "" }
     win:setTitle("Define a var")
@@ -349,10 +411,14 @@ function DefList:onMouseDown(x, y)
     if idx < 1 or idx > #self.items then return end
     local d = self.items[idx].item
     if not d then return end
-    self.selected = idx
-    V.selected = d.name
-    V.holders  = nil
-    V.status   = nil
+    self.selected  = idx
+    V.selected     = d.name
+    V.holders      = nil
+    -- A different var means a different list; carrying the player selection
+    -- across would leave a verb pointed at somebody the new list may not hold.
+    V.selectedUser = nil
+    V.pending      = nil
+    V.status       = nil
     send("varHolders", { name = d.name })
     DFVarsView.rebuild()
 end
@@ -372,7 +438,10 @@ function HolderList:doDrawItem(y, item, alt)
     -- deliberately holds both, so which is which has to be visible without
     -- spending a column on it.
     local c = row.online and DFKit.col.text or DFKit.col.textDim
-    self:drawText(DFKit.fitText(row.user, FONT, self.width - 90), 6, y + 3,
+    -- A row fetched by name is marked, because it is the one row in the list
+    -- that is not there because the server volunteered it.
+    local label = row.pinned and (row.user .. "  *") or row.user
+    self:drawText(DFKit.fitText(label, FONT, self.width - 90), 6, y + 3,
                   c.r, c.g, c.b, 1, FONT)
     local kind = V.holders and V.holders.kind
     local cell = DFVarsView.cellFor(kind, row)
@@ -384,13 +453,29 @@ end
 
 function HolderList:onMouseDown(x, y)
     local idx = self:rowAt(x, y)
-    if idx >= 1 and idx <= #self.items then self.selected = idx end
+    if idx < 1 or idx > #self.items then return end
+    self.selected = idx
+    -- The USERNAME is what is remembered. See the header: the index does not
+    -- survive the next refill.
+    local row = self.items[idx].item
+    V.selectedUser = row and row.user or nil
+    V.status = nil
 end
 
-local function selectedUser()
-    local box = V.holderBox
-    local item = box and box.items[box.selected]
-    return item and item.item and item.item.user or nil
+-- The selected player, or nil. Answers from the remembered USERNAME and
+-- confirms it is still in the list, so a player who dropped out of it between
+-- refreshes yields no target rather than the wrong one.
+--
+-- A MODULE FUNCTION rather than a file-local, because this is the answer to
+-- "who is about to be modified" and the RPNecroTab lesson says a file-local
+-- inside a UI module is one no fixture will ever load (TODO.md). Getting this
+-- wrong modifies the wrong player, which is the defect it exists to prevent.
+function DFVarsView.targetUser()
+    if not V.selectedUser or not V.holders then return nil end
+    for _, row in ipairs(V.holders.rows or {}) do
+        if row.user == V.selectedUser then return row.user end
+    end
+    return nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -415,7 +500,7 @@ local function needSelection()
 end
 
 local function needUser()
-    local user = selectedUser()
+    local user = DFVarsView.targetUser()
     if not user then V.status = "Select a player row first."; return nil end
     return user
 end
@@ -438,6 +523,24 @@ function DFVarsView.rebuild()
             i.height = DFKit.rowHeight()
         end
     end)
+
+    -- Put the widget back where the USERNAME says it is. refillList calls
+    -- clear(), which sets selected = 1 (ISScrollingListBox.lua:340-345); left
+    -- alone, the panel would highlight - and act on - whoever happens to be
+    -- first after every single action.
+    local box = V.holderBox
+    box.selected = -1
+    if V.selectedUser then
+        for i, item in ipairs(box.items) do
+            if item.item and item.item.user == V.selectedUser then
+                box.selected = i
+                break
+            end
+        end
+        -- Gone from the list entirely: forget it rather than letting a stale
+        -- name sit behind a highlight nobody can see.
+        if box.selected == -1 then V.selectedUser = nil end
+    end
 end
 
 function DFVarsView.attach(panel)
@@ -484,28 +587,25 @@ function DFVarsView.attach(panel)
 
     -- The escape hatch for anybody the list does not show: an offline holder
     -- past the row bound, or somebody who has never held this var and is not
-    -- online right now. It performs whichever verb the SELECTED VAR takes, so
-    -- there is one button rather than a by-name twin of every verb.
+    -- online right now.
+    --
+    -- It FETCHES rather than acting. An earlier version performed one verb -
+    -- Grant for a marker, Set for a counter - which meant the two REMOVING
+    -- verbs had no by-name route at all, so a holder past the row bound could
+    -- be granted things forever and never revoked. Bringing the player into the
+    -- list instead makes all four verbs reach them, and it reuses the
+    -- varsOfPlayer read that already existed.
     V.byNameBtn = DFKit.button(panel, 0, 0, 84, "By name", panel, function()
         if needSelection() then return end
-        if isMarker(selectedDef()) then
-            askUser("Grant '" .. V.selected .. "' to which username?", function(user)
-                send("varGrant", { user = user, name = V.selected })
-            end)
-        else
-            askUser("Set '" .. V.selected .. "' - type  username=number",
-                function(text)
-                    local user, value = text:match("^%s*(.-)%s*=%s*(.-)%s*$")
-                    local n = tonumber(value)
-                    if not user or user == "" or not n then
-                        V.status = "Type it as  username=number, for example  Kriegan=5"
-                        return
-                    end
-                    send("varSet", { user = user, name = V.selected, value = n })
-                end)
-        end
-    end, nil, { tooltip = "Act on somebody the list does not show - an offline "
-                       .. "player, or one who has never held this var." })
+        askUser("Look up which username?", function(user)
+            V.pending = user
+            V.status  = "Looking up " .. user .. "..."
+            send("varsOfPlayer", { user = user })
+        end)
+    end, nil, { tooltip = "Bring somebody into the list who is not in it - an "
+                       .. "offline player, or one who has never held this var. "
+                       .. "They can then be granted, revoked, set or reset like "
+                       .. "any other row." })
 
     V.revokeBtn = DFKit.button(panel, 0, 0, 76, "Revoke", panel, function()
         if needSelection() then return end

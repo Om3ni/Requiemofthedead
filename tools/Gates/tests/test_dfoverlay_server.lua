@@ -1,17 +1,19 @@
 -- DFOverlay_Server fixture - who may rearrange what, and where it is kept.
 --
 -- WHAT IS AT RISK. This is a write endpoint on a live server, so the first
--- question is authority and the gate here is UNUSUAL: it is per payload, not
--- per command. DFServer's dispatcher takes one capability per action, and one
--- capability is the wrong shape for this action - the sandbox pages are gated
--- on Capability.SandboxOptions and the server page on
--- ChangeAndReloadServerOptions, and a role can hold either without the other.
--- So the check moved inside the handler, which means the DISPATCHER IS NOT
--- CARRYING IT and these tests are the only thing standing between a
--- sandbox-only moderator and the server page's layout. They are written as
--- crossed pairs for that reason: each role is asserted to be allowed its own
--- page AND refused the other, because a gate that says yes to everyone passes
--- any test that only checks the yes.
+-- question is authority, and layoutSet has the only gate in the suite that
+-- genuinely CANNOT be declared: it is per payload, not per command. The sandbox
+-- pages are gated on Capability.SandboxOptions and the server page on
+-- ChangeAndReloadServerOptions, a role can hold either without the other, and
+-- DFServer's dispatcher takes one capability name per action. So layoutSet
+-- decides for itself, THE DISPATCHER IS NOT CARRYING IT, and these tests are the
+-- only thing standing between a sandbox-only moderator and the server page's
+-- layout. Written as crossed pairs for that reason: each role is asserted to be
+-- allowed its own page AND refused the other, because a gate that says yes to
+-- everyone passes any test that only checks the yes.
+--
+-- layoutRecover is the contrast and is checked below: one fixed capability, so
+-- it declares it and the dispatcher enforces it.
 --
 -- The second risk is the store. An empty layout must REMOVE the page rather
 -- than store an empty list - otherwise there are two ways to say "no layout",
@@ -45,7 +47,7 @@ RDShared = { DIR = "RFTD/", EXT_DOC = ".json.txt", nowMs = function() return clo
 -- touchDefs (an unmirrored layout is lost on a hard kill), and that `held` is
 -- read through report() rather than off the store's internals.
 local touched, heldDefs = 0, nil
-local imported, discarded = 0, 0
+local imported, discarded, flushed = 0, 0, 0
 local fakeStore = {
     _defs = {},
     boot      = function() end,
@@ -59,6 +61,7 @@ local fakeStore = {
     report    = function() return { heldDefs = heldDefs } end,
     import    = function() imported = imported + 1; heldDefs = nil; return true end,
     discard   = function() discarded = discarded + 1; heldDefs = nil; return true end,
+    flush     = function() flushed = flushed + 1; return true end,
 }
 local storeSpec
 RDConfigStore = { new = function(spec) storeSpec = spec; return fakeStore end }
@@ -151,6 +154,20 @@ check(DFOverlay_Server.get("RFTDDirge") == nil,
     .. "say 'no layout' and the document grows a key per change of mind")
 check(touched == 2, "clearing a layout was not mirrored")
 
+-- ABSENT IS NOT EMPTY. sanitize answers {} for anything that is not a list, and
+-- {} means RESET - so a payload with no entries field would silently wipe the
+-- page's layout for every admin.
+DFOverlay_Server.set("RFTDDirge", { "A", "B" }, "K")
+check(DFOverlay_Server.set("RFTDDirge", nil, "K") == false,
+    "a MISSING entries field was read as 'clear this page'")
+check(DFOverlay_Server.set("RFTDDirge", "not a list", "K") == false,
+    "a non-list entries field was read as 'clear this page'")
+check(DFOverlay_Server.get("RFTDDirge") ~= nil,
+    "the malformed payload wiped the stored layout anyway")
+check(handlers.layoutSet.run(sandboxOnly, { key = "RFTDDirge" }).ok == false,
+    "a layoutSet with no entries field was accepted at the wire")
+DFOverlay_Server.set("RFTDDirge", {}, "K")
+
 check(DFOverlay_Server.set("has space", { "A" }, "K") == false, "a bad key was stored")
 check(DFOverlay_Server.get("has space") == nil, "a bad key was read back")
 
@@ -196,11 +213,28 @@ check(handlers.layoutSet.capability == nil,
     "layoutSet grew a dispatcher capability; one name cannot express a gate "
     .. "that differs per page")
 check(handlers.layoutGet.capability == nil, "layoutGet grew a dispatcher capability")
+-- ...but layoutRecover's gate does NOT depend on the payload, so it declares
+-- one. Checking inside the body instead would lose the dispatcher's refusal
+-- reply and get refused attempts logged as accepted commands.
+check(handlers.layoutRecover.capability == "ChangeAndReloadServerOptions",
+    "layoutRecover does not declare its capability: "
+    .. tostring(handlers.layoutRecover.capability))
 
 -- ---- reads ---------------------------------------------------------------
 
+audits = {}
 check(handlers.layoutGet.run(nobody, { key = "RFTDDirge" }).ok == false,
     "a non-staff caller could make the server do work")
+check(#audits == 1 and audits[1]:find("REFUSED", 1, true) ~= nil,
+    "layoutGet declares no capability, so the dispatcher logs its attempts as "
+    .. "accepted; a refusal it decides itself has to audit itself or it is "
+    .. "invisible: " .. table.concat(audits, " | "))
+
+audits = {}
+handlers.layoutSet.run(sandboxOnly, { key = "__server", entries = { "A" } })
+check(#audits == 1 and audits[1]:find("REFUSED", 1, true) ~= nil,
+    "the same for layoutSet, whose gate genuinely cannot be declared: "
+    .. table.concat(audits, " | "))
 
 directSends = {}
 check(handlers.layoutGet.run(sandboxOnly, { key = "RFTDDirge" }).ok == true,
@@ -249,10 +283,12 @@ check(directSends[1].args.held == "foreign",
     "a held store looks identical to a healthy one from the panel - the admin "
     .. "sees reflected order with a good layout sitting unread on disk")
 
-check(handlers.layoutRecover.run(sandboxOnly, { take = true }).ok == false,
+-- Applied the way DFServer applies it; the dispatcher's own enforcement is
+-- pinned in test_dfserver.lua.
+check(RDAccess.roleHas(sandboxOnly, handlers.layoutRecover.capability) == false,
     "recover replaces EVERY page's layout, so it must want the stricter "
     .. "capability, not either one")
-check(imported == 0, "the refused recover imported anyway")
+check(imported == 0, "nothing should have imported yet")
 
 staffSends = {}
 check(handlers.layoutRecover.run(serverOnly, { take = true }).ok == true,
@@ -266,6 +302,12 @@ check(#staffSends == 1 and staffSends[1].command == "AdminLayoutStale",
 -- say that nothing reached disk. Reported rather than refused: refusing would
 -- lock an admin out of arranging anything until they resolve a hold that has
 -- nothing to do with the page in front of them.
+check(flushed > 0,
+    "recover did not FLUSH. discard() only releases the latch and marks the "
+    .. "document pending, so a hard kill before the next save or sweep leaves "
+    .. "the old file on disk and the hold returns on the next boot - after the "
+    .. "admin was told it had been dealt with.")
+
 heldDefs = "corrupt"
 local heldSave = handlers.layoutSet.run(sandboxOnly,
     { key = "RFTDDirge", entries = { "A" } })

@@ -202,6 +202,25 @@ check(tostring(select(2, RDVars.add("Kriegan", "AnomalyLoot", 0 / 0))):find("NaN
 check(tostring(select(2, RDVars.set("Kriegan", "AnomalyLoot", nil))):find("nil", 1, true),
     "a nil value gave no usable reason")
 
+-- INFINITY, which is the one that DISAPPEARS rather than misbehaving. Its type
+-- is number and it compares equal to itself, so both earlier guards let it
+-- through - and RDJson has no representation for it, encoding it as null which
+-- decodes back to nil (verified against the real encoder). The counter then
+-- reads normally until the mirror is replayed after a crash, and is gone.
+check(RDVars.set("Kriegan", "AnomalyLoot", math.huge) == nil,
+    "POSITIVE INFINITY was accepted into a counter. It survives in ModData and "
+    .. "vanishes through the JSON mirror, so the value is present until the "
+    .. "next restart and absent afterwards.")
+check(RDVars.set("Kriegan", "AnomalyLoot", -math.huge) == nil,
+    "negative infinity was accepted into a counter")
+check(RDVars.add("Kriegan", "AnomalyLoot", math.huge) == nil,
+    "add() accepted infinity where set() refused it")
+check(tostring(select(2, RDVars.set("Kriegan", "AnomalyLoot", math.huge))):find("finite", 1, true),
+    "infinity was refused with the wrong reason")
+check(RDVars.set("Kriegan", "AnomalyLoot", 2^40) == 2^40,
+    "a merely LARGE finite number was refused - the bound is finiteness, not size")
+RDVars.set("Kriegan", "AnomalyLoot", 5)
+
 -- valuesOf: holders() for counters. Same admin question of the other kind.
 RDVars.set("Kriegan", "AnomalyLoot", 3)
 RDVars.set("Astrid",  "AnomalyLoot", 0)
