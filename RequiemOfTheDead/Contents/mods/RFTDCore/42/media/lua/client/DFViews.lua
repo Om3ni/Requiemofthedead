@@ -120,6 +120,29 @@ function DFViews:layoutStrip(x, y)
     return x
 end
 
+-- The standard host layout: claim a strip along the top, give the rest to
+-- whichever view is active.
+--
+-- PROMOTED 2026-08-23 because it was written twice, identically, and
+-- check-helpers said so - HBHusbandryTab and the Admin tab had the same
+-- thirteen lines. That is not a coincidence to be tolerated: it is what hosting
+-- a DFViews strip IS, and the two copies would drift on the strip's height the
+-- first time anyone adjusted one.
+--
+-- The strip is claimed FIRST, above anything either view owns, so it stays put
+-- while the body underneath changes completely. A host with its own chrome to
+-- place can still do the two calls by hand; this is the common case, not a
+-- mandate.
+function DFViews:layoutHost(panel, x, y, w, h)
+    local m = DFKit.metrics
+    local R = DFKit.layout(panel, x, y, w, h)
+    local strip = R:header(m.btnH + m.gap)
+    self:layoutStrip(strip.x, strip.y)
+    local body = R:rest()
+    self:layoutActive(panel, body.x, body.y, body.w, body.h)
+    return body
+end
+
 -- Switch. Unknown ids fall back to the landing view rather than leaving the
 -- panel showing nothing, which is what a stale saved id would otherwise do.
 function DFViews:set(id)

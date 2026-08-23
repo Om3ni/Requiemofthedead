@@ -36,6 +36,25 @@ function RDAccess.roleHas(player, capability)
     return role ~= nil and role:hasCapability(cap) == true
 end
 
+-- Holds ANY ONE of a named list. Distinct from hasAnyCapability below, which
+-- asks "is this person staff at all" - this asks "may they do any of these
+-- specific things", which is what a surface hosting two differently-gated
+-- sub-views needs: the Admin tab's Sandbox half wants Capability.SandboxOptions
+-- and its Server half wants ChangeAndReloadServerOptions, and a role can hold
+-- either without the other.
+--
+-- A single capability is accepted too, so a caller can pass whatever its spec
+-- happens to carry without branching first.
+function RDAccess.roleHasAny(player, capabilities)
+    if type(capabilities) ~= "table" then
+        return RDAccess.roleHas(player, capabilities)
+    end
+    for i = 1, #capabilities do
+        if RDAccess.roleHas(player, capabilities[i]) then return true end
+    end
+    return false
+end
+
 -- True if the player's role grants at least one capability of any kind -
 -- they hold *some* staff privilege. For actions any staffer may legitimately
 -- trigger but no ordinary player should. Iterates the capability list; cheap,
