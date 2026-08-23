@@ -28,6 +28,15 @@ local function check(ok, message)
     else failed = failed + 1; realPrint("FAIL RDConfigStore: " .. message) end
 end
 
+-- pairs(), not next(). This fixture runs REAL Lua 5.1, where `next` exists, so
+-- using it here would work - but a fixture is where people go to read the
+-- idiom, and Kahlua registers no global `next` (CLAUDE.md sect. 3). Modelling
+-- the wrong shape in a test is how it ends up in a module.
+local function isEmpty(t)
+    for _ in pairs(t) do return false end
+    return true
+end
+
 -- ---- engine stubs -------------------------------------------------------
 
 function isServer() return true end
@@ -203,9 +212,9 @@ reset()
 fs[DEFS], fs[STATE] = defsOnDisk, stateOnDisk
 local s4 = newStore()                       -- no meta at all: fresh or wiped
 s4:boot()
-check(next(s4:defs()) == nil,
+check(isEmpty(s4:defs()),
     "a previous world's defs were loaded into a fresh world automatically")
-check(next(s4:state()) == nil,
+check(isEmpty(s4:state()),
     "a previous world's STATE was loaded automatically - players would get back "
     .. "one-time grants they had already consumed")
 check(logged("previous world"), "the refusal was not explained on the console")
@@ -316,7 +325,7 @@ fs[DEFS] = RDJson.encode{ format = 99, kind = "defs", key = "TEST",
 local s10 = newStore()
 s10:root().meta.defsMs = 1
 s10:boot()
-check(next(s10:defs()) == nil and logged("CRITICAL"),
+check(isEmpty(s10:defs()) and logged("CRITICAL"),
     "an unknown envelope format was loaded instead of refused")
 
 -- ---- the flush budget ----------------------------------------------------

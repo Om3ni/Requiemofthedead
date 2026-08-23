@@ -118,7 +118,7 @@ local function validateRevokers(revokers)
     if type(revokers) ~= "table" then
         return nil, "revokers must be a table"
     end
-    local out, count = {}, 0
+    local out = {}
     for k, v in pairs(revokers) do
         local want = RDVarDefs.REVOKERS[k]
         if not want then
@@ -139,13 +139,13 @@ local function validateRevokers(revokers)
             return nil, "revoker 'kit' cannot be empty"
         end
         -- death = false is not a revoker, it is the absence of one. Storing it
-        -- would make `next(revokers) == nil` - the permanence test - lie.
+        -- would leave a key behind, and isPermanent below answers by looking for
+        -- ANY key - so the var would read as revocable while nothing revokes it.
         if not (k == "death" and v == false) then
             out[k] = v
-            count = count + 1
         end
     end
-    return out, nil, count
+    return out
 end
 
 function RDVarDefs.validate(def)
@@ -203,9 +203,18 @@ end
 
 -- A char var with no revokers at all: it lasts until an admin removes it.
 -- False for a string var, which is never revoked in the first place.
+--
+-- pairs(), NOT next(). B42's Kahlua registers no global `next` - BaseLib exposes
+-- print/tostring/type/pairs/ipairs and the bytecode loader, and nothing more -
+-- so `next(t) == nil` throws "Object tried to call nil" on a live server. It
+-- passes every fixture, because tools\Gates\run-tests runs REAL Lua 5.1 where
+-- the global exists (CLAUDE.md sect. 3, and RDSelect.lua:76-79 says the same
+-- thing at length). This function was written with next() and shipped green.
 function RDVarDefs.isPermanent(def)
     if type(def) ~= "table" or def.kind ~= RDVarDefs.CHAR then return false end
-    return def.revokers == nil or next(def.revokers) == nil
+    if def.revokers == nil then return true end
+    for _ in pairs(def.revokers) do return false end
+    return true
 end
 
 function RDVarDefs.isChar(def)   return type(def) == "table" and def.kind == RDVarDefs.CHAR   end
