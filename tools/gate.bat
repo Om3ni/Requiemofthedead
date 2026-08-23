@@ -10,6 +10,11 @@ rem one that would have spoken.
 rem
 rem   tools\gate            run everything; non-zero exit if any gate failed
 rem
+rem check-kahlua joins directly after check-lua (2026-08-23): both answer "does
+rem this even work", both are cheap, and the Kahlua one exists because NO other
+rem gate can see its subject - check-lua is syntax only and run-tests runs real
+rem Lua 5.1, where the missing globals exist. See check-kahlua.py's header.
+rem
 rem COST ORDER, fast first, so a syntax error costs you a second rather than the
 rem two minutes run-tests takes to spawn its hundred-odd fixtures. Every gate
 rem still runs even after one fails - you want the whole picture in one pass,
@@ -31,6 +36,7 @@ set FAIL=0
 set FAILED=
 
 call :run "lua      " "%G%\check-lua.bat"
+call :run "kahlua   " "%G%\check-kahlua.bat"
 call :run "pcall    " "%G%\check-pcall.bat"
 call :run "helpers  " "%G%\check-helpers.bat"
 call :run "network  " "%G%\check-network.bat"
@@ -42,7 +48,7 @@ call "%G%\check-citations.bat"
 
 echo.
 if !FAIL!==0 (
-    echo GATE PASS - all five gates clean.
+    echo GATE PASS - all six gates clean.
     echo Not a runtime test. Boot Mosaic for anything on an event hook or a per-tick path.
 ) else (
     echo GATE FAIL -!FAILED!
