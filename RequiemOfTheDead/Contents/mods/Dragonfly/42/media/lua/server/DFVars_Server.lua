@@ -125,6 +125,31 @@ local function pushSummary(player)
     sendServerCommand(player, DFCore.MODULE, "AdminVars", { defs = DFVars_Server.summary() })
 end
 
+-- Everyone this var touches, in one message. Bounded, because it is the one
+-- read here whose size is set by how many people play on the server rather than
+-- by how many vars an admin defined - a marker granted to an event with two
+-- hundred attendees is a real payload. The overflow is COUNTED and sent, not
+-- silently cut: a list that says "200 of 340" is usable and a list that quietly
+-- stops at 200 is a lie about who holds what.
+local HOLDER_MAX = 200
+
+function DFVars_Server.holdersOf(name)
+    local def = RDVars.definition(name)
+    if not def then return nil, "no var named '" .. tostring(name) .. "'" end
+
+    local rows, total = {}, 0
+    if RDVarDefs.isChar(def) then
+        local users = RDVars.holders(def.name) or {}
+        total = #users
+        for i = 1, math.min(total, HOLDER_MAX) do rows[i] = { user = users[i] } end
+    else
+        local vals = RDVars.valuesOf(def.name) or {}
+        total = #vals
+        for i = 1, math.min(total, HOLDER_MAX) do rows[i] = vals[i] end
+    end
+    return { name = def.name, kind = def.kind, rows = rows, total = total }
+end
+
 local function pushPlayer(player, user)
     sendServerCommand(player, DFCore.MODULE, "AdminVarsPlayer", RDVars.ofPlayer(user))
 end
@@ -197,6 +222,16 @@ Events.OnServerStarted.Add(function()
         action = "varsList",
         run = staffOnly(function(player)
             pushSummary(player)
+            return { ok = true }
+        end),
+    }
+
+    DFServer.registerHandler{
+        action = "varHolders",
+        run = staffOnly(function(player, args)
+            local payload, why = DFVars_Server.holdersOf(args.name)
+            if not payload then return { ok = false, reason = tostring(why) } end
+            sendServerCommand(player, DFCore.MODULE, "AdminVarHolders", payload)
             return { ok = true }
         end),
     }

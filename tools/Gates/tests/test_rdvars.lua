@@ -202,6 +202,23 @@ check(tostring(select(2, RDVars.add("Kriegan", "AnomalyLoot", 0 / 0))):find("NaN
 check(tostring(select(2, RDVars.set("Kriegan", "AnomalyLoot", nil))):find("nil", 1, true),
     "a nil value gave no usable reason")
 
+-- valuesOf: holders() for counters. Same admin question of the other kind.
+RDVars.set("Kriegan", "AnomalyLoot", 3)
+RDVars.set("Astrid",  "AnomalyLoot", 0)
+local vals = RDVars.valuesOf("AnomalyLoot")
+check(#vals == 2, "valuesOf returned " .. #vals .. " rows, expected 2")
+check(vals[1].user == "Astrid" and vals[1].value == 0,
+    "valuesOf is not sorted by username, or it dropped a ZERO - zero is a value "
+    .. "somebody was set to, and only absent means untouched")
+check(vals[2].user == "Kriegan" and vals[2].value == 3, "valuesOf lost a value")
+RDVars.reset("Astrid", "AnomalyLoot")
+check(#RDVars.valuesOf("AnomalyLoot") == 1,
+    "a reset counter still appeared in valuesOf - reset means ABSENT")
+check(RDVars.valuesOf("Anomaly") == nil,
+    "valuesOf answered for a MARKER - asking a counter question of a marker is "
+    .. "a programming error, and holders() is the other half of the pair")
+check(RDVars.valuesOf("NoSuchVar") == nil, "valuesOf answered for an undefined var")
+
 -- ---- expiry --------------------------------------------------------------
 
 reset()

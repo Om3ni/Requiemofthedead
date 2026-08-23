@@ -340,6 +340,27 @@ function RDVars.reset(subject, name)
     return true
 end
 
+-- The counter counterpart of holders(): every username the counter has been
+-- touched for, with its value, sorted. Same admin question from the other side -
+-- "who has Anomaly?" and "where is everyone up to on AnomalyLoot?" are one
+-- question asked of the two kinds, and answering only the marker half would push
+-- the other into the caller, which would mean walking the store from outside it.
+--
+-- ABSENT PLAYERS ARE ABSENT. A username with no record does not appear with a
+-- zero, because zero is a value somebody was set to and absent is not.
+function RDVars.valuesOf(name)
+    local key, def = resolve(name, RDVarDefs.STRING)
+    if not key then return nil, def end
+    local out = {}
+    for user, r in pairs(state()) do
+        if r.numbers and r.numbers[key] ~= nil then
+            out[#out + 1] = { user = user, value = r.numbers[key] }
+        end
+    end
+    table.sort(out, function(a, b) return a.user < b.user end)
+    return out
+end
+
 -- ---------------------------------------------------------------------------
 -- Reading a whole player - the admin surface's one call
 -- ---------------------------------------------------------------------------

@@ -124,8 +124,9 @@ check(ok, "module loads: " .. tostring(err))
 check(started ~= nil, "registration was not deferred to OnServerStarted")
 check(handlers.varGrant == nil, "a handler registered at file scope")
 started()
-for _, a in ipairs({ "varsList", "varsOfPlayer", "varDefine", "varUndefine",
-                     "varGrant", "varRevoke", "varSet", "varReset" }) do
+for _, a in ipairs({ "varsList", "varsOfPlayer", "varHolders", "varDefine",
+                     "varUndefine", "varGrant", "varRevoke", "varSet",
+                     "varReset" }) do
     check(handlers[a] ~= nil, a .. " did not register")
     check(handlers[a].capability == nil,
         a .. " grew a dispatcher capability; the gates here differ per verb and "
@@ -306,6 +307,38 @@ check(directSends[1].args.username == "A", "the reply did not name its player")
 check(#directSends[1].args.chars == 1, "the player's markers did not come back")
 check(run("varsOfPlayer", moderator, { user = string.rep("u", 200) }).ok == false,
     "an unbounded username was read")
+
+-- varHolders: the one read whose size is set by how many people play here.
+directSends = {}
+check(run("varHolders", moderator, { name = "Wave" }).ok == true, "varHolders was refused")
+check(directSends[1].command == "AdminVarHolders", "the holders reply is wrong")
+check(#directSends[1].args.rows == 2, "the holder rows did not come back")
+check(directSends[1].args.total == 2, "the total was wrong")
+check(run("varHolders", nobody, { name = "Wave" }).ok == false,
+    "a non-staff caller read a holder list")
+check(run("varHolders", moderator, { name = "NoSuchVar" }).ok == false,
+    "holders answered for an undefined var")
+
+-- A counter answers the same question from the other side, values included.
+run("varDefine", schemaAdmin,
+    { def = { kind = "string", name = "Progress", resetOnDeath = false } })
+run("varSet", statAdmin, { user = "A", name = "Progress", value = 0 })
+directSends = {}
+run("varHolders", moderator, { name = "Progress" })
+check(directSends[1].args.rows[1].value == 0,
+    "a counter's holder list dropped a ZERO - zero is a value somebody was set "
+    .. "to, and only absent means untouched")
+
+-- The bound. Over the cap the list is TRUNCATED but the total is honest: a list
+-- that says 200 of 340 is usable, one that quietly stops at 200 is a lie.
+for i = 1, 205 do run("varGrant", statAdmin, { user = "bulk" .. i, name = "Wave" }) end
+directSends = {}
+run("varHolders", moderator, { name = "Wave" })
+local big = directSends[1].args
+check(#big.rows == 200, "the holder list was not bounded: " .. #big.rows .. " rows")
+check(big.total == 207,
+    "the TRUE total did not travel with the truncated list, so the panel would "
+    .. "show 200 and imply that is everyone: " .. tostring(big.total))
 
 -- A schema change invalidates every panel's list, so they are told to re-ask.
 staffSends = {}

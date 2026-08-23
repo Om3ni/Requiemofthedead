@@ -13,6 +13,10 @@
 -- here and nothing at all in either view. Both were written to the DFViews
 -- contract (attach / layout / draw / onShow) from the start.
 --
+-- Vars joined on 2026-08-23, third and last of the built ones: it is where an
+-- admin goes on purpose rather than to look at something, so it sits after the
+-- two that are read as often as they are written.
+--
 -- Tooling and Safezones are NOT in the strip and will not be until they exist.
 -- DFViews has no disabled state, so a button for an unbuilt view switches to
 -- nothing and reads as broken rather than as coming later.
@@ -59,6 +63,7 @@ require "DFKit"
 require "DFViews"
 require "Admin/DFSandboxView"
 require "Admin/DFServerView"
+require "Admin/DFVarsView"
 
 DFAdminTab = DFAdminTab or {}
 local T = DFAdminTab
@@ -73,6 +78,10 @@ local function build(spec, panel, x, y, w, h)
               tip = "The server's own INI options. Changes go out as "
                  .. "/changeoption; some need a restart, and the engine never "
                  .. "sends these back to a connected client." },
+            { id = "vars", label = "Vars", w = 60, view = DFVarsView,
+              tip = "Player attributes: markers a character either holds or "
+                 .. "does not, and counters that hold a number. Backend state "
+                 .. "for events, kits and quests - players never see it." },
         },
         -- DFViews owns the strip-then-body shape (layoutHost); calling it
         -- directly at each site rather than through a local wrapper, because
@@ -126,15 +135,23 @@ Events.OnGameStart.Add(function()
         order      = 10,
         -- A LIST: either half is enough to be shown the tab. See the
         -- capability note in the header.
+        -- Three now, one per sub-tab. Vars' verbs are gated on
+        -- CanModifyPlayerStatsInThePlayerStatsUI server-side (DFVars_Server),
+        -- so a role holding only that must be able to reach the tab that hosts
+        -- them - otherwise the capability grants an ability with no way to use
+        -- it. The strip still cannot grey the two halves such a role cannot
+        -- use; that is the DFViews gap already in TODO.md.
         capability = Capability
-            and { Capability.SandboxOptions, Capability.ChangeAndReloadServerOptions }
+            and { Capability.SandboxOptions,
+                  Capability.ChangeAndReloadServerOptions,
+                  Capability.CanModifyPlayerStatsInThePlayerStatsUI }
             or nil,
         build      = build,
         resize     = function(_, panel, w, h)
             if T.views then T.views:layoutHost(panel, 0, 0, w, h) end
         end,
     }
-    print("[Dragonfly] DFAdminTab registered (Sandbox | Server)")
+    print("[Dragonfly] DFAdminTab registered (Sandbox | Server | Vars)")
 end)
 
 -- ---------------------------------------------------------------------------
