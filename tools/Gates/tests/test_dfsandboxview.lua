@@ -47,6 +47,11 @@ DFSandboxModel = { build = function() return {} end }
 ISScrollingListBox = { derive = function() return {} end }
 function getSandboxOptions() return nil end
 
+local DIR = ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua/client/Admin"
+DFStaged = nil
+local okS, errS = pcall(dofile, DIR .. "/DFStaged.lua")
+check(okS, "DFStaged loads: " .. tostring(errS))
+
 DFSandboxView = nil
 local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
@@ -119,6 +124,10 @@ for _, e in ipairs(ws) do if e.kind then kinds = kinds + 1 end end
 check(kinds == 1, "an unknown option type produced a dial anyway")
 
 check(#DFSandboxView.schemaFor(nil) == 0, "a nil mod produced a schema")
+
+-- The view builds its store in attach(); fixtures never call attach, so it
+-- is built here the same way.
+DFSandboxView.staged = DFStaged.new(DFSandboxView.liveValue)
 
 -- ---- the apply transaction ----------------------------------------------
 -- A fake SandboxOptions pair: `live` is what the server has right now, `copy`

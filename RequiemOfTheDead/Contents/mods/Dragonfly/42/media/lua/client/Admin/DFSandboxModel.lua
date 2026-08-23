@@ -144,6 +144,106 @@ function DFSandboxModel.build()
     return order
 end
 
+-- ---------------------------------------------------------------------------
+-- SERVER OPTIONS
+--
+-- A different registry with the SAME enumeration surface - getNumOptions,
+-- getOptionByIndex (zero-based), getOptionByName, and per-option getName /
+-- getTooltip / getType / getValueAsString / getDefaultValue. getServerOptions
+-- is a real Lua global (LuaManager.java:3558), and vanilla gameplay code reads
+-- it client-side for live decisions (ISChat.lua:179 for the chat character
+-- limit, ISInventoryPage.lua:420 for TrashDeleteAll), which is the proof that a
+-- client's copy holds the server's real values rather than defaults.
+--
+-- WHAT IS DIFFERENT, and it decides the whole shape of the view:
+--
+--   NO PAGES. ServerOption carries no category of any kind - 144 options in one
+--   flat list. Sandbox options group themselves by mod page; these cannot, so
+--   the grouping below is OURS.
+--
+--   NO RE-BROADCAST. changeOption parses the value and saves the server ini
+--   (ServerOptions.java:335-344) and tells no client. Contrast the sandbox
+--   path, which re-sends the whole set to every connection
+--   (GameServer.java:1623-1630). So a client's copy is whatever it received at
+--   connect, for the whole session, and a panel that writes has to echo the
+--   value locally or appear to have done nothing. Vanilla does exactly that
+--   (ISServerOptions.lua:184-189).
+--
+-- GROUPING IS A MECHANICAL PREFIX RULE, not a hand-classification. 144 options
+-- is too many to sort by judgement without the list going stale the first time
+-- the engine adds one, and a wrong guess is worse than no guess: it files an
+-- option where nobody will look for it. A name that literally starts with one
+-- of these words goes in that section; everything else goes to Other. The rule
+-- is auditable by reading it, and a new option lands correctly or lands in
+-- Other, never somewhere misleading. It catches 61 of the current 144.
+local SERVER_SECTIONS = {
+    "AntiCheat", "Safehouse", "PVP", "Discord", "Voice", "Safety",
+    "Player", "Backup", "Faction", "Chat", "Steam", "Sleep",
+    "Server", "Map", "Login", "War", "Workshop", "Mod",
+}
+
+local function serverSection(name)
+    for _, prefix in ipairs(SERVER_SECTIONS) do
+        if name:sub(1, #prefix) == prefix then return prefix end
+    end
+    return "Other"
+end
+
+-- Returns ONE page-shaped table, the same shape build() emits per mod, so the
+-- view and its schema translation do not need to know which registry they are
+-- looking at.
+function DFSandboxModel.buildServer()
+    local so = getServerOptions()
+    if not so then return nil end
+
+    local order, bySection = {}, {}
+    for i = 0, so:getNumOptions() - 1 do
+        local o = so:getOptionByIndex(i)
+        if o then
+            local row = readOption(o)
+            -- Server option names are not namespaced, so short == name. Kept
+            -- distinct anyway: everything downstream keys on `name`.
+            local sec = serverSection(row.short)
+            local bucket = bySection[sec]
+            if not bucket then
+                bucket = { title = sec, options = {} }
+                bySection[sec] = bucket
+                order[#order + 1] = bucket
+            end
+            bucket.options[#bucket.options + 1] = row
+        end
+    end
+
+    -- Sections alphabetical, Other last: it is the leftovers bucket and reads
+    -- as one at the bottom, not wedged between Map and PVP.
+    table.sort(order, function(a, b)
+        if (a.title == "Other") ~= (b.title == "Other") then return b.title == "Other" end
+        return a.title < b.title
+    end)
+    for _, sec in ipairs(order) do
+        table.sort(sec.options, function(a, b) return a.short < b.short end)
+    end
+
+    local count = 0
+    for _, sec in ipairs(order) do count = count + #sec.options end
+    return { page = "__server", label = "Server", sections = order, count = count }
+end
+
+function DFSandboxModel.serverValueOf(name)
+    local so = getServerOptions()
+    local o = so and so:getOptionByName(name)
+    if not o then return nil end
+    if o:getType() == "string" or o:getType() == "text" then return o:getValue() end
+    return o:getValueAsString()
+end
+
+function DFSandboxModel.serverIsDefault(name)
+    local so = getServerOptions()
+    local o = so and so:getOptionByName(name)
+    if not o then return true end
+    return tostring(o:getDefaultValue()) == tostring(DFSandboxModel.serverValueOf(name))
+end
+
 -- The current value, read fresh. Deliberately NOT cached into the model: the
 -- model describes the SHAPE of the options, which cannot change while the panel
 -- is open, whereas a value can be changed by another admin at any moment. One

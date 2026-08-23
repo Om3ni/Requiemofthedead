@@ -73,6 +73,7 @@ require "DFForm"
 -- throws at load. check-lua is syntax only, so a wrong path here parses clean
 -- and fails in game (CLAUDE.md sect. 1).
 require "Admin/DFSandboxModel"
+require "Admin/DFStaged"
 require "ISUI/ISScrollingListBox"
 
 DFSandboxView = DFSandboxView or {}
@@ -83,7 +84,7 @@ local NAV_MIN = 150
 
 V.mods    = {}
 V.selected = nil     -- page name of the chosen mod
-V.pending  = {}      -- option name -> the value an admin has staged
+V.staged   = nil     -- DFStaged, built in attach() once liveValue exists
 
 -- ---------------------------------------------------------------------------
 -- Model -> DFForm schema. PURE, and separated from every widget on purpose.
@@ -160,29 +161,7 @@ local function optionType(name)
 end
 
 function DFSandboxView.readValue(name)
-    if V.pending[name] ~= nil then return V.pending[name] end
-    local t = optionType(name)
-    if not t then return nil end
-    local so = getSandboxOptions()
-    local o = so:getOptionByName(name)
-    if t == "boolean" or t == "enum" then return o:getValue() end
-    if t == "string" or t == "text" then return o:getValue() end
-    -- Numbers reach DFForm as strings for text dials and numbers for int ones.
-    if t == "integer" then return tonumber(o:getValueAsString()) end
-    return o:getValueAsString()
-end
-
--- Staging, not writing. Nothing reaches the engine until Apply.
-function DFSandboxView.stage(name, value)
-    local live = DFSandboxView.liveValue(name)
-    if tostring(live) == tostring(value) then
-        -- Edited back to where it started: drop it rather than push a no-op.
-        -- Otherwise "3 pending" counts changes that change nothing, and Apply
-        -- writes options the admin did not decide to write.
-        V.pending[name] = nil
-    else
-        V.pending[name] = value
-    end
+    return V.staged and V.staged:get(name) or DFSandboxView.liveValue(name)
 end
 
 -- The engine's current value, ignoring anything staged.
@@ -194,16 +173,6 @@ function DFSandboxView.liveValue(name)
     if t == "string" or t == "text" then return o:getValue() end
     if t == "integer" then return tonumber(o:getValueAsString()) end
     return o:getValueAsString()
-end
-
-function DFSandboxView.pendingCount()
-    local n = 0
-    for _ in pairs(V.pending) do n = n + 1 end
-    return n
-end
-
-function DFSandboxView.discard()
-    V.pending = {}
 end
 
 -- ---------------------------------------------------------------------------
@@ -257,11 +226,11 @@ function DFSandboxView.apply()
     local ok, res = DFSandboxView.applyTo(
         getSandboxOptions(),
         function() return SandboxOptions.new() end,
-        V.pending,
+        V.staged and V.staged.pending or {},
         isClient)
     if ok then
         print("[Dragonfly] sandbox: applied " .. tostring(res) .. " change(s).")
-        V.pending = {}
+        V.staged:clear()
         V.status = tostring(res) .. " change(s) applied."
     else
         V.status = tostring(res)
@@ -292,12 +261,11 @@ function NavList:doDrawItem(y, item, alt)
 
     -- Staged edits on a mod the admin is not currently looking at are the
     -- easiest thing to lose track of, so the count is on the nav row.
-    local staged = 0
+    local names = {}
     for _, sec in ipairs(mod.sections or {}) do
-        for _, opt in ipairs(sec.options or {}) do
-            if V.pending[opt.name] ~= nil then staged = staged + 1 end
-        end
+        for _, opt in ipairs(sec.options or {}) do names[#names + 1] = opt.name end
     end
+    local staged = V.staged and V.staged:countIn(names) or 0
     local txt = staged > 0 and ("+" .. staged) or tostring(mod.count or 0)
     local col = staged > 0 and DFKit.col.accent or DFKit.col.textDim
     local w = getTextManager():MeasureStringX(FONT, txt)
@@ -358,17 +326,23 @@ function DFSandboxView.attach(panel)
     panel:addChild(nav)
     V.navBox = nav
 
+    V.staged = DFStaged.new(DFSandboxView.liveValue)
+
     V.form = DFForm.new{
         title      = "Sandbox",
         inlineHelp = true,
         schema     = {},
         get        = DFSandboxView.readValue,
-        set        = DFSandboxView.stage,
+        -- Bound inline rather than through a named wrapper: a two-line
+        -- delegate per view is the shape check-helpers counts as a copy, and
+        -- there is nothing here for a wrapper to add. DFStaged owns the
+        -- "an edit back to the current value is not an edit" rule.
+        set        = function(k, v) V.staged:set(k, v) end,
         -- The accent tick in the gutter. NOT "differs from default" - that is
         -- DFSandboxModel.isDefault and it is a different question. This marks
         -- what YOU have staged and not yet pushed, which is the one thing a
         -- reader cannot recover by looking anywhere else.
-        moved      = function(key) return V.pending[key] ~= nil end,
+        moved      = function(key) return V.staged and V.staged:has(key) end,
         enabled    = function() return true end,
     }
     local formWidgets = V.form:attach(panel)
@@ -379,7 +353,7 @@ function DFSandboxView.attach(panel)
                  .. "changed are written; everything else keeps whatever the "
                  .. "server has right now." })
     V.discardBtn = DFKit.button(panel, 0, 0, 90, "Discard", panel,
-        function() DFSandboxView.discard(); V.status = nil; DFSandboxView.rebuildForm() end)
+        function() V.staged:clear(); V.status = nil; DFSandboxView.rebuildForm() end)
 
     reload()
 
@@ -414,7 +388,7 @@ function DFSandboxView.draw(el)
 
     local r = V.footRect
     if not r then return end
-    local n = DFSandboxView.pendingCount()
+    local n = V.staged and V.staged:count() or 0
     local text, col
     if n > 0 then
         text = n .. " change" .. (n == 1 and "" or "s") .. " staged - not applied"

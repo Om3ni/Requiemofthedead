@@ -1,39 +1,43 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- DFAdminTab - the server's own settings, in the deck.
 --
--- Was a reserved empty slot until 2026-08-22; it now hosts the Sandbox view.
+-- Was a reserved empty slot until 2026-08-22; it now hosts Sandbox and Server.
 -- The slot was claimed early on purpose - tab order is sorted, so a tab
 -- arriving late shuffles whatever sits at 30+ sideways, and the roster is
 -- something admins learn by muscle memory. Claiming it then means nothing
 -- moved today.
 --
 -- ---------------------------------------------------------------------------
--- WHY THERE IS NO SUB-TAB STRIP YET, since the plan called for one.
+-- THE SUB-TAB STRIP arrived with the second view, 2026-08-23, and cost exactly
+-- what was predicted when the first one shipped without it: a DFViews.new{}
+-- here and nothing at all in either view. Both were written to the DFViews
+-- contract (attach / layout / draw / onShow) from the start.
 --
--- The strip is Sandbox / Server / Tooling / Safezones, and only Sandbox exists.
--- A strip of one button is noise, and three buttons leading to empty views are
--- worse - DFViews has no disabled state, so they would switch to nothing and
--- read as broken rather than as unbuilt. So the host calls the view directly.
+-- Tooling and Safezones are NOT in the strip and will not be until they exist.
+-- DFViews has no disabled state, so a button for an unbuilt view switches to
+-- nothing and reads as broken rather than as coming later.
 --
--- DFSandboxView implements the full DFViews contract regardless (attach /
--- layout / draw / onShow), so introducing the strip when the Server view lands
--- is a DFViews.new{} here and nothing at all there. That is the reason to write
--- the contract now and not the strip: the cost of being early is carried by the
--- side that does not change.
+-- Sandbox leads because it is what an admin opens this tab to look at; Server
+-- is where you go deliberately, and it is the one that can require a restart.
 --
 -- ---------------------------------------------------------------------------
--- CAPABILITY. Gated on Capability.SandboxOptions (Capability.java:84) - the
--- engine's own permission for the screen this mirrors, rather than isTopAdmin,
--- which would stay true for a moderator who should not have it and is not a
--- statement about sandbox editing at all.
+-- CAPABILITY. Gated on the engine's OWN permissions for the screens this
+-- mirrors, rather than isTopAdmin - which stays true for a moderator who should
+-- not have them and is not a statement about either thing.
 --
--- KNOWN, AND DELIBERATELY NOT SOLVED YET: the spec carries ONE capability
--- (DFDeck.lua:334 evaluates `RDAccess.roleHas(p, cap)`), but the Server view
--- needs ChangeAndReloadServerOptions (:103) and someone could hold one without
--- the other. When that view lands there are two honest ways out - teach the
--- registry to accept a list, or gate the TAB on holding any of them and grey
--- the individual strip buttons - and both are decisions about a Core contract,
--- so neither is worth pre-building against one view.
+-- SOLVED 2026-08-23, the first of the two ways named when this was deferred:
+-- the spec may now carry a LIST, and the deck shows the tab to anyone holding
+-- any one of them (RDAccess.roleHasAny, DFDeck.lua:339). The two halves are
+-- genuinely differently gated - Sandbox wants Capability.SandboxOptions
+-- (Capability.java:84) and Server wants ChangeAndReloadServerOptions (:103),
+-- which is what ChangeOptionCommand and ReloadOptionsCommand both require -
+-- and a role can hold either without the other.
+--
+-- What this does NOT yet do is grey the individual strip button for the half a
+-- given role cannot use. That is the second half of the same problem and it
+-- needs DFViews to learn a disabled state, which is a Core widget change with
+-- no second consumer yet. Filed rather than bolted on: today the server's four
+-- admins all hold both, so it is a correctness gap and not a live one.
 
 -- ---------------------------------------------------------------------------
 -- WHY THE HOST LIVES INSIDE Admin/ WITH ITS VIEWS. Longstrider's precedent:
@@ -52,31 +56,57 @@
 if isServer() then return end
 
 require "DFKit"
+require "DFViews"
 require "Admin/DFSandboxView"
+require "Admin/DFServerView"
 
 DFAdminTab = DFAdminTab or {}
 local T = DFAdminTab
 
-local function layout(panel, x, y, w, h)
-    DFSandboxView.layout(panel, x, y, w, h)
-end
-
 local function build(spec, panel, x, y, w, h)
-    DFSandboxView.attach(panel)
+    T.views = DFViews.new{
+        views = {
+            { id = "sandbox", label = "Sandbox", w = 84, view = DFSandboxView,
+              tip = "Every RFTD mod's sandbox options, one page per mod, with "
+                 .. "the game's own description under each setting." },
+            { id = "server", label = "Server", w = 76, view = DFServerView,
+              tip = "The server's own INI options. Changes go out as "
+                 .. "/changeoption; some need a restart, and the engine never "
+                 .. "sends these back to a connected client." },
+        },
+        -- DFViews owns the strip-then-body shape (layoutHost); calling it
+        -- directly at each site rather than through a local wrapper, because
+        -- the wrapper was identical in two mods and counted as a copy.
+        relayout = function()
+            if T.host then
+                T.views:layoutHost(T.host, T.hostX, T.hostY, T.hostW, T.hostH)
+            end
+        end,
+    }
 
-    -- One chrome chain on the host, not in the view. The view draws its legend
-    -- through this; when a second view arrives the host routes the chain to
-    -- whichever is active, which is exactly what HBHusbandryTab does and why -
-    -- a drawRect has no visibility flag, so two views each installing their own
-    -- chain would both paint and the hidden one would draw over the visible.
+    -- Strip buttons belong to the TAB and are never hidden by a switch, so they
+    -- go into neither view's widget list.
+    T.views:attachStrip(panel)
+    T.views:attachViews(panel)
+
+    -- ONE chrome chain, on the host, routed to whichever view is active. Two
+    -- views each installing their own would both paint - a drawRect has no
+    -- visibility flag to switch off - and the hidden one would draw over the
+    -- visible. Same reasoning and same shape as HBHusbandryTab.
     local origPrerender = panel.prerender
     panel.prerender = function(self_)
         if origPrerender then origPrerender(self_) end
-        DFSandboxView.draw(self_)
+        if T.views then T.views:draw(self_) end
     end
 
     T.host = panel
-    layout(panel, x, y, w, h)
+    T.hostX, T.hostY, T.hostW, T.hostH = x, y, w, h
+
+    -- set() rather than trusting the constructor default: this is what performs
+    -- the FIRST visibility pass, so Server starts hidden rather than drawn on
+    -- top of Sandbox until somebody clicks.
+    T.views:set("sandbox")
+    T.views:layoutHost(panel, x, y, w, h)
 end
 
 Events.OnGameStart.Add(function()
@@ -94,11 +124,17 @@ Events.OnGameStart.Add(function()
         -- Console 1000 (always last). Spaced by ten so a new tab can land
         -- between two without renumbering five files across five mods.
         order      = 10,
-        capability = Capability and Capability.SandboxOptions or nil,
+        -- A LIST: either half is enough to be shown the tab. See the
+        -- capability note in the header.
+        capability = Capability
+            and { Capability.SandboxOptions, Capability.ChangeAndReloadServerOptions }
+            or nil,
         build      = build,
-        resize     = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
+        resize     = function(_, panel, w, h)
+            if T.views then T.views:layoutHost(panel, 0, 0, w, h) end
+        end,
     }
-    print("[Dragonfly] DFAdminTab registered (Sandbox)")
+    print("[Dragonfly] DFAdminTab registered (Sandbox | Server)")
 end)
 
 -- ---------------------------------------------------------------------------

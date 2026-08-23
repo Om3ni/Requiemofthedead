@@ -332,7 +332,11 @@ function DFDeck:refreshBeat()
             self.rows[i].enabled = false
         else
             local cap = spec.capability
-            self.rows[i].enabled = (cap == nil) or RDAccess.roleHas(p, cap)
+            -- roleHasAny, not roleHas: a spec may name a LIST when its tab
+            -- hosts sub-views with different gates, and holding any one of
+            -- them is enough to be shown the tab. A bare capability still
+            -- works - roleHasAny falls through to roleHas for a non-table.
+            self.rows[i].enabled = (cap == nil) or RDAccess.roleHasAny(p, cap)
         end
     end
 end
