@@ -97,7 +97,15 @@ function DFOverlay_Server.get(key)
     return pages()[key]
 end
 
--- Store one page. Returns (true, kept, dropped) or (false, reason).
+-- Store one page. Returns (true, kept, dropped, mirrored) or (false, reason).
+--
+-- `mirrored` is the store's own answer and it is NOT always yes. While a layout
+-- file is held - it outlived the world, or it will not decode - RDConfigStore
+-- refuses to overwrite it, so the write lands in ModData and stops there. That
+-- is a real degraded state, not a failure: ModData is the authority and the
+-- world save still carries it. But telling the admin "saved" without saying
+-- the mirror refused would leave them to discover it after a hard kill, which
+-- is precisely the class of silence this whole subsystem exists to remove.
 --
 -- An EMPTY layout removes the page rather than storing an empty list, and that
 -- is the reset: with no record the panel falls back to the reflected order,
@@ -115,8 +123,8 @@ function DFOverlay_Server.set(key, entries, who)
     else
         p[key] = { entries = clean, by = who, atMs = RDShared.nowMs() }
     end
-    ensure():touchDefs()
-    return true, #clean, dropped
+    local mirrored = ensure():touchDefs()
+    return true, #clean, dropped, mirrored
 end
 
 -- ---------------------------------------------------------------------------
@@ -202,7 +210,7 @@ Events.OnServerStarted.Add(function()
                 return { ok = false, reason = "missing capability for " .. key }
             end
 
-            local ok, kept, dropped = DFOverlay_Server.set(
+            local ok, kept, dropped, mirrored = DFOverlay_Server.set(
                 key, args.entries, player:getUsername())
             if not ok then return { ok = false, reason = kept } end
 
@@ -215,9 +223,14 @@ Events.OnServerStarted.Add(function()
                 dropped > 0 and (" dropped=" .. dropped) or ""))
 
             RDNet.sendStaff(DFCore.MODULE, "AdminLayout", payloadFor(key))
-            return { ok = true, message = kept == 0
+            local msg = kept == 0
                 and ("Layout cleared for " .. key)
-                or  (kept .. " entries saved for " .. key) }
+                or  (kept .. " entries saved for " .. key)
+            if not mirrored then
+                msg = msg .. " - NOT written to disk: the layout file is held. "
+                    .. "Recover or discard it, or this is lost on a hard kill."
+            end
+            return { ok = true, message = msg }
         end,
     }
 

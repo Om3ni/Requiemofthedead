@@ -75,6 +75,7 @@ require "DFForm"
 require "Admin/DFSandboxModel"
 require "Admin/DFStaged"
 require "Admin/DFLayout"
+require "Admin/DFLayoutEditor"
 require "ISUI/ISScrollingListBox"
 
 DFSandboxView = DFSandboxView or {}
@@ -379,10 +380,19 @@ function DFSandboxView.attach(panel)
                  .. "server has right now." })
     V.discardBtn = DFKit.button(panel, 0, 0, 90, "Discard", panel,
         function() V.staged:clear(); V.status = nil; DFSandboxView.rebuildForm() end)
+    -- Opens on the SHAPED page - what is on screen right now - so the arranger
+    -- and the panel behind it agree about what is where.
+    V.arrangeBtn = DFKit.button(panel, 0, 0, 84, "Arrange", panel,
+        function()
+            DFLayoutEditor.open(V.selected, (DFLayout.shape(selectedMod())))
+        end, nil,
+        { tooltip = "Set the order and the section headings for this page. "
+                 .. "Server-wide: every admin sees the same arrangement. "
+                 .. "Options can be moved but never hidden." })
 
     reload()
 
-    local out = { nav, V.applyBtn, V.discardBtn }
+    local out = { nav, V.applyBtn, V.discardBtn, V.arrangeBtn }
     for _, wdg in ipairs(formWidgets or {}) do out[#out + 1] = wdg end
     return out
 end
@@ -394,7 +404,7 @@ function DFSandboxView.layout(panel, x, y, w, h)
     local foot = R:footer(DFKit.metrics.btnH + DFKit.metrics.pad)
     V.footRect = { x = foot.x, y = foot.y, w = foot.w, h = foot.h }
     local bx = foot.x + foot.w
-    for _, b in ipairs({ V.applyBtn, V.discardBtn }) do
+    for _, b in ipairs({ V.applyBtn, V.discardBtn, V.arrangeBtn }) do
         if b then
             bx = bx - b:getWidth()
             b:setX(bx); b:setY(foot.y)

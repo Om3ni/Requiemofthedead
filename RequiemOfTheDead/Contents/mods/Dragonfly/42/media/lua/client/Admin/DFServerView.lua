@@ -66,6 +66,7 @@ require "Admin/DFSandboxView"
 require "Admin/DFServerFlags"
 require "Admin/DFStaged"
 require "Admin/DFLayout"
+require "Admin/DFLayoutEditor"
 
 DFServerView = DFServerView or {}
 local V = DFServerView
@@ -300,9 +301,19 @@ function DFServerView.attach(panel)
                  .. "This does not refresh THIS panel - the engine never sends "
                  .. "server options back to a connected client." })
 
+    -- Same button, same meaning, one page. 144 flat options with no category
+    -- metadata is the page that needs arranging most.
+    V.arrangeBtn = DFKit.button(panel, 0, 0, 84, "Arrange", panel,
+        function()
+            DFLayoutEditor.open(DFOverlay.SERVER_KEY, (DFLayout.shape(V.page)))
+        end, nil,
+        { tooltip = "Set the order and the section headings for the server "
+                 .. "options. Server-wide, and options can be moved but never "
+                 .. "hidden." })
+
     reload()
 
-    local out = { V.search, V.applyBtn, V.discardBtn, V.reloadBtn }
+    local out = { V.search, V.applyBtn, V.discardBtn, V.reloadBtn, V.arrangeBtn }
     for _, wdg in ipairs(formWidgets or {}) do out[#out + 1] = wdg end
     return out
 end
@@ -322,7 +333,7 @@ function DFServerView.layout(panel, x, y, w, h)
     local foot = R:footer(m.btnH + m.pad)
     V.footRect = { x = foot.x, y = foot.y, w = foot.w, h = foot.h }
     local bx = foot.x + foot.w
-    for _, b in ipairs({ V.applyBtn, V.discardBtn, V.reloadBtn }) do
+    for _, b in ipairs({ V.applyBtn, V.discardBtn, V.reloadBtn, V.arrangeBtn }) do
         if b then
             bx = bx - b:getWidth()
             b:setX(bx); b:setY(foot.y)

@@ -50,7 +50,12 @@ local fakeStore = {
     _defs = {},
     boot      = function() end,
     defs      = function(self) return self._defs end,
-    touchDefs = function() touched = touched + 1; return true end,
+    -- Returns the store's real answer: false while a document is HELD, because
+    -- writeDoc refuses to overwrite a file it was told to keep. The write still
+    -- lands in ModData, so this is degraded rather than failed - and saying
+    -- "saved" without saying "not to disk" is the silence this whole subsystem
+    -- exists to remove.
+    touchDefs = function() touched = touched + 1; return heldDefs == nil end,
     report    = function() return { heldDefs = heldDefs } end,
     import    = function() imported = imported + 1; heldDefs = nil; return true end,
     discard   = function() discarded = discarded + 1; heldDefs = nil; return true end,
@@ -257,7 +262,20 @@ check(#staffSends == 1 and staffSends[1].command == "AdminLayoutStale",
     "recover did not tell the panels their copies are wrong - every admin "
     .. "would keep drawing the layout that was just replaced")
 
+-- A save while the file is held SUCCEEDS - ModData is the authority - but must
+-- say that nothing reached disk. Reported rather than refused: refusing would
+-- lock an admin out of arranging anything until they resolve a hold that has
+-- nothing to do with the page in front of them.
 heldDefs = "corrupt"
+local heldSave = handlers.layoutSet.run(sandboxOnly,
+    { key = "RFTDDirge", entries = { "A" } })
+check(heldSave.ok == true, "a save during a hold was refused outright")
+check(tostring(heldSave.message):find("NOT written to disk", 1, true) ~= nil,
+    "a save that never reached the mirror reported plain success - the admin "
+    .. "would find out after a hard kill: " .. tostring(heldSave.message))
+check(DFOverlay_Server.get("RFTDDirge") ~= nil,
+    "the held save did not reach ModData either")
+
 check(handlers.layoutRecover.run(serverOnly, { take = false }).ok == true,
     "discard was refused")
 check(discarded == 1, "discard did not reach the store")
