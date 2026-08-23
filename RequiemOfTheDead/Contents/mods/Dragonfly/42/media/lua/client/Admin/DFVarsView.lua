@@ -105,10 +105,12 @@ function DFVarsView.buildDef(model)
     return nil, "Choose a kind."
 end
 
--- One row's value column, for a holder list. The marker/counter split again,
--- and the "-" is load-bearing.
+-- One row's value column. The marker/counter split again, and BOTH dashes are
+-- load-bearing: a marker's is "does not hold it", a counter's is "nobody has
+-- ever touched this", and the second is emphatically not zero.
 function DFVarsView.cellFor(kind, row)
-    if kind == RDVarDefs.CHAR then return "holds" end
+    row = row or {}
+    if kind == RDVarDefs.CHAR then return row.holds and "holds" or "-" end
     if row.value == nil then return "-" end
     return tostring(row.value)
 end
@@ -366,7 +368,10 @@ function HolderList:doDrawItem(y, item, alt)
     elseif alt then
         self:drawRect(0, y, self.width, item.height - 1, 0.10, 1, 1, 1)
     end
-    local c = DFKit.col.text
+    -- Online players read at full strength and offline ones dimmed. The list
+    -- deliberately holds both, so which is which has to be visible without
+    -- spending a column on it.
+    local c = row.online and DFKit.col.text or DFKit.col.textDim
     self:drawText(DFKit.fitText(row.user, FONT, self.width - 90), 6, y + 3,
                   c.r, c.g, c.b, 1, FONT)
     local kind = V.holders and V.holders.kind
@@ -472,11 +477,35 @@ function DFVarsView.attach(panel)
 
     V.grantBtn = DFKit.button(panel, 0, 0, 76, "Grant", panel, function()
         if needSelection() then return end
-        askUser("Grant '" .. V.selected .. "' to which username?", function(user)
-            send("varGrant", { user = user, name = V.selected })
-        end)
-    end, nil, { tooltip = "Grant the selected marker to a username. The player "
-                       .. "does not need to be online." })
+        local user = needUser(); if not user then return end
+        send("varGrant", { user = user, name = V.selected })
+    end, nil, { tooltip = "Grant the selected marker to the selected player. "
+                       .. "Everyone online is listed, whether they hold it or not." })
+
+    -- The escape hatch for anybody the list does not show: an offline holder
+    -- past the row bound, or somebody who has never held this var and is not
+    -- online right now. It performs whichever verb the SELECTED VAR takes, so
+    -- there is one button rather than a by-name twin of every verb.
+    V.byNameBtn = DFKit.button(panel, 0, 0, 84, "By name", panel, function()
+        if needSelection() then return end
+        if isMarker(selectedDef()) then
+            askUser("Grant '" .. V.selected .. "' to which username?", function(user)
+                send("varGrant", { user = user, name = V.selected })
+            end)
+        else
+            askUser("Set '" .. V.selected .. "' - type  username=number",
+                function(text)
+                    local user, value = text:match("^%s*(.-)%s*=%s*(.-)%s*$")
+                    local n = tonumber(value)
+                    if not user or user == "" or not n then
+                        V.status = "Type it as  username=number, for example  Kriegan=5"
+                        return
+                    end
+                    send("varSet", { user = user, name = V.selected, value = n })
+                end)
+        end
+    end, nil, { tooltip = "Act on somebody the list does not show - an offline "
+                       .. "player, or one who has never held this var." })
 
     V.revokeBtn = DFKit.button(panel, 0, 0, 76, "Revoke", panel, function()
         if needSelection() then return end
@@ -486,17 +515,13 @@ function DFVarsView.attach(panel)
 
     V.setBtn = DFKit.button(panel, 0, 0, 76, "Set", panel, function()
         if needSelection() then return end
-        askUser("Set '" .. V.selected .. "' for which username? (name=value)",
-            function(text)
-                local user, value = text:match("^%s*(.-)%s*=%s*(.-)%s*$")
-                local n = tonumber(value)
-                if not user or user == "" or not n then
-                    V.status = "Type it as  username=number, for example  Kriegan=5"
-                    return
-                end
-                send("varSet", { user = user, name = V.selected, value = n })
-            end)
-    end, nil, { tooltip = "Set a counter for a username. Type username=number." })
+        local user = needUser(); if not user then return end
+        askUser("Set '" .. V.selected .. "' for " .. user .. " to:", function(text)
+            local n = tonumber(text)
+            if not n then V.status = "That is not a number."; return end
+            send("varSet", { user = user, name = V.selected, value = n })
+        end)
+    end, nil, { tooltip = "Set the selected player's counter." })
 
     V.resetBtn = DFKit.button(panel, 0, 0, 76, "Reset", panel, function()
         if needSelection() then return end
@@ -507,7 +532,7 @@ function DFVarsView.attach(panel)
 
     DFVarsView.refresh()
     return { defs, holders, V.defineBtn, V.removeBtn, V.grantBtn, V.revokeBtn,
-             V.setBtn, V.resetBtn }
+             V.setBtn, V.resetBtn, V.byNameBtn }
 end
 
 function DFVarsView.layout(panel, x, y, w, h)
@@ -518,8 +543,8 @@ function DFVarsView.layout(panel, x, y, w, h)
     local foot = R:footer(m.btnH + m.pad)
     V.footRect = { x = foot.x, y = foot.y, w = foot.w, h = foot.h }
     local bx = foot.x + foot.w
-    for _, b in ipairs({ V.resetBtn, V.setBtn, V.revokeBtn, V.grantBtn,
-                         V.removeBtn, V.defineBtn }) do
+    for _, b in ipairs({ V.byNameBtn, V.resetBtn, V.setBtn, V.revokeBtn,
+                         V.grantBtn, V.removeBtn, V.defineBtn }) do
         if b then
             bx = bx - b:getWidth()
             b:setX(bx); b:setY(foot.y)
@@ -548,6 +573,7 @@ function DFVarsView.draw(el)
         V.setBtn:setVisible(def ~= nil and not marker)
         V.resetBtn:setVisible(def ~= nil and not marker)
         V.removeBtn:setVisible(def ~= nil)
+        V.byNameBtn:setVisible(def ~= nil)
     end
 
     if #V.defs == 0 then
@@ -560,7 +586,7 @@ function DFVarsView.draw(el)
         local h = V.holders
         local text
         if #h.rows == 0 then
-            text = "Nobody has " .. tostring(h.name) .. "."
+            text = "Nobody online, and nobody holds " .. tostring(h.name) .. "."
         elseif h.total > #h.rows then
             -- Truncated, and it says so with the true total. A list that stops
             -- at 200 without saying so is a lie about who holds what.

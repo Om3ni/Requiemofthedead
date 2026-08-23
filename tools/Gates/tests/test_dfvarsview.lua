@@ -153,7 +153,16 @@ check(DFVarsView.cellFor("string", { value = 0 }) ~= DFVarsView.cellFor("string"
     "A COUNTER SET TO ZERO AND A COUNTER NOBODY TOUCHED RENDER ALIKE. That is "
     .. "the one distinction the two-kind design exists to keep, and every "
     .. "repeatable quest built on this loses its 'have you started' test.")
-check(DFVarsView.cellFor("char", { }) == "holds", "a marker row said nothing")
+check(DFVarsView.cellFor("char", { holds = true }) == "holds", "a holder said nothing")
+-- The list carries online NON-holders too, so a marker row has two states. Draw
+-- them alike and the panel tells an admin that everybody online holds it.
+check(DFVarsView.cellFor("char", { online = true }) == "-",
+    "AN ONLINE PLAYER WHO DOES NOT HOLD THE MARKER RENDERED AS A HOLDER. The "
+    .. "list includes non-holders precisely so they can be granted one; drawing "
+    .. "them identically makes the column meaningless.")
+check(DFVarsView.cellFor("char", { holds = true }) ~= DFVarsView.cellFor("char", {}),
+    "holding and not holding a marker render alike")
+check(DFVarsView.cellFor("char", nil) == "-", "cellFor faulted on a nil row")
 check(DFVarsView.cellFor("string", { value = 12 }) == "12", "a counter value was mangled")
 
 -- ---- the lifecycle line --------------------------------------------------

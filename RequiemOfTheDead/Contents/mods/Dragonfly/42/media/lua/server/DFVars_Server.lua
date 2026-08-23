@@ -125,28 +125,81 @@ local function pushSummary(player)
     sendServerCommand(player, DFCore.MODULE, "AdminVars", { defs = DFVars_Server.summary() })
 end
 
--- Everyone this var touches, in one message. Bounded, because it is the one
--- read here whose size is set by how many people play on the server rather than
--- by how many vars an admin defined - a marker granted to an event with two
--- hundred attendees is a real payload. The overflow is COUNTED and sent, not
--- silently cut: a list that says "200 of 340" is usable and a list that quietly
--- stops at 200 is a lie about who holds what.
+-- Everyone this var is ABOUT, in one message: the people who hold it, plus
+-- everybody currently online.
+--
+-- The online half is what makes the panel usable for the ordinary case - an
+-- admin hands a marker to the four people standing in front of them - and the
+-- holder half is what makes it correct: somebody who earned a marker at last
+-- night's event and logged off must still be visible, and revocable, today.
+-- Either list alone would quietly lose one of those two.
+--
+-- ONLINE ROWS ARE NEVER THE ONES DROPPED. The list is bounded, because its size
+-- is set by how many people play here rather than by how many vars exist - a
+-- marker granted to a two-hundred-person event is a real payload - so online
+-- players are emitted first and offline holders fill whatever is left. Dropping
+-- an online row would remove the very person the admin is trying to act on,
+-- while an unlisted offline holder is still reachable by name.
+--
+-- The overflow is COUNTED and sent rather than silently cut: a list that says
+-- "200 of 340" is usable, and one that stops at 200 without saying so is a lie
+-- about who holds what.
 local HOLDER_MAX = 200
+
+local function onlineNames()
+    local out = {}
+    local players = getOnlinePlayers()
+    if not players then return out end
+    for i = 0, players:size() - 1 do
+        local p = players:get(i)
+        local n = p and p.getUsername and p:getUsername()
+        if n then out[#out + 1] = tostring(n) end
+    end
+    return out
+end
 
 function DFVars_Server.holdersOf(name)
     local def = RDVars.definition(name)
     if not def then return nil, "no var named '" .. tostring(name) .. "'" end
 
-    local rows, total = {}, 0
+    -- What the store knows about this var, by user.
+    local held = {}
     if RDVarDefs.isChar(def) then
-        local users = RDVars.holders(def.name) or {}
-        total = #users
-        for i = 1, math.min(total, HOLDER_MAX) do rows[i] = { user = users[i] } end
+        for _, user in ipairs(RDVars.holders(def.name) or {}) do
+            held[user] = { user = user, holds = true }
+        end
     else
-        local vals = RDVars.valuesOf(def.name) or {}
-        total = #vals
-        for i = 1, math.min(total, HOLDER_MAX) do rows[i] = vals[i] end
+        for _, row in ipairs(RDVars.valuesOf(def.name) or {}) do
+            held[row.user] = { user = row.user, value = row.value }
+        end
     end
+
+    -- Online first, whether or not they hold anything.
+    local rows, seen = {}, {}
+    local online = onlineNames()
+    table.sort(online)
+    for _, user in ipairs(online) do
+        if not seen[user] then
+            seen[user] = true
+            local row = held[user] or { user = user }
+            row.online = true
+            rows[#rows + 1] = row
+        end
+    end
+
+    -- Then offline holders, sorted, up to the bound.
+    local offline = {}
+    for user, row in pairs(held) do
+        if not seen[user] then offline[#offline + 1] = row end
+    end
+    table.sort(offline, function(a, b) return a.user < b.user end)
+
+    local total = #rows + #offline
+    for _, row in ipairs(offline) do
+        if #rows >= HOLDER_MAX then break end
+        rows[#rows + 1] = row
+    end
+
     return { name = def.name, kind = def.kind, rows = rows, total = total }
 end
 

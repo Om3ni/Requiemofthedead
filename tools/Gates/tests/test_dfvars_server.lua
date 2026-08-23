@@ -94,6 +94,20 @@ local staffSends, directSends = {}, {}
 RDNet = { sendStaff = function(_, command, args)
     staffSends[#staffSends + 1] = { command = command, args = args }
 end }
+-- The online roster. Set per block; the holder list must merge it in, because
+-- "hand this to the four people standing in front of me" is the ordinary case
+-- and "revoke it from somebody who logged off" is the correct one.
+local onlineRoster = {}
+function getOnlinePlayers()
+    return {
+        size = function() return #onlineRoster end,
+        get  = function(_, i)
+            local n = onlineRoster[i + 1]
+            return n and { getUsername = function() return n end } or nil
+        end,
+    }
+end
+
 function sendServerCommand(player, _, command, args)
     directSends[#directSends + 1] = { to = player.name, command = command, args = args }
 end
@@ -309,11 +323,35 @@ check(run("varsOfPlayer", moderator, { user = string.rep("u", 200) }).ok == fals
     "an unbounded username was read")
 
 -- varHolders: the one read whose size is set by how many people play here.
+onlineRoster = {}
 directSends = {}
 check(run("varHolders", moderator, { name = "Wave" }).ok == true, "varHolders was refused")
 check(directSends[1].command == "AdminVarHolders", "the holders reply is wrong")
 check(#directSends[1].args.rows == 2, "the holder rows did not come back")
 check(directSends[1].args.total == 2, "the total was wrong")
+
+-- Online players appear whether or not they hold it: the panel's ordinary job
+-- is handing a marker to somebody who is standing there, and a list of holders
+-- alone can never offer that.
+onlineRoster = { "Zed", "A" }
+directSends = {}
+run("varHolders", moderator, { name = "Wave" })
+local merged = directSends[1].args
+local byUser = {}
+for _, r in ipairs(merged.rows) do byUser[r.user] = r end
+check(byUser["Zed"] ~= nil,
+    "AN ONLINE PLAYER WHO DOES NOT HOLD THE VAR WAS ABSENT. There is then no "
+    .. "way to grant one from this panel except by typing a username.")
+check(byUser["Zed"].online == true, "an online row was not marked online")
+check(byUser["Zed"].holds == nil, "a non-holder was reported as holding it")
+check(byUser["A"].holds == true and byUser["A"].online == true,
+    "an online HOLDER lost one of its two facts")
+check(byUser["B"] ~= nil and byUser["B"].online == nil,
+    "an OFFLINE holder vanished - somebody who earned a marker last night and "
+    .. "logged off must still be revocable today")
+check(merged.rows[1].user == "A" and merged.rows[2].user == "Zed",
+    "online rows are not first and sorted: " .. merged.rows[1].user)
+check(merged.total == 3, "the total lost somebody: " .. tostring(merged.total))
 check(run("varHolders", nobody, { name = "Wave" }).ok == false,
     "a non-staff caller read a holder list")
 check(run("varHolders", moderator, { name = "NoSuchVar" }).ok == false,
@@ -329,16 +367,24 @@ check(directSends[1].args.rows[1].value == 0,
     "a counter's holder list dropped a ZERO - zero is a value somebody was set "
     .. "to, and only absent means untouched")
 
--- The bound. Over the cap the list is TRUNCATED but the total is honest: a list
--- that says 200 of 340 is usable, one that quietly stops at 200 is a lie.
+-- The bound, and WHICH rows survive it. Online players are never the ones cut:
+-- dropping one removes the very person the admin is acting on, while an
+-- unlisted offline holder is still reachable by name.
 for i = 1, 205 do run("varGrant", statAdmin, { user = "bulk" .. i, name = "Wave" }) end
+onlineRoster = { "Zed", "A" }
 directSends = {}
 run("varHolders", moderator, { name = "Wave" })
 local big = directSends[1].args
 check(#big.rows == 200, "the holder list was not bounded: " .. #big.rows .. " rows")
-check(big.total == 207,
+check(big.total == 208,
     "the TRUE total did not travel with the truncated list, so the panel would "
     .. "show 200 and imply that is everyone: " .. tostring(big.total))
+local sawOnline = {}
+for _, r in ipairs(big.rows) do if r.online then sawOnline[r.user] = true end end
+check(sawOnline["Zed"] and sawOnline["A"],
+    "AN ONLINE PLAYER WAS TRUNCATED OUT of an oversized list. The bound exists "
+    .. "for the two hundred offline holders nobody is looking at, not for the "
+    .. "handful of people the admin is actually standing next to.")
 
 -- A schema change invalidates every panel's list, so they are told to re-ask.
 staffSends = {}
