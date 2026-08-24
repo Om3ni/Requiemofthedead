@@ -127,7 +127,7 @@ function RQConfig.get()
         -- boundary means every consumer (jugg, boss, scav) keeps its math unchanged.
         --
         -- ONE KNOB, THREE FEATURES: Boss and Scavenger auras reuse this exact value
-        -- (RQSuppress reads all three playerInAura flags into its "aura" term
+        -- (UNREAD since 2026-08-24: this fed the weapon debuff RQBulwark replaced.
         -- group), so changing it moves all three specials' weapon debuffs together.
         --
         -- The shipped default is 40 (declared in media/sandbox-options.txt), i.e. weapons
@@ -143,7 +143,7 @@ function RQConfig.get()
 
         -- Reach (tiles) of the weapon debuff while holding a FIREARM near a
         -- Juggernaut, Boss, or enraged Scavenger -- the kiting counter
-        -- (RQSuppress "aura"/"ranged" source). Firearms out-range the 3-tile
+        -- (UNREAD since 2026-08-24, was the RQSuppress ranged band). Firearms out-range the 3-tile
         -- melee aura by nature, so gating their debuff on that ring made it
         -- free to step out and shoot; this radius is the honest engagement
         -- band for ranged play. 0 disables the band (old behavior). If the

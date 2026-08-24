@@ -3,19 +3,18 @@
 -- All buff behavior runs server-side (svJuggernautTick).
 -- Client keeps: ring follow and the proximity-based buff highlight.
 --
--- The weapon debuff that used to live here moved to RQSuppress -- this file
--- now just publishes RQJuggernaut.playerInAura each frame, the same contract
--- RQBoss and RQScavenger already used. RQSuppress loads after all three
--- (alphabetical load order registers its render tick last), reads the flags
--- same-frame, and owns every weapon write: snapshot, stacking, the ranged
+-- The weapon debuff that used to live here moved to RQSuppress, and then out of
+-- Dirge altogether on 2026-08-24 - RQBulwark decides mitigation server-side now,
+-- against the zombie that was struck rather than against the player's weapon.
+-- What is left in this file is presentation: the ground ring and the outline
 -- kiting counter, linger, and restore. Nothing in this file touches items.
 
 RQJuggernaut = RQJuggernaut or {}
 
 -- Local player in range of any Juggernaut's aura this frame. Read by
--- RQSuppress's "aura" group alongside RQBoss.playerInAura and
--- RQScavenger.playerInAura.
-RQJuggernaut.playerInAura = false
+-- The playerInAura flag this file used to publish is gone: RQSuppress's aura
+-- term was Dirge's weapon debuff, and RQBulwark replaced it. What remains here
+-- is presentation - the ground ring and the outline highlight.
 
 -- Ring color for the jugg's ground marker. Full alpha so it reads
 -- clearly against the outline highlight (which uses a=0.3).
@@ -96,7 +95,6 @@ Events.OnRenderTick.Add(function()
         end
     end
 
-    RQJuggernaut.playerInAura = inRange
 end)
 
 function RQJuggernaut.onDead(zombie)
@@ -105,10 +103,6 @@ function RQJuggernaut.onDead(zombie)
         RQRing.clear("jugg_" .. oid)
     end
 end
-
-Events.OnGameStart.Add(function()
-    RQJuggernaut.playerInAura = false
-end)
 
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.

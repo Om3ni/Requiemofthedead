@@ -181,77 +181,31 @@ local function restoreAll(player)
 end
 
 -- ---------------------------------------------------------------------------
--- Built-in sources: the aura term
+-- No built-in sources
 -- ---------------------------------------------------------------------------
--- Melee band: the flags each special's render tick publishes. PZ registers
--- OnRenderTick handlers in file load order and client files load
--- alphabetically, so RQBoss/RQJuggernaut/RQScavenger all publish before this
--- file's tick reads -- every flag is same-frame fresh. (The old
--- Juggernaut-reads-Scavenger path was a frame stale by the same mechanism.)
-local function auraMult()
-    return RQConfig.get().juggernautAuraMultiplier
-end
-
-RQSuppress.register("aura", "juggernaut", function()
-    if RQJuggernaut and RQJuggernaut.playerInAura then return auraMult() end
-end)
-
-RQSuppress.register("aura", "boss", function()
-    if RQBoss and RQBoss.playerInAura then return auraMult() end
-end)
-
-RQSuppress.register("aura", "scavenger", function()
-    if RQScavenger and RQScavenger.playerInAura then return auraMult() end
-end)
-
--- Ranged band: the kiting counter. Active while the player holds a firearm
--- within rangedProtectRadius of any Juggernaut or Boss, or any Scavenger the
--- server reports enraged (RQReconcile.scavClientState -- already synced for
--- the rage gradient, so the gate costs one table read).
+-- Dirge's four terms - the three per-type aura sources and the ranged
+-- engagement band - were removed on 2026-08-24. RQBulwark decides tank
+-- mitigation now, on the server, against the zombie that was actually struck.
 --
--- Positions come from RQReconcile.lastKnownPos: ~2s stale against a 15-tile
--- band is fine, and it means no cell scans and no findZombieByID here --
--- pure arithmetic per registered special per frame. MP-only by construction:
--- in SP the reconcile channel never populates, so specials without a pos
--- entry are skipped, and an SP player has no server to exploit anyway.
+-- WHY BOTH COULD NOT STAY. They are two answers to one question, and they
+-- compound: a Juggernaut would have soaked the hit AND the hit would have been
+-- weakened before it arrived. Beyond the balance nonsense, the older answer was
+-- structurally weaker in two ways that are worth recording rather than
+-- rediscovering. It changed the WEAPON, so it applied to every target the
+-- player swung at, not only the special that earned it. And it was computed on
+-- the attacking client, which is where the number the server accepts comes from
+-- (see IsoGameCharacter.java:5723 and RQSvHit's header) - so it was
+-- client-trusted by construction.
 --
--- Same multiplier as the melee band on purpose: this is the same debuff with
--- an honest reach for weapons that out-range a 3-tile ring, not a second
--- knob. It joins the same "aura" group, so standing inside the ring while
--- holding a gun does not double-apply.
-RQSuppress.register("aura", "ranged", function(player, weapon)
-    -- isAimedFirearm (HandWeapon:1080, a field return) exists only on
-    -- HandWeapon, and the equipped item can be anything, so the presence test
-    -- is the guard -- indexing an absent method is nil, only calling it throws.
-    if not weapon or not weapon.isAimedFirearm then return end
-    if not weapon:isAimedFirearm() then return end
-
-    local cfg    = RQConfig.get()
-    local radius = cfg.rangedProtectRadius
-    if radius <= 0 then return end
-
-    local rSq = radius * radius
-    local px  = player:getX()
-    local py  = player:getY()
-
-    for oid, zType in pairs(RQRegistry.activeZombies) do
-        local protected = (zType == "Juggernaut") or (zType == "Boss")
-        if not protected and zType == "Scavenger" then
-            local st  = RQReconcile.scavClientState[oid]
-            protected = (st and st.enraged) or false
-        end
-        if protected then
-            local pos = RQReconcile.lastKnownPos[oid]
-            if pos then
-                local dx = px - pos.x
-                local dy = py - pos.y
-                if dx * dx + dy * dy <= rSq then
-                    return auraMult()
-                end
-            end
-        end
-    end
-end)
+-- THE SERVICE STAYS. This file is a registry with a real external consumer:
+-- RFTDLimes registers a per-zone term through RQSuppress.register, and the
+-- term-group composition model exists for exactly that. Deleting the file
+-- because its first consumer stopped using it would break a second one.
+--
+-- The `playerInAura` flags the aura term read are gone from RQBoss,
+-- RQJuggernaut and RQScavenger with it. Their render ticks remain - they still
+-- draw the ground rings and highlights - but nothing publishes a flag that
+-- nothing reads.
 
 -- ---------------------------------------------------------------------------
 -- Main tick

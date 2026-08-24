@@ -21,7 +21,6 @@ RQBoss.bossBuffPainted = setmetatable({}, { __mode = "k" })
 -- can OR this with its own range check before deciding to apply/release the
 -- weapon debuff - the two auras share a single apply/release pair to avoid
 -- race conditions when the player is inside both at once.
-RQBoss.playerInAura = false
 
 -- Cached on first render. Cant read at file scope because RQConfig may not
 -- be loaded yet when this file runs - the server-options receive path used
@@ -104,7 +103,6 @@ Events.OnRenderTick.Add(function()
         end
     end
 
-    RQBoss.playerInAura = playerInAnyBossAura
 end)
 
 function RQBoss.onDead(zombie)
@@ -118,7 +116,6 @@ end
 
 Events.OnGameStart.Add(function()
     RQBoss.bossBuffPainted = setmetatable({}, { __mode = "k" })
-    RQBoss.playerInAura    = false
 end)
 
 -- ---------------------------------------------------------------------------

@@ -50,11 +50,7 @@ end
 --   2. Ring color is the live rage gradient, not a constant
 --   3. Special filter inverted: paint SPECIALS only (lore: scavs share with
 --      their own kind, not shamblers). Yields to boss-painted entries.
-RQScavenger.playerInAura = false
-
 Events.OnRenderTick.Add(function()
-    RQScavenger.playerInAura = false
-
     local player = getPlayer()
     if not player then return end
     local playerNum = player:getPlayerNum()
@@ -81,12 +77,6 @@ Events.OnRenderTick.Add(function()
                         local zz = math.floor(scav:getZ())
                         local color = getScavColor(state)
                         RQRing.update("scav_" .. onlineID, zx, zy, zz, radius, color)
-
-                        local ddx = px - zx
-                        local ddy = py - zy
-                        if ddx*ddx + ddy*ddy <= rSq then
-                            RQScavenger.playerInAura = true
-                        end
 
                         if cell then
                             local bossPainted = RQBoss and RQBoss.bossBuffPainted or {}
