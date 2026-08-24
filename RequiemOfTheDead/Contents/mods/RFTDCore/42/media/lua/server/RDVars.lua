@@ -62,25 +62,17 @@ require "RDConfigStore"
 
 RDVars = RDVars or {}
 
-local store
-
 -- One store, two documents. defs are cold and precious - what a var IS, the
 -- half an admin wants back after a wipe. state is hot and deliberately NOT
--- restored across one: handing back charVars players already spent their kit
+-- restored across one: handing back flags players already spent their kit
 -- claims on is the exploit the save-scoping exists to prevent.
-local function ensure()
-    if not store then
-        store = RDConfigStore.new{
-            modKey    = "RFTDVars",
-            defsFile  = RDShared.DIR .. "vars-defs"  .. RDShared.EXT_DOC,
-            stateFile = RDShared.DIR .. "vars-state" .. RDShared.EXT_DOC,
-            flushMs   = 30000,
-            label     = "RFTDCore",
-        }
-    end
-    store:boot()   -- idempotent
-    return store
-end
+local ensure = RDConfigStore.lazy{
+    modKey    = "RFTDVars",
+    defsFile  = RDShared.DIR .. "vars-defs"  .. RDShared.EXT_DOC,
+    stateFile = RDShared.DIR .. "vars-state" .. RDShared.EXT_DOC,
+    flushMs   = 30000,
+    label     = "RFTDCore",
+}
 
 -- Exposed for the admin surface and for fixtures. Nothing else should reach
 -- past the API below into the raw tables.
@@ -89,18 +81,68 @@ function RDVars.store() return ensure() end
 local function defs()  return ensure():defs()  end
 local function state() return ensure():state() end
 
--- A player's record, created on demand. `chars` are markers with provenance;
--- `numbers` are counters. Kept as two tables rather than one tagged map so
+-- ---------------------------------------------------------------------------
+-- THE STATE DOCUMENT HAS TWO HALVES since 2026-08-23:
+--
+--   state.players[user] = { flags = {}, numbers = {} }
+--   state.world[key]    = number
+--
+-- World counters could not simply take a reserved key in the player map. A
+-- player record and a world value are different shapes, the map is keyed by
+-- whatever string the engine reports as a username, and any sentinel picked
+-- here - "__world", "" - is a username somebody can eventually hold. The
+-- collision would not throw; record() would hand back the number map and
+-- immediately give it a `flags` table.
+--
+-- THE MIGRATION IS ONE-WAY AND RUNS ONCE, on the first read of a document
+-- written before the split. Everything at the top level that is a table and is
+-- not the world half was a player record, because that is the only thing the
+-- old shape held. Discarding it instead was not an option: this document holds
+-- flags players earned, and state is already the half that does not come back
+-- after a wipe (see the store spec above) - losing it twice over is not a
+-- migration, it is the bug the scoping was meant to avoid.
+--
+-- ONE shape check, reached through BOTH accessors. Splitting it would make the
+-- migration depend on which half of the document a caller happened to touch
+-- first, and which call comes first in a session is not something this file
+-- gets to decide.
+local function ensureShape()
+    local st = state()
+    if not st.players then
+        -- Collected first, cleared second, assigned third. Adding a NEW key to
+        -- a table being traversed is undefined in Lua 5.1; clearing existing
+        -- ones during traversal is explicitly allowed.
+        --
+        -- `world` is skipped by name because a half-migrated document is real:
+        -- one written by a build that had world counters and re-read after the
+        -- players half was lost would otherwise file the world map as a player
+        -- named "world", complete with a flags table.
+        local moved = {}
+        for k, v in pairs(st) do
+            if k ~= "world" and type(v) == "table" then moved[k] = v end
+        end
+        for k in pairs(moved) do st[k] = nil end
+        st.players = moved
+    end
+    st.world = st.world or {}
+    return st
+end
+
+local function players()     return ensureShape().players end
+local function worldValues() return ensureShape().world   end
+
+-- A player's record, created on demand. `flags` are the markers a player
+-- holds, with provenance; `numbers` are counters. Kept as two tables rather than one tagged map so
 -- "absent" and "zero" can never be confused - see RDVarDefs' header.
 local function record(username, create)
-    local s = state()
+    local s = players()
     local r = s[username]
     if not r and create then
-        r = { chars = {}, numbers = {} }
+        r = { flags = {}, numbers = {} }
         s[username] = r
     end
     if r then
-        r.chars   = r.chars   or {}
+        r.flags   = r.flags   or {}
         r.numbers = r.numbers or {}
     end
     return r
@@ -117,22 +159,47 @@ local function resolve(name, wantKind)
     end
     if wantKind and def.kind ~= wantKind then
         return nil, "'" .. def.name .. "' is a " .. def.kind
-            .. " var - " .. (wantKind == RDVarDefs.CHAR
-                and "grant/revoke/has are for markers"
+            .. " var - " .. (wantKind == RDVarDefs.FLAG
+                and "grant/revoke/has are for flags"
                 or  "get/set/add/reset are for counters")
     end
     return key, def
 end
 
-local function userKey(subject)
-    if type(subject) == "string" then return subject end
-    if type(subject) == "table" or type(subject) == "userdata" then
-        if subject.getUsername then
-            local n = subject:getUsername()
-            if n then return tostring(n) end
-        end
-    end
-    return nil
+-- Moved to RDShared on 2026-08-23, when DMKits needed the same rule and a
+-- second copy would have been two chances for "what counts as a player" to
+-- drift. Aliased rather than called through, because ten call sites below read
+-- better with the short name.
+local userKey = RDShared.username
+
+-- ---------------------------------------------------------------------------
+-- The owner mirror's seam
+--
+-- ONE listener, notified with a username after any change to that player's
+-- record. RDVarsPush subscribes and replicates the player's own document to
+-- their client; this file stays wire-free, which is what keeps its fixture
+-- pure. World counter writes notify nobody - they are in nobody's mirror.
+-- A verb that changed nothing (reset of an absent counter, a refused revoke)
+-- does not notify: a push per no-op would be wire spent restating the truth.
+-- ---------------------------------------------------------------------------
+RDVars.onTouched = nil
+
+local function notifyTouched(user)
+    local fn = RDVars.onTouched
+    if fn then fn(user) end
+end
+
+-- Milliseconds until this holding expires: positive = still live, <= 0 =
+-- expired, nil = never expires. THE one expression of the expiry rule - has(),
+-- sweep() and mirrorOf() all ask it, so a permission can never be expired to
+-- one reader and live to another.
+--
+-- Signed, deliberately (see the Expiry section header): a backwards clock step
+-- makes `now - at` negative, so the remaining GROWS past ms rather than going
+-- negative - a live grant can never expire early off an NTP correction.
+local function remainingMs(ms, at, now)
+    if not ms or not at then return nil end
+    return ms - (now - at)
 end
 
 -- ---------------------------------------------------------------------------
@@ -153,11 +220,32 @@ function RDVars.define(rawDef, by)
         return nil, "'" .. def.name .. "' already exists as a " .. existing.kind
             .. " var - undefine it first to change its kind"
     end
+    if existing and existing.scope ~= def.scope then
+        -- SCOPE IS AS UNMOVABLE AS KIND, for the identical reason one line up.
+        -- A per-player counter's values live in the player records and a world
+        -- counter's lives once; there is no move between them, so a scope
+        -- change under a live name silently strands whichever set already
+        -- exists - and the panel would then read a counter that has plainly
+        -- been in use as one nothing has ever written to.
+        return nil, "'" .. def.name .. "' already exists, counted for "
+            .. tostring(existing.scope) .. " - undefine it first to change "
+            .. "what it is counted for. Its current values cannot move."
+    end
 
     def.createdMs = existing and existing.createdMs or RDShared.nowMs()
     def.by        = existing and existing.by        or by
     d[def.key]    = def
     ensure():touchDefs()
+    -- A redefinition can change the expiry every holder's remaining time is
+    -- computed from, so their mirrors are stale the moment this returns.
+    if existing then
+        for user, r in pairs(players()) do
+            if (r.flags and r.flags[def.key] ~= nil)
+                or (r.numbers and r.numbers[def.key] ~= nil) then
+                notifyTouched(user)
+            end
+        end
+    end
     return def
 end
 
@@ -175,9 +263,19 @@ function RDVars.undefine(name)
 
     d[key] = nil
     local touched = 0
-    for _, r in pairs(state()) do
-        if r.chars and r.chars[key] ~= nil then r.chars[key] = nil; touched = touched + 1
-        elseif r.numbers and r.numbers[key] ~= nil then r.numbers[key] = nil; touched = touched + 1 end
+    -- A world counter has no holders, so the purge is one slot. It still
+    -- counts: an admin deleting a var is told how much was cleared, and
+    -- reporting 0 for a counter that held 43 reads as "nothing was lost".
+    if worldValues()[key] ~= nil then
+        worldValues()[key] = nil
+        touched = touched + 1
+    end
+    for user, r in pairs(players()) do
+        if r.flags and r.flags[key] ~= nil then
+            r.flags[key] = nil; touched = touched + 1; notifyTouched(user)
+        elseif r.numbers and r.numbers[key] ~= nil then
+            r.numbers[key] = nil; touched = touched + 1; notifyTouched(user)
+        end
     end
     local s = ensure()
     s:touchDefs()
@@ -199,37 +297,39 @@ function RDVars.definitions()
 end
 
 -- ---------------------------------------------------------------------------
--- Markers (char vars)
+-- Flags (flags)
 -- ---------------------------------------------------------------------------
 
 function RDVars.grant(subject, name, by)
     local user = userKey(subject)
     if not user then return nil, "no player" end
-    local key, def = resolve(name, RDVarDefs.CHAR)
+    local key, def = resolve(name, RDVarDefs.FLAG)
     if not key then return nil, def end
 
     local r = record(user, true)
     -- Re-granting refreshes the clock rather than being a no-op: an admin
-    -- re-granting a 4-hour marker means "another four hours", not "nothing".
-    r.chars[key] = { at = RDShared.nowMs(), by = by }
+    -- re-granting a 4-hour flag means "another four hours", not "nothing".
+    r.flags[key] = { at = RDShared.nowMs(), by = by }
     ensure():touchState()
+    notifyTouched(user)
     return true
 end
 
 -- `why` is free text for the caller's own audit line; this file does not act on
--- it. The kit system passes its kit id here when a claim consumes a marker.
+-- it. The kit system passes its kit id here when a claim consumes a flag.
 function RDVars.revoke(subject, name, why)
     local user = userKey(subject)
     if not user then return nil, "no player" end
-    local key, def = resolve(name, RDVarDefs.CHAR)
+    local key, def = resolve(name, RDVarDefs.FLAG)
     if not key then return nil, def end
 
     local r = record(user, false)
-    if not r or r.chars[key] == nil then
+    if not r or r.flags[key] == nil then
         return nil, user .. " does not hold '" .. def.name .. "'"
     end
-    r.chars[key] = nil
+    r.flags[key] = nil
     ensure():touchState()
+    notifyTouched(user)
     return true
 end
 
@@ -242,19 +342,27 @@ end
 function RDVars.has(subject, name)
     local user = userKey(subject)
     if not user then return false, "no player" end
-    local key, def = resolve(name, RDVarDefs.CHAR)
+    local key, def = resolve(name, RDVarDefs.FLAG)
     if not key then return false, def end
     local r = record(user, false)
-    return (r and r.chars[key] ~= nil) or false
+    local held = r and r.flags[key]
+    if not held then return false end
+    -- Checked at READ time, not left to the sweep. The sweep's cadence is a
+    -- floor on how stale the STORE can be; a permission answering yes past its
+    -- own deadline for even one claim is the failure the deadline exists to
+    -- prevent. The sweep still reaps the record.
+    local rem = remainingMs(RDVarDefs.expiryMs(def), held.at, RDShared.nowMs())
+    if rem and rem <= 0 then return false end
+    return true
 end
 
--- Every holder of a marker, sorted. The admin question "who has Anomaly?".
+-- Every holder of a flag, sorted. The admin question "who has Anomaly?".
 function RDVars.holders(name)
-    local key, def = resolve(name, RDVarDefs.CHAR)
+    local key, def = resolve(name, RDVarDefs.FLAG)
     if not key then return nil, def end
     local out = {}
-    for user, r in pairs(state()) do
-        if r.chars and r.chars[key] ~= nil then out[#out + 1] = user end
+    for user, r in pairs(players()) do
+        if r.flags and r.flags[key] ~= nil then out[#out + 1] = user end
     end
     table.sort(out)
     return out
@@ -304,24 +412,44 @@ local function badNumber(v)
     return nil
 end
 
+-- ---------------------------------------------------------------------------
+-- THE SUBJECT IS IGNORED ON A WORLD COUNTER, and every verb below resolves the
+-- definition BEFORE it looks at one. That ordering is the whole point: a kit or
+-- a quest writes `{ kind = "counter", name = "Runs", add = 1 }` and never has
+-- to know which scope the DM chose. Flipping a counter from player to world is
+-- then a decision on the definition alone, and every consumer keeps working.
+--
+-- The cost is that a world write from a caller who meant a player write is not
+-- an error anybody sees. It is the right trade: the alternative is a second set
+-- of verbs, which means every consumer branching on scope, which means every
+-- consumer able to get the branch wrong.
+-- ---------------------------------------------------------------------------
+
 function RDVars.get(subject, name)
-    local user = userKey(subject)
-    if not user then return nil, "no player" end
     local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
+    if RDVarDefs.isWorld(def) then return worldValues()[key] end
+    local user = userKey(subject)
+    if not user then return nil, "no player" end
     local r = record(user, false)
     return r and r.numbers[key] or nil
 end
 
 function RDVars.set(subject, name, value)
-    local user = userKey(subject)
-    if not user then return nil, "no player" end
     local why = badNumber(value)
     if why then return nil, why end
     local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
+    if RDVarDefs.isWorld(def) then
+        worldValues()[key] = value
+        ensure():touchState()
+        return value
+    end
+    local user = userKey(subject)
+    if not user then return nil, "no player" end
     record(user, true).numbers[key] = value
     ensure():touchState()
+    notifyTouched(user)
     return value
 end
 
@@ -330,36 +458,55 @@ end
 -- add(user, "Loot", 1) work on a player's first sample without a set() first -
 -- while get() still reports absent until something touches it.
 function RDVars.add(subject, name, delta)
-    local user = userKey(subject)
-    if not user then return nil, "no player" end
     local why = badNumber(delta)
     if why then return nil, why end
     local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
+    if RDVarDefs.isWorld(def) then
+        local w = worldValues()
+        -- Absent counts as zero for adding, exactly as it does per player -
+        -- that is what makes the first claim of a kit work without a set()
+        -- first - while get() still reports absent until something touches it.
+        local now = (w[key] or 0) + delta
+        w[key] = now
+        ensure():touchState()
+        return now
+    end
+    local user = userKey(subject)
+    if not user then return nil, "no player" end
     local r = record(user, true)
     local now = (r.numbers[key] or 0) + delta
     r.numbers[key] = now
     ensure():touchState()
+    notifyTouched(user)
     return now
 end
 
 -- Back to ABSENT, not to zero. Reset means "as if it had never been touched".
 function RDVars.reset(subject, name)
-    local user = userKey(subject)
-    if not user then return nil, "no player" end
     local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
+    if RDVarDefs.isWorld(def) then
+        local w = worldValues()
+        if w[key] == nil then return true end
+        w[key] = nil
+        ensure():touchState()
+        return true
+    end
+    local user = userKey(subject)
+    if not user then return nil, "no player" end
     local r = record(user, false)
     if not r or r.numbers[key] == nil then return true end
     r.numbers[key] = nil
     ensure():touchState()
+    notifyTouched(user)
     return true
 end
 
 -- The counter counterpart of holders(): every username the counter has been
 -- touched for, with its value, sorted. Same admin question from the other side -
 -- "who has Anomaly?" and "where is everyone up to on AnomalyLoot?" are one
--- question asked of the two kinds, and answering only the marker half would push
+-- question asked of the two kinds, and answering only the flag half would push
 -- the other into the caller, which would mean walking the store from outside it.
 --
 -- ABSENT PLAYERS ARE ABSENT. A username with no record does not appear with a
@@ -367,8 +514,13 @@ end
 function RDVars.valuesOf(name)
     local key, def = resolve(name, RDVarDefs.COUNTER)
     if not key then return nil, def end
+    -- A world counter has no per-player rows and this returns none, rather
+    -- than one row attributed to a made-up user. A caller that wants the
+    -- number asks get(); a caller drawing a list gets an empty one, which is
+    -- the truth about who holds a value.
+    if RDVarDefs.isWorld(def) then return {} end
     local out = {}
-    for user, r in pairs(state()) do
+    for user, r in pairs(players()) do
         if r.numbers and r.numbers[key] ~= nil then
             out[#out + 1] = { user = user, value = r.numbers[key] }
         end
@@ -388,12 +540,12 @@ function RDVars.ofPlayer(subject)
     local user = userKey(subject)
     if not user then return nil, "no player" end
     local r = record(user, false)
-    local out = { username = user, chars = {}, numbers = {} }
+    local out = { username = user, flags = {}, numbers = {} }
     if not r then return out end
     local d = defs()
-    for key, held in pairs(r.chars) do
+    for key, held in pairs(r.flags) do
         local def = d[key]
-        out.chars[#out.chars + 1] = {
+        out.flags[#out.flags + 1] = {
             key = key, name = def and def.name or key,
             at = held.at, by = held.by,
             expiresMs = def and RDVarDefs.expiryMs(def) or nil,
@@ -405,8 +557,39 @@ function RDVars.ofPlayer(subject)
             key = key, name = def and def.name or key, value = n,
         }
     end
-    table.sort(out.chars,   function(a, b) return a.key < b.key end)
+    table.sort(out.flags,   function(a, b) return a.key < b.key end)
     table.sort(out.numbers, function(a, b) return a.key < b.key end)
+    return out
+end
+
+-- The owner's own document, shaped for the wire. THE MIRROR OFFERS, THE SERVER
+-- PERMITS: this is everything a client tool may use to decide what to show,
+-- and nothing here is ever authority - every verb re-derives server-side.
+--
+--   flags   [key] = ms REMAINING (positive), or 0 for a flag that never
+--           expires. Remaining rather than a deadline because the client's
+--           wall clock is not this machine's; it adds the remaining to its own
+--           clock on receipt. An already-expired holding is omitted - has()
+--           would refuse it here, so the mirror must not offer it there.
+--   numbers [key] = value. Absent stays absent; zero is a value.
+--
+-- Canonical KEYS, not display names: the client normalizes queries through the
+-- same RDVarDefs rule, so lookup and storage cannot disagree about case.
+-- World counters are in nobody's document, deliberately - they belong to the
+-- server, and a tool that needs one is a different (unbuilt) surface.
+function RDVars.mirrorOf(subject)
+    local user = userKey(subject)
+    if not user then return nil, "no player" end
+    local out = { flags = {}, numbers = {} }
+    local r = record(user, false)
+    if not r then return out end
+    local d, now = defs(), RDShared.nowMs()
+    for key, held in pairs(r.flags) do
+        local rem = remainingMs(RDVarDefs.expiryMs(d[key]), held.at, now)
+        if rem == nil then out.flags[key] = 0
+        elseif rem > 0 then out.flags[key] = rem end
+    end
+    for key, n in pairs(r.numbers) do out.numbers[key] = n end
     return out
 end
 
@@ -414,7 +597,7 @@ end
 -- Expiry
 --
 -- THE CLOCK RUNS BACKWARDS SOMETIMES. RDShared.nowMs is getTimestampMs - wall
--- clock, and an NTP correction can step it back. A marker must not expire early
+-- clock, and an NTP correction can step it back. A flag must not expire early
 -- when that happens: an early flush costs RDConfigStore one file write, but an
 -- early revoke TAKES SOMETHING FROM A PLAYER, so the two files break the tie in
 -- opposite directions on purpose.
@@ -430,31 +613,31 @@ end
 -- pins that shape directly rather than pinning the deleted clause.
 --
 -- Bounded by admin-scale data: online-and-offline players who hold at least one
--- marker, times their markers. Nothing here walks the world.
+-- flag, times their flags. Nothing here walks the world.
 -- ---------------------------------------------------------------------------
 
 function RDVars.sweep()
     local now = RDShared.nowMs()
     local d, expired = defs(), 0
-    for _, r in pairs(state()) do
-        if r.chars then
-            for key, held in pairs(r.chars) do
-                local ms = RDVarDefs.expiryMs(d[key])
-                if ms and held.at then
-                    -- Signed, deliberately. See the note above: a backwards
-                    -- clock yields a negative elapsed, which cannot reach a
-                    -- positive ms, and that is what keeps a live grant safe.
-                    if now - held.at >= ms then
-                        r.chars[key] = nil
-                        expired = expired + 1
-                    end
+    for user, r in pairs(players()) do
+        if r.flags then
+            local hit = false
+            for key, held in pairs(r.flags) do
+                -- remainingMs carries the backwards-clock property the note
+                -- above describes: a negative elapsed grows the remaining.
+                local rem = remainingMs(RDVarDefs.expiryMs(d[key]), held.at, now)
+                if rem and rem <= 0 then
+                    r.flags[key] = nil
+                    expired = expired + 1
+                    hit = true
                 end
             end
+            if hit then notifyTouched(user) end
         end
     end
     if expired > 0 then
         ensure():touchState()
-        print("[RFTDCore] RDVars: " .. expired .. " marker(s) expired.")
+        print("[RFTDCore] RDVars: " .. expired .. " flag(s) expired.")
     end
     return expired
 end
@@ -464,7 +647,7 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Split from the listener so a fixture can drive it with a username and no
--- engine object. Returns (markersRevoked, countersReset).
+-- engine object. Returns (flagsRevoked, countersReset).
 function RDVars.applyDeath(subject)
     local user = userKey(subject)
     if not user then return 0, 0 end
@@ -472,10 +655,10 @@ function RDVars.applyDeath(subject)
     if not r then return 0, 0 end
 
     local d, revoked, reset = defs(), 0, 0
-    for key in pairs(r.chars) do
+    for key in pairs(r.flags) do
         local def = d[key]
         if def and def.revokers and def.revokers.death then
-            r.chars[key] = nil
+            r.flags[key] = nil
             revoked = revoked + 1
         end
     end
@@ -486,7 +669,10 @@ function RDVars.applyDeath(subject)
             reset = reset + 1
         end
     end
-    if revoked > 0 or reset > 0 then ensure():touchState() end
+    if revoked > 0 or reset > 0 then
+        ensure():touchState()
+        notifyTouched(user)
+    end
     return revoked, reset
 end
 
@@ -506,7 +692,7 @@ end
 
 -- EveryTenMinutes is compressed GAME time, so at the default day length this is
 -- roughly every ten real seconds - a floor on how stale an expiry can be, not a
--- schedule. The body walks only players who hold markers.
+-- schedule. The body walks only players who hold flags.
 Events.EveryTenMinutes.Add(function() RDVars.sweep() end)
 
 return RDVars

@@ -41,7 +41,23 @@ DFKit = {
     refillList = function() end,
     drawEmpty = function() end,
 }
-DFForm = { new = function(o) return o end }
+-- filterSchema is RECORDED here, not reimplemented: what it does with a query
+-- is test_dfform's business now that both option views share it. What this
+-- file has to prove is that the view hands it the CURRENT query, because a
+-- rebuild that filtered on "" leaves a search box that types and does nothing.
+local filterQueries = {}
+DFForm = {
+    new = function(o) return o end,
+    filterSchema = function(schema, query)
+        filterQueries[#filterQueries + 1] = query
+        return schema
+    end,
+    countRows = function(schema)
+        local n = 0
+        for _, e in ipairs(schema or {}) do if e.key then n = n + 1 end end
+        return n
+    end,
+}
 ISScrollingListBox = { derive = function() return {} end }
 ISTextEntryBox = { new = function() return {} end }
 function getText(k) return k end
@@ -94,6 +110,18 @@ function SendCommandToServer(line) sent[#sent + 1] = line end
 local okOv, errOv = pcall(dofile,
     ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua/shared/DFOverlay.lua")
 check(okOv, "DFOverlay loads: " .. tostring(errOv))
+
+-- DFLayout is the server-wide arrangement document and is not this file's
+-- subject. Shape is identity here: the arranger may reorder and group but
+-- never adds or removes an option, so nothing downstream of it cares which of
+-- the two shapes it is handed.
+DFLayout = {
+    shape     = function(page) return page, {} end,
+    request   = function() end,
+    onChanged = function() end,
+    noteFor   = function() return nil end,
+    held      = function() return false end,
+}
 
 DFSandboxModel = nil; DFSandboxView = nil; DFServerFlags = nil; DFServerView = nil
 for _, f in ipairs({ "DFStaged", "DFSandboxModel", "DFSandboxView", "DFServerFlags", "DFServerView" }) do
@@ -201,29 +229,32 @@ DFServerView.staged:set("PVP", false)
 check(DFServerView.staged:count() == 0,
     "staging a value equal to what was already sent queued a redundant write")
 
--- ---- filter --------------------------------------------------------------
+-- The filter's own behaviour moved to test_dfform when DFForm.filterSchema was
+-- promoted for the sandbox view's second copy. What stays this file's business
+-- is that the view actually ROUTES its schema through it - a rebuild that
+-- assigned the unfiltered schema would leave a search box that types and does
+-- nothing.
 
-local schema = {
-    { group = "PVP" },
-    { key = "PVP", label = "PVP" },
-    { key = "PVPLogToolChat", label = "PVPLogToolChat" },
-    { group = "Other" },
-    { key = "Zzz", label = "Zzz" },
-}
-check(#DFServerView.filterSchema(schema, "") == #schema, "an empty filter changed the schema")
+-- rebuild() returns early without a form, which is right in production and
+-- would make both checks below silently vacuous. DFForm.new hands back the
+-- opts table, so this is the same shape attach() would have installed.
+DFServerView.form = DFForm.new{ schema = {} }
+DFServerView.page = { sections = { { title = "PVP", options = {
+    { name = "PVP",            label = "PVP",            type = "boolean" },
+    { name = "PVPLogToolChat", label = "PVPLogToolChat", type = "boolean" },
+} } } }
+DFServerView.filter = "pvplog"
+filterQueries = {}
+DFServerView.rebuild()
+check(filterQueries[1] == "pvplog",
+    "THE SEARCH BOX DOES NOTHING. rebuild() did not route the schema through "
+    .. "the shared filter with the typed query: " .. tostring(filterQueries[1]))
 
-local hits = DFServerView.filterSchema(schema, "pvplog")
-local groups, rows = 0, 0
-for _, e in ipairs(hits) do
-    if e.group then groups = groups + 1 else rows = rows + 1 end
-end
-check(rows == 1, "filter matched " .. rows .. " rows, expected 1")
-check(groups == 1, "a section header with nothing under it survived the filter")
-
-check(#DFServerView.filterSchema(schema, "PVPLOG") == #DFServerView.filterSchema(schema, "pvplog"),
-    "the filter is case-sensitive")
-check(#DFServerView.filterSchema(schema, "zzzz") == 0,
-    "a filter matching nothing left headers behind")
+DFServerView.filter = ""
+filterQueries = {}
+DFServerView.rebuild()
+check(filterQueries[1] == "",
+    "clearing the box did not reach the filter, so the last search would stick")
 
 -- ---- restart flags -------------------------------------------------------
 -- Three states, and the third is the honest one: an option nobody has read

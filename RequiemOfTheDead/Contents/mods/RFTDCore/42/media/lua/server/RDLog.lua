@@ -457,6 +457,28 @@ end
 -- It was hardcoded "?" here, which meant every forensic record in the family - not
 -- just Guardian's - shipped an empty attribution field. Optional so an unconverted
 -- caller degrades to the old behaviour rather than erroring.
+-- A stream bound to one module, which is how a satellite is meant to hold this.
+--
+--     local forensic = RDLog.channel("kits", "RFTDDungeonMaster")
+--     forensic("DM.KIT_CLAIMED", player, { id = "reward" })
+--
+-- The stream name and the module id are fixed once instead of repeated at every
+-- call site, where they are exactly the two arguments a copy-paste gets wrong -
+-- and a wrong modId is invisible, because it only shows up as an empty
+-- attribution field in a record nobody reads until they need it.
+--
+-- The returned function is nil-safe about RDLog itself so a SHARED file can
+-- hold one: RDLog is server-only, and Limes' LMSync is loaded on both sides.
+--
+-- Promoted 2026-08-23 from identical wrappers in LMSync and DMKits_Server.
+function RDLog.channel(streamName, modId)
+    return function(evt, subj, payload)
+        if RDLog and RDLog.forensic then
+            RDLog.forensic(streamName, evt, subj, payload, modId)
+        end
+    end
+end
+
 function RDLog.forensic(streamName, evt, subj, payload, modId)
     push(streamName, envelope(evt, modId or "?", subj, payload))
 

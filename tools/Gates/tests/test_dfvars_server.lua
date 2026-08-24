@@ -59,7 +59,8 @@ end }
 -- RDConfigStore stubbed to a live table: this fixture is about the wire and the
 -- gates, and RDConfigStore has its own fixture for persistence.
 local touched = 0
-RDConfigStore = { new = function()
+RDConfigStore = {}
+RDConfigStore.new = function()
     local st = { _d = {}, _s = {} }
     st.boot = function() end
     st.defs = function(self) return self._d end
@@ -67,7 +68,19 @@ RDConfigStore = { new = function()
     st.touchDefs  = function() touched = touched + 1; return true end
     st.touchState = function() touched = touched + 1; return true end
     return st
-end }
+end
+-- A stub must implement the surface it stands in for, not the subset today's
+-- caller happens to reach. lazy() is how a consumer is meant to hold a store,
+-- and leaving it out here meant RDVars stopped loading the moment it adopted
+-- the supported pattern - a fixture failure that says nothing about RDVars.
+RDConfigStore.lazy = function(spec)
+    local store
+    return function()
+        if not store then store = RDConfigStore.new(spec) end
+        store:boot()
+        return store
+    end
+end
 
 local caps = {}
 RDAccess = {
@@ -124,7 +137,12 @@ end
 
 -- ---- load ----------------------------------------------------------------
 
-RDShared = { nowMs = function() return clock end, DIR = "RFTD/", EXT_DOC = ".json.txt" }
+-- The REAL RDShared, with only the clock replaced - RDVars resolves every
+-- player through RDShared.username, and a hand-written stub of three fields
+-- stopped covering that the day it moved into Core.
+require = function() return true end
+dofile(CORE .. "/shared/RDShared.lua")
+RDShared.nowMs = function() return clock end
 
 RDVarDefs = nil
 local okD, errD = pcall(dofile, CORE .. "/shared/RDVarDefs.lua")
@@ -194,13 +212,13 @@ end
 
 -- ---- schema verbs --------------------------------------------------------
 
-local CHAR = { kind = "char", name = "Anomaly", revokers = { death = true } }
+local CHAR = { kind = "flag", name = "Anomaly", revokers = { death = true } }
 
 check(run("varDefine", schemaAdmin, { def = CHAR }).ok == true,
     "a role holding ChangeAndReloadServerOptions could not define a var")
 check(RDVars.definition("Anomaly") ~= nil, "the definition did not reach the store")
 
-check(run("varDefine", statAdmin, { def = { kind = "char", name = "Sneaky" } }).ok == false,
+check(run("varDefine", statAdmin, { def = { kind = "flag", name = "Sneaky" } }).ok == false,
     "A PER-PLAYER ROLE DEFINED SERVER-WIDE SCHEMA. Defining changes what this "
     .. "world can express and undefining purges every holder; that is not the "
     .. "same authority as editing one player's state.")
@@ -327,7 +345,7 @@ check(run("varUndefine", schemaAdmin, { name = "NeverExisted" }).ok == false,
 
 -- ---- reads ---------------------------------------------------------------
 
-run("varDefine", schemaAdmin, { def = { kind = "char", name = "Wave", revokers = {} } })
+run("varDefine", schemaAdmin, { def = { kind = "flag", name = "Wave", revokers = {} } })
 run("varGrant", statAdmin, { user = "A", name = "Wave" })
 run("varGrant", statAdmin, { user = "B", name = "Wave" })
 
@@ -351,7 +369,7 @@ check(wave ~= nil, "the definition did not reach the reply")
 check(wave.holders == 2, "the holder COUNT was wrong: " .. tostring(wave.holders))
 check(wave.permanent == true, "a var with no revokers did not report as permanent")
 
--- A count, not a list. A marker granted to two hundred event attendees is a
+-- A count, not a list. A flag granted to two hundred event attendees is a
 -- packet nobody needs and a list nobody reads.
 check(type(wave.holders) == "number",
     "the summary sent a holder LIST rather than a count")
@@ -360,7 +378,7 @@ directSends = {}
 check(run("varsOfPlayer", moderator, { user = "A" }).ok == true, "a staff read was refused")
 check(directSends[1].command == "AdminVarsPlayer", "the player reply is wrong")
 check(directSends[1].args.username == "A", "the reply did not name its player")
-check(#directSends[1].args.chars == 1, "the player's markers did not come back")
+check(#directSends[1].args.flags == 1, "the player's flags did not come back")
 check(run("varsOfPlayer", moderator, { user = string.rep("u", 200) }).ok == false,
     "an unbounded username was read")
 
@@ -373,7 +391,7 @@ check(#directSends[1].args.rows == 2, "the holder rows did not come back")
 check(directSends[1].args.total == 2, "the total was wrong")
 
 -- Online players appear whether or not they hold it: the panel's ordinary job
--- is handing a marker to somebody who is standing there, and a list of holders
+-- is handing a flag to somebody who is standing there, and a list of holders
 -- alone can never offer that.
 onlineRoster = { "Zed", "A" }
 directSends = {}
@@ -389,10 +407,20 @@ check(byUser["Zed"].holds == nil, "a non-holder was reported as holding it")
 check(byUser["A"].holds == true and byUser["A"].online == true,
     "an online HOLDER lost one of its two facts")
 check(byUser["B"] ~= nil and byUser["B"].online == nil,
-    "an OFFLINE holder vanished - somebody who earned a marker last night and "
+    "an OFFLINE holder vanished - somebody who earned a flag last night and "
     .. "logged off must still be revocable today")
-check(merged.rows[1].user == "A" and merged.rows[2].user == "Zed",
-    "online rows are not first and sorted: " .. merged.rows[1].user)
+-- HOLDERS FIRST, then the roster. A: holder and online. B: holder, offline.
+-- Zed: online, holds nothing. The window asks "who holds this", so the holders
+-- occupy the top of the list whether or not they are logged in, and the people
+-- who are merely present sit under them. Put the roster first - which is what
+-- this did until 2026-08-23 - and a variable nobody holds opens with the
+-- reading admin's own name on row one, which reads as the panel having added
+-- them to it.
+check(merged.rows[1].user == "A" and merged.rows[2].user == "B"
+      and merged.rows[3].user == "Zed",
+    "the three groups are out of order: "
+    .. merged.rows[1].user .. ", " .. merged.rows[2].user .. ", "
+    .. tostring(merged.rows[3] and merged.rows[3].user))
 check(merged.total == 3, "the total lost somebody: " .. tostring(merged.total))
 check(run("varHolders", nobody, { name = "Wave" }).ok == false,
     "a non-staff caller read a holder list")
@@ -423,14 +451,148 @@ check(big.total == 208,
     .. "show 200 and imply that is everyone: " .. tostring(big.total))
 local sawOnline = {}
 for _, r in ipairs(big.rows) do if r.online then sawOnline[r.user] = true end end
+check(big.rows[#big.rows].user == "Zed",
+    "THE ROSTER WAS NOT WHAT SURVIVED AT THE TAIL. Order and truncation are "
+    .. "separate decisions here: holders read first, and the bound is spent on "
+    .. "OFFLINE holders alone. Filling to the bound in display order would put "
+    .. "the roster past the cut on any variable with two hundred holders - "
+    .. "exactly the case where handing the flag to somebody present matters.")
 check(sawOnline["Zed"] and sawOnline["A"],
     "AN ONLINE PLAYER WAS TRUNCATED OUT of an oversized list. The bound exists "
     .. "for the two hundred offline holders nobody is looking at, not for the "
     .. "handful of people the admin is actually standing next to.")
 
+-- SORTED, and not by luck. All three groups come out of hash iteration, whose
+-- order Lua does not define - so an unsorted list reshuffles between two reads
+-- of a variable nothing has changed, which reads as the panel losing track of
+-- who holds what. Eight names, deliberately not in alphabetical order as
+-- written, so the assertion is about table.sort and not about insertion order.
+run("varDefine", schemaAdmin, { def = { kind = "flag", name = "Sorted" } })
+local crowd = { "mike", "alpha", "zulu", "bravo", "yankee", "charlie", "xray", "delta" }
+for _, u in ipairs(crowd) do run("varGrant", statAdmin, { user = u, name = "Sorted" }) end
+onlineRoster = crowd
+directSends = {}
+run("varHolders", moderator, { name = "Sorted" })
+local ordered = directSends[1].args.rows
+check(#ordered == #crowd, "the sorting case lost rows: " .. #ordered)
+local slip = nil
+for i = 2, #ordered do
+    if ordered[i - 1].user > ordered[i].user then
+        slip = ordered[i - 1].user .. " came before " .. ordered[i].user
+    end
+end
+check(slip == nil, "THE HOLDER LIST CAME BACK UNSORTED: " .. tostring(slip))
+
+-- The offline half sorts too, and separately: it is a different table, so one
+-- table.sort proves nothing about the other.
+onlineRoster = {}
+directSends = {}
+run("varHolders", moderator, { name = "Sorted" })
+local offline = directSends[1].args.rows
+local offSlip = nil
+for i = 2, #offline do
+    if offline[i - 1].user > offline[i].user then
+        offSlip = offline[i - 1].user .. " came before " .. offline[i].user
+    end
+end
+check(offSlip == nil, "the OFFLINE holders came back unsorted: " .. tostring(offSlip))
+run("varUndefine", schemaAdmin, { name = "Sorted" })
+
+-- ---- world counters ------------------------------------------------------
+--
+-- One number the whole server shares. The window that shows it has no holder
+-- list, so the read has to answer with the VALUE, and the two verbs are their
+-- own commands rather than a scope branch inside varSet/varReset: those carry
+-- a username, validate it, and push that player's record back afterwards, and
+-- none of the three means anything here.
+
+run("varDefine", schemaAdmin,
+    { def = { kind = "counter", name = "Runs", scope = "world" } })
+
+directSends = {}
+check(run("varHolders", moderator, { name = "Runs" }).ok == true,
+    "a world counter could not be read")
+local wpay = directSends[1].args
+check(wpay.scope == "world", "the reply did not say which scope it was")
+check(#wpay.rows == 0 and wpay.total == 0,
+    "A WORLD COUNTER CAME BACK WITH HOLDER ROWS. Nobody holds it, and any row "
+    .. "here is a name an admin can aim a verb at.")
+check(wpay.value == nil,
+    "AN UNTOUCHED WORLD COUNTER REPORTED A VALUE. Absent means nothing has "
+    .. "ever written to it; a panel drawing that as 0 says a quest has been "
+    .. "completed zero times, which is a different claim.")
+
+-- THE GATE IS THE SCHEMA CAPABILITY, not the per-player one. An admin trusted
+-- to fix one player's sample count is not automatically trusted to declare
+-- what the whole server has done.
+check(run("varWorldSet", statAdmin, { name = "Runs", value = 5 }).ok == false,
+    "THE PER-PLAYER CAPABILITY REACHED A SERVER-WIDE NUMBER. Every quest gate "
+    .. "on the server reads it.")
+check(run("varWorldSet", nobody, { name = "Runs", value = 5 }).ok == false,
+    "a caller with no capability set a world counter")
+
+directSends = {}
+check(run("varWorldSet", schemaAdmin, { name = "Runs", value = 42 }).ok == true,
+    "a world counter could not be set")
+check(directSends[1] and directSends[1].args.value == 42,
+    "the verb did not push the new value back, so the window would keep "
+    .. "drawing what it believed before")
+
+-- Zero is a value somebody set. Clearing is the other thing.
+check(run("varWorldSet", schemaAdmin, { name = "Runs", value = 0 }).ok == true,
+    "a world counter could not be set to zero")
+directSends = {}
+run("varHolders", moderator, { name = "Runs" })
+check(directSends[1].args.value == 0, "a stored zero read back as absent")
+
+directSends = {}
+check(run("varWorldReset", schemaAdmin, { name = "Runs" }).ok == true,
+    "a world counter could not be cleared")
+check(directSends[1].args.value == nil,
+    "A CLEARED WORLD COUNTER CAME BACK AS ZERO. Absent and zero are the two "
+    .. "answers every repeatable quest gates on.")
+
+-- Refusals still push, for the same reason the per-player verbs do: a refused
+-- action leaves the panel showing whatever it believed before, and the one
+-- thing an admin needs after one is the value that is actually stored.
+run("varWorldSet", schemaAdmin, { name = "Runs", value = 7 })
+directSends = {}
+local bad = run("varWorldSet", schemaAdmin, { name = "Runs", value = "abc" })
+check(bad.ok == false, "a world counter accepted something that is not a number")
+check(directSends[1] and directSends[1].args.value == 7,
+    "a REFUSED world write pushed nothing back")
+
+-- The verbs refuse anything that is not a world counter, rather than falling
+-- through to a player write with no player.
+check(run("varWorldSet", schemaAdmin, { name = "Progress", value = 1 }).ok == false,
+    "A PER-PLAYER COUNTER WAS WRITTEN THROUGH THE WORLD VERB. It carries no "
+    .. "username, so the write would land nowhere or everywhere.")
+check(run("varWorldSet", schemaAdmin, { name = "Wave", value = 1 }).ok == false,
+    "a FLAG was written through the world counter verb")
+check(run("varWorldSet", schemaAdmin, { name = "NoSuchVar", value = 1 }).ok == false,
+    "an undefined var was written")
+check(run("varWorldReset", schemaAdmin, { name = "NoSuchVar" }).ok == false,
+    "an undefined var was cleared")
+
+-- And a world counter is not reachable through the per-player verbs, which
+-- would otherwise write it once per admin who tried.
+check(run("varSet", statAdmin, { user = "A", name = "Runs", value = 3 }).ok == true,
+    "the per-player verb errored rather than routing by scope")
+directSends = {}
+run("varHolders", moderator, { name = "Runs" })
+check(directSends[1].args.value == 3,
+    "a per-player set on a world counter went somewhere other than the world "
+    .. "slot: " .. tostring(directSends[1].args.value))
+check(#directSends[1].args.rows == 0,
+    "A PER-PLAYER SET ON A WORLD COUNTER CREATED A HOLDER. RDVars routes by "
+    .. "the definition on purpose, so a kit writing add:1 never has to know "
+    .. "which scope the DM picked - but it must not leave a record behind.")
+
+run("varUndefine", schemaAdmin, { name = "Runs" })
+
 -- A schema change invalidates every panel's list, so they are told to re-ask.
 staffSends = {}
-run("varDefine", schemaAdmin, { def = { kind = "char", name = "Wave2" } })
+run("varDefine", schemaAdmin, { def = { kind = "flag", name = "Wave2" } })
 check(#staffSends == 1 and staffSends[1].command == "AdminVarsStale",
     "defining a var did not tell the other panels their list is out of date")
 staffSends = {}

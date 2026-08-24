@@ -1,0 +1,6 @@
+name=Requiem of the Dead: Dungeon Master
+id=RFTDDungeonMaster
+modversion=1.2.1
+require=RFTDCore
+description=Kits - reward packages an admin writes once and a player claims when they have earned it. A kit can carry items, character markers and counters, traits and skill XP, and can hold a weighted roulette so two people claiming the same kit do not walk away with the same thing. Each kit sets its own wait between claims - none, a day, a season - and can require markers or a counter total before it will show up at all. Kits are written in game on the admin panel; what a kit contains is decided entirely on the server, and nothing a player sends can change it. This is the first release of the mod that will grow to hold quests and placed world encounters. Requires Requiem of the Dead: Core; the authoring tab appears inside the Dragonfly admin panel when that mod is present, and everything here works without it. Designed for dedicated multiplayer servers.
+pzversion=42

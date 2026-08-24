@@ -2,9 +2,9 @@
 --
 -- WHAT IS ACTUALLY AT RISK HERE. A var is a permission in disguise: holding one
 -- is what lets a player claim a kit. So the failures worth catching are the two
--- directions of getting that wrong - a marker that outlives what it was meant
+-- directions of getting that wrong - a flag that outlives what it was meant
 -- to cover (a spent event grant that never expires, an admin-only flag that
--- survives death when it declared it would not), and a marker that vanishes
+-- survives death when it declared it would not), and a flag that vanishes
 -- from under a player who legitimately holds it. Both are silent. Neither is
 -- visible until someone types /kit at an event.
 --
@@ -69,11 +69,15 @@ Events = {
 }
 
 local clock = 1000000
-RDShared = {
-    nowMs   = function() return clock end,
-    DIR     = "RFTD/",
-    EXT_DOC = ".json.txt",
-}
+-- The REAL RDShared, with only the clock replaced. It was a hand-written stub
+-- of three fields until 2026-08-23, when username() moved into RDShared and the
+-- stub silently stopped covering the surface RDVars actually uses - every call
+-- keyed by a player resolved to nil. Loading it for real means the next thing
+-- Core adds cannot fail the same way, and it costs nothing: RDShared's only
+-- file-scope call is registerMod, which is a table write.
+require = function() return true end
+dofile(CORE .. "/shared/RDShared.lua")
+RDShared.nowMs = function() return clock end
 
 require = function() return true end
 dofile(CORE .. "/shared/RDJson.lua")
@@ -101,7 +105,7 @@ end
 
 -- Shorthands: every block wants the same two vars.
 local function defineAnomaly(revokers)
-    return RDVars.define{ kind = "char", name = "Anomaly", revokers = revokers }
+    return RDVars.define{ kind = "flag", name = "Anomaly", revokers = revokers }
 end
 local function defineLoot(resetOnDeath)
     return RDVars.define{ kind = "counter", name = "AnomalyLoot", resetOnDeath = resetOnDeath }
@@ -110,7 +114,7 @@ end
 -- ---- definitions ---------------------------------------------------------
 
 reset()
-check(defineAnomaly({ death = true }) ~= nil, "a valid char var was refused")
+check(defineAnomaly({ death = true }) ~= nil, "a valid flag was refused")
 check(defineLoot(true) ~= nil, "a valid string var was refused")
 check(RDVars.define{ kind = "counter", name = "Bad" } == nil,
     "a string var with no resetOnDeath reached the store - RDVarDefs' rule "
@@ -125,9 +129,9 @@ check(fs[DEFS_FILE] ~= nil, "defining a var did not write the defs file immediat
 -- Changing kind under a live name would strand every holder's state in the
 -- wrong half of their record, silently.
 check(RDVars.define{ kind = "counter", name = "Anomaly", resetOnDeath = true } == nil,
-    "a char var was silently converted to a string var")
+    "a flag was silently converted to a string var")
 
--- ---- markers -------------------------------------------------------------
+-- ---- flags -------------------------------------------------------------
 
 reset()
 defineAnomaly({ death = true })
@@ -143,7 +147,7 @@ check(#holders == 1 and holders[1] == "Kriegan", "holders() did not report the g
 
 check(RDVars.revoke("Kriegan", "Anomaly", "claimed anomaly_crossbow") == true, "revoke failed")
 check(RDVars.has("Kriegan", "Anomaly") == false, "has() true after a revoke")
-check(RDVars.revoke("Kriegan", "Anomaly") == nil, "revoking a marker nobody holds reported success")
+check(RDVars.revoke("Kriegan", "Anomaly") == nil, "revoking a flag nobody holds reported success")
 
 -- Undefined vars are refused once, in one place, with a reason an admin can read.
 local okGrant, why = RDVars.grant("Kriegan", "Nonexistent")
@@ -154,9 +158,9 @@ check(okGrant == nil and tostring(why):find("no var named", 1, true) ~= nil,
 defineLoot(true)
 check(RDVars.grant("Kriegan", "AnomalyLoot") == nil, "grant() worked on a counter")
 check(select(1, RDVars.has("Kriegan", "AnomalyLoot")) == false, "has() claimed a counter was held")
-check(RDVars.get("Kriegan", "Anomaly") == nil, "get() worked on a marker")
+check(RDVars.get("Kriegan", "Anomaly") == nil, "get() worked on a flag")
 
--- Re-granting refreshes the clock. An admin re-granting a timed marker means
+-- Re-granting refreshes the clock. An admin re-granting a timed flag means
 -- "another four hours", not "nothing happened".
 reset()
 defineAnomaly({ expires = 60 })
@@ -166,7 +170,7 @@ RDVars.grant("Kriegan", "Anomaly")
 clock = clock + 59 * 60000
 RDVars.sweep()
 check(RDVars.has("Kriegan", "Anomaly") == true,
-    "a re-granted marker expired on the ORIGINAL grant time - the refresh was lost")
+    "a re-granted flag expired on the ORIGINAL grant time - the refresh was lost")
 
 -- ---- counters: absent is not zero ---------------------------------------
 
@@ -234,7 +238,7 @@ RDVars.reset("Astrid", "AnomalyLoot")
 check(#RDVars.valuesOf("AnomalyLoot") == 1,
     "a reset counter still appeared in valuesOf - reset means ABSENT")
 check(RDVars.valuesOf("Anomaly") == nil,
-    "valuesOf answered for a MARKER - asking a counter question of a marker is "
+    "valuesOf answered for a MARKER - asking a counter question of a flag is "
     .. "a programming error, and holders() is the other half of the pair")
 check(RDVars.valuesOf("NoSuchVar") == nil, "valuesOf answered for an undefined var")
 
@@ -245,13 +249,13 @@ defineAnomaly({ expires = 60 })
 RDVars.grant("Kriegan", "Anomaly")
 
 clock = clock + 59 * 60000
-check(RDVars.sweep() == 0, "a marker expired one minute early")
-check(RDVars.has("Kriegan", "Anomaly") == true, "a marker was taken before its expiry")
+check(RDVars.sweep() == 0, "a flag expired one minute early")
+check(RDVars.has("Kriegan", "Anomaly") == true, "a flag was taken before its expiry")
 
 clock = clock + 1 * 60000                        -- exactly 60 minutes
 check(RDVars.sweep() == 1, "the expiry did not fire AT the boundary")
-check(RDVars.has("Kriegan", "Anomaly") == false, "an expired marker was still held")
-check(RDVars.sweep() == 0, "sweeping again re-counted an already-expired marker")
+check(RDVars.has("Kriegan", "Anomaly") == false, "an expired flag was still held")
+check(RDVars.sweep() == 0, "sweeping again re-counted an already-expired flag")
 
 -- The clock is wall time and NOT monotonic. Erring the other way here would
 -- TAKE SOMETHING FROM A PLAYER, which is why this rule is the opposite of the
@@ -267,29 +271,29 @@ defineAnomaly({ expires = 60 })
 RDVars.grant("Kriegan", "Anomaly")
 clock = clock - 24 * 60 * 60000                  -- NTP steps the clock back a day
 check(RDVars.sweep() == 0,
-    "a BACKWARDS clock step expired a live marker - an NTP correction would "
+    "a BACKWARDS clock step expired a live flag - an NTP correction would "
     .. "silently strip every timed grant on the server")
-check(RDVars.has("Kriegan", "Anomaly") == true, "the marker was taken by a backwards clock")
+check(RDVars.has("Kriegan", "Anomaly") == true, "the flag was taken by a backwards clock")
 
 -- ...and forward again. The grant must still be live: a clock that wandered and
--- came back has not consumed any of the marker's hour.
+-- came back has not consumed any of the flag's hour.
 clock = clock + 24 * 60 * 60000
-check(RDVars.sweep() == 0, "a marker expired after the clock returned to normal")
-check(RDVars.has("Kriegan", "Anomaly") == true, "a round-trip clock excursion took the marker")
+check(RDVars.sweep() == 0, "a flag expired after the clock returned to normal")
+check(RDVars.has("Kriegan", "Anomaly") == true, "a round-trip clock excursion took the flag")
 
--- A marker with no expiry is never touched by the sweep, however long it runs.
+-- A flag with no expiry is never touched by the sweep, however long it runs.
 reset()
 defineAnomaly(nil)
 RDVars.grant("Kriegan", "Anomaly")
 clock = clock + 365 * 24 * 60 * 60000
-check(RDVars.sweep() == 0, "a permanent marker expired")
-check(RDVars.has("Kriegan", "Anomaly") == true, "a permanent marker was swept away after a year")
+check(RDVars.sweep() == 0, "a permanent flag expired")
+check(RDVars.has("Kriegan", "Anomaly") == true, "a permanent flag was swept away after a year")
 
 -- ---- death ---------------------------------------------------------------
 
 reset()
-RDVars.define{ kind = "char", name = "Temporary", revokers = { death = true } }
-RDVars.define{ kind = "char", name = "Keeper" }
+RDVars.define{ kind = "flag", name = "Temporary", revokers = { death = true } }
+RDVars.define{ kind = "flag", name = "Keeper" }
 RDVars.define{ kind = "counter", name = "Fragile", resetOnDeath = true }
 RDVars.define{ kind = "counter", name = "Durable", resetOnDeath = false }
 
@@ -301,13 +305,13 @@ RDVars.grant("Omen", "Temporary")
 
 onDeath(player("Kriegan"))
 
-check(RDVars.has("Kriegan", "Temporary") == false, "a death-revoked marker survived death")
+check(RDVars.has("Kriegan", "Temporary") == false, "a death-revoked flag survived death")
 check(RDVars.has("Kriegan", "Keeper") == true,
-    "a marker that did NOT declare death as a revoker was taken anyway - a var "
+    "a flag that did NOT declare death as a revoker was taken anyway - a var "
     .. "goes nowhere on death unless it said it would")
 check(RDVars.get("Kriegan", "Fragile") == nil, "resetOnDeath = true did not reset")
 check(RDVars.get("Kriegan", "Durable") == 9, "resetOnDeath = false was reset anyway")
-check(RDVars.has("Omen", "Temporary") == true, "another player's markers were cleared by this death")
+check(RDVars.has("Omen", "Temporary") == true, "another player's flags were cleared by this death")
 
 -- The handler fires for every character in the world.
 onDeath(zombie())
@@ -324,17 +328,17 @@ RDVars.set("Kriegan", "AnomalyLoot", 3)
 
 local view = RDVars.ofPlayer("Kriegan")
 check(view.username == "Kriegan", "ofPlayer lost the username")
-check(#view.chars == 1 and view.chars[1].name == "Anomaly",
-    "ofPlayer did not report the marker under its authored spelling")
-check(view.chars[1].by == "Omen", "ofPlayer lost the granting admin")
-check(view.chars[1].expiresMs == 60 * 60000, "ofPlayer did not join the definition's expiry")
+check(#view.flags == 1 and view.flags[1].name == "Anomaly",
+    "ofPlayer did not report the flag under its authored spelling")
+check(view.flags[1].by == "Omen", "ofPlayer lost the granting admin")
+check(view.flags[1].expiresMs == 60 * 60000, "ofPlayer did not join the definition's expiry")
 check(#view.numbers == 1 and view.numbers[1].value == 3, "ofPlayer lost the counter")
 
 -- A panel that holds a reference to the live record can corrupt the store by
 -- rendering.
-view.chars[1].name = "Tampered"
+view.flags[1].name = "Tampered"
 view.numbers[1].value = 999
-check(RDVars.ofPlayer("Kriegan").chars[1].name == "Anomaly"
+check(RDVars.ofPlayer("Kriegan").flags[1].name == "Anomaly"
     and RDVars.get("Kriegan", "AnomalyLoot") == 3,
     "ofPlayer handed back the live record - editing the view mutated the store")
 
@@ -377,20 +381,301 @@ modDataMap["RFTDVars"] = { defs = {}, state = {}, meta = { defsMs = 1, stateMs =
 check(RDVars.definition("Anomaly") ~= nil, "definitions did not come back after a restart")
 check(RDVars.has("Kriegan", "Anomaly") == true, "a grant did not survive a restart")
 check(RDVars.get("Kriegan", "AnomalyLoot") == 5, "a counter did not survive a restart")
-check(RDVars.ofPlayer("Kriegan").chars[1].by == "Omen",
+check(RDVars.ofPlayer("Kriegan").flags[1].by == "Omen",
     "the granting admin was lost in the round trip")
 
 -- A wipe: the files outlive the save, ModData does not. Nothing may come back
--- on its own, or players keep every marker they spent last season.
+-- on its own, or players keep every flag they spent last season.
 reset()
 fs[DEFS_FILE], fs[STATE_FILE] = defsOnDisk, stateOnDisk
 check(RDVars.has("Kriegan", "Anomaly") == false,
-    "A WIPE CARRIED PLAYER STATE FORWARD - the marker survived a world with no "
+    "A WIPE CARRIED PLAYER STATE FORWARD - the flag survived a world with no "
     .. "ModData, which is the exploit save-scoping exists to prevent")
 check(RDVars.definition("Anomaly") == nil,
     "definitions were auto-loaded into a wiped world - the admin imports them "
     .. "deliberately, and the store holds the file until they do")
 
+-- ---- world counters ------------------------------------------------------
+--
+-- One number for the whole server. The verbs are the SAME verbs, and that is
+-- the design: a kit writes { kind = "counter", name = "Runs", add = 1 } and
+-- never learns which scope the DM picked, so flipping a counter from player to
+-- world is a decision on the definition alone.
+
+reset()
+check(RDVars.define{ kind = "counter", name = "Runs", scope = "world" } ~= nil,
+    "a world counter could not be defined")
+defineLoot(false)
+
+-- Absent, not zero. A world counter nothing has written to has never run.
+check(RDVars.get(nil, "Runs") == nil,
+    "an untouched world counter reported a value")
+check(RDVars.add(nil, "Runs", 1) == 1, "the first add did not treat absent as zero")
+check(RDVars.add(nil, "Runs", 2) == 3, "adds did not accumulate")
+check(RDVars.get(nil, "Runs") == 3, "get did not read back the world value")
+check(RDVars.set(nil, "Runs", 40) == 40, "set failed")
+check(RDVars.get(nil, "Runs") == 40, "set did not stick")
+
+-- THE SUBJECT IS IGNORED. Two different players writing the same world counter
+-- must move ONE number - if either got their own, the count would be per-player
+-- wearing a world label, which is the exact bug this scope exists to avoid.
+check(RDVars.add("Kriegan", "Runs", 1) == 41, "a subject was allowed to fork the count")
+check(RDVars.add(player("Omen"), "Runs", 1) == 42,
+    "an IsoPlayer subject forked the count")
+check(RDVars.get("Kriegan", "Runs") == 42 and RDVars.get("Omen", "Runs") == 42,
+    "two players read different values from ONE world counter")
+
+-- It does not leak into anybody's record, which is what keeps it off every
+-- player-facing read and every per-player list.
+check(#RDVars.ofPlayer("Kriegan").numbers == 0,
+    "A WORLD COUNTER LANDED IN A PLAYER'S RECORD. It would then show on their "
+    .. "variables list as something they hold, and be reset by their death.")
+check(#RDVars.valuesOf("Runs") == 0,
+    "valuesOf invented per-player rows for a counter nobody holds")
+
+-- ...and it must still report none when a record DOES carry that key. A
+-- document written before the counter was world-scoped, or one edited by hand,
+-- holds exactly this: a per-player value under a name whose only truth is now
+-- the world slot. Reporting it would put a holder on a screen that has no
+-- holders, with a value the counter does not have.
+RDVars.store():state().players.Stale = { flags = {}, numbers = { runs = 99 } }
+check(#RDVars.valuesOf("Runs") == 0,
+    "A STRANDED PER-PLAYER VALUE WAS REPORTED AS A WORLD COUNTER'S HOLDER: "
+    .. tostring(#RDVars.valuesOf("Runs")) .. " row(s)")
+check(RDVars.get("Stale", "Runs") == 42,
+    "a read for a world counter answered out of a player's record instead of "
+    .. "the world slot")
+
+-- Clear returns it to ABSENT, not to zero. A quest gates on the difference.
+check(RDVars.reset(nil, "Runs") == true, "reset failed")
+check(RDVars.get(nil, "Runs") == nil,
+    "A CLEARED WORLD COUNTER READ AS ZERO. Absent means nothing has ever "
+    .. "written to it; zero means it ran and was reset.")
+check(RDVars.reset(nil, "Runs") == true, "resetting an already-absent counter failed")
+check(RDVars.set(nil, "Runs", 0) == 0, "zero could not be stored")
+check(RDVars.get(nil, "Runs") == 0, "a stored zero read back as absent")
+
+-- Death touches players only. A world counter with no holder cannot be reset
+-- by one, and applyDeath walks a record it is not in.
+RDVars.set("Kriegan", "AnomalyLoot", 7)
+RDVars.applyDeath("Kriegan")
+check(RDVars.get(nil, "Runs") == 0, "a player's death moved a world counter")
+
+-- The two halves are separate storage. A per-player counter of the same shape
+-- must not read the world slot or vice versa.
+check(RDVars.define{ kind = "counter", name = "Runs", resetOnDeath = false } == nil,
+    "a world counter was silently converted to a per-player one under its own name")
+
+-- Deleting a world counter clears the value AND reports it. An admin told "0
+-- cleared" about a counter that held 42 reads it as nothing having been lost.
+RDVars.set(nil, "Runs", 42)
+local ok, touched = RDVars.undefine("Runs")
+check(ok == true, "a world counter could not be deleted")
+-- TWO: the world slot, and the stranded per-player value planted above. The
+-- purge clearing both is the point of it - redefining the name next season
+-- must not resurrect either half, and an admin told "1 cleared" about a
+-- deletion that touched two places has been told something untrue.
+check(touched == 2, "the purge did not count both halves: " .. tostring(touched))
+check(RDVars.define{ kind = "counter", name = "Runs", scope = "world" } ~= nil,
+    "redefining after a delete failed")
+check(RDVars.get(nil, "Runs") == nil,
+    "A DELETED WORLD COUNTER CAME BACK WITH ITS OLD VALUE. The purge left the "
+    .. "slot behind, so redefining the name inherits a stranded number.")
+
+-- ---- the state document's migration --------------------------------------
+--
+-- The state file written before 2026-08-23 WAS the player map. It holds flags
+-- players earned, and state is already the half that does not survive a wipe -
+-- so losing it to a shape change would be the same loss twice.
+
+reset()
+defineAnomaly({})
+defineLoot(false)
+RDVars.grant("Kriegan", "Anomaly", "Omen")
+RDVars.set("Kriegan", "AnomalyLoot", 5)
+local st = RDVars.store():state()
+check(st.players ~= nil, "the state document did not split into halves")
+check(st.players.Kriegan ~= nil, "the player record is not under players")
+check(st.Kriegan == nil,
+    "a player record was left at the top level as well, so two shapes of the "
+    .. "same document are live at once")
+
+-- Now hand the store an OLD-shaped document and read through it.
+local legacy = RDVars.store():state()
+legacy.players, legacy.world = nil, nil
+legacy.Kriegan = { flags = { anomaly = { at = 1, by = "Omen" } },
+                   numbers = { anomalyloot = 5 } }
+check(RDVars.has("Kriegan", "Anomaly") == true,
+    "THE MIGRATION LOST A FLAG. The pre-split document is the one holding "
+    .. "everything players have earned so far.")
+check(RDVars.get("Kriegan", "AnomalyLoot") == 5, "the migration lost a counter")
+local after = RDVars.store():state()
+check(after.players and after.players.Kriegan ~= nil, "the record was not moved")
+check(after.Kriegan == nil, "the record was copied rather than moved, so the "
+    .. "next migration would run again on a document that already ran one")
+
+-- A world value already present must survive the migration rather than being
+-- swept into the player map along with everything else.
+local mixed = RDVars.store():state()
+mixed.players = nil
+mixed.world = { runs = 9 }
+mixed.Ghoul = { flags = {}, numbers = {} }
+RDVars.define{ kind = "counter", name = "Runs", scope = "world" }
+check(RDVars.get(nil, "Runs") == 9,
+    "THE MIGRATION ATE THE WORLD HALF. A half-migrated document - one written "
+    .. "by a build that had world counters but re-read by one walking the old "
+    .. "shape - would file the world map as a player named 'world'.")
+check(RDVars.store():state().players.Ghoul ~= nil,
+    "the migration skipped the records while preserving the world half")
+
 print = realPrint
+-- ---- expiry at READ time -------------------------------------------------
+--
+-- The sweep's cadence is a floor on how stale the STORE can be. has() is a
+-- PERMISSION, and a permission that answers yes past its own deadline - even
+-- for the seconds until the next sweep - is the failure the deadline exists
+-- to prevent. So has() applies the expiry rule itself, sweep or no sweep.
+
+reset()
+defineAnomaly({ expires = 60 })
+RDVars.grant("Kriegan", "Anomaly")
+
+clock = clock + 61 * 60000                       -- past the deadline, NO sweep
+check(RDVars.has("Kriegan", "Anomaly") == false,
+    "AN EXPIRED FLAG ANSWERED YES BEFORE THE SWEEP RAN. The sweep is the "
+    .. "reaper, not the rule - a claim in the gap got a spent permission.")
+
+-- The backwards clock keeps the same property it has in the sweep: a grant
+-- must never expire early off an NTP step.
+reset()
+defineAnomaly({ expires = 60 })
+RDVars.grant("Kriegan", "Anomaly")
+clock = clock - 10 * 60000
+check(RDVars.has("Kriegan", "Anomaly") == true,
+    "a backwards clock step expired a live flag at read time")
+
+-- ---- mirrorOf --------------------------------------------------------------
+--
+-- The owner's wire document. What is at risk: the mirror OFFERING something
+-- has() would refuse (an expired flag), remaining computed on the wrong end
+-- of the skew (a deadline instead of a duration), and absent collapsing into
+-- zero on the way out.
+
+reset()
+defineAnomaly({ expires = 60 })
+RDVars.define{ kind = "flag", name = "Forever", revokers = {} }
+defineLoot(false)
+local worldOk = RDVars.define{ kind = "counter", name = "Runs", scope = "world" }
+check(worldOk ~= nil, "the world counter define was refused - later world checks would test nothing")
+
+RDVars.grant("Kriegan", "Anomaly")
+RDVars.grant("Kriegan", "Forever")
+RDVars.set("Kriegan", "AnomalyLoot", 0)
+RDVars.add(nil, "Runs", 5)
+
+clock = clock + 20 * 60000
+local doc = RDVars.mirrorOf("Kriegan")
+check(doc.flags.forever == 0, "a never-expiring flag did not travel as 0")
+check(doc.flags.anomaly == 40 * 60000,
+    "REMAINING WAS NOT REMAINING: got " .. tostring(doc.flags.anomaly)
+    .. ". The wire must carry a duration - a deadline is anchored to the "
+    .. "server clock, and the client's is not the server's.")
+check(doc.numbers.anomalyloot == 0,
+    "a counter set to zero was absent from the mirror - zero is a value")
+check(doc.numbers.runs == nil,
+    "A WORLD COUNTER RODE IN A PLAYER'S DOCUMENT. It belongs to the server "
+    .. "and is in nobody's mirror.")
+
+clock = clock + 41 * 60000                       -- Anomaly now expired, unswept
+doc = RDVars.mirrorOf("Kriegan")
+check(doc.flags.anomaly == nil,
+    "THE MIRROR OFFERED A FLAG has() WOULD REFUSE. Expired-but-unswept must "
+    .. "be omitted, or the client shows a door the server will not open.")
+check(doc.flags.forever == 0, "the expiry of one flag disturbed another")
+
+local blank = RDVars.mirrorOf("NeverSeen")
+check(blank ~= nil and next(blank.flags) == nil and next(blank.numbers) == nil,
+    "an untouched player did not get an empty document")
+check(RDVars.mirrorOf(nil) == nil, "a nil subject did not refuse")
+
+-- ---- the touch seam --------------------------------------------------------
+--
+-- RDVars.onTouched is the push's whole feed: a mutation that does not fire it
+-- is a mirror that silently goes stale, which the player reads as a door that
+-- stays dark after they earned it. So every verb that changes a player's
+-- record must announce the user - and every verb that changes nothing, or
+-- changes only the world, must stay silent, or the wire restates the truth
+-- per no-op.
+
+reset()
+local touchedLog = {}
+RDVars.onTouched = function(user) touchedLog[#touchedLog + 1] = user end
+local function drained()
+    local out = touchedLog
+    touchedLog = {}
+    return out
+end
+
+defineAnomaly({ expires = 60, death = true })
+defineLoot(true)
+local worldOk = RDVars.define{ kind = "counter", name = "Runs", scope = "world" }
+check(worldOk ~= nil, "the world counter define was refused - later world checks would test nothing")
+drained()                                        -- defines notify nobody new
+
+RDVars.grant("Kriegan", "Anomaly")
+check(#drained() == 1, "grant did not announce its user")
+
+RDVars.revoke("Kriegan", "Anomaly")
+check(drained()[1] == "Kriegan", "revoke did not announce its user")
+RDVars.revoke("Kriegan", "Anomaly")
+check(#drained() == 0, "A REFUSED REVOKE STILL ANNOUNCED - nothing changed")
+
+RDVars.set("Kriegan", "AnomalyLoot", 5)
+RDVars.add("Kriegan", "AnomalyLoot", 1)
+RDVars.reset("Kriegan", "AnomalyLoot")
+check(#drained() == 3, "set/add/reset did not announce once each")
+RDVars.reset("Kriegan", "AnomalyLoot")
+check(#drained() == 0, "resetting an absent counter announced a no-op")
+
+RDVars.add(nil, "Runs", 1)
+RDVars.set(nil, "Runs", 10)
+check(#drained() == 0,
+    "A WORLD WRITE ANNOUNCED A PLAYER. World counters are in nobody's mirror; "
+    .. "there is nobody to push to.")
+
+RDVars.grant("Kriegan", "Anomaly")
+RDVars.set("Kriegan", "AnomalyLoot", 3)
+drained()
+RDVars.applyDeath(player("Kriegan"))
+local t = drained()
+check(#t == 1 and t[1] == "Kriegan",
+    "death revocation did not announce the player exactly once")
+
+RDVars.grant("Kriegan", "Anomaly")
+RDVars.grant("Voss", "Anomaly")
+drained()
+clock = clock + 61 * 60000
+RDVars.sweep()
+t = drained()
+check(#t == 2,
+    "THE SWEEP EXPIRED FLAGS WITHOUT ANNOUNCING THE HOLDERS - their mirrors "
+    .. "keep offering what the store just took (got " .. #t .. ")")
+
+RDVars.grant("Kriegan", "Anomaly")
+drained()
+RDVars.undefine("Anomaly")
+t = drained()
+check(#t == 1 and t[1] == "Kriegan",
+    "undefine purged a holding without announcing the holder")
+
+RDVars.set("Kriegan", "AnomalyLoot", 3)
+drained()
+defineLoot(true)                                 -- redefinition over a holder
+check(#drained() == 1,
+    "a redefinition did not announce its holders - a changed expiry leaves "
+    .. "every mirror's remaining stale")
+
+RDVars.onTouched = nil
+
 realPrint(string.format("RDVars: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

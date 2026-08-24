@@ -1,38 +1,33 @@
--- DFVarsView fixture - the pure half of the vars admin sub-tab.
+-- DFVarsView fixture - the Variables sub-tab's navigation half.
 --
--- WHAT IS AT RISK. Three things, and none of them looks like a bug on screen.
+-- The tab became two lists on 2026-08-23 and everything about ONE variable
+-- moved to DFVarEditor, along with the assertions that guarded it. What is left
+-- here is the catalogue: which column a variable belongs in, what its row says,
+-- and the selection that Delete is aimed at.
 --
--- 1. buildDef turns a form into a DEFINITION. Two of its rules exist to stop a
---    var nobody meant: `death = false` must not be STORED as a revoker (RDVarDefs
---    treats an absent revoker and a false one as different, and the false one
---    leaves a key behind that makes the var read as revocable while nothing
---    revokes it), and a counter must not be created without somebody actually
---    choosing resetOnDeath. A boolean toggle would have quietly defeated the
---    second - a toggle always shows something, so whichever way it starts IS a
---    default - which is why the form uses a three-way choice and why the empty
---    third state is tested here rather than assumed away.
+-- WHAT IS AT RISK.
 --
--- 2. ABSENT IS NOT ZERO, at the pixel. A counter nobody has touched and a
---    counter somebody set to zero must not render alike; that difference is the
---    entire reason markers and counters are two kinds.
+-- 1. THE SPLIT ITSELF. A variable in the wrong column is a variable an admin
+--    reads as the other kind - and the two take opposite verbs. A kind the
+--    server sends that matches neither must land in NEITHER list rather than
+--    defaulting into one, because a silent default here is a row that lies
+--    about what it is.
 --
--- 3. A LATE REPLY. Holder lists arrive per var and an admin clicks faster than a
---    round trip. A reply for a var they have moved off must be DROPPED, not
---    drawn - rendering one var's holders under another var's heading is the most
---    misleading thing this panel could do, and it would look completely normal.
+-- 2. THE SELECTION SURVIVING A REFRESH, aimed at Delete. Every action triggers
+--    a server push, the push rebuilds both lists, and DFKit.refillList calls
+--    clear() - which sets `selected = 1` (ISScrollingListBox.lua:340-345). A
+--    tab that read its target off a widget would delete Anomaly, refresh,
+--    silently point at whatever is now first, and delete THAT on the next
+--    click. Two lists make it worse, not better: without a side, the same name
+--    in both columns is ambiguous.
 --
--- 4. THE SELECTION SURVIVING A REFRESH, which is the one that modifies the
---    wrong player. Every verb is followed by a server push, the push rebuilds
---    the list, and refillList calls the widget's clear() - which sets
---    `selected = 1` (ISScrollingListBox.lua:340-345). A panel that read its
---    target off the widget would therefore act on Alice, refresh, silently
---    point at whoever is first, and modify THEM on the next click.
+-- 3. FORWARDING. There is one OnServerCommand listener and holder traffic
+--    belongs to the editor. A reply this file swallowed would leave an open
+--    editor showing nothing, and one it failed to forward is the same bug.
 --
---    The fake list box below reproduces that clear() faithfully, on purpose:
---    a stub that preserved the selection would test the fixture's idea of a
---    list widget rather than the one PZ ships.
---
--- The drawing is not covered; it needs ISUI and a Mosaic boot.
+-- The fake list box reproduces clear() faithfully, on purpose: a stub that
+-- preserved the selection would test the fixture's idea of a list widget rather
+-- than the one PZ ships. The drawing is not covered; it needs ISUI and Mosaic.
 
 local ROOT = arg[1] or "."
 local CORE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua"
@@ -54,12 +49,10 @@ local function stubClass()
     function C:derive() local D = {}; D.__index = D; setmetatable(D, { __index = C }); return D end
     return C
 end
-ISScrollingListBox  = stubClass()
-ISCollapsableWindow = stubClass()
--- A list box that behaves like the one PZ ships, in the one respect that
--- matters here: clear() drops the selection to row 1.
-local function fakeBox()
-    local box = { items = {}, selected = 1 }
+ISScrollingListBox = stubClass()
+
+local function fakeBox(side)
+    local box = { items = {}, selected = 1, side = side }
     function box:clear() self.items = {}; self.selected = 1 end
     function box:addItem(name, item)
         local i = { text = name, item = item }
@@ -72,17 +65,14 @@ end
 DFKit = { font = { small = "small" }, metrics = { btnH = 24, pad = 8, gap = 6 },
           col = { text = {}, textDim = {}, accent = {}, accentDim = {}, line = {} },
           rowHeight = function() return 22 end,
-          -- Faithful to DFKit.refillList in the one respect under test: it
-          -- clears before it fills.
           refillList = function(box, fill)
               box:clear()
               if fill then fill(box) end
               return box
           end,
           fitText = function(s) return s end }
-DFForm   = { new = function(o) return o end }
 DFConfirm = { ask = function() end }
-DFCore   = { MODULE = "RFTDDragonfly" }
+DFCore    = { MODULE = "RFTDDragonfly" }
 function getPlayer() return { name = "me", getPlayerNum = function() return 0 end } end
 
 local sent = {}
@@ -91,9 +81,24 @@ function sendClientCommand(_, _, command, args)
 end
 Events = { OnServerCommand = { Add = function() end } }
 
--- The REAL RDVarDefs. The form calls normalizeName so the admin gets the
--- server's own answer at the keyboard; a stub would test the fixture's idea of
--- a legal name rather than the store's.
+-- Both downstream surfaces are stubbed to recorders: this file's job is to
+-- forward, and what either DOES with a reply is that fixture's business.
+local forwarded = {}
+DFVarEditor = { receive = function(command, args)
+    forwarded[#forwarded + 1] = { command = command, args = args }
+    return command == "AdminVarHolders" or command == "AdminVarsPlayer"
+end }
+
+-- The player modal OBSERVES. Its answer is deliberately ignored by the
+-- forwarder, and the stub returns true for the traffic it cares about so that
+-- a version of DFVarsView which started gating on it would be caught here
+-- rather than in game.
+local observed = {}
+DFPlayerVarsModal = { observe = function(command, args)
+    observed[#observed + 1] = { command = command, args = args }
+    return command == "AdminVarsPlayer"
+end }
+
 RDVarDefs = nil
 local okD, errD = pcall(dofile, CORE .. "/shared/RDVarDefs.lua")
 check(okD, "RDVarDefs loads: " .. tostring(errD))
@@ -102,302 +107,189 @@ DFVarsView = nil
 local ok, err = pcall(dofile, DIR .. "/client/Admin/DFVarsView.lua")
 check(ok, "module loads: " .. tostring(err))
 
--- ---- buildDef: markers ---------------------------------------------------
+-- ---- the split -----------------------------------------------------------
 
-local def, why = DFVarsView.buildDef{
-    name = "Anomaly", kind = "char", death = true, expires = 240, kit = "crossbow" }
-check(def ~= nil, "a complete marker was refused: " .. tostring(why))
-check(def.kind == "char" and def.name == "Anomaly", "the marker came out wrong")
-check(def.revokers.death == true, "the death revoker was dropped")
-check(def.revokers.expires == 240, "the expiry was dropped")
-check(def.revokers.kit == "crossbow", "the kit revoker was dropped")
+local DEFS = {
+    { name = "Zeta",    kind = "counter", resetOnDeath = true },
+    { name = "Anomaly", kind = "flag", holders = 2 },
+    { name = "Loot",    kind = "counter", resetOnDeath = false },
+    { name = "Beacon",  kind = "flag", holders = 0 },
+}
 
--- Every unset revoker is ABSENT, not false and not zero.
-local bare = DFVarsView.buildDef{ name = "Wave", kind = "char",
-                                  death = false, expires = 0, kit = "" }
-check(bare ~= nil, "a marker with no revokers was refused")
-check(bare.revokers.death == nil,
-    "death = false was STORED as a revoker. RDVarDefs treats an absent revoker "
-    .. "and a false one as different things, and the key left behind makes the "
-    .. "var read as revocable while nothing actually revokes it.")
-check(bare.revokers.expires == nil, "an expiry of 0 was stored as a revoker")
-check(bare.revokers.kit == nil, "an empty kit id was stored as a revoker")
-check(RDVarDefs.isPermanent((RDVarDefs.validate(bare))) == true,
-    "a marker with nothing set did not come out PERMANENT - which is what the "
-    .. "form told the admin it would be")
+local flags, counters = DFVarsView.split(DEFS)
+check(#flags == 2, "the flag column held " .. #flags .. ", expected 2")
+check(#counters == 2, "the counter column held " .. #counters .. ", expected 2")
+check(flags[1].name == "Anomaly" and flags[2].name == "Beacon",
+    "the flag column was not sorted by name")
+check(counters[1].name == "Loot" and counters[2].name == "Zeta",
+    "the counter column was not sorted by name - the two lists are read side by "
+    .. "side and must behave the same way whatever order the wire delivered")
 
--- The real definition validator must accept what the form builds. If these two
--- ever disagree the admin gets a refusal they cannot act on.
-local vOk, vWhy = RDVarDefs.validate(def)
-check(vOk ~= nil, "the form built a marker the store refuses: " .. tostring(vWhy))
+-- A kind matching neither is dropped from BOTH, rather than defaulting into
+-- one. A row in the wrong column tells an admin it is the other kind, and the
+-- two take opposite verbs.
+local f2, c2 = DFVarsView.split({ { name = "Odd", kind = "sigil" },
+                                  { name = "None" } })
+check(#f2 == 0 and #c2 == 0,
+    "a variable of an unknown kind was filed into a column anyway")
 
--- ---- buildDef: counters --------------------------------------------------
+local f3, c3 = DFVarsView.split(nil)
+check(#f3 == 0 and #c3 == 0, "split faulted on nothing")
 
-local counter = DFVarsView.buildDef{ name = "Loot", kind = "counter", resetOnDeath = "yes" }
-check(counter ~= nil, "a counter was refused")
-check(counter.resetOnDeath == true, "'yes' did not become true")
-check(DFVarsView.buildDef{ name = "Loot", kind = "counter",
-                           resetOnDeath = "no" }.resetOnDeath == false,
-    "'no' did not become false")
-local cOk, cWhy = RDVarDefs.validate(counter)
-check(cOk ~= nil, "the form built a counter the store refuses: " .. tostring(cWhy))
+-- ---- the row's tag -------------------------------------------------------
+-- A flag reports how many hold it. A counter cannot report the same thing -
+-- "how many have a value" is not "how many hold it" - so it reports its
+-- lifecycle instead of a number that would read as a holder count.
 
--- The one that matters. "" is the dial nobody moved.
-local unset, unsetWhy = DFVarsView.buildDef{ name = "Loot", kind = "counter",
-                                             resetOnDeath = "" }
-check(unset == nil,
-    "A COUNTER WAS CREATED WITHOUT ANYBODY CHOOSING resetOnDeath. RDVarDefs "
-    .. "refuses an unset one precisely so the behaviour is decided rather than "
-    .. "inherited, and a form that supplies a value for the unmoved dial hands "
-    .. "that decision back to whichever way the control happened to start.")
-check(tostring(unsetWhy):find("no default", 1, true) ~= nil,
-    "the refusal did not explain itself: " .. tostring(unsetWhy))
-check(DFVarsView.buildDef{ name = "Loot", kind = "counter" } == nil,
-    "a counter with no resetOnDeath field at all was accepted")
-check(DFVarsView.buildDef{ name = "Loot", kind = "counter",
-                           resetOnDeath = true } == nil,
-    "a raw boolean was accepted where the form's three-way choice is expected - "
-    .. "which would mean the dial and the builder disagree about the shape")
-
--- ---- buildDef: names and kinds -------------------------------------------
--- Validated by the SERVER'S OWN function, so the two cannot drift.
-
-check(DFVarsView.buildDef{ name = "", kind = "char" } == nil, "an empty name was accepted")
-check(DFVarsView.buildDef{ name = "9Lives", kind = "char" } == nil,
-    "a name starting with a digit was accepted - it reads as an array index in "
-    .. "half the places these keys land")
-check(DFVarsView.buildDef{ name = "has space", kind = "char" } == nil,
-    "a name with a space was accepted")
-check(DFVarsView.buildDef{ name = string.rep("n", RDVarDefs.NAME_MAX + 1),
-                           kind = "char" } == nil, "an over-long name was accepted")
-check(DFVarsView.buildDef{ name = "  Anomaly  ", kind = "char" }.name == "Anomaly",
-    "the name was not trimmed the way the store trims it")
-check(DFVarsView.buildDef{ name = "Ok", kind = "wat" } == nil, "an unknown kind was accepted")
-check(DFVarsView.buildDef{ name = "Ok" } == nil, "a definition with no kind was accepted")
-check(DFVarsView.buildDef(nil) == nil, "buildDef(nil) built something")
-
--- ---- ABSENT IS NOT ZERO --------------------------------------------------
-
-check(DFVarsView.cellFor("string", { value = 0 }) == "0", "zero rendered as something else")
-check(DFVarsView.cellFor("string", { value = nil }) == "-", "absent rendered as something else")
-check(DFVarsView.cellFor("string", { value = 0 }) ~= DFVarsView.cellFor("string", {}),
-    "A COUNTER SET TO ZERO AND A COUNTER NOBODY TOUCHED RENDER ALIKE. That is "
-    .. "the one distinction the two-kind design exists to keep, and every "
-    .. "repeatable quest built on this loses its 'have you started' test.")
-check(DFVarsView.cellFor("char", { holds = true }) == "holds", "a holder said nothing")
--- The list carries online NON-holders too, so a marker row has two states. Draw
--- them alike and the panel tells an admin that everybody online holds it.
-check(DFVarsView.cellFor("char", { online = true }) == "-",
-    "AN ONLINE PLAYER WHO DOES NOT HOLD THE MARKER RENDERED AS A HOLDER. The "
-    .. "list includes non-holders precisely so they can be granted one; drawing "
-    .. "them identically makes the column meaningless.")
-check(DFVarsView.cellFor("char", { holds = true }) ~= DFVarsView.cellFor("char", {}),
-    "holding and not holding a marker render alike")
-check(DFVarsView.cellFor("char", nil) == "-", "cellFor faulted on a nil row")
-check(DFVarsView.cellFor("string", { value = 12 }) == "12", "a counter value was mangled")
-
--- ---- the lifecycle line --------------------------------------------------
-
-check(DFVarsView.lifecycleOf{ kind = "char", revokers = {} } == "permanent",
-    "a marker with no revokers did not read as permanent")
-check(DFVarsView.lifecycleOf{ kind = "char" } == "permanent",
-    "a marker with no revokers TABLE did not read as permanent")
-local life = DFVarsView.lifecycleOf{ kind = "char",
-    revokers = { death = true, expires = 30, kit = "k" } }
-check(life:find("on death", 1, true) and life:find("30 min", 1, true)
-      and life:find("kit k", 1, true),
-    "the lifecycle line dropped a revoker: " .. life)
-check(DFVarsView.lifecycleOf{ kind = "counter", resetOnDeath = true } == "resets on death",
+check(DFVarsView.tagFor{ kind = "flag", holders = 3 } == "3",
+    "a flag row did not show its holder count")
+check(DFVarsView.tagFor{ kind = "flag" } == "0",
+    "a flag nobody holds showed something other than zero")
+check(DFVarsView.tagFor{ kind = "counter", resetOnDeath = true } == "resets",
     "a resetting counter did not say so")
-check(DFVarsView.lifecycleOf{ kind = "counter", resetOnDeath = false } == "survives death",
-    "a surviving counter did not say so - and 'no lifecycle' is not the same "
-    .. "sentence as 'permanent', which is a marker's word")
-check(DFVarsView.lifecycleOf(nil) == "", "lifecycleOf(nil) faulted")
+check(DFVarsView.tagFor{ kind = "counter", resetOnDeath = false } == "keeps",
+    "a surviving counter did not say so")
+check(DFVarsView.tagFor{ kind = "counter", resetOnDeath = true }
+      ~= DFVarsView.tagFor{ kind = "counter", resetOnDeath = false },
+    "both counter lifecycles render alike")
+-- A world counter has no resetOnDeath at all, so "keeps" would be a lifecycle
+-- answer invented for a question that does not apply. It reports its SCOPE
+-- instead - which is also the fact that decides whether the row can appear on
+-- any player's variables list.
+check(DFVarsView.tagFor{ kind = "counter", scope = "world" } == "world",
+    "a world counter reported a lifecycle it does not have: "
+    .. DFVarsView.tagFor{ kind = "counter", scope = "world" })
+check(DFVarsView.tagFor{ kind = "counter", scope = "player", resetOnDeath = true }
+      == "resets", "the per-player tag changed when scopes arrived")
+check(DFVarsView.tagFor(nil) == "", "tagFor faulted on nil")
 
--- ---- the late reply ------------------------------------------------------
+-- ---- receive -------------------------------------------------------------
 
-DFVarsView.defs = { { name = "Anomaly", kind = "char", holders = 2 },
-                    { name = "Loot", kind = "counter" } }
-DFVarsView.selected = "Anomaly"
-DFVarsView.holders  = nil
-
-check(DFVarsView.receive("AdminVarHolders",
-    { name = "Anomaly", kind = "char", rows = { { user = "A" } }, total = 1 }) == true,
-    "a holder reply for the selected var was ignored")
-check(DFVarsView.holders ~= nil and #DFVarsView.holders.rows == 1,
-    "the holder list did not land")
-
--- The admin has clicked Loot; Anomaly's answer is still in flight.
-DFVarsView.selected = "Loot"
-DFVarsView.holders  = nil
-DFVarsView.receive("AdminVarHolders",
-    { name = "Anomaly", kind = "char", rows = { { user = "A" } }, total = 1 })
-check(DFVarsView.holders == nil,
-    "A LATE REPLY WAS DRAWN UNDER THE NEW SELECTION. Anomaly's holders would "
-    .. "appear beneath Loot's heading, which reads as fact and is false.")
-
-DFVarsView.receive("AdminVarHolders",
-    { name = "Loot", kind = "counter", rows = { { user = "B", value = 0 } }, total = 1 })
-check(DFVarsView.holders ~= nil and DFVarsView.holders.name == "Loot",
-    "the reply that DID match was dropped too")
-
-check(DFVarsView.receive("SomethingElse", {}) == false, "an unrelated command was consumed")
-
--- A definition disappearing under the selection clears it rather than leaving
--- the panel pointed at a var that no longer exists.
-DFVarsView.selected = "Anomaly"
 sent = {}
-DFVarsView.receive("AdminVars", { defs = { { name = "Loot", kind = "counter" } } })
-check(DFVarsView.selected == "Loot",
-    "the selection stayed on a var that was removed from under it: "
+check(DFVarsView.receive("AdminVars", { defs = DEFS }) == true,
+    "the catalogue reply was ignored")
+check(#DFVarsView.defs == 4, "the catalogue did not land")
+
+check(DFVarsView.receive("AdminVarsStale", {}) == true,
+    "the stale push was ignored")
+check(sent[#sent].command == "varsList",
+    "a stale push did not re-read the catalogue")
+
+-- Holder traffic is the editor's. One listener, one intake - two would race for
+-- the same replies.
+forwarded, observed = {}, {}
+check(DFVarsView.receive("AdminVarHolders", { name = "Anomaly" }) == true,
+    "a holder reply was not handled")
+check(#forwarded == 1 and forwarded[1].command == "AdminVarHolders",
+    "a holder reply was swallowed instead of forwarded to the editor")
+check(DFVarsView.receive("AdminVarsPlayer", { username = "A" }) == true,
+    "a per-player reply was not handled")
+check(#forwarded == 2, "a per-player reply was not forwarded")
+
+-- THE MODAL OBSERVES, IT DOES NOT CLAIM. Both surfaces can legitimately want
+-- the same per-player push: the modal is showing that player, and the editor
+-- reads any such push as "a verb landed somewhere, re-read the holders". The
+-- stub above returns true for it, so a forwarder that short-circuited on that
+-- answer would starve the editor here.
+check(#observed == 2,
+    "a reply reached the editor without being offered to the player modal")
+check(forwarded[2].command == "AdminVarsPlayer",
+    "THE MODAL CLAIMED A REPLY THE EDITOR ALSO NEEDED. An open editor would go "
+    .. "stale the moment somebody opened a player's variables, with nothing on "
+    .. "screen to say it had.")
+
+forwarded, observed = {}, {}
+check(DFVarsView.receive("SomethingElse", {}) == false,
+    "an unrelated command was consumed")
+check(#forwarded == 1,
+    "an unrelated command was not offered to the editor before being declined")
+check(#observed == 1,
+    "an unrelated command skipped the modal, so a command it later learns to "
+    .. "handle would never reach it")
+
+-- ---- the selection, across a refresh -------------------------------------
+
+DFVarsView.flagBox    = fakeBox("flag")
+DFVarsView.counterBox = fakeBox("counter")
+DFVarsView.defs       = DEFS
+DFVarsView.selected   = "Beacon"
+DFVarsView.side       = "flag"
+DFVarsView.rebuild()
+
+check(DFVarsView.flagBox.selected == 2,
+    "the widget index was not re-derived from the remembered name: "
+    .. tostring(DFVarsView.flagBox.selected))
+check(DFVarsView.counterBox.selected == -1,
+    "the OTHER column kept a highlight, so the tab would show two selections "
+    .. "and Delete would be aimed at an ambiguous one")
+
+-- The refresh that follows every action, with the list back in a different
+-- order - which is what happens the moment another admin adds a variable.
+DFVarsView.defs = {
+    { name = "Beacon",  kind = "flag", holders = 0 },
+    { name = "Aardvark", kind = "flag", holders = 1 },
+    { name = "Anomaly", kind = "flag", holders = 2 },
+}
+DFVarsView.rebuild()
+check(DFVarsView.selected == "Beacon",
+    "THE SELECTION MOVED ACROSS A REFRESH. clear() drops the widget to row 1, "
+    .. "so the next Delete would remove whichever variable happened to be "
+    .. "first: " .. tostring(DFVarsView.selected))
+check(DFVarsView.flagBox.selected == 3,
+    "the highlight and the selection disagree, so the tab would draw one row "
+    .. "and delete another")
+
+-- The same NAME in the other column is a different variable. Without the side,
+-- the tab would highlight a counter because a flag of that name was selected.
+DFVarsView.defs = {
+    { name = "Echo", kind = "flag", holders = 0 },
+    { name = "Echo", kind = "counter", resetOnDeath = true },
+}
+DFVarsView.selected, DFVarsView.side = "Echo", "counter"
+DFVarsView.rebuild()
+check(DFVarsView.counterBox.selected == 1, "the counter column lost its selection")
+check(DFVarsView.flagBox.selected == -1,
+    "A FLAG WAS HIGHLIGHTED BECAUSE A COUNTER OF THE SAME NAME WAS SELECTED. "
+    .. "The two columns hold different variables and Delete would take the "
+    .. "wrong one.")
+
+-- Deleted out from under the selection: no selection, rather than sliding onto
+-- a neighbour that Delete would then remove.
+DFVarsView.defs = { { name = "Other", kind = "flag", holders = 0 } }
+DFVarsView.rebuild()
+check(DFVarsView.selected == nil,
+    "the selection slid onto a neighbour after its own variable was deleted: "
     .. tostring(DFVarsView.selected))
-check(#sent >= 1 and sent[1].command == "varHolders",
-    "moving the selection did not fetch the new var's holders")
+check(DFVarsView.flagBox.selected == -1 and DFVarsView.counterBox.selected == -1,
+    "a highlight survived the variable it pointed at")
 
--- ---- the selection, across a refresh ------------------------------------
-
-DFVarsView.defBox    = fakeBox()
-DFVarsView.holderBox = fakeBox()
-DFVarsView.defs      = { { name = "Anomaly", kind = "char", holders = 2 } }
-DFVarsView.selected  = "Anomaly"
-DFVarsView.holders   = { name = "Anomaly", kind = "char", rows = {
-    { user = "Alice", holds = true, online = true },
-    { user = "Bob",   online = true },
-    { user = "Carol", holds = true },
-} }
-DFVarsView.selectedUser = "Carol"
+-- ...and a variable of that name reappearing must NOT silently re-select it.
+DFVarsView.defs = DEFS
 DFVarsView.rebuild()
+check(DFVarsView.selected == nil,
+    "a variable that came back was silently re-selected, so the next Delete "
+    .. "would act on something nobody pointed at")
 
-check(DFVarsView.holderBox.selected == 3,
-    "the widget index was not re-derived from the remembered username: "
-    .. tostring(DFVarsView.holderBox.selected))
-check(DFVarsView.targetUser() == "Carol", "the target was lost by a rebuild")
+-- The catalogue reply clears a selection whose variable is gone. This looks
+-- redundant with the rebuild's own cleanup and is not: rebuild() returns
+-- immediately when the lists do not exist yet, so a catalogue arriving BEFORE
+-- the tab was ever attached - which is exactly what a stale push from another
+-- admin does - would leave the selection pointing at a deleted variable with
+-- nothing to clear it.
+DFVarsView.flagBox, DFVarsView.counterBox = nil, nil
+DFVarsView.selected, DFVarsView.side = "Anomaly", "flag"
+DFVarsView.receive("AdminVars", { defs = { { name = "Loot", kind = "counter" } } })
+check(DFVarsView.selected == nil,
+    "the selection stayed on a variable removed from under it, with no lists "
+    .. "attached to clean up after it: " .. tostring(DFVarsView.selected))
+check(DFVarsView.side == nil, "the side outlived the selection")
 
--- The refresh that follows every action. Carol is still present but the list
--- came back in a different order, which is exactly what happens when somebody
--- logs in or out between one action and the next.
-DFVarsView.holders.rows = {
-    { user = "Bob",   online = true },
-    { user = "Carol", holds = true, online = true },
-    { user = "Alice", holds = true, online = true },
-}
-DFVarsView.rebuild()
-check(DFVarsView.targetUser() == "Carol",
-    "THE SELECTION MOVED TO ANOTHER PLAYER ACROSS A REFRESH. Every verb here is "
-    .. "followed by a push that rebuilds the list, and clear() drops the widget "
-    .. "to row 1 - so the second click of a grant/revoke pair would modify "
-    .. "whoever happened to be first. Got: " .. tostring(DFVarsView.targetUser()))
-check(DFVarsView.holderBox.selected == 2,
-    "the highlight and the target disagree, so the panel would draw the "
-    .. "selection on one row and act on another")
-
--- Carol logs off and drops out of the list. That must become NO target, not
--- row one: guessing here modifies somebody the admin never chose.
-DFVarsView.holders.rows = {
-    { user = "Bob",   online = true },
-    { user = "Alice", holds = true, online = true },
-}
-DFVarsView.rebuild()
-check(DFVarsView.targetUser() == nil,
-    "a player who left the list was replaced by whoever is now first, instead "
-    .. "of the panel simply having no target: " .. tostring(DFVarsView.targetUser()))
-check(DFVarsView.holderBox.selected == -1,
-    "the widget kept a highlight on a row the verbs will not act on")
-
--- ...and when she logs back IN she must not be silently re-selected. This is
--- what the rebuild's cleanup buys that targetUser's own check does not: without
--- it the remembered name simply waits, and a player reappearing in the list
--- becomes the target of the next click without the admin ever choosing them.
-DFVarsView.holders.rows = {
-    { user = "Bob",   online = true },
-    { user = "Carol", holds = true, online = true },
-    { user = "Alice", holds = true, online = true },
-}
-DFVarsView.rebuild()
-check(DFVarsView.targetUser() == nil,
-    "A PLAYER WHO LEFT AND CAME BACK WAS SILENTLY RE-SELECTED. The admin "
-    .. "chose them before they logged off; the next click would act on them "
-    .. "again with nobody having pointed at them: "
-    .. tostring(DFVarsView.targetUser()))
-check(DFVarsView.holderBox.selected == -1, "the stale highlight came back too")
-
--- The other half of the pair. targetUser confirms against the CURRENT rows
--- rather than trusting the remembered name, which is what covers a change to
--- the list that has not been through a rebuild - the state spliceRecord itself
--- passes through on its way in.
-DFVarsView.holders.rows = { { user = "Dave", online = true } }
-DFVarsView.selectedUser = "Dave"
-check(DFVarsView.targetUser() == "Dave", "a present player was not the target")
-DFVarsView.holders.rows = { { user = "Erin", online = true } }
-check(DFVarsView.targetUser() == nil,
-    "targetUser trusted the remembered name against a list that no longer "
-    .. "holds it, without waiting for a rebuild to notice")
-DFVarsView.selectedUser = nil
-
--- Selecting a different var drops the player selection with it.
-DFVarsView.selectedUser = "Alice"
-DFVarsView.defs = { { name = "Anomaly", kind = "char" }, { name = "Loot", kind = "counter" } }
-DFVarsView.receive("AdminVarHolders",
-    { name = "Anomaly", kind = "char", rows = { { user = "Alice", holds = true } }, total = 1 })
-check(DFVarsView.targetUser() == "Alice", "the target was dropped by its own var's reply")
-
--- ---- By name splices a player in ----------------------------------------
--- The escape hatch has to make ALL FOUR verbs reachable, not two. Firing one
--- verb by name left a holder past the row bound grantable forever and never
--- revocable.
-
-DFVarsView.holders = { name = "Anomaly", kind = "char", rows = {
-    { user = "Alice", holds = true, online = true },
-} }
-DFVarsView.selectedUser = nil
-
-check(DFVarsView.spliceRecord{ username = "Offline",
-        chars = { { key = "anomaly", name = "Anomaly" } }, numbers = {} } == true,
-    "a fetched record was not spliced into the list")
-check(#DFVarsView.holders.rows == 2, "the fetched player did not become a row")
-check(DFVarsView.targetUser() == "Offline",
-    "the fetched player was not selected, so the verbs still have no target "
-    .. "for them - which is the whole point of fetching them")
-local spliced
-for _, r in ipairs(DFVarsView.holders.rows) do if r.user == "Offline" then spliced = r end end
-check(spliced.holds == true, "the record's marker did not reach the row")
-check(spliced.pinned == true, "the fetched row was not marked as fetched")
-
-
--- A player who IS already listed must be selected, not duplicated: two rows for
--- one player is two answers to one question.
-check(DFVarsView.spliceRecord{ username = "Alice", chars = {}, numbers = {} } == true,
-    "splicing an already-listed player failed")
-check(#DFVarsView.holders.rows == 2, "an already-listed player was duplicated")
-check(DFVarsView.targetUser() == "Alice", "the already-listed player was not selected")
-
--- A record carries EVERYTHING that player holds. Only the selected var's entry
--- may reach the row, or the panel reports somebody as holding the var on screen
--- because they hold a different one entirely.
-DFVarsView.spliceRecord{ username = "Elsewhere",
-    chars = { { key = "other", name = "Other" } }, numbers = {} }
-local wrong
-for _, r in ipairs(DFVarsView.holders.rows) do
-    if r.user == "Elsewhere" then wrong = r end
-end
-check(wrong ~= nil, "the record was not spliced at all")
-check(wrong.holds == nil,
-    "A PLAYER WHO HOLDS A DIFFERENT MARKER WAS SHOWN AS HOLDING THIS ONE. The "
-    .. "record lists everything they have; only the selected var's entry "
-    .. "belongs in a row under the selected var's heading.")
-
-
--- The row is derived for the SELECTED var only. A record carries everything
--- that player holds; a row that showed another var's value would be a number
--- under the wrong heading.
-DFVarsView.holders = { name = "Loot", kind = "counter", rows = {} }
-DFVarsView.spliceRecord{ username = "Zed", chars = {},
-    numbers = { { key = "loot", name = "Loot", value = 0 },
-                { key = "other", name = "Other", value = 99 } } }
-check(DFVarsView.holders.rows[1].value == 0,
-    "the spliced row took the wrong var's value: "
-    .. tostring(DFVarsView.holders.rows[1].value))
-check(DFVarsView.spliceRecord(nil) == false, "spliceRecord faulted on nothing")
+-- And with the lists attached, both paths agree.
+DFVarsView.flagBox    = fakeBox("flag")
+DFVarsView.counterBox = fakeBox("counter")
+DFVarsView.selected, DFVarsView.side = "Anomaly", "flag"
+DFVarsView.receive("AdminVars", { defs = { { name = "Loot", kind = "counter" } } })
+check(DFVarsView.selected == nil, "the attached path disagreed with the bare one")
 
 print(string.format("DFVarsView: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

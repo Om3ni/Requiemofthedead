@@ -1,8 +1,20 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- DFItemQuery - type-ahead item lookup for the admin Add Item field.
+-- DFItemQuery - type-ahead item lookup for any field that takes an item type.
 --
 -- Requested 2026-08-18: "begin typing and it populates a list of assets that
 -- narrows as you complete", replacing exact-fullType-or-nothing entry.
+--
+-- IT LIVES IN CORE because it has two consumers (CLAUDE.md sect. 5): Dragonfly's
+-- Add Item field, and the kit editor's item grant. It was written in Dragonfly
+-- when only the first existed and moved here when the second arrived, rather
+-- than copied - a satellite cannot require Dragonfly, so the alternatives were
+-- a second copy of the ranker or an item field with no search, and the second
+-- copy is what check-helpers exists to stop.
+--
+-- Nothing about it is Dragonfly-shaped: it enumerates a registry and ranks
+-- strings, which is the "decides rather than draws" test RDItemKind and
+-- RDSelect are already in Core for. The UI stays with whoever is drawing -
+-- DFEntry hosts the shared one now (see its `suggest` option).
 --
 -- The registry is enumerated ONCE per session and cached as plain Lua strings:
 -- ScriptManager.instance:getAllItems() returns the live post-mod script list

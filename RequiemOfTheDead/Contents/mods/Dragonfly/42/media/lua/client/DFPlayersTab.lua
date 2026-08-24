@@ -567,6 +567,26 @@ local function buildDetail(panel, x, y, w, h)
     d.actionButtons[#d.actionButtons + 1] = restoreBtn
     d.restoreButton = restoreBtn
 
+    -- Variables: what RDVars flags and counters this player is carrying. The
+    -- one read the Variables tab cannot give, because that tab is organised by
+    -- VARIABLE - answering "does Alice have the Crypt Delver flag" there means
+    -- opening each variable in turn until one of them lists her.
+    --
+    -- No client capability, matching the server: varsOfPlayer is gated on
+    -- having ANY capability rather than a named one (DFVars_Server, staffOnly),
+    -- and "any capability at all" is not a capability name to check against. A
+    -- named gate here would grey the button for staff the server would answer.
+    local varsBtn = DFKit.button(panel, x + PAD + 570, row1Y, 90, "Variables", panel,
+        withSelected("Variables", nil, function(row)
+            if not DFPlayerVarsModal then
+                if DFFeedback then DFFeedback.bad("DFPlayerVarsModal not loaded.") end
+                return
+            end
+            DFPlayerVarsModal.open(row.username)
+            notify("Variables", row.username)
+        end))
+    d.actionButtons[#d.actionButtons + 1] = varsBtn
+
     -- Action button row
     local row2Y = row1Y + BTN_H + PAD
     local function mkButton(label, bx, bw, callback, kind)

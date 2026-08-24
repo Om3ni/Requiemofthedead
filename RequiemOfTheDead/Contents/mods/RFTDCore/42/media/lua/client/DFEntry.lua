@@ -34,6 +34,32 @@
 -- the element holding keyboard focus, and that is the text box - so a panel
 -- level key handler here would either not fire or fight the box for input.
 -- Cancel and the X are both one click away and neither can be got wrong.
+--
+-- ---------------------------------------------------------------------------
+-- SUGGESTIONS, opt-in via opts.suggest.
+--
+-- A field whose valid values are a registry - an item type, a trait id - is not
+-- free prose, and asking someone to type "Base.Nails" exactly is asking them to
+-- remember a spelling the game never shows them. Dragonfly's Add Item field
+-- solved that in 2026-08 with a list that narrows as you type; the LOGIC of it
+-- is now DFItemQuery in Core, and the LIST is here, so the next field that
+-- needs one declares a function instead of re-inlining a dropdown.
+--
+-- POLLED, NOT EVENT-DRIVEN. UITextBox2 has no text-changed callback of any
+-- kind - the engine's own consumers poll it - so prerender compares the current
+-- text against the last text it saw and re-queries only on a change. That is
+-- one string compare per frame and one registry scan per keystroke.
+--
+-- THE BAND IS RESERVED WHETHER OR NOT IT HAS ROWS. A window that grew as
+-- matches appeared would move Save out from under a click that was already on
+-- its way down - the same reason the validation message has a line reserved for
+-- it. An empty band says why it is empty instead.
+--
+-- PICKING FILLS THE BOX, IT DOES NOT COMMIT. The value is still yours to edit
+-- afterwards, and Save still runs validate() over whatever ends up there - so a
+-- suggestion is a shortcut, never an authority. UITextBox2.SetText writes
+-- internalText and moves the caret to the end without touching focus
+-- (UITextBox2.java:651-665), which is what makes that safe mid-typing.
 
 if isServer() then return end
 
@@ -48,6 +74,11 @@ DFEntry = ISPanel:derive("DFEntry")
 DFEntryState = DFEntryState or { instance = nil }
 
 local PAD = 12
+
+-- How many suggestions the band holds. Eight is what Dragonfly's Add Item field
+-- has offered since it shipped; a list long enough to need scrolling is a list
+-- being read instead of a query being narrowed.
+local SUGGEST_ROWS = 8
 
 local function fontBody()  return DFKit.font.small or UIFont.Small end
 local function fontTitle() return DFKit.font.label or UIFont.Small end
@@ -73,6 +104,57 @@ end
 
 local function tw(s)
     return getTextManager():MeasureStringX(fontBody(), s or "")
+end
+
+-- ---------------------------------------------------------------------------
+-- Suggestions - the pure half
+-- ---------------------------------------------------------------------------
+
+-- What a suggest() answer has to look like before it is drawn. Providers hand
+-- back whatever their registry gave them, so a row is accepted as a bare string
+-- or as { value, label }, and anything without a usable value is dropped rather
+-- than drawn - a row with no value is a click that puts "nil" in the box.
+function DFEntry.normalize(rows)
+    local out = {}
+    if type(rows) ~= "table" then return out end
+    for i = 1, #rows do
+        local r     = rows[i]
+        local value = (type(r) == "table") and r.value or r
+        if type(value) == "string" and value ~= "" then
+            local label = (type(r) == "table" and r.label) or value
+            out[#out + 1] = { value = value, label = tostring(label) }
+            if #out >= SUGGEST_ROWS then break end
+        end
+    end
+    return out
+end
+
+-- Which suggestion a click at window y landed on, or nil. Split out because it
+-- is the piece that fails SILENTLY when it is wrong: an off-by-one here puts
+-- the neighbouring item in the box, and the list it came from looked correct.
+--
+-- `top` is the window's rowsY, set once at open time and used by the drawing,
+-- the hover and this - one number, because three copies of it is how a hit test
+-- drifts three pixels from what is on screen and nobody can see why.
+--
+-- Above the band needs no test of its own: y < top makes the quotient negative,
+-- floor takes it to -1 or lower, and the i < 1 arm below already answers nil.
+function DFEntry.rowAt(y, top, rowH, count)
+    if not top or not rowH or rowH <= 0 or (count or 0) <= 0 then return nil end
+    local i = math.floor((y - top) / rowH) + 1
+    if i < 1 or i > count then return nil end
+    return i
+end
+
+-- One row's text. The label alone when they are the same string, both when they
+-- are not: "Nails" is what an admin is looking for and "Base.Nails" is what has
+-- to end up in the field, and showing only one of them means either they cannot
+-- find it or they cannot tell two modules' versions apart.
+function DFEntry.rowText(row)
+    if type(row) ~= "table" then return "" end
+    local label, value = tostring(row.label or ""), tostring(row.value or "")
+    if label == "" or label == value then return value end
+    return label .. "  -  " .. value
 end
 
 -- ---------------------------------------------------------------------------
@@ -137,6 +219,47 @@ end
 
 function DFEntry:onSave()   self:commit() end
 function DFEntry:onCancel() DFEntry.close() end
+
+-- Re-query only when the text actually changed. UITextBox2 has no text-changed
+-- callback, so this is polled from prerender - the comparison is what keeps a
+-- registry scan on the keystroke rather than on the frame.
+--
+-- NO pcall AROUND suggest(), unlike validate() a few lines down, and the
+-- difference is worth stating because it looks inconsistent. A validate() that
+-- throws leaves someone unable to Save and with nothing on screen explaining
+-- why - a trapped state the guard exists to prevent. A suggest() that throws is
+-- our own code failing, in a suite where every provider ships with this file;
+-- it throws inside UIManager's per-element catch, gets logged at throw time,
+-- and is fixed. Swallowing it would show an empty list, which is indistinguish-
+-- able from "nothing matches" and would be found by nobody.
+function DFEntry:refreshSuggestions()
+    if type(self.opts.suggest) ~= "function" then return end
+    local s = self:text()
+    if s == self.lastQuery then return end
+    self.lastQuery   = s
+    self.picked      = nil
+    self.hoverRow    = nil
+    self.suggestions = DFEntry.normalize(self.opts.suggest(s))
+end
+
+-- A pick fills the box. It does not commit, and it does not bypass validate():
+-- Save still runs the caller's rule over whatever is in the field, so a stale
+-- provider offering something the rule refuses is caught like anything typed.
+function DFEntry:pick(value)
+    if not self.entry or type(value) ~= "string" then return end
+    -- SetText writes internalText and moves the caret to the end without
+    -- touching keyboard focus (UITextBox2.java:651-665), so this is safe while
+    -- someone is mid-word.
+    self.entry:setText(value)
+    -- Collapsed afterwards: the list is now describing what is already in the
+    -- box. lastQuery matches, so the poll above leaves it alone until typing
+    -- resumes, and `picked` is what stops the empty band claiming that the
+    -- value just chosen matches nothing.
+    self.lastQuery   = value
+    self.picked      = value
+    self.suggestions = {}
+    self.hoverRow    = nil
+end
 
 -- The current text, whatever the engine will actually hand the consumer.
 function DFEntry:text()
@@ -206,10 +329,49 @@ function DFEntry:prerender()
     local ok, msg = self:check(s)
     self.problem = (not ok) and msg or nil
 
+    -- Suggestions, in the band reserved for them at open time. DRAWN, not
+    -- widgets, for the reason at the top of this file: one text box exists here
+    -- and nothing else in the window wants keyboard focus.
+    if (self.suggestH or 0) > 0 then
+        self:refreshSuggestions()
+        local rows, sy = self.suggestions or {}, self.suggestY
+        self:drawRect(PAD, sy, w - PAD * 2, self.suggestH, 0.35,
+            c.panel.r, c.panel.g, c.panel.b)
+        self:drawRectBorder(PAD, sy, w - PAD * 2, self.suggestH, 0.35,
+            c.line.r, c.line.g, c.line.b)
+
+        if #rows == 0 then
+            -- Three different silences, and they are not interchangeable:
+            -- nothing typed, nothing found, and one already chosen.
+            local line
+            if self.picked and s == self.picked then
+                line = "Picked.  Keep typing to search again."
+            elseif s == "" then
+                line = "Start typing to search."
+            else
+                line = "Nothing matches '" .. s .. "'."
+            end
+            self:drawText(DFKit.fitText(line, fBody, w - PAD * 2 - 12),
+                PAD + 6, self.rowsY, c.textDim.r, c.textDim.g, c.textDim.b, 0.9, fBody)
+        else
+            for i = 1, #rows do
+                local ry = self.rowsY + (i - 1) * lh
+                if i == self.hoverRow then
+                    self:drawRect(PAD + 1, ry - 1, w - PAD * 2 - 2, lh, 0.55,
+                        c.accentDim.r, c.accentDim.g, c.accentDim.b)
+                end
+                local tc = (i == self.hoverRow) and c.text or c.textDim
+                self:drawText(
+                    DFKit.fitText(DFEntry.rowText(rows[i]), fBody, w - PAD * 2 - 12),
+                    PAD + 6, ry, tc.r, tc.g, tc.b, 1, fBody)
+            end
+        end
+    end
+
     -- The rule, and then whatever is currently wrong with the text. The rule
     -- stays visible while the message comes and goes, because a message alone
     -- tells you that you are wrong and not what right looks like.
-    local y = self.entryY + entryH() + 6
+    local y = self.bodyY or (self.entryY + entryH() + 6)
     for _, ln in ipairs(self.ruleLines or {}) do
         self:drawText(ln, PAD, y, c.textDim.r, c.textDim.g, c.textDim.b, 0.9, fBody)
         y = y + lh
@@ -227,6 +389,9 @@ end
 function DFEntry:onMouseMove(dx, dy)
     local x, y = self:getMouseX(), self:getMouseY()
     self.hoverClose = (y < titleH() and x > self.width - 26)
+    self.hoverRow = ((self.suggestH or 0) > 0)
+        and DFEntry.rowAt(y, self.rowsY, lineH(), #(self.suggestions or {}))
+        or nil
     if self.dragging then
         self:setX(getMouseX() - self.dragDX)
         self:setY(getMouseY() - self.dragDY)
@@ -235,6 +400,7 @@ end
 
 function DFEntry:onMouseMoveOutside(dx, dy)
     self.hoverClose = false
+    self.hoverRow   = nil
     if self.dragging then
         self:setX(getMouseX() - self.dragDX)
         self:setY(getMouseY() - self.dragDY)
@@ -247,6 +413,12 @@ function DFEntry:onMouseDown(x, y)
         self.dragging = true
         self.dragDX = getMouseX() - self:getX()
         self.dragDY = getMouseY() - self:getY()
+        return
+    end
+    if (self.suggestH or 0) > 0 then
+        local rows = self.suggestions or {}
+        local i = DFEntry.rowAt(y, self.rowsY, lineH(), #rows)
+        if i then self:pick(rows[i].value) end
     end
 end
 
@@ -285,6 +457,9 @@ end
 --   onCommit(s)  called with the accepted string. Not called on cancel.
 --   saveLabel    override for the commit button
 --   nearX/nearY  open beside a point rather than centre-screen
+--   suggest(s)   -> rows, each a string or { value, label }. Present means the
+--                window carries a type-ahead band; absent means it does not,
+--                and every caller written before this option is unchanged.
 function DFEntry.show(opts)
     opts = opts or {}
     DFEntry.close()
@@ -294,15 +469,23 @@ function DFEntry.show(opts)
     -- Wide enough for the rule, because a rule that wraps to three lines under
     -- a one-line box reads as the main content.
     if opts.rule then W = math.max(W, math.min(680, tw(opts.rule) + PAD * 2 + 8)) end
+    -- A suggestion reads "Nails  -  Base.Nails", so the window that shows them
+    -- starts wider than one that only holds a value.
+    if opts.suggest then W = math.max(W, 520) end
 
     local ruleLines = opts.rule and DFKit.wrapText(opts.rule, fBody, W - PAD * 2) or {}
 
     local th, lh, eh = titleH(), lineH(), entryH()
     local entryY = th + PAD
+    local suggestY = entryY + eh + 6
+    -- RESERVED WHOLE, whether or not there are matches to put in it. See the
+    -- header: a band that grew as results arrived would move Save out from
+    -- under a click already on its way down.
+    local suggestH = opts.suggest and (SUGGEST_ROWS * lh + 6) or 0
     -- One spare line under the rule, always reserved: the validation message
     -- appears and disappears as you type, and a window that resized under the
     -- cursor to make room for it would move the button out from under a click.
-    local h = entryY + eh + 6 + (#ruleLines + 1) * lh + PAD
+    local h = suggestY + suggestH + (#ruleLines + 1) * lh + PAD
               + DFKit.metrics.btnH + PAD
 
     local sw = getCore():getScreenWidth()
@@ -317,6 +500,20 @@ function DFEntry.show(opts)
     local win = DFEntry:new(x, y, W, h, opts)
     win.ruleLines = ruleLines
     win.entryY    = entryY
+    win.suggestY  = suggestY
+    win.suggestH  = suggestH
+    -- Where row one starts, written ONCE. The drawing, the hover and the click
+    -- all read this; a literal offset repeated at each of them is a hit test
+    -- that drifts from the list on screen the first time one of the three is
+    -- adjusted, and the list keeps looking right while it does.
+    win.rowsY     = suggestY + 3
+    win.bodyY     = suggestY + suggestH
+    -- Seeded so a window opened on an EXISTING value starts collapsed. Querying
+    -- the seed would list the one item already in the box, under a heading
+    -- inviting a choice that has been made.
+    win.suggestions = {}
+    win.lastQuery   = tostring(opts.value or "")
+    win.picked      = (win.lastQuery ~= "") and win.lastQuery or nil
     win:initialise()
     win:instantiate()
     win:addToUIManager()

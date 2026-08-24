@@ -126,6 +126,34 @@ function RDShared.textSafe(v, extra)
     return s
 end
 
+-- ---------------------------------------------------------------------------
+-- Identity, in the one form the suite keys on.
+--
+-- USERNAME, not display name and not SteamID. Memoir gates ownership on it,
+-- RCRegistry keys claims by it, RDVars keys every marker and counter by it -
+-- because it survives a display-name change and, unlike a SteamID, it survives
+-- the trip through Lua intact (a 17-digit SteamID exceeds 2^53 and flattens
+-- through a double, so two accounts can compare equal - RDIdentity.lua:9-14).
+--
+-- Takes a username straight through so a caller holding either a string or a
+-- character does not have to branch, and answers nil rather than guessing when
+-- it holds neither. Every caller treats nil as "no player" and refuses; none of
+-- them may treat it as "the local player", which is why there is no fallback.
+--
+-- Promoted 2026-08-23 from identical copies in RDVars and DMKits. Two copies of
+-- "what counts as a player here" is two chances for one subsystem to start
+-- accepting something another refuses.
+function RDShared.username(subject)
+    if type(subject) == "string" then return subject end
+    if type(subject) == "table" or type(subject) == "userdata" then
+        if subject.getUsername then
+            local n = subject:getUsername()
+            if n then return tostring(n) end
+        end
+    end
+    return nil
+end
+
 RDShared.registerMod(RDShared.MODULE, RDShared.VERSION)
 
 -- ---------------------------------------------------------------------------

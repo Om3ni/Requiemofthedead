@@ -22,6 +22,9 @@
 --     choice values={}, labels={} -> pill, click cycles. Stores the STRING.
 --     int    min=, max=, step=    -> [-] [ number ] [+], plus mouse wheel
 --     text                        -> a box; click opens DFEntry to type in
+--   optional on a text dial:
+--     suggest = function(query)   registry-backed type-ahead in that popout.
+--                                 Returns rows: a string, or { value, label }.
 --   optional on any dial:
 --     help  = "paragraph"   the ? popout body. No help, no ? glyph.
 --     unit  = "tiles"       suffix on the number
@@ -247,6 +250,68 @@ function DFForm.new(opts)
         scroll  = DFScroll.new(),
     }
     return setmetatable(f, { __index = DFForm })
+end
+
+-- ---------------------------------------------------------------------------
+-- FILTERING A SCHEMA. Case-insensitive substring over the option's key and its
+-- label, and a section header survives only when something under it did - an
+-- empty heading reads as an option that went missing rather than one that did
+-- not match.
+--
+-- It lives HERE, on the module that owns what a schema IS, rather than on
+-- either surface that filters one. The server view had it first, for 144 flat
+-- options with category metadata for 61 of them; the sandbox view needs the
+-- same thing across nine mod pages, and a second copy is exactly what
+-- check-helpers exists to refuse.
+--
+-- MATCHING DELIBERATELY EXCLUDES THE HELP TEXT. Every sandbox tooltip is a
+-- sentence, so "zombie" would match half the registry through prose that
+-- happens to mention zombies, and the admin would be reading a filtered list
+-- that is not obviously filtered by anything. The key and the label are what
+-- somebody is actually typing at.
+--
+-- Returns the schema UNCHANGED for an empty query - the same table, not a copy,
+-- because the caller assigns it straight onto a form and an identical copy per
+-- keystroke is allocation for nothing.
+function DFForm.filterSchema(schema, query)
+    query = tostring(query or ""):lower()
+    if query == "" then return schema end
+
+    local hit = {}
+    for _, e in ipairs(schema or {}) do
+        if e.group then
+            hit[#hit + 1] = e
+        else
+            local hay = ((e.key or "") .. " " .. (e.label or "")):lower()
+            -- Plain find: a query is typed text, and "(" or "%" in it would be
+            -- a pattern error rather than a search that finds nothing.
+            if hay:find(query, 1, true) then hit[#hit + 1] = e end
+        end
+    end
+
+    local kept = {}
+    for i = 1, #hit do
+        local e = hit[i]
+        if e.group then
+            local nxt = hit[i + 1]
+            if nxt and not nxt.group then kept[#kept + 1] = e end
+        else
+            kept[#kept + 1] = e
+        end
+    end
+    return kept
+end
+
+-- How many DIALS a schema holds, headers excluded. The number a "12 of 40
+-- shown" line is built from, and the reason it is here rather than counted at
+-- each call site is that #schema is the wrong answer by however many section
+-- headers the layout added.
+function DFForm.countRows(schema)
+    local n = 0
+    for _, e in ipairs(schema or {}) do
+        if e.key then n = n + 1 end
+    end
+    return n
 end
 
 function DFForm:attach(panel)
@@ -718,6 +783,10 @@ function DFForm:click(ax, ay)
                 validate    = e.validate,
                 maxLen      = e.maxLen,
                 placeholder = e.placeholder,
+                -- A row whose valid values are a registry declares how to
+                -- search it and gets the type-ahead band; one that holds prose
+                -- declares nothing and is unchanged. See DFEntry's header.
+                suggest     = e.suggest,
                 nearX       = getMouseX(),
                 nearY       = getMouseY(),
                 onCommit    = function(s) setter(e.key, s) end,

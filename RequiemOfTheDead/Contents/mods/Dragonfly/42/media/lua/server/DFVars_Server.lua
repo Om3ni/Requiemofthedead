@@ -39,7 +39,7 @@
 --                       player's character state - it is what PlayerXpPacket
 --                       requires (PlayerXpPacket.java:20) and what
 --                       GameServer.java:1309 tests before letting one player
---                       edit another's stats. Granting a marker is that act.
+--                       edit another's stats. Granting a flag is that act.
 --
 --   reading             any staff capability. A var name and a holder list are
 --                       operational data, not secrets, and a panel that cannot
@@ -69,7 +69,7 @@
 -- TARGETS ARE USERNAMES, AND A USERNAME OFF THE WIRE IS A TABLE KEY.
 --
 -- RDVars keys by username and accepts a bare string, which is correct for its
--- own purposes - an admin must be able to grant a marker to the person who won
+-- own purposes - an admin must be able to grant a flag to the person who won
 -- last night's event whether or not they are online right now. It does mean an
 -- unbounded string from a client becomes a record in the store, so the bound is
 -- applied HERE, at the door, rather than in Core: length, and nothing below
@@ -111,7 +111,7 @@ end
 
 -- Every definition, with the one number an admin actually wants beside it:
 -- how many people hold it. Counted here rather than sent as a holder list -
--- a marker granted to two hundred event attendees is a list nobody reads and
+-- a flag granted to two hundred event attendees is a list nobody reads and
 -- a packet nobody needs.
 function DFVars_Server.summary()
     local out = {}
@@ -126,7 +126,7 @@ function DFVars_Server.summary()
             permanent    = RDVarDefs.isPermanent(def),
             revokers     = def.revokers,
         }
-        if RDVarDefs.isChar(def) then
+        if RDVarDefs.isFlag(def) then
             local holders = RDVars.holders(def.name)
             row.holders = holders and #holders or 0
         end
@@ -143,14 +143,14 @@ end
 -- everybody currently online.
 --
 -- The online half is what makes the panel usable for the ordinary case - an
--- admin hands a marker to the four people standing in front of them - and the
--- holder half is what makes it correct: somebody who earned a marker at last
+-- admin hands a flag to the four people standing in front of them - and the
+-- holder half is what makes it correct: somebody who earned a flag at last
 -- night's event and logged off must still be visible, and revocable, today.
 -- Either list alone would quietly lose one of those two.
 --
 -- ONLINE ROWS ARE NEVER THE ONES DROPPED. The list is bounded, because its size
 -- is set by how many people play here rather than by how many vars exist - a
--- marker granted to a two-hundred-person event is a real payload - so online
+-- flag granted to a two-hundred-person event is a real payload - so online
 -- players are emitted first and offline holders fill whatever is left. Dropping
 -- an online row would remove the very person the admin is trying to act on,
 -- while an unlisted offline holder is still reachable by name.
@@ -176,9 +176,24 @@ function DFVars_Server.holdersOf(name)
     local def = RDVars.definition(name)
     if not def then return nil, "no var named '" .. tostring(name) .. "'" end
 
+    -- A WORLD COUNTER HAS NO HOLDERS. It answers with its value and an empty
+    -- roster rather than one row invented for a player who does not exist:
+    -- "who holds this" has no answer for a number the server owns, and a made-
+    -- up row would be a name an admin could then aim a verb at.
+    --
+    -- The value travels as `value` and may be nil. Absent is not zero here
+    -- either - a world counter nothing has touched has never run, and a panel
+    -- drawing that as 0 would report a quest as completed zero times when the
+    -- truth is that it has never been finished by anyone, ever, including in
+    -- the sense of the counter existing.
+    if RDVarDefs.isWorld(def) then
+        return { name = def.name, kind = def.kind, scope = def.scope,
+                 value = RDVars.get(nil, def.name), rows = {}, total = 0 }
+    end
+
     -- What the store knows about this var, by user.
     local held = {}
-    if RDVarDefs.isChar(def) then
+    if RDVarDefs.isFlag(def) then
         for _, user in ipairs(RDVars.holders(def.name) or {}) do
             held[user] = { user = user, holds = true }
         end
@@ -188,31 +203,59 @@ function DFVars_Server.holdersOf(name)
         end
     end
 
-    -- Online first, whether or not they hold anything.
-    local rows, seen = {}, {}
-    local online = onlineNames()
-    table.sort(online)
-    for _, user in ipairs(online) do
-        if not seen[user] then
-            seen[user] = true
-            local row = held[user] or { user = user }
+    -- THREE GROUPS, and ORDER and TRUNCATION are separate decisions about them.
+    --
+    -- Order: holders first - online ones, then offline ones - and the roster of
+    -- online non-holders last. The window this feeds is organised around one
+    -- question, who holds this, and the answer has to be in the first rows. It
+    -- used to be online-first regardless of holding, which is why a freshly
+    -- created flag opened with the admin's own name on row one, above nothing,
+    -- under a caption counting rows. It read as "it added me".
+    --
+    -- The roster itself stays and is not a courtesy: Add and Set need somebody
+    -- to aim at, and without it every single grant would begin by typing a
+    -- username. It just must not be the first thing read.
+    --
+    -- Truncation: the bound is spent on OFFLINE HOLDERS and on nothing else.
+    -- Cutting an online row removes the very person an admin is standing next
+    -- to and about to act on, while an unlisted offline holder is still
+    -- reachable through the window's By-name route. That is why the budget is
+    -- computed from what is left after both online groups are reserved, rather
+    -- than by filling to the bound in display order.
+    local online = {}
+    for _, user in ipairs(onlineNames()) do online[user] = true end
+
+    local onlineHolders, offlineHolders, roster = {}, {}, {}
+    for user, row in pairs(held) do
+        if online[user] then
             row.online = true
-            rows[#rows + 1] = row
+            onlineHolders[#onlineHolders + 1] = row
+        else
+            offlineHolders[#offlineHolders + 1] = row
         end
     end
-
-    -- Then offline holders, sorted, up to the bound.
-    local offline = {}
-    for user, row in pairs(held) do
-        if not seen[user] then offline[#offline + 1] = row end
+    for user in pairs(online) do
+        if not held[user] then roster[#roster + 1] = { user = user, online = true } end
     end
-    table.sort(offline, function(a, b) return a.user < b.user end)
+    -- Sorted after collection because all three come out of hash iteration,
+    -- whose order Lua does not define - unsorted, the list would reshuffle
+    -- between two reads of a variable nothing had changed.
+    local byUser = function(a, b) return a.user < b.user end
+    table.sort(onlineHolders, byUser)
+    table.sort(offlineHolders, byUser)
+    table.sort(roster, byUser)
 
-    local total = #rows + #offline
-    for _, row in ipairs(offline) do
-        if #rows >= HOLDER_MAX then break end
-        rows[#rows + 1] = row
+    local total = #onlineHolders + #offlineHolders + #roster
+    local budget = HOLDER_MAX - #onlineHolders - #roster
+    if budget < 0 then budget = 0 end
+
+    local rows = {}
+    for _, row in ipairs(onlineHolders) do rows[#rows + 1] = row end
+    for i = 1, #offlineHolders do
+        if i > budget then break end
+        rows[#rows + 1] = offlineHolders[i]
     end
+    for _, row in ipairs(roster) do rows[#rows + 1] = row end
 
     return { name = def.name, kind = def.kind, rows = rows, total = total }
 end
@@ -300,6 +343,63 @@ Events.OnServerStarted.Add(function()
         end),
     }
 
+    -- THE WORLD COUNTER VERBS. Separate commands rather than a scope branch
+    -- inside varSet/varReset, because the payloads genuinely differ: those
+    -- carry a username, validate it, and push that player's record back
+    -- afterwards, and none of the three has any meaning here.
+    --
+    -- GATED HIGHER, on purpose. CAP_PLAYER is "may edit one player's stats";
+    -- a world counter is a number every quest gate on the server reads, so it
+    -- sits with the schema capability instead. An admin trusted to fix Alice's
+    -- sample count is not automatically trusted to declare the server has
+    -- finished a quest forty times.
+    local function worldVerb(action, run)
+        DFServer.registerHandler{
+            action     = action,
+            capability = CAP_SCHEMA,
+            run = function(player, args)
+                args = args or {}
+                local def = RDVars.definition(args.name)
+                if not RDVarDefs.isWorld(def) then
+                    return { ok = false,
+                             reason = "'" .. tostring(args.name)
+                                 .. "' is not a world counter" }
+                end
+                local ok, detail = run(player, args, def)
+                DFCore.audit(action, player, string.format("var=%s%s",
+                    tostring(args.name),
+                    ok and (" -> " .. tostring(detail)) or (" REFUSED: " .. tostring(detail))))
+                -- The holder payload is what the editor draws, value included,
+                -- so re-reading it is how the window learns what it just did -
+                -- including after a refusal, where the one thing an admin needs
+                -- is the value that is actually stored.
+                local payload = DFVars_Server.holdersOf(def.name)
+                if payload then
+                    sendServerCommand(player, DFCore.MODULE, "AdminVarHolders", payload)
+                end
+                if not ok then return { ok = false, reason = tostring(detail) } end
+                return { ok = true, message = detail }
+            end,
+        }
+    end
+
+    worldVerb("varWorldSet", function(player, args, def)
+        local v = tonumber(args.value)
+        if v == nil then return nil, "that is not a number" end
+        local set, why = RDVars.set(nil, def.name, v)
+        if set == nil then return nil, why end
+        return true, "Set " .. def.name .. " to " .. tostring(set) .. "."
+    end)
+
+    worldVerb("varWorldReset", function(player, args, def)
+        local ok, why = RDVars.reset(nil, def.name)
+        if not ok then return nil, why end
+        -- "Cleared", never "set to zero". A world counter back to absent has
+        -- never run; one at zero has run and been reset. Quests gate on the
+        -- difference.
+        return true, "Cleared " .. def.name .. " - back to never set."
+    end)
+
     DFServer.registerHandler{
         action = "varsOfPlayer",
         run = staffOnly("varsOfPlayer", function(player, args)
@@ -381,7 +481,7 @@ Events.OnServerStarted.Add(function()
 
     playerVerb("varReset", function(_, args, user)
         -- Back to ABSENT, not to zero, which is a distinction the panel has to
-        -- keep saying out loud - it is the whole reason counters and markers
+        -- keep saying out loud - it is the whole reason counters and flags
         -- are two kinds rather than one.
         local ok, why = RDVars.reset(user, args.name)
         if not ok then return nil, why end

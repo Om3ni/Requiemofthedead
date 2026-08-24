@@ -14,7 +14,7 @@
 --   string  a COUNTER. Holds a number. "Collected 5 of 10 samples."
 --
 -- Merging them was considered and rejected. Revokers are a lifecycle for a
--- marker - gone when the kit is claimed, on death, after four hours - and a
+-- flag - gone when the kit is claimed, on death, after four hours - and a
 -- counter is never revoked, it is incremented and reset. One system would
 -- leave the revoker list meaningless for half the entries, and would collapse
 -- ABSENT with ZERO, which is the exact distinction a repeatable quest needs:
@@ -31,12 +31,12 @@
 -- Every genuine string case collapses into something else, and each collapse
 -- BUYS something a string cannot do:
 --
---   "Faction = Anomaly"     -> the charVar `Anomaly`. Now "is this player in any
+--   "Faction = Anomaly"     -> the flag `Anomaly`. Now "is this player in any
 --                              faction" is a set test rather than a list of
 --                              every string the field might hold.
 --   "most-killed type"      -> `Kills_Screamer = 4`. Now they can be ranked.
 --   "stage = chamber"       -> `Stage = 3`. Now `stage >= 3` works at all.
---   "kit they claimed"      -> the kit id already lives in a marker's revoker.
+--   "kit they claimed"      -> the kit id already lives in a flag's revoker.
 --
 -- The one real string case is PLAYER-AUTHORED TEXT - a base name, an epitaph, a
 -- submitted answer - and it is out of scope on purpose rather than by omission.
@@ -63,6 +63,34 @@
 -- problem waiting for a season boundary.
 --
 -- ---------------------------------------------------------------------------
+-- A COUNTER HAS A SCOPE. Added 2026-08-23, when the first real consumer went
+-- looking for "how many times has this quest been completed at all" and found
+-- that every verb in RDVars takes a subject.
+--
+--   player   one value per player. "Alice has 5 of 10 samples."
+--   world    ONE value, held by the server. "This quest has been finished 43
+--            times." Nobody holds it; it has no holders list.
+--
+-- Summing the player half was the alternative and it is wrong twice: it costs
+-- a walk of every record to answer one question, and it silently loses every
+-- player who has been wiped or never came back - so the number shrinks over a
+-- season for reasons nobody can see.
+--
+-- SCOPE DEFAULTS TO PLAYER, and that is not the same call as resetOnDeath
+-- below. resetOnDeath had two plausible answers and no status quo, so picking
+-- one silently would be behaviour nobody chose. Scope has a status quo: every
+-- counter that exists is per-player, an absent scope has always meant exactly
+-- that, and a required dial here would ask a question whose answer the panel
+-- already knows.
+--
+-- A FLAG HAS NO SCOPE. Its entire vocabulary is about a holder - granted to
+-- whom, revoked on whose death, expiring from whose grant - so a world flag is
+-- not a flag with a different scope, it is a boolean nobody has designed. If
+-- that is ever wanted it is a world counter used as 0/1, or a third kind with
+-- its own rules. Refused here rather than ignored, because a scope silently
+-- dropped from a definition is a var that behaves nothing like it reads.
+--
+-- ---------------------------------------------------------------------------
 -- resetOnDeath HAS NO DEFAULT, DELIBERATELY. A counter that silently survived
 -- death, or silently did not, is behaviour nobody chose - discovered months
 -- later by a player, in the shape of a quest that cannot be failed. Creation
@@ -70,8 +98,11 @@
 
 RDVarDefs = RDVarDefs or {}
 
-RDVarDefs.CHAR   = "char"
+RDVarDefs.FLAG   = "flag"
 RDVarDefs.COUNTER = "counter"
+
+RDVarDefs.SCOPE_PLAYER = "player"
+RDVarDefs.SCOPE_WORLD  = "world"
 
 RDVarDefs.NAME_MAX = 32
 
@@ -96,6 +127,7 @@ RDVarDefs.REVOKERS = {
 
 local ALLOWED_FIELDS = {
     kind = true, name = true, revokers = true, resetOnDeath = true,
+    scope = true,
     note = true,          -- free-text admin commentary; never interpreted
 }
 
@@ -184,8 +216,8 @@ function RDVarDefs.validate(def)
     end
 
     local kind = def.kind
-    if kind ~= RDVarDefs.CHAR and kind ~= RDVarDefs.COUNTER then
-        return nil, "kind must be '" .. RDVarDefs.CHAR .. "' or '"
+    if kind ~= RDVarDefs.FLAG and kind ~= RDVarDefs.COUNTER then
+        return nil, "kind must be '" .. RDVarDefs.FLAG .. "' or '"
             .. RDVarDefs.COUNTER .. "', got " .. tostring(kind)
     end
 
@@ -198,11 +230,20 @@ function RDVarDefs.validate(def)
 
     local out = { kind = kind, key = key, name = display, note = def.note }
 
-    if kind == RDVarDefs.CHAR then
-        -- A marker has no value, so resetOnDeath would be a second spelling of
+    if kind == RDVarDefs.FLAG then
+        -- A flag has no value, so resetOnDeath would be a second spelling of
         -- revokers.death. Two ways to say one thing is how they drift apart.
         if def.resetOnDeath ~= nil then
-            return nil, "a char var uses revokers.death, not resetOnDeath"
+            return nil, "a flag uses revokers.death, not resetOnDeath"
+        end
+        -- See the header: a world flag is not a flag. Refused rather than
+        -- ignored - a dropped scope leaves a var that behaves nothing like the
+        -- definition an admin is looking at.
+        if def.scope ~= nil and def.scope ~= RDVarDefs.SCOPE_PLAYER then
+            return nil, "a flag has no scope - it is granted to a player, "
+                .. "revoked on that player's death, and expires from that "
+                .. "player's grant. Use a world counter if you want one number "
+                .. "the whole server shares."
         end
         local revokers, why = validateRevokers(def.revokers)
         if not revokers then return nil, why end
@@ -211,11 +252,32 @@ function RDVarDefs.validate(def)
         if def.revokers ~= nil then
             return nil, "a string var has no revokers - it is reset, not revoked"
         end
-        if type(def.resetOnDeath) ~= "boolean" then
-            return nil, "resetOnDeath is required on a string var and must be "
-                .. "true or false - there is deliberately no default"
+
+        local scope = def.scope
+        if scope == nil then scope = RDVarDefs.SCOPE_PLAYER end
+        if scope ~= RDVarDefs.SCOPE_PLAYER and scope ~= RDVarDefs.SCOPE_WORLD then
+            return nil, "scope must be '" .. RDVarDefs.SCOPE_PLAYER .. "' or '"
+                .. RDVarDefs.SCOPE_WORLD .. "', got " .. tostring(scope)
         end
-        out.resetOnDeath = def.resetOnDeath
+        out.scope = scope
+
+        if scope == RDVarDefs.SCOPE_WORLD then
+            -- Whose death? A world counter has no holder to die. Refused
+            -- rather than accepted-and-ignored: `resetOnDeath = true` stored
+            -- on a world counter is a promise the store cannot keep, and it
+            -- would read on the panel as a lifecycle that never fires.
+            if def.resetOnDeath ~= nil then
+                return nil, "a world counter has no resetOnDeath - it belongs "
+                    .. "to the server, not to a player, so there is no death "
+                    .. "for it to reset on"
+            end
+        else
+            if type(def.resetOnDeath) ~= "boolean" then
+                return nil, "resetOnDeath is required on a string var and must be "
+                    .. "true or false - there is deliberately no default"
+            end
+            out.resetOnDeath = def.resetOnDeath
+        end
     end
 
     return out
@@ -225,7 +287,7 @@ end
 -- Questions consumers ask about a definition
 -- ---------------------------------------------------------------------------
 
--- A char var with no revokers at all: it lasts until an admin removes it.
+-- A flag with no revokers at all: it lasts until an admin removes it.
 -- False for a string var, which is never revoked in the first place.
 --
 -- pairs(), NOT next(). B42's Kahlua registers no global `next` - BaseLib exposes
@@ -235,20 +297,28 @@ end
 -- the global exists (CLAUDE.md sect. 3, and RDSelect.lua:76-79 says the same
 -- thing at length). This function was written with next() and shipped green.
 function RDVarDefs.isPermanent(def)
-    if type(def) ~= "table" or def.kind ~= RDVarDefs.CHAR then return false end
+    if type(def) ~= "table" or def.kind ~= RDVarDefs.FLAG then return false end
     if def.revokers == nil then return true end
     for _ in pairs(def.revokers) do return false end
     return true
 end
 
-function RDVarDefs.isChar(def)   return type(def) == "table" and def.kind == RDVarDefs.CHAR   end
+function RDVarDefs.isFlag(def)   return type(def) == "table" and def.kind == RDVarDefs.FLAG   end
 function RDVarDefs.isString(def) return type(def) == "table" and def.kind == RDVarDefs.COUNTER end
+
+-- Is this the one-value-for-the-whole-server kind? Answers only for counters,
+-- so a caller cannot reach it through a flag whose stored scope came from an
+-- older document or a hand-edited file.
+function RDVarDefs.isWorld(def)
+    return type(def) == "table" and def.kind == RDVarDefs.COUNTER
+       and def.scope == RDVarDefs.SCOPE_WORLD
+end
 
 -- Does this definition expire on its own, and when, relative to a grant?
 -- Returns nil for a var that does not expire, so a caller cannot accidentally
 -- treat "no expiry" as "expires at 0".
 function RDVarDefs.expiryMs(def)
-    if not RDVarDefs.isChar(def) then return nil end
+    if not RDVarDefs.isFlag(def) then return nil end
     local mins = def.revokers and def.revokers.expires
     if type(mins) ~= "number" then return nil end
     return mins * 60000

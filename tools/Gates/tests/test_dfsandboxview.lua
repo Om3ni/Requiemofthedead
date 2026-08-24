@@ -41,8 +41,52 @@ DFKit = {
     rowHeight = function() return 22 end,
     wrapText  = function() return {} end,
     fitText   = function(s) return s end,
+    refillList = function(box, fill)
+        box:clear()
+        if fill then fill(box) end
+        return box
+    end,
 }
-DFForm = { new = function(o) return o end }
+-- filterSchema and countRows are RECORDED rather than reimplemented: what
+-- they do with a query is test_dfform's business now that both option views
+-- share them. This file has to prove the view routes through them with the
+-- typed query - a rebuild that filtered on "" leaves a box that types and does
+-- nothing - and that the nav's per-mod counts come from the same rule as the
+-- page, because two rules would let the nav promise a match the page cannot
+-- show.
+local filterQueries = {}
+DFForm = {
+    new = function(o) return o end,
+    filterSchema = function(schema, query)
+        filterQueries[#filterQueries + 1] = query
+        if query == "" then return schema end
+        local out = {}
+        for _, e in ipairs(schema or {}) do
+            if e.key and tostring(e.key):lower():find(tostring(query):lower(), 1, true) then
+                out[#out + 1] = e
+            end
+        end
+        return out
+    end,
+    countRows = function(schema)
+        local n = 0
+        for _, e in ipairs(schema or {}) do if e.key then n = n + 1 end end
+        return n
+    end,
+}
+
+-- DFLayout is the server-wide arrangement document and is not this file's
+-- subject. Shape is identity: the arranger reorders and groups but can never
+-- add or hide an option, which is exactly why the nav may count matches off
+-- the raw page instead.
+DFLayout = {
+    shape     = function(page) return page, {} end,
+    request   = function() end,
+    onChanged = function() end,
+    noteFor   = function() return nil end,
+    held      = function() return false end,
+    forget    = function() end,
+}
 DFSandboxModel = { build = function() return {} end }
 ISScrollingListBox = { derive = function() return {} end }
 function getSandboxOptions() return nil end
@@ -213,6 +257,110 @@ check(ok6 == true, "the non-client branch failed")
 check(built.sent == false, "a packet was sent with no client")
 check(live6.values["a.Bool"] == true,
     "the non-client branch did not write through to the live options")
+
+-- ---- the search ----------------------------------------------------------
+--
+-- Nine mod pages of roughly forty options each. Without a filter the surface is
+-- something an admin scrolls past rather than reads, and the failure this
+-- guards is not cosmetic: a search that quietly drops a match is an admin
+-- concluding a sandbox option does not exist.
+
+local function page(name, ...)
+    local opts = {}
+    for _, key in ipairs({ ... }) do
+        opts[#opts + 1] = opt(name .. "." .. key, "boolean")
+    end
+    return { page = name, label = name, count = #opts,
+             sections = { { title = name, options = opts } } }
+end
+
+DFSandboxView.mods = { page("Dirge", "ZombieRate", "ScreamerRate"),
+                       page("Husbandry", "EggRate") }
+DFSandboxView.selected = "Dirge"
+DFSandboxView.form = DFForm.new{ schema = {} }
+
+-- No query: the nav shows totals, and the form is handed the whole page. The
+-- empty query still has to REACH the filter, or clearing the box would leave
+-- the last search stuck on screen with nothing to say so.
+DFSandboxView.filter = ""
+filterQueries = {}
+DFSandboxView.recount()
+DFSandboxView.rebuildForm()
+check(DFSandboxView.matches == nil,
+    "an empty search left per-mod match counts on the nav, so every row would "
+    .. "report a number that answers no question anybody asked")
+check(filterQueries[1] == "", "clearing the box did not reach the filter")
+check(DFSandboxView.shown == 2 and DFSandboxView.shownOf == 2,
+    "the unfiltered page did not report itself whole: "
+    .. tostring(DFSandboxView.shown) .. " of " .. tostring(DFSandboxView.shownOf))
+
+-- A query: the page narrows and the nav counts the OTHER mods, which is the
+-- whole reason the search is worth having across nine pages rather than one.
+DFSandboxView.filter = "screamer"
+filterQueries = {}
+DFSandboxView.recount()
+DFSandboxView.rebuildForm()
+check(filterQueries[#filterQueries] == "screamer",
+    "the typed query never reached the filter: "
+    .. tostring(filterQueries[#filterQueries]))
+check(DFSandboxView.shown == 1 and DFSandboxView.shownOf == 2,
+    "the page did not report N of M: " .. tostring(DFSandboxView.shown)
+    .. " of " .. tostring(DFSandboxView.shownOf))
+check(DFSandboxView.matches ~= nil, "the nav was not given match counts")
+check(DFSandboxView.matches["Dirge"] == 1,
+    "the selected mod counted wrong: " .. tostring(DFSandboxView.matches["Dirge"]))
+check(DFSandboxView.matches["Husbandry"] == 0,
+    "A MOD WITH NO MATCH DID NOT REPORT ZERO. Absent and zero read alike on a "
+    .. "nav row, and an admin would click through it looking for the option "
+    .. "the panel already knows is not there.")
+
+-- The nav's counts and the page's filtering must come from ONE rule. Two would
+-- let the nav promise a match on a page that then shows nothing.
+DFSandboxView.selected = "Husbandry"
+DFSandboxView.rebuildForm()
+check(DFSandboxView.shown == DFSandboxView.matches["Husbandry"],
+    "THE NAV AND THE PAGE DISAGREE about how many options match. The nav said "
+    .. tostring(DFSandboxView.matches["Husbandry"]) .. ", the page shows "
+    .. tostring(DFSandboxView.shown))
+
+DFSandboxView.selected = "Dirge"
+DFSandboxView.rebuildForm()
+check(DFSandboxView.shown == DFSandboxView.matches["Dirge"],
+    "the nav and the page disagree on the selected mod too")
+
+-- A query nobody matches empties the page rather than falling back to all of
+-- it. A filter that silently gives up is worse than one that finds nothing:
+-- the admin reads a full list and concludes their search term is in it.
+DFSandboxView.filter = "nosuchoption"
+DFSandboxView.recount()
+DFSandboxView.rebuildForm()
+check(DFSandboxView.shown == 0,
+    "a search matching nothing fell back to showing everything")
+check(DFSandboxView.matches["Dirge"] == 0 and DFSandboxView.matches["Husbandry"] == 0,
+    "the nav still claimed matches for a query nothing matched")
+
+-- Reopening the tab keeps whatever is in the search box, and the mod list is
+-- rebuilt from scratch. Counts computed against the OLD list would survive as
+-- promises about pages that no longer hold what they claim.
+DFSandboxView.filter = "screamer"
+DFSandboxView.recount()
+-- onShow goes through the real reload(), which refills the nav from the model.
+-- That is the path the bug lives on, so the fixture drives it rather than
+-- poking V.mods: recounting has to happen after the list is rebuilt, and a
+-- test that set the list by hand could not tell the two orders apart.
+DFSandboxView.navBox = { items = {}, clear = function(b) b.items = {} end,
+    addItem = function(b, name, item)
+        local i = { text = name, item = item }
+        b.items[#b.items + 1] = i
+        return i
+    end }
+DFSandboxModel.build = function() return { page("Dirge", "ZombieRate") } end
+DFSandboxView.selected = "Dirge"
+DFSandboxView.onShow()
+check(DFSandboxView.matches["Dirge"] == 0,
+    "THE NAV KEPT A COUNT FROM THE PREVIOUS MOD LIST. It said "
+    .. tostring(DFSandboxView.matches["Dirge"]) .. " for a page that no longer "
+    .. "holds a matching option.")
 
 print(string.format("DFSandboxView: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

@@ -1,7 +1,7 @@
 -- DFItemQuery fixture - the type-ahead ranking and the session cache contract.
 
 local ROOT = arg[1] or "."
-local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua/client/DFItemQuery.lua"
+local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/client/DFItemQuery.lua"
 
 local passed, failed = 0, 0
 local function check(ok, message)

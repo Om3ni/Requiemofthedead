@@ -14,7 +14,8 @@
 -- that asymmetry because getting it backwards is the obvious bug.
 
 local ROOT = arg[1] or "."
-local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua/client/Admin/DFSandboxModel.lua"
+local DF = ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua"
+local SOURCE = DF .. "/client/Admin/DFSandboxModel.lua"
 
 local passed, failed = 0, 0
 local realPrint = print
@@ -27,6 +28,10 @@ end
 function isServer() return false end
 require = function() return true end
 DFKit = {}
+-- The REAL DFOverlay. buildServer stamps its page with DFOverlay.SERVER_KEY and
+-- three separate files key on that constant agreeing; a stubbed string here
+-- would let them drift apart while every fixture stayed green.
+dofile(DF .. "/shared/DFOverlay.lua")
 
 local TEXT = {}
 function getText(k) return TEXT[k] or k end
@@ -145,6 +150,123 @@ local m2 = DFSandboxModel.build()
 local row = m2[1].sections[1].options[1]
 check(row.values and #row.values == 3, "enum values not resolved")
 check(row.values[1] == "v1", "enum value translation is not 1-based")
+
+-- ---- SERVER options - a DIFFERENT registry with a SMALLER surface ---------
+--
+-- buildServer had no fixture at all until 2026-08-23, and a live 42.20.3 client
+-- found out why: it reused the sandbox reader, which calls getTranslatedName().
+-- A ServerOption does not have one. Its interface is asConfigOption() and
+-- getTooltip() and nothing more (ServerOptions.java:637-641); getName() and
+-- getType() come from the *ConfigOption base it extends, which is precisely why
+-- those two worked and the third threw "Object tried to call nil".
+--
+-- SO THE FAKE BELOW DELIBERATELY OMITS getTranslatedName. That omission is the
+-- test. Per CLAUDE.md sect. 2 a fixture must implement the verified surface it
+-- stands in for and no more - a fake that is more generous than the engine
+-- proves nothing, and this one was generous in exactly one method.
+
+local sopts = {}
+local function mkServerOpt(name, otype, value, default)
+    return {
+        name = name, otype = otype, value = value, default = default,
+        getName    = function(s) return s.name end,
+        getType    = function(s) return s.otype end,
+        -- getTranslatedName is ABSENT ON PURPOSE. Do not add it.
+        getTooltip = function(s) return s.name .. " tip" end,
+        getDefaultValue  = function(s) return s.default end,
+        getValueAsString = function(s) return tostring(s.value) end,
+        getValue         = function(s) return s.value end,
+        getNumValues = function(s) return s.numValues or 0 end,
+        getValueTranslationByIndex = function(s, k) return "sv" .. k end,
+    }
+end
+local svo = {}
+function svo:getNumOptions() return #sopts end
+function svo:getOptionByIndex(i) return sopts[i + 1] end   -- ZERO-based
+function svo:getOptionByName(n)
+    for _, o in ipairs(sopts) do if o.name == n then return o end end
+end
+function getServerOptions() return svo end
+local function addSv(...) sopts[#sopts + 1] = mkServerOpt(...) end
+
+addSv("PVP", "boolean", "true", "true")
+addSv("PVPMeleeDamageModifier", "double", "0.3", "0.3")
+addSv("SafehouseAllowTrepass", "boolean", "true", "true")
+addSv("MapRemotePlayerVisibility", "integer", "1", "1")
+addSv("ServerWelcomeMessage", "text", "hi", "")
+addSv("SomethingUnbucketed", "boolean", "false", "false")
+
+local sv = DFSandboxModel.buildServer()
+check(sv ~= nil, "buildServer returned nothing")
+
+-- THE REGRESSION. Reading a server option must not touch getTranslatedName,
+-- and the label falls back to the raw name - which is what vanilla's own
+-- settings screen shows (ServerSettingsScreen.lua:2570).
+-- buildServer returns ONE page-shaped table - the same shape build() emits per
+-- mod - so the view never has to know which registry it is drawing.
+local function findRow(page, name)
+    for _, sec in ipairs((page or {}).sections or {}) do
+        for _, r in ipairs(sec.options) do
+            if r.name == name then return r, sec end
+        end
+    end
+end
+local pvp = findRow(sv, "PVP")
+check(pvp ~= nil, "the PVP server option did not survive the walk")
+check(pvp and pvp.label == "PVP",
+    "a server option's label was not its raw name: " .. tostring(pvp and pvp.label))
+check(pvp and pvp.type == "boolean", "the server option type was lost")
+check(pvp and pvp.tooltip == "PVP tip", "the server option tooltip was lost")
+
+-- Server names are not namespaced, so short == name. Downstream keys on name,
+-- but the view draws short, and letting them diverge here would silently
+-- truncate every row at the first dot in a value like a welcome message.
+check(pvp and pvp.short == "PVP", "short diverged from name on a server option")
+
+-- Bucketing is by name prefix, longest-match irrelevant - PVPMeleeDamage...
+-- must land under PVP, not under a section of its own.
+local _, pvpSec = findRow(sv, "PVPMeleeDamageModifier")
+check(pvpSec and pvpSec.title == "PVP",
+    "PVPMeleeDamageModifier landed in section " .. tostring(pvpSec and pvpSec.title))
+
+-- Anything matching no prefix goes to Other, and Other sorts LAST - it is the
+-- leftovers bucket and reads as one at the bottom, not wedged between Map and
+-- PVP.
+local _, otherSec = findRow(sv, "SomethingUnbucketed")
+check(otherSec and otherSec.title == "Other", "an unbucketed option missed Other")
+local secs = sv.sections
+check(secs[#secs].title == "Other", "Other was not sorted last")
+for i = 2, #secs - 1 do
+    check(secs[i - 1].title < secs[i].title,
+        "server sections were not alphabetical before Other")
+end
+
+-- The page carries the sentinel three files key on, and a total the footer
+-- draws without re-walking.
+check(sv.page == DFOverlay.SERVER_KEY, "the server page lost its sentinel key")
+check(sv.count == #sopts, "the page count was " .. tostring(sv.count)
+    .. ", expected " .. #sopts)
+
+-- Enum server options resolve their labels the same 1-based way. Their
+-- translations are hardcoded to AntiCheat's keys in the engine
+-- (ServerOptions.java:629-634) - TIS's quirk, not ours - so the only thing
+-- worth pinning here is the indexing.
+sopts = {}
+local se = mkServerOpt("AntiCheatProtectionType", "enum", "2", "1")
+se.numValues = 3
+sopts[1] = se
+local sv2 = DFSandboxModel.buildServer()
+local srow = findRow(sv2, "AntiCheatProtectionType")
+check(srow and srow.values and #srow.values == 3, "server enum values not resolved")
+check(srow and srow.values[1] == "sv1", "server enum translation is not 1-based")
+check(srow and srow.label == "AntiCheatProtectionType",
+    "an enum server option's label was not its raw name")
+
+-- No registry at all is nil, not an empty page: the view must be able to tell
+-- "there are no server options" from "this build has no server options screen".
+function getServerOptions() return nil end
+check(DFSandboxModel.buildServer() == nil,
+    "buildServer invented a page when the registry was absent")
 
 realPrint(string.format("DFSandboxModel: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

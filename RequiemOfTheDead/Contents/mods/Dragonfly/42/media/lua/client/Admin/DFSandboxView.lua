@@ -77,6 +77,7 @@ require "Admin/DFStaged"
 require "Admin/DFLayout"
 require "Admin/DFLayoutEditor"
 require "ISUI/ISScrollingListBox"
+require "ISUI/ISTextEntryBox"
 
 DFSandboxView = DFSandboxView or {}
 local V = DFSandboxView
@@ -87,6 +88,8 @@ local NAV_MIN = 150
 V.mods    = {}
 V.selected = nil     -- page name of the chosen mod
 V.staged   = nil     -- DFStaged, built in attach() once liveValue exists
+V.filter   = ""      -- the search box text, applied to the page on screen
+V.matches  = nil     -- [page] = matching option count, nil when not searching
 
 -- ---------------------------------------------------------------------------
 -- Model -> DFForm schema. PURE, and separated from every widget on purpose.
@@ -268,8 +271,22 @@ function NavList:doDrawItem(y, item, alt)
         for _, opt in ipairs(sec.options or {}) do names[#names + 1] = opt.name end
     end
     local staged = V.staged and V.staged:countIn(names) or 0
-    local txt = staged > 0 and ("+" .. staged) or tostring(mod.count or 0)
-    local col = staged > 0 and DFKit.col.accent or DFKit.col.textDim
+
+    -- WHILE SEARCHING THE NUMBER IS THE MATCH COUNT, and the colour still
+    -- carries the staged fact. Both have to survive. A nav reporting staged
+    -- counts during a search cannot answer "which page holds the option I
+    -- typed", which is the only reason to search across nine pages at all; one
+    -- that dropped the staged mark would hide unpushed work behind a filter.
+    local txt, col
+    if V.matches then
+        local n = V.matches[mod.page] or 0
+        txt = tostring(n)
+        col = (staged > 0 and DFKit.col.accent)
+           or (n > 0 and DFKit.col.text) or DFKit.col.textDim
+    else
+        txt = staged > 0 and ("+" .. staged) or tostring(mod.count or 0)
+        col = staged > 0 and DFKit.col.accent or DFKit.col.textDim
+    end
     local w = getTextManager():MeasureStringX(FONT, txt)
     self:drawText(txt, self.width - w - 6, y + 3, col.r, col.g, col.b, 1, FONT)
     return y + item.height
@@ -306,7 +323,12 @@ function DFSandboxView.rebuildForm()
     V.shapeStats = stats
     local schema, skipped = DFSandboxView.schemaFor(shaped)
     V.skipped = skipped
-    V.form.schema = schema
+    -- Counted before AND after, because the footer has to be able to say "12 of
+    -- 41" - and the total is the shaped page rather than mod.count, which is
+    -- the reflected figure and includes the option types this view skips.
+    V.shownOf = DFForm.countRows(schema)
+    V.form.schema = DFForm.filterSchema(schema, V.filter)
+    V.shown = DFForm.countRows(V.form.schema)
     -- The wrap cache is keyed on width and font, neither of which changed - but
     -- the SCHEMA did, and a stale entry would size a row for another mod's
     -- description. Cleared rather than versioned: it refills in one frame.
@@ -314,6 +336,23 @@ function DFSandboxView.rebuildForm()
     if V.form.rect then
         V.form:layout(V.form.rect.x, V.form.rect.y, V.form.rect.w, V.form.rect.h)
     end
+end
+
+-- Per-mod match counts for the nav, computed ONCE per query rather than inside
+-- doDrawItem: that runs for every visible row sixty times a second, and
+-- schemaFor allocates a table per option.
+--
+-- Counted off the RAW page rather than the shaped one. DFLayout may reorder
+-- options and give them section headings but can never add or hide one, so the
+-- two agree about how many match and the raw page is the cheaper to reach.
+function DFSandboxView.recount()
+    if V.filter == "" then V.matches = nil; return end
+    local counts = {}
+    for _, mod in ipairs(V.mods) do
+        counts[mod.page] = DFForm.countRows(
+            DFForm.filterSchema((DFSandboxView.schemaFor(mod)), V.filter))
+    end
+    V.matches = counts
 end
 
 local function reload()
@@ -326,6 +365,11 @@ local function reload()
             i.height = DFKit.rowHeight()
         end
     end)
+    -- Recounted against the list that was just rebuilt. Reopening the tab
+    -- keeps whatever is in the search box, so without this the nav would carry
+    -- match counts computed against the previous mod list - and the one thing
+    -- the nav must never do is promise a match on a page that then shows none.
+    DFSandboxView.recount()
     DFSandboxView.rebuildForm()
 end
 
@@ -373,6 +417,21 @@ function DFSandboxView.attach(panel)
     }
     local formWidgets = V.form:attach(panel)
 
+    -- The same search the Server sub-tab has had, for the same reason one page
+    -- over: nine mods of forty options each is a surface an admin scrolls
+    -- rather than reads, and the option they want is usually one they can
+    -- half-name. It filters the PAGE, and the nav reports how many each of the
+    -- other eight would show - otherwise a search is only ever answerable by
+    -- clicking through every mod in turn.
+    V.search = ISTextEntryBox:new("", 0, 0, 160, DFKit.metrics.btnH)
+    V.search:initialise(); V.search:instantiate()
+    V.search.onTextChange = function()
+        V.filter = V.search:getInternalText() or ""
+        DFSandboxView.recount()
+        DFSandboxView.rebuildForm()
+    end
+    panel:addChild(V.search)
+
     V.applyBtn = DFKit.button(panel, 0, 0, 90, "Apply", panel,
         function() DFSandboxView.apply() end, "action",
         { tooltip = "Push staged changes to the server. Only the options you "
@@ -392,7 +451,7 @@ function DFSandboxView.attach(panel)
 
     reload()
 
-    local out = { nav, V.applyBtn, V.discardBtn, V.arrangeBtn }
+    local out = { nav, V.search, V.applyBtn, V.discardBtn, V.arrangeBtn }
     for _, wdg in ipairs(formWidgets or {}) do out[#out + 1] = wdg end
     return out
 end
@@ -415,11 +474,39 @@ function DFSandboxView.layout(panel, x, y, w, h)
 
     local navR, formR = R:splitH(0.20, NAV_MIN, 300)
     DFKit.sizeList(V.navBox, navR.x, navR.y, navR.w, navR.h)
+
+    -- The band is sliced off the FORM column, not off the whole region. The nav
+    -- is not filtered - it re-counts - so a box spanning both would sit above a
+    -- list it does not narrow and read as narrowing it.
+    local bar = formR:header(DFKit.metrics.btnH + DFKit.metrics.gap)
+    V.search:setX(bar.x); V.search:setY(bar.y)
+    V.search:setWidth(math.min(220, math.floor(bar.w * 0.4)))
+    V.searchHintX = bar.x + V.search:getWidth() + DFKit.metrics.gap
+    V.searchHintY = bar.y + 4
+    V.searchHintW = bar.w - V.search:getWidth() - DFKit.metrics.gap
+
     V.form:layout(formR.x, formR.y, formR.w, formR.h)
 end
 
 function DFSandboxView.draw(el)
     V.form:draw(el)
+
+    if V.searchHintX then
+        local d = DFKit.col.textDim
+        local hint
+        if V.filter ~= "" then
+            -- Scoped to THIS page out loud. The nav carries the other eight, so
+            -- "0 of 41 shown" here must never be readable as "nothing on the
+            -- server matches" - that is the wrong conclusion to leave available
+            -- to an admin standing on whichever page happened to be selected.
+            hint = (V.shown or 0) .. " of " .. (V.shownOf or 0)
+                .. " shown on this page - the nav counts the other mods"
+        else
+            hint = "Search this page by option name."
+        end
+        el:drawText(DFKit.fitText(hint, FONT, V.searchHintW or 200),
+                    V.searchHintX, V.searchHintY, d.r, d.g, d.b, 1, FONT)
+    end
 
     local r = V.footRect
     if not r then return end

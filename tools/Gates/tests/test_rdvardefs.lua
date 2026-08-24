@@ -71,22 +71,22 @@ check(D.normalizeName(string.rep("a", 32)) ~= nil, "a 32-character name was refu
 check(D.normalizeName(nil) == nil and D.normalizeName(7) == nil,
     "normalizeName accepted a non-string")
 
--- ---- char vars -----------------------------------------------------------
+-- ---- flags -----------------------------------------------------------
 
-local anomaly = accepts({ kind = "char", name = "Anomaly" }, "a bare char var")
+local anomaly = accepts({ kind = "flag", name = "Anomaly" }, "a bare flag")
 check(anomaly.key == "anomaly" and anomaly.name == "Anomaly",
     "validate did not carry both key and display name")
 check(D.isPermanent(anomaly),
-    "a char var with NO revokers must read as permanent - it lasts until an "
+    "a flag with NO revokers must read as permanent - it lasts until an "
     .. "admin removes it, and this is the test every consumer asks")
-check(D.isChar(anomaly) and not D.isString(anomaly), "kind predicates disagree")
+check(D.isFlag(anomaly) and not D.isString(anomaly), "kind predicates disagree")
 check(D.expiryMs(anomaly) == nil,
     "a var that does not expire returned an expiry - a caller would read 0 as "
     .. "'expires immediately'")
 
-local timed = accepts({ kind = "char", name = "Anomaly",
+local timed = accepts({ kind = "flag", name = "Anomaly",
                         revokers = { kit = "anomaly_crossbow", expires = 270, death = true } },
-                      "a char var with all three revokers")
+                      "a flag with all three revokers")
 check(not D.isPermanent(timed), "a var with revokers read as permanent")
 check(D.expiryMs(timed) == 270 * 60000, "expiry was not converted from minutes to ms")
 check(timed.revokers.kit == "anomaly_crossbow",
@@ -94,28 +94,28 @@ check(timed.revokers.kit == "anomaly_crossbow",
 
 -- death = false is the ABSENCE of a revoker, not a revoker. Storing it would
 -- make the permanence test lie.
-local notOnDeath = accepts({ kind = "char", name = "Keeper", revokers = { death = false } },
-                           "a char var with death = false")
+local notOnDeath = accepts({ kind = "flag", name = "Keeper", revokers = { death = false } },
+                           "a flag with death = false")
 check(D.isPermanent(notOnDeath),
     "revokers.death = false left a stored revoker, so the var no longer reads "
     .. "as permanent even though nothing will ever revoke it")
 
 -- The revoker set is CLOSED. Ignoring an unknown key hands an admin who typed
 -- `expiry` a permanent var and no indication of why.
-check(refuses({ kind = "char", name = "X", revokers = { expiry = 10 } },
+check(refuses({ kind = "flag", name = "X", revokers = { expiry = 10 } },
               "a misspelled revoker key"):find("expires", 1, true) ~= nil,
     "the refusal for a misspelled revoker did not name the real set")
-refuses({ kind = "char", name = "X", revokers = { expires = "270" } }, "expires as a string")
-refuses({ kind = "char", name = "X", revokers = { expires = 0 } }, "expires = 0")
-refuses({ kind = "char", name = "X", revokers = { expires = -5 } }, "a negative expiry")
-refuses({ kind = "char", name = "X", revokers = { death = "yes" } }, "death as a string")
-refuses({ kind = "char", name = "X", revokers = { kit = "" } }, "an empty kit id")
-refuses({ kind = "char", name = "X", revokers = "death" }, "revokers as a string")
+refuses({ kind = "flag", name = "X", revokers = { expires = "270" } }, "expires as a string")
+refuses({ kind = "flag", name = "X", revokers = { expires = 0 } }, "expires = 0")
+refuses({ kind = "flag", name = "X", revokers = { expires = -5 } }, "a negative expiry")
+refuses({ kind = "flag", name = "X", revokers = { death = "yes" } }, "death as a string")
+refuses({ kind = "flag", name = "X", revokers = { kit = "" } }, "an empty kit id")
+refuses({ kind = "flag", name = "X", revokers = "death" }, "revokers as a string")
 
 -- NaN compares false against every bound, so an unguarded expiry check would
 -- install a var that claims to expire and never does.
 local nan = 0 / 0
-refuses({ kind = "char", name = "X", revokers = { expires = nan } }, "expires = NaN")
+refuses({ kind = "flag", name = "X", revokers = { expires = nan } }, "expires = NaN")
 
 -- ---- string vars ---------------------------------------------------------
 
@@ -138,29 +138,109 @@ refuses({ kind = "counter", name = "X", resetOnDeath = 1 }, "resetOnDeath as a n
 -- of one concept is how they drift apart.
 refuses({ kind = "counter", name = "X", resetOnDeath = true, revokers = { death = true } },
         "a string var with revokers")
-refuses({ kind = "char", name = "X", resetOnDeath = true }, "a char var with resetOnDeath")
+refuses({ kind = "flag", name = "X", resetOnDeath = true }, "a flag with resetOnDeath")
 
 -- ---- shape ---------------------------------------------------------------
 
 refuses(nil, "nil")
 refuses("Anomaly", "a bare string")
 refuses({ name = "X" }, "a definition with no kind")
-refuses({ kind = "marker", name = "X" }, "an unknown kind")
-refuses({ kind = "char" }, "a definition with no name")
-refuses({ kind = "char", name = "X", colour = "red" }, "an unknown field")
-refuses({ kind = "char", name = "X", note = 7 }, "a non-string note")
-accepts({ kind = "char", name = "X", note = "for the Anomaly event" }, "an admin note")
+-- Deliberately not a near-miss of a real kind: this case was written as
+-- "marker" and a 2026-08-23 rename made that WORD valid, turning an
+-- unknown-kind test into an accepted one. A bogus value it is.
+refuses({ kind = "sigil", name = "X" }, "an unknown kind")
+refuses({ kind = "flag" }, "a definition with no name")
+refuses({ kind = "flag", name = "X", colour = "red" }, "an unknown field")
+refuses({ kind = "flag", name = "X", note = 7 }, "a non-string note")
+accepts({ kind = "flag", name = "X", note = "for the Anomaly event" }, "an admin note")
 
 -- ---- validate never hands back the caller's table -------------------------
 -- A form object still being edited must not be able to mutate a stored
 -- definition behind the store's back.
-local form = { kind = "char", name = "Live", revokers = { death = true } }
+local form = { kind = "flag", name = "Live", revokers = { death = true } }
 local stored = D.validate(form)
 check(stored ~= form, "validate returned the caller's own table")
 form.revokers.death = false
 form.name = "Changed"
 check(stored.revokers.death == true and stored.name == "Live",
     "editing the submitted form mutated the validated definition")
+
+-- ---- scope ---------------------------------------------------------------
+--
+-- Added 2026-08-23. A counter is either per-player or one number the whole
+-- server shares, and the second exists because "how many times has this quest
+-- been completed at all" had no home - summing the player half costs a walk of
+-- every record AND loses everyone who was wiped or never came back.
+
+local world = RDVarDefs.validate{ kind = "counter", name = "Runs",
+                                  scope = "world" }
+check(world ~= nil, "a world counter was refused")
+check(world and world.scope == "world", "the scope did not survive validation")
+check(RDVarDefs.isWorld(world) == true, "isWorld did not recognise one")
+
+-- ABSENT SCOPE MEANS PER-PLAYER, and that is a status quo rather than a
+-- default nobody chose. Every counter that has ever existed is per-player, so
+-- unlike resetOnDeath there is no second plausible reading to be silent about.
+local plain = RDVarDefs.validate{ kind = "counter", name = "Samples",
+                                  resetOnDeath = false }
+check(plain and plain.scope == "player",
+    "an unscoped counter did not normalise to per-player: "
+    .. tostring(plain and plain.scope))
+check(RDVarDefs.isWorld(plain) == false, "a per-player counter reported as world")
+
+-- A world counter has no holder, so it has no death to reset on. Refused
+-- rather than accepted-and-ignored: stored, it is a lifecycle the panel would
+-- draw and nothing would ever fire.
+local why
+_, why = RDVarDefs.validate{ kind = "counter", name = "Runs", scope = "world",
+                             resetOnDeath = true }
+check(_ == nil, "A WORLD COUNTER ACCEPTED resetOnDeath. Whose death?")
+check(tostring(why):find("death") ~= nil, "the refusal did not name the field: " .. tostring(why))
+check(RDVarDefs.validate{ kind = "counter", name = "Runs", scope = "world",
+                          resetOnDeath = false } == nil,
+    "resetOnDeath = false was accepted on a world counter - the field does not "
+    .. "apply, and false is an answer to a question that was not asked")
+
+-- The per-player half keeps its rule untouched.
+check(RDVarDefs.validate{ kind = "counter", name = "Samples", scope = "player" } == nil,
+    "a per-player counter no longer requires resetOnDeath")
+
+-- A FLAG HAS NO SCOPE. Its whole vocabulary is about a holder, so a world flag
+-- is not a flag with a different scope - it is a boolean nobody has designed.
+_, why = RDVarDefs.validate{ kind = "flag", name = "Open", scope = "world" }
+check(_ == nil, "A WORLD FLAG WAS ACCEPTED. Granted to whom, revoked on whose "
+    .. "death, expiring from whose grant?")
+check(tostring(why):find("counter") ~= nil,
+    "the refusal did not point at the thing that does work: " .. tostring(why))
+check(RDVarDefs.validate{ kind = "flag", name = "Open", scope = "player" } ~= nil,
+    "an explicit player scope on a flag was refused - it is the only thing a "
+    .. "flag can be, so saying so out loud must not be an error")
+check(RDVarDefs.validate{ kind = "flag", name = "Open" } ~= nil,
+    "a plain flag broke when scope arrived")
+
+-- An unknown scope is refused rather than falling back, for the same reason an
+-- unknown revoker is: a typo that silently yields the default is a var that
+-- behaves nothing like the definition somebody is reading.
+-- resetOnDeath is answered on both, so the ONLY rule that can refuse them is
+-- the scope one. Without it these pass for the wrong reason - the missing
+-- resetOnDeath - and a scope that fell through to the default would go unseen.
+check(RDVarDefs.validate{ kind = "counter", name = "Runs", scope = "server",
+                          resetOnDeath = false } == nil,
+    "a misspelled scope fell back to a default")
+check(RDVarDefs.validate{ kind = "counter", name = "Runs", scope = true,
+                          resetOnDeath = false } == nil,
+    "a non-string scope was accepted")
+check(RDVarDefs.validate{ kind = "counter", name = "Runs", scope = "World",
+                          resetOnDeath = false } == nil,
+    "scope matching is case-insensitive somewhere it should not be - every "
+    .. "other closed set in this file is exact, and a 'World' that quietly "
+    .. "became per-player is a counter behaving as neither")
+
+check(RDVarDefs.isWorld(nil) == false, "isWorld faulted on nothing")
+check(RDVarDefs.isWorld{ kind = "flag", scope = "world" } == false,
+    "isWorld answered for a FLAG carrying a stored scope. Definitions can come "
+    .. "from an older document or a hand-edited file, and a flag that reads as "
+    .. "world-scoped would be routed to a store half it has no values in.")
 
 print(string.format("RDVarDefs: %d passed, %d failed", passed, failed))
 os.exit(failed == 0 and 0 or 1)

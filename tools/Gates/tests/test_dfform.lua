@@ -362,6 +362,11 @@ local strSchema = {
     { key = "title", kind = "text", label = "Announce title",
       empty = "(the zone's name)", rule = "Empty uses the zone name.", maxLen = 64 },
     { key = "bare", kind = "choice", label = "No options", values = {} },
+    -- A registry-backed row. The provider is never called here - what is at
+    -- risk is only whether the row hands it over, because a row that declares
+    -- one and gets a plain box back is a silent loss of the whole feature.
+    { key = "item", kind = "text", label = "Item type",
+      suggest = function(q) return { "Base." .. tostring(q) } end },
 }
 local sf = DFForm.new{
     schema  = strSchema,
@@ -425,11 +430,23 @@ eq("popout is seeded with the current value", entryShown.value, "The City")
 eq("popout carries the rule", entryShown.rule, "Empty uses the zone name.")
 eq("popout carries the cap", entryShown.maxLen, 64)
 eq("popout is titled with the label", entryShown.title, "Announce title")
+eq("A ROW THAT DECLARES NO PROVIDER MUST NOT GET A BAND - every text field in "
+   .. "the suite predates this option and holds prose", entryShown.suggest, nil)
+
 
 -- The commit writes through. This is the half that would silently do nothing if
 -- the callback closed over the wrong thing.
 entryShown.onCommit("Muldraugh")
 eq("commit writes the typed value", strVals.title, "Muldraugh")
+-- ...and one that does declare a provider hands it over. This single line is
+-- the whole seam between a schema and the type-ahead; without it the row still
+-- opens a popout, still accepts typing, and simply never searches.
+local irow = rectFor(sf, "item")
+entryShown = nil
+sf:click(irow.textX + 2, irow.y + 2)
+ok("the item row opens the popout", entryShown ~= nil)
+ok("THE PROVIDER REACHES THE POPOUT", type(entryShown.suggest) == "function")
+eq("and it is the row's own", entryShown.suggest("Axe")[1], "Base.Axe")
 
 -- A read-only form (no set) must not offer to edit at all: the popout would
 -- take a value it has nowhere to put.
@@ -534,6 +551,59 @@ local narrow = #inl:helpLines(inl.schema[1], 40)
 ok("a width change re-wraps rather than serving the cache",
    inl._helpCache.w == 40, "cache still keyed to " .. tostring(inl._helpCache.w))
 eq("re-wrapping still clamps", narrow, before)
+
+-- ---------------------------------------------------------------------------
+-- FILTERING
+--
+-- Moved here from test_dfserverview on 2026-08-23, when the sandbox view grew
+-- the same search and the rule stopped belonging to either surface. Both option
+-- screens now show a filtered list, so a defect here is an admin concluding an
+-- option does not exist because their search quietly dropped it.
+-- ---------------------------------------------------------------------------
+
+local SCHEMA = {
+    { group = "PVP" },
+    { key = "PVP",            label = "PVP" },
+    { key = "PVPLogToolChat", label = "PVPLogToolChat" },
+    { group = "Other" },
+    { key = "Zzz",            label = "Zzz" },
+}
+
+ok("an empty query returns the schema itself, not a copy",
+   DFForm.filterSchema(SCHEMA, "") == SCHEMA,
+   "a copy per keystroke is allocation for nothing")
+ok("a nil query is the same as an empty one",
+   DFForm.filterSchema(SCHEMA, nil) == SCHEMA)
+
+local hits = DFForm.filterSchema(SCHEMA, "pvplog")
+eq("one row matched", DFForm.countRows(hits), 1)
+eq("its header came with it", #hits, 2)
+ok("A SECTION HEADER WITH NOTHING UNDER IT SURVIVED",
+   not (hits[#hits] and hits[#hits].group),
+   "an empty heading reads as an option that went missing, not one that did "
+   .. "not match")
+
+eq("the query is case-insensitive",
+   #DFForm.filterSchema(SCHEMA, "PVPLOG"), #hits)
+eq("matching nothing leaves no headers behind",
+   #DFForm.filterSchema(SCHEMA, "zzzz"), 0)
+
+-- The LABEL matches too, not just the key. On the sandbox pages the two differ
+-- - the key is the raw option name and the label is what is drawn - so keying
+-- on one alone means half the searches fail against the text on screen.
+eq("the label is searched as well as the key",
+   DFForm.countRows(DFForm.filterSchema(
+       { { key = "SomeOpaqueName", label = "Zombie respawn" } }, "respawn")), 1)
+
+-- A typed query is text, not a pattern. Without a plain find, a stray "(" is a
+-- Lua error thrown from a keystroke rather than a search that finds nothing.
+local okPat, errPat = pcall(DFForm.filterSchema, SCHEMA, "pvp(")
+ok("a pattern character in the query does not throw", okPat, tostring(errPat))
+eq("and it matches nothing rather than everything",
+   okPat and #DFForm.filterSchema(SCHEMA, "pvp(") or -1, 0)
+
+eq("countRows ignores section headers", DFForm.countRows(SCHEMA), 3)
+eq("countRows survives nothing at all", DFForm.countRows(nil), 0)
 
 print(string.format("DFForm scrolling: %d passed, %d failed", pass, fail))
 os.exit(fail > 0 and 1 or 0)

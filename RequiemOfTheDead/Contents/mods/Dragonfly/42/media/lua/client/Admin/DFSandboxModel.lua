@@ -67,7 +67,26 @@ end
 -- One option, flattened to what a row needs. Enum values are resolved here
 -- rather than at draw time: getValueTranslationByIndex is a per-call lookup and
 -- a redraw is sixty frames a second.
-local function readOption(o)
+--
+-- THE LABEL IS PASSED IN, and that is the whole of a live 42.20.3 crash on
+-- 2026-08-23. Two registries share the enumeration surface below but NOT the
+-- label: a sandbox option has getTranslatedName(), and a server option simply
+-- does not exist. The ServerOption interface is asConfigOption() and
+-- getTooltip() and nothing else (ServerOptions.java:637-641); the concrete
+-- classes extend *ConfigOption, which is where getName() and getType() come
+-- from - which is exactly why those two worked and the third threw "Object
+-- tried to call nil in readOption".
+--
+-- Vanilla does not translate a server option's name either. Its own settings
+-- screen labels the row with the raw setting name
+-- (ServerSettingsScreen.lua:2570), and only the TOOLTIP has a key
+-- (UI_ServerOption_<name>_tooltip). So the fallback here is not a degradation -
+-- it is what the game itself shows.
+--
+-- Passed as an argument rather than sniffed with a nil test, because "does this
+-- object happen to have that method" is the question that produced the bug. The
+-- caller knows which registry it is walking; this function should not guess.
+local function readOption(o, label)
     local name  = o:getName()
     local short = name:match("%.(.+)$") or name
     local otype = o:getType()
@@ -75,7 +94,7 @@ local function readOption(o)
         name    = name,
         short   = short,
         type    = otype,
-        label   = o:getTranslatedName(),
+        label   = label or short,
         tooltip = o:getTooltip(),
     }
     if otype == "enum" then
@@ -115,7 +134,7 @@ function DFSandboxModel.build()
                     byPage[page] = mod
                     order[#order + 1] = mod
                 end
-                local row = readOption(o)
+                local row = readOption(o, o:getTranslatedName())
                 if isHeader(row.short, row.type) then
                     mod.sections[#mod.sections + 1] =
                         { title = sectionTitle(row.label, row.short), options = {} }
@@ -201,6 +220,8 @@ function DFSandboxModel.buildServer()
     for i = 0, so:getNumOptions() - 1 do
         local o = so:getOptionByIndex(i)
         if o then
+            -- No label argument: a server option has no getTranslatedName,
+            -- and vanilla's own screen shows the raw setting name too.
             local row = readOption(o)
             -- Server option names are not namespaced, so short == name. Kept
             -- distinct anyway: everything downstream keys on `name`.

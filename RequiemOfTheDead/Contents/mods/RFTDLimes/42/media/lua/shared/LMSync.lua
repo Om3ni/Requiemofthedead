@@ -138,11 +138,10 @@ if isServer() then
 
     RDNet.adopt(TOKEN)
 
-    local function forensic(evt, player, payload)
-        if RDLog and RDLog.forensic then
-            RDLog.forensic("limes", evt, player, payload, TOKEN)
-        end
-    end
+    -- Core's, not a copy. Nil-safe inside, which this file needs: it is shared
+    -- and RDLog is server-only.
+    local forensic = RDLog and RDLog.channel and RDLog.channel("limes", TOKEN)
+        or function() end
 
     -- Everything leaving the server for a client goes through the §5 side tag:
     -- loot tables and dirge weights are read only by server code, so they cost

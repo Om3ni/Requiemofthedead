@@ -277,6 +277,37 @@ function RDConfigStore.new(spec)
     return self
 end
 
+-- ---------------------------------------------------------------------------
+-- The way a consumer is meant to hold one.
+--
+-- Returns a getter. The store is built on first use and booted on every call,
+-- which is the correct usage pattern spelled once instead of at each consumer:
+--
+--     local ensure = RDConfigStore.lazy{ modKey = ..., defsFile = ... }
+--     local function defs() return ensure():defs() end
+--
+-- WHY LAZY AND NOT AT FILE SCOPE. boot() resolves the file against the live
+-- table and mirrors one over the other, so a store constructed and booted while
+-- its owner's file is still loading would export an empty document over a good
+-- file - which boot()'s own header warns about. Deferring to first use puts it
+-- after the consumer's defaults are in place, without asking every consumer to
+-- remember that.
+--
+-- WHY BOOT ON EVERY CALL rather than once here: boot() is idempotent by its own
+-- `booted` flag, and calling it on the way through means there is no path to a
+-- store that was built but never booted. A consumer that hand-rolled this could
+-- forget; this cannot.
+--
+-- Promoted 2026-08-23 from identical blocks in RDVars and DMKits.
+function RDConfigStore.lazy(spec)
+    local store
+    return function()
+        if not store then store = RDConfigStore.new(spec) end
+        store:boot()
+        return store
+    end
+end
+
 local function say(self, msg)
     print("[" .. self.label .. "] RDConfigStore: " .. msg)
 end

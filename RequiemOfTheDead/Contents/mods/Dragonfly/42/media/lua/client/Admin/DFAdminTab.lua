@@ -13,7 +13,7 @@
 -- here and nothing at all in either view. Both were written to the DFViews
 -- contract (attach / layout / draw / onShow) from the start.
 --
--- Vars joined on 2026-08-23, third and last of the built ones: it is where an
+-- Variables joined on 2026-08-23, third and last of the built ones: it is where an
 -- admin goes on purpose rather than to look at something, so it sits after the
 -- two that are read as often as they are written.
 --
@@ -78,10 +78,12 @@ local function build(spec, panel, x, y, w, h)
               tip = "The server's own INI options. Changes go out as "
                  .. "/changeoption; some need a restart, and the engine never "
                  .. "sends these back to a connected client." },
-            { id = "vars", label = "Vars", w = 60, view = DFVarsView,
-              tip = "Player attributes: markers a character either holds or "
-                 .. "does not, and counters that hold a number. Backend state "
-                 .. "for events, kits and quests - players never see it." },
+            { id = "vars", label = "Variables", w = 84, view = DFVarsView,
+              tip = "Player attributes, in two columns: FLAGS a character "
+                 .. "either holds or does not, and COUNTERS that hold a "
+                 .. "number. Click one to edit it and manage who has it. "
+                 .. "Backend state for events, kits and quests - players never "
+                 .. "see it." },
         },
         -- DFViews owns the strip-then-body shape (layoutHost); calling it
         -- directly at each site rather than through a local wrapper, because
@@ -151,7 +153,7 @@ Events.OnGameStart.Add(function()
             if T.views then T.views:layoutHost(panel, 0, 0, w, h) end
         end,
     }
-    print("[Dragonfly] DFAdminTab registered (Sandbox | Server | Vars)")
+    print("[Dragonfly] DFAdminTab registered (Sandbox | Server | Variables)")
 end)
 
 -- ---------------------------------------------------------------------------

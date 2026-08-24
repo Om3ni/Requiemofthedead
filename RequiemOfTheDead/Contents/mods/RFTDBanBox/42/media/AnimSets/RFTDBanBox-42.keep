@@ -1,0 +1,22 @@
+This folder is intentionally empty.
+
+Project Zomboid's AdvancedAnimator walks <mod>/common/media/AnimSets,
+<mod>/common/media/actiongroups, <mod>/42/media/AnimSets and
+<mod>/42/media/actiongroups for EVERY loaded mod, on every Core.ResetLua.
+A folder that does not exist makes its walkFileTree call visitFileFailed,
+which logs a NoSuchFileException at Error severity - four per mod, every
+reload. Benign, but it buries real errors in the DebugLog.
+
+The folder existing is the entire fix. This file is only here because git
+does not track empty directories.
+
+Do NOT replace this with a placeholder .xml: searchFolders collects every
+file ending in .xml (AdvancedAnimator.java:658-666) and the animation
+loader then tries to parse it, which trades a harmless log line for a real
+one. Any other extension is ignored.
+
+The name carries the mod id and the tier because ZomboidFileSystem.loadMod
+maps common/ and <version>/ into ONE relative namespace and logs
+'mod "X" overrides <rel>' whenever two files land on the same relative path
+(ZomboidFileSystem.java:620-621). A plain .keep in all fourteen mods would
+silence 56 errors and create 26 override lines.

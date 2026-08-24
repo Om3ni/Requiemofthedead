@@ -44,6 +44,7 @@ IBdebuglog.txt
 # Dropped-in server forensic segments for analysis (not repo content)
 *.jsonl.log
 guardiant.log
+Bulwark Proposal.md
 
 # The archive companion to the above. 42.20's write-extension allowlist renamed
 # Memoir's recovery point from "latest.json" to "latest.json.txt" (RDShared

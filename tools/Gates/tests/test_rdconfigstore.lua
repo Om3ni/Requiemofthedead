@@ -200,7 +200,7 @@ check(pcall(RDConfigStore.new, { modKey = "X", defsFile = "RFTD/a.json", stateFi
 
 reset()
 local s = newStore()
-s:defs().anomaly = { kind = "char", revokers = { death = true } }
+s:defs().anomaly = { kind = "flag", revokers = { death = true } }
 s:state().Kriegan = { anomaly = 1, loot = 5 }
 s:touchDefs()
 s:touchState()
@@ -215,7 +215,7 @@ local s2 = newStore()
 s2:root().meta.defsMs  = 1     -- live, but older than the file
 s2:root().meta.stateMs = 1
 s2:boot()
-check(s2:defs().anomaly ~= nil and s2:defs().anomaly.kind == "char",
+check(s2:defs().anomaly ~= nil and s2:defs().anomaly.kind == "flag",
     "defs did not survive the round trip")
 check(s2:defs().anomaly.revokers.death == true,
     "a nested value was lost in the round trip")

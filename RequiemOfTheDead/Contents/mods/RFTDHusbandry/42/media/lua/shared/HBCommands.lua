@@ -26,6 +26,7 @@ HBCmd.DEBUG_REFILL       = "hbDebugRefill"
 HBCmd.DEBUG_PROBE_RESULT = "hbDebugProbeResult"
 HBCmd.ADD_BEDDING        = "hbAddBedding"     -- player: add hay bedding to a hutch
 HBCmd.SEX_CHECK          = "hbSexCheck"       -- admin: authoritative sex diagnostic
+HBCmd.PART_PLACED        = "hbPartPlaced"     -- player: floor-drop report (HBPartDropClient -> HBPartWatch)
 
 if not isServer() then return end
 
@@ -157,6 +158,17 @@ Events.OnClientCommand.Add(function(module, command, player, args)
         local total = HBBedding.addBedding(hutch, added)
         print(string.format("[HB] ADD_BEDDING: +%.0f at %d,%d,%d -> %.0f/%d",
             added, x, y, z, total, HBBedding.MAX))
+
+    elseif command == HBCmd.PART_PLACED then
+        -- Client-asserted forensic report; open to any player like ADD_BEDDING
+        -- (the sender reports on itself). Bounds, rate limit and the watchlist
+        -- re-check all live in HBPartWatch.onClientReport - one boundary,
+        -- stated there. Presence check follows SEX_CHECK's idiom above.
+        if HBPartWatch and HBPartWatch.onClientReport then
+            HBPartWatch.onClientReport(player, args)
+        else
+            print("[HB] PART_PLACED: HBPartWatch not loaded")
+        end
     end
 end)
 

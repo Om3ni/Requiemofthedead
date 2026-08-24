@@ -185,38 +185,13 @@ function DFServerView.reloadServer()
     V.status = "Asked the server to re-read its options file."
 end
 
--- ---------------------------------------------------------------------------
--- Filter. 144 options in one registry: without this the surface is a wall, and
--- the grouping only accounts for 61 of them. Matches the option NAME and its
--- label, case-insensitively, and keeps a section header only when something
--- under it survived - an empty heading reads as a missing option.
--- ---------------------------------------------------------------------------
-function DFServerView.filterSchema(schema, query)
-    query = tostring(query or ""):lower()
-    if query == "" then return schema end
-
-    local out = {}
-    for _, e in ipairs(schema) do
-        if e.group then
-            out[#out + 1] = e
-        else
-            local hay = ((e.key or "") .. " " .. (e.label or "")):lower()
-            if hay:find(query, 1, true) then out[#out + 1] = e end
-        end
-    end
-    -- Drop headers with nothing beneath them.
-    local kept = {}
-    for i = 1, #out do
-        local e = out[i]
-        if e.group then
-            local nxt = out[i + 1]
-            if nxt and not nxt.group then kept[#kept + 1] = e end
-        else
-            kept[#kept + 1] = e
-        end
-    end
-    return kept
-end
+-- The filter itself is DFForm.filterSchema: the sandbox view grew the same
+-- need across nine mod pages on 2026-08-23, and the rule about what matches -
+-- and about section headers surviving only when something under them did - now
+-- has one home on the module that owns what a schema is.
+--
+-- Why this surface needs it at all: 144 options in one registry is a wall, and
+-- the grouping only accounts for 61 of them.
 
 -- ---------------------------------------------------------------------------
 -- Wiring
@@ -240,7 +215,7 @@ function DFServerView.rebuild()
             e.live = false
         end
     end
-    V.form.schema = DFServerView.filterSchema(schema, V.filter)
+    V.form.schema = DFForm.filterSchema(schema, V.filter)
     V.form._helpCache = nil
     if V.form.rect then
         V.form:layout(V.form.rect.x, V.form.rect.y, V.form.rect.w, V.form.rect.h)
@@ -352,8 +327,7 @@ function DFServerView.draw(el)
     local d = DFKit.col.textDim
     if V.searchHintX then
         local total = V.page and V.page.count or 0
-        local shown = 0
-        for _, e in ipairs(V.form.schema or {}) do if e.key then shown = shown + 1 end end
+        local shown = DFForm.countRows(V.form.schema)
         local hint = (V.filter ~= "" and (shown .. " of " .. total .. " shown") or (total .. " options"))
         local known = DFServerFlags.coverage(total)
         hint = hint .. "   -   restart-effect verified for " .. known
