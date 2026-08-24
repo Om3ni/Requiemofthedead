@@ -304,6 +304,32 @@ local function sendToPlayer(player, cmd, args)
     sendServerCommand(player, RQCommon.MODULE, cmd, args)
 end
 
+-- ---------------------------------------------------------------------------
+-- Cadence gate
+-- ---------------------------------------------------------------------------
+-- Returns true when `key` is due, stamping the next deadline as a side effect.
+-- `state` is any table the caller already owns (a per-zombie state row, or a
+-- module-level pass table); `now` is a getTimestampMs() value the caller has
+-- already read, so one tick's worth of work shares one clock read.
+--
+-- WALL CLOCK, NOT TICK COUNTS, and that distinction is the point. The
+-- Juggernaut aura used to gate on `svJuggBuffTick >= 120` while RQSvBoss gated
+-- on getTimestampMs against a 2000 ms interval - two spellings of "every ~2
+-- seconds" that agree only while the server is holding 60 Hz. OnTick sags
+-- under load, so the tick-count version silently stretched exactly when the
+-- server was busiest, and the two auras drifted apart from each other. Every
+-- cadence in this mod reads the same clock now.
+--
+-- A first call (no stamp yet) is always due, so a fresh state row acts
+-- immediately instead of waiting out one interval before it does anything.
+local function due(state, key, intervalMs, now)
+    if not state then return true end
+    local last = state[key]
+    if last and (now - last) < intervalMs then return false end
+    state[key] = now
+    return true
+end
+
 -- writes to RQSvShared.svPending so RQServer.lua can drain it in OnTick
 local function scheduleAction(delayMs, fn)
     local q = RQSvShared.svPending
@@ -485,6 +511,18 @@ function RQSvShared.eachActiveZombie(fn)
         fn(zombie, zType)
     end
     return n
+end
+
+-- "What kind of special is this, if any?" - the registry first, the zombie's own
+-- modData second. The fallback is not belt-and-braces: a special that has been
+-- reloaded from a save, or has fallen out of the live registry during cell
+-- churn, still carries RQType and is still a special. Returns nil for an
+-- ordinary zombie.
+function RQSvShared.typeOf(zombie)
+    if not zombie then return nil end
+    local fromRegistry = _activeZombies and _activeZombies[zombie]
+    if fromRegistry then return fromRegistry end
+    return zombie:getModData()["RQType"]
 end
 
 local function svFindActiveZombieByOnlineID(onlineID)
@@ -770,6 +808,7 @@ end
 
 RQSvShared.broadcast                    = broadcast
 RQSvShared.sendToPlayer                 = sendToPlayer
+RQSvShared.due                          = due
 RQSvShared.scheduleAction               = scheduleAction
 RQSvShared.isPlayerVisible              = isPlayerVisible
 RQSvShared.isAnyPlayerInRange           = isAnyPlayerInRange

@@ -12,6 +12,11 @@ if not isServer() then return end
 -- ========================
 
 RQSvGlutton = RQSvGlutton or {}
+
+-- How often an idle Glutton re-scans for a body. Corpses do not move, so
+-- this trades a scan the player cannot see for one they cannot see either.
+local CORPSE_SCAN_INTERVAL = 500
+
 RQSvGlutton.state = {}
 
 -- how long the owning client has to path the glutton to a corpse before we give up
@@ -50,6 +55,15 @@ function RQSvGlutton.tick(zombie)
             -- since shares can be 0.5/N (smaller than 0.5 with co-eaters present).
             local currentMult = 1.0 + (state.totalMultGain or 0)
             if currentMult >= cfg.gluttonMaxMult then break end
+            -- The cap check above is free; the scan below is not. At the default
+            -- GluttonRadius of 7 svGluttonFindCorpse does ~154 getGridSquare
+            -- lookups plus a getDeadBodys per square, and it used to do that on
+            -- EVERY tick for every idle Glutton - roughly nine thousand lookups a
+            -- second each, to re-answer a question about corpses, which do not
+            -- move. Nothing downstream is rushed either: the walk there is driven
+            -- by the owning client, and arrival comes back through the
+            -- eaterArrived queue that still drains every tick.
+            if not RQSvShared.due(state, "nextScan", CORPSE_SCAN_INTERVAL, now) then break end
             local corpse, corpseSq = RQSvEating.svGluttonFindCorpse(zombie, cfg.gluttonRadius, gid)
             if not corpse then break end
             state.phase        = "seeking"

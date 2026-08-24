@@ -199,5 +199,46 @@ device.setIsTurnedOn = function() error("fixture shutdown fault") end
 check(not pcall(RQSvShared.svDamageWorldElectronics, 10, 20, 0, 0, 25),
     "an unexpected live-object mutation fault is not swallowed")
 
+-- ---------------------------------------------------------------------------
+-- RQSvShared.due - the one cadence gate
+-- ---------------------------------------------------------------------------
+-- These pin the three properties every caller in the mod leans on: a fresh
+-- state row fires immediately, a stamped one stays shut for the full interval,
+-- and the clock is the caller's wall clock rather than a count of calls. That
+-- last one is the whole reason the helper exists - the Juggernaut aura used to
+-- gate on a tick count and so stretched silently whenever OnTick sagged.
+
+local st = {}
+check(RQSvShared.due(st, "k", 1000, 5000) == true,
+    "a key that has never fired is due immediately")
+check(st.k == 5000, "firing stamps the deadline on the caller's table")
+check(RQSvShared.due(st, "k", 1000, 5999) == false,
+    "a key stays shut for the whole interval")
+check(st.k == 5000, "a refused call does not move the stamp")
+check(RQSvShared.due(st, "k", 1000, 6000) == true,
+    "the boundary is inclusive - exactly one interval later is due")
+check(st.k == 6000, "firing at the boundary re-stamps")
+
+-- Independent keys on one row. svOnTick keeps every cadence in a single table,
+-- so a fast gate must not hold a slow one open or vice versa.
+local multi = {}
+RQSvShared.due(multi, "fast", 250, 1000)
+check(RQSvShared.due(multi, "slow", 2000, 1000) == true,
+    "a second key on the same row is judged on its own stamp")
+check(RQSvShared.due(multi, "fast", 250, 1100) == false,
+    "stamping one key does not disturb another")
+
+-- A zero stamp is a real stamp, not an absent one. RQSvBoss seeds
+-- lastBuffTick = 0 at state creation, and Lua's only falsey values are nil and
+-- false - so 0 must be read as "fired at time zero", which is long overdue.
+local zeroed = { lastBuffTick = 0 }
+check(RQSvShared.due(zeroed, "lastBuffTick", 2000, 50000) == true,
+    "a zero stamp reads as long overdue, matching the Boss's seeded state")
+
+-- Callers pass a table they already own; a nil row means "no state to throttle
+-- against", which must not throw inside a per-tick loop.
+check(RQSvShared.due(nil, "k", 1000, 1) == true,
+    "a nil state row is treated as due rather than raising")
+
 print(string.format("RQSvShared: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

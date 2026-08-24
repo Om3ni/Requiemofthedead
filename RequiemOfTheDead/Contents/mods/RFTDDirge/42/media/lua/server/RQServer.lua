@@ -24,6 +24,7 @@ require "RQSvScavenger"
 require "RQSvScreamer"
 require "RQSvJuggernaut"
 require "RQSvBoss"
+require "RQSvHit"       -- the single OnHitZombie intake; must load after the type modules it dispatches to
 require "RQSvEMP"
 require "RQSvLoot"
 require "RQWireHeadroom"
@@ -68,9 +69,20 @@ local svSnapshotDirty  = false
 local svConfigRefreshTimer = 0
 local deathCleanupTimer    = 0
 local svReservationCleanupTimer = 0
-local svJuggBuffTick   = 0
+-- One row, one clock: every cadence in svOnTick stamps its next deadline
+-- here through RQSvShared.due. Reset on game start with the timers below.
+local svPassState      = {}
 local svToCleanup      = {}
 local svToCleanupDead  = {}  -- parallel to svToCleanup: true = confirmed death
+
+-- Behaviour-pass cadence (ms). 250 ms is picked to stay under the point a
+-- player can perceive: it bounds how long a Screamer takes to notice
+-- someone entering its awareness band, which is the only job in the pass
+-- where lateness is felt as sloppy AI rather than as nothing at all.
+local BEHAVIOUR_INTERVAL = 250
+-- Unchanged in effect from the old `svJuggBuffTick >= 120`, which was two
+-- seconds at a healthy 60 Hz. Now it is two seconds at any frame rate.
+local JUGG_BUFF_INTERVAL = 2000
 
 local SCAN_RANGE    = 30
 -- No organic conversion fires within GUARD_RANGE of a visible player, or on a
@@ -1087,10 +1099,37 @@ local function svOnTick()
         RQSvShared.clearSvConfig()
     end
 
-    -- Juggernaut buff is expensive so we only run it every ~2 seconds
-    svJuggBuffTick = (svJuggBuffTick or 0) + 1
-    local doJuggBuff = svJuggBuffTick >= 120
-    if doJuggBuff then svJuggBuffTick = 0 end
+    -- ------------------------------------------------------------------
+    -- CADENCE. Two tiers, and which tier a job belongs in is decided by
+    -- whether a late answer is visible to a player.
+    --
+    -- EVERY TICK: the queue drains above, and the per-zombie state machines
+    -- below - cast completion, eating phase transitions, seek timeouts. These
+    -- are cheap comparisons against a stored deadline, and a cast bar that
+    -- resolves a quarter-second late IS visible, so their timing is left
+    -- exactly as it was.
+    --
+    -- BEHAVIOUR PASS: the expensive work, none of which a player can time.
+    -- Position bookkeeping (svRememberZombie, svDormantTrack) and the aura
+    -- sweeps. This used to run at 60 Hz for no reason: svRememberZombie
+    -- allocates a fresh row and svDormantTrack costs six engine calls, per
+    -- special, per tick.
+    --
+    -- Staleness is bounded by BEHAVIOUR_INTERVAL and both consumers tolerate
+    -- it with room to spare. The dormant registry re-binds a realizing special
+    -- within ADOPT_RADIUS = 8 tiles (RQSvDormant.lua:48, sized for "walkers
+    -- drift while virtual"), and svDeathCache's position is the origin of a
+    -- 17x17 sweep. A quarter-second of drift is a fraction of a tile against
+    -- either.
+    --
+    -- The Juggernaut gate moved off a tick COUNT (`>= 120`) onto the same
+    -- wall clock everything else uses - see RQSvShared.due for why. One
+    -- consequence worth stating: the old counter stretched under load and so
+    -- backed the aura off for free. It does not any more. The pass as a whole
+    -- still costs far less than it did, because what this interval gates is
+    -- much more expensive than what it no longer accidentally throttles.
+    local doBehaviour = RQSvShared.due(svPassState, "behaviour", BEHAVIOUR_INTERVAL, now)
+    local doJuggBuff  = RQSvShared.due(svPassState, "juggBuff", JUGG_BUFF_INTERVAL, now)
 
     -- Iterate alive special zombies and dispatch to type modules
     local cleanupCount = 0
@@ -1113,8 +1152,10 @@ local function svOnTick()
             -- i.e. the virtualization moment) keeps it as an adoption candidate.
             svToCleanupDead[cleanupCount] = dead or grappleOnly
         else
-            svRememberZombie(zombie, zType)
-            svDormantTrack(zombie, zType)
+            if doBehaviour then
+                svRememberZombie(zombie, zType)
+                svDormantTrack(zombie, zType)
+            end
             if zombie:getHealth() > 0 then
                 if zType == "Screamer" then
                     RQSvScreamer.tick(zombie)
@@ -1348,7 +1389,7 @@ Events.OnGameStart.Add(function()
     svConfigRefreshTimer = 0
     svSnapshotTimer   = 0
     svSnapshotDirty   = false
-    svJuggBuffTick    = 0
+    svPassState       = {}
     -- Must clear alongside svPending below: a queued trailing transmit lives in
     -- that queue, so wiping the queue without clearing the flag would leave
     -- svBaselineQueued true forever and block every future coalesced transmit.

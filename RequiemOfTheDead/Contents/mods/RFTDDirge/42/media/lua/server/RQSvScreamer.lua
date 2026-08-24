@@ -8,6 +8,11 @@ if not isServer() then return end
 local SCREAMER_AWARENESS_MULT = 2.5
 
 RQSvScreamer = RQSvScreamer or {}
+
+-- How often a screamer re-checks whether anyone is inside its awareness
+-- band. Kept short: this is perceived as reaction time.
+local AWARENESS_INTERVAL = 250
+
 RQSvScreamer.state = {}  -- scID -> { lastScreamTime, castDue, isAlert }
 
 -- returns true if the zombie currently has a live target in aggro, used to avoid double-triggering
@@ -72,9 +77,19 @@ function RQSvScreamer.tick(zombie)
         end
         return
     end
-    -- wider awareness range wakes the screamer up and re-enables pathfinding
+    -- wider awareness range wakes the screamer up and re-enables pathfinding.
+    --
+    -- Throttled, but only just: isAnyPlayerInRange walks getOnlinePlayers() with
+    -- an isPlayerVisible check per player, so on a full server this was forty
+    -- visibility tests per screamer per tick. AWARENESS_INTERVAL is the tightest
+    -- cadence in this file on purpose - this is the one gate where being late
+    -- reads as a screamer that did not notice you, rather than as nothing.
+    -- state.isAlert simply holds its previous value on a skipped pass.
     local awarenessRange = cfg.screamerTriggerRange * SCREAMER_AWARENESS_MULT
-    local playerInAwareness = RQSvShared.isAnyPlayerInRange(zombie, awarenessRange)
+    local playerInAwareness = state.isAlert
+    if RQSvShared.due(state, "nextAwareness", AWARENESS_INTERVAL, now) then
+        playerInAwareness = RQSvShared.isAnyPlayerInRange(zombie, awarenessRange)
+    end
     if playerInAwareness and not state.isAlert then
         state.isAlert = true
         zombie:setUseless(false)

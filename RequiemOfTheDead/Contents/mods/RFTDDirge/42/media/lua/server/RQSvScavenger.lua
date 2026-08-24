@@ -6,7 +6,7 @@
 -- to base over 10 minutes but it stays hostile forever. Eats while raging,
 -- and rage-eating actively heals toward the frozen peakHP (never above).
 --
--- Rage trigger is event-driven from the client OnHitZombie listener via the
+-- Rage trigger is event-driven from RQSvHit's server-side intake via the
 -- scavPlayerHit command; the HP-threshold heuristic that used to live here
 -- was unreliable (depended on the order of damage vs tick) and is gone.
 --
@@ -14,6 +14,12 @@
 if not isServer() then return end
 
 RQSvScavenger = RQSvScavenger or {}
+
+-- Matches the Glutton's corpse-scan cadence; both feed the same eating
+-- engine and there is no reason for them to disagree about how often a
+-- stationary body is worth looking for.
+local CORPSE_SCAN_INTERVAL = 500
+
 -- scavID -> state
 -- phase:         "idle" | "seeking" | "eating" (eating state machine, runs even when hostile)
 -- baseHealth:    immutable original spawn HP. Decay target. Gradient denominator on the client.
@@ -117,7 +123,10 @@ end
 -- when a player damages a passive scav. peakHP at the moment of trigger is the
 -- basis for rageHP (so fed-ness carries through), then frozen for the rest of
 -- the scav's life as the gradient denominator and decay ceiling.
-function RQSvScavenger.onPlayerHit(zombie, attackerName)
+-- Called by RQSvHit, which has already established that this is a player
+-- attack on a registered special. Takes only the zombie: the attacker's name
+-- was a parameter for years and never read by a single line of this body.
+function RQSvScavenger.onPlayerHit(zombie)
     if not zombie then return end
     local scavID = zombie:getOnlineID()
     if not scavID or scavID < 0 then return end
@@ -244,7 +253,11 @@ function RQSvScavenger.tick(zombie)
         end
 
         if state.phase == "idle" then
-            -- scan nearby for a corpse, radius is smaller than Glutton
+            -- scan nearby for a corpse, radius is smaller than Glutton.
+            -- Throttled for the same reason the Glutton's is: a corpse does not
+            -- move, so re-asking sixty times a second buys nothing. The smaller
+            -- radius makes each scan cheaper, not free.
+            if not RQSvShared.due(state, "nextScan", CORPSE_SCAN_INTERVAL, now) then break end
             local corpse, corpseSq = RQSvEating.svGluttonFindCorpse(zombie, RQSvShared.SCAV_CORPSE_RADIUS, scavID)
             if not corpse then
                 break
@@ -273,18 +286,13 @@ function RQSvScavenger.tick(zombie)
     until true
 end
 
--- Server-side hit detection. In dedicated MP the OnHitZombie event fires on
--- the server side (where the zombie lives), not on the attacker's client.
--- Subscribing here lets us see hits directly without a sendClientCommand
--- roundtrip. The onPlayerHit guard already debounces against already-raging.
-Events.OnHitZombie.Add(function(zombie, wielder, bodyPart, weapon)
-    if not zombie or not wielder then return end
-    if not instanceof(wielder, "IsoPlayer") then return end
-    local zType = _activeZombies[zombie] or zombie:getModData()["RQType"]
-    if zType ~= "Scavenger" then return end
-    local attackerName = wielder:getUsername() or "unknown"
-    RQSvScavenger.onPlayerHit(zombie, attackerName)
-end)
+-- Hit detection MOVED to RQSvHit (2026-08-24). This file used to own its own
+-- OnHitZombie listener; it now exposes onPlayerHit and the single intake calls
+-- it first in a fixed order. The validation that used to live in the listener
+-- here - player attacker, registered special type - is done once in RQSvHit for
+-- all four responsibilities instead of once per subscriber. The debounce
+-- against an already-raging Scavenger stays in onPlayerHit, where it belongs:
+-- it is a property of rage, not of hit intake.
 
 -- give RQSvEating a reference to our state table so it can clean up on zombie death
 RQSvEating.setScavengerState(RQSvScavenger.state)

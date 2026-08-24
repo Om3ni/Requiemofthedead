@@ -90,8 +90,10 @@ function RQSvBoss.tick(zombie)
 
     -- passive buff aura sweep, throttled. runs regardless of whether a cast is active -
     -- the buff doesnt wait its turn, the skills do.
-    if now - state.lastBuffTick >= BOSS_BUFF_INTERVAL then
-        state.lastBuffTick = now
+    -- Was an inline `now - lastBuffTick >= interval` pair. Same behaviour, but
+    -- through the one gate the whole mod now shares, so there is a single place
+    -- where "every N milliseconds" is spelled out - see RQSvShared.due.
+    if RQSvShared.due(state, "lastBuffTick", BOSS_BUFF_INTERVAL, now) then
         local n = svDoBossBuff(zombie, cfg)
         if n > 0 then
             RQDirgeLog.write("Boss", "[INFO] id=" .. tostring(bossID) .. " buff aura buffed=" .. n .. " zombies")
