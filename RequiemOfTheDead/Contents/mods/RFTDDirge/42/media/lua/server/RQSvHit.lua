@@ -157,8 +157,13 @@ local function dispatch(ctx)
         RQSvScavenger.onPlayerHit(ctx.zombie)
     end
 
-    RQMcCoy.onAttacked(ctx)
-    RQBloodhound.onAttacked(ctx)
+    -- Healing and pursuit are for SPECIALS. An ordinary zombie under an aura
+    -- borrows the escort's protection, not its constitution: it does not heal
+    -- and it does not hunt.
+    if ctx.zType then
+        RQMcCoy.onAttacked(ctx)
+        RQBloodhound.onAttacked(ctx)
+    end
 
     -- LAST. Everything above has already run, so a successful soak cannot stop
     -- a Scavenger enraging, a healing window arming, or a shooter being marked.
@@ -181,8 +186,11 @@ function RQSvHit.onHitZombie(zombie, wielder, bodyPart, weapon)
     if not instanceof(wielder, "IsoPlayer") then return refuse("not-player") end
     if zombie:isDead() then return refuse("already-dead") end
 
+    -- zType may be NIL, and that is not a refusal any more. An ordinary zombie
+    -- standing inside a living special's aura is protected by it, so it has to
+    -- reach Bulwark. Everything else downstream is special-only and says so at
+    -- its own call site rather than being filtered out here.
     local zType = RQSvShared.typeOf(zombie)
-    if not zType then return refuse("not-special") end
 
     -- isRanged is a plain field return (HandWeapon.java:824-826), but `weapon`
     -- is whatever the player swung: nil for fists, and an InventoryItem that is

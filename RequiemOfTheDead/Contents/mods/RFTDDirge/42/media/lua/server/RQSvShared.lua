@@ -37,7 +37,7 @@ end
 
 local SCREAMER_SPAWN_RADIUS = 8
 local BOSS_TRIGGER_RANGE    = 20
-local BOSS_SKILLS           = { "Scream", "EMPulse" }  -- coin-flip pool. Buff is now a passive aura, see RQSvBoss.svDoBossBuff.
+local BOSS_SKILLS           = { "Scream", "EMPulse" }  -- coin-flip pool. The Boss's protective aura is not a skill; RQBulwark reads it at hit time.
 local BOSS_SKILL_LABELS     = {
     Scream   = "Screaming...",
     EMPulse  = "EMP Charging...",
@@ -584,12 +584,18 @@ end
 --
 -- Returns the number of entries visited, so a caller can distinguish "no
 -- specials alive" from "Dirge is not tracking anything".
+-- A truthy return from `fn` STOPS the walk. Added for RQBulwark's aura lookup,
+-- which asks "is anything protecting this target" and has no use for a second
+-- answer - without a break it was walking the whole registry to discard every
+-- source after the first match. Existing callers return nothing and are
+-- unaffected. Returns how many entries were visited, which is the number worth
+-- watching when the registry grows.
 function RQSvShared.eachActiveZombie(fn)
     if not _activeZombies or type(fn) ~= "function" then return 0 end
     local n = 0
     for zombie, zType in pairs(_activeZombies) do
         n = n + 1
-        fn(zombie, zType)
+        if fn(zombie, zType) then break end
     end
     return n
 end

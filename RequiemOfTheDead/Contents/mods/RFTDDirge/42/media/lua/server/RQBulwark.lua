@@ -29,9 +29,16 @@
 -- the outcome on the server instead. See RQSvHit's header for the bRemote
 -- reading that makes the distinction real.
 --
--- SELF-PROTECTION ONLY in this slice. Aura protection - ordinary zombies
--- standing inside a living special's radius - is Slice 5 and is deliberately
--- absent rather than stubbed.
+-- AURA PROTECTION IS EVALUATED AT HIT TIME, not granted in advance. The model
+-- this replaced walked a square block every two seconds and multiplied nearby
+-- zombies' health once, latching each one in a weak table so it could never be
+-- buffed twice. The latch could not fix what was wrong with it: the grant
+-- outlived its source, so killing a Juggernaut left its escort permanently
+-- tough; leaving the radius did nothing at all; and it cost one owner-directed
+-- HP command per zombie per sweep, which was the mod's peak network burst.
+-- Asking the question when a hit actually lands costs nothing until somebody
+-- swings, and entering, leaving, source death and rage state all become
+-- meaningful immediately and for free.
 -- =============================================
 
 if not isServer() then return end
@@ -65,11 +72,40 @@ local SELF_SOAK = {
 
 RQBulwark.SELF_SOAK = SELF_SOAK
 
+-- Aura rates, keyed by what the TARGET is rather than by which source is
+-- protecting it. A special being escorted is worth more than an ordinary zombie
+-- being escorted, and the escort's own type does not change that.
+local AURA_SOAK = {
+    ordinary = { ranged = 30, melee = 15 },
+    special  = { ranged = 40, melee = 20 },
+}
+RQBulwark.AURA_SOAK = AURA_SOAK
+
+-- Who protects whom.
+--   Juggernaut - the escort. Protects the ordinary horde around it, not its
+--                peers; two Juggernauts standing together are not a fortress.
+--   Boss       - protects everything nearby, ordinary and special alike.
+--   Scavenger  - protects specials only, and only while enraged. A passive one
+--                is eating, not leading.
+local AURA_SOURCE = {
+    Juggernaut = { ordinary = true,  special = false },
+    Boss       = { ordinary = true,  special = true  },
+    Scavenger  = { ordinary = false, special = true  },
+}
+
+-- The best any aura can ever offer. Used to stop both the source walk and the
+-- walk itself early: once a target has reached this, nothing can improve it.
+local MAX_AURA = math.max(AURA_SOAK.special.ranged, AURA_SOAK.ordinary.ranged)
+
 -- ---------------------------------------------------------------------------
 -- Counters
 -- ---------------------------------------------------------------------------
 RQBulwark.stats = {
     evaluated  = 0,
+    auraWalks    = 0,  -- times the registry was walked at all
+    auraLookups  = 0,  -- sources that passed every eligibility test
+    auraWins     = 0,  -- times an aura beat the target's own protection
+    auraVisitedMax = 0, -- worst-case sources examined in one walk
     soaked     = 0,
     penetrated = 0,
     ranged     = 0,
@@ -102,6 +138,68 @@ function RQBulwark.rateFor(zType, isRanged, enraged)
 end
 
 -- ---------------------------------------------------------------------------
+-- auraRateFor
+-- ---------------------------------------------------------------------------
+-- Walks the live special registry looking for something protecting this target.
+-- That registry is bounded by Dirge's spawn policy and is orders of magnitude
+-- smaller than the zombie population, which is exactly why the lookup goes this
+-- way round instead of scanning squares the way the old sweep did.
+--
+-- STRONGEST SINGLE RESULT. Two sources covering one tile do not compound; the
+-- better of the two applies and that is all. Overlapping auras multiplying into
+-- accidental immunity is the failure this rule exists to prevent.
+--
+-- Tests are ordered by cost. Type eligibility is a table lookup, the floor is
+-- one comparison and eliminates every storey above and below, and only then is
+-- distance worth computing. Rage state is asked last because it is the only one
+-- that calls into another module.
+function RQBulwark.auraRateFor(target, targetType, isRanged)
+    local isSpecial = targetType ~= nil
+    local row  = isSpecial and AURA_SOAK.special or AURA_SOAK.ordinary
+    local rate = isRanged and row.ranged or row.melee
+
+    local cfg = RQSvShared.getSvConfig()
+    local radius = cfg.juggernautBuffRadius
+    if not radius or radius <= 0 then return nil end
+
+    local rSq = radius * radius
+    local tx, ty = target:getX(), target:getY()
+    local tz = math.floor(target:getZ())
+
+    local st = RQBulwark.stats
+    st.auraWalks = st.auraWalks + 1
+
+    local found = false
+    local visited = RQSvShared.eachActiveZombie(function(source, sourceType)
+        local eligibility = AURA_SOURCE[sourceType]
+        if not eligibility then return end
+        if source == target then return end
+        if isSpecial then
+            if not eligibility.special then return end
+        elseif not eligibility.ordinary then
+            return
+        end
+        if source:isDead() then return end
+        if math.floor(source:getZ()) ~= tz then return end
+        local dx, dy = source:getX() - tx, source:getY() - ty
+        if dx * dx + dy * dy > rSq then return end
+        if sourceType == "Scavenger" and not RQSvScavenger.isEnraged(source) then return end
+
+        st.auraLookups = st.auraLookups + 1
+        found = true
+        -- Truthy return breaks the walk. The strongest-single-result rule means
+        -- there is nothing a second source could add, so continuing would be
+        -- work spent confirming an answer already in hand.
+        return true
+    end)
+    if visited < st.auraVisitedMax then st.auraVisitedMax = st.auraVisitedMax end
+    if visited > st.auraVisitedMax then st.auraVisitedMax = visited end
+
+    if not found then return nil end
+    return rate
+end
+
+-- ---------------------------------------------------------------------------
 -- decide - PURE
 -- ---------------------------------------------------------------------------
 -- Takes the roll rather than making one. This is the seam the fixtures use to
@@ -124,20 +222,37 @@ end
 -- soak cannot suppress any of them. A soaked hit is still an attack.
 function RQBulwark.resolve(ctx)
     local zType = ctx.zType
-    if not SELF_SOAK[zType] then return refuse("not-protected-type") end
 
+    -- Self-protection first, because it is free: one table lookup against a
+    -- type we are already holding. The registry walk only happens when self
+    -- protection did not already reach the best an aura could possibly offer.
     local enraged = (zType == "Scavenger") and RQSvScavenger.isEnraged(ctx.zombie) or false
-    local rate, why = RQBulwark.rateFor(zType, ctx.isRanged, enraged)
-    if not rate then return refuse(why) end
+    local rate = RQBulwark.rateFor(zType, ctx.isRanged, enraged)
+
+    if not rate or rate < MAX_AURA then
+        local auraRate = RQBulwark.auraRateFor(ctx.zombie, zType, ctx.isRanged)
+        if auraRate and (not rate or auraRate > rate) then
+            rate = auraRate
+            RQBulwark.stats.auraWins = RQBulwark.stats.auraWins + 1
+        end
+    end
+
+    if not rate then return refuse("unprotected") end
 
     local st = RQBulwark.stats
     st.evaluated = st.evaluated + 1
     if ctx.isRanged then st.ranged = st.ranged + 1 else st.melee = st.melee + 1 end
 
-    local soaked = RQBulwark.decide(zType, ctx.isRanged, enraged, ZombRand(100))
+    -- The rate is already resolved - self or aura, whichever won - so the roll
+    -- is made against it directly rather than back through decide(), which
+    -- knows only about self-protection.
+    local soaked = ZombRand(100) < rate
 
-    local row = st.byType[zType]
-    if not row then row = { soaked = 0, penetrated = 0 }; st.byType[zType] = row end
+    -- An ordinary zombie protected by an aura has no type of its own, and
+    -- "ordinary" is a meaningful row here rather than a missing one.
+    local key = zType or "ordinary"
+    local row = st.byType[key]
+    if not row then row = { soaked = 0, penetrated = 0 }; st.byType[key] = row end
 
     if soaked then
         -- The one mutation this file makes. Not guarded: setAvoidDamage is a
@@ -155,7 +270,7 @@ function RQBulwark.resolve(ctx)
     end
 
     if RQSvShared.getSvConfig().debugMode then
-        RQDirgeLog.write("Bulwark", "[INFO] " .. zType
+        RQDirgeLog.write("Bulwark", "[INFO] " .. (zType or "ordinary")
             .. (ctx.isRanged and " ranged" or " melee")
             .. " rate=" .. rate
             .. (soaked and " SOAKED" or " penetrated")

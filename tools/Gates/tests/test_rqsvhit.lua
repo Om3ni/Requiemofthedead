@@ -148,12 +148,26 @@ activeZombies[corpse] = "Juggernaut"
 fire(corpse, player, nil, nil)
 check(refusedCount("already-dead") == 1, "a dead zombie is refused by name")
 
-local ordinary = makeZombie{ id = 7 }
-fire(ordinary, player, nil, meleeWeapon())
-check(refusedCount("not-special") == 1, "an ordinary zombie is refused by name")
-
 check(RQSvHit.stats.dispatched == 0, "no refused hit reached dispatch")
-check(RQSvHit.stats.seen == 5, "every call is counted as seen, refused or not")
+check(RQSvHit.stats.seen == 4, "every call is counted as seen, refused or not")
+
+-- ---------------------------------------------------------------------------
+-- An ordinary zombie is NOT a refusal
+-- ---------------------------------------------------------------------------
+-- It was, until aura protection moved to hit time. An ordinary zombie standing
+-- inside a living special's radius borrows that protection, so it has to reach
+-- Bulwark - but nothing else. It does not enrage, it does not heal, and it does
+-- not hunt: it borrows the escort's protection, not its constitution.
+local ordinary = makeZombie{ id = 7 }
+order, rageCalls, mccoyCalls, bloodhoundCalls, bulwarkCalls = {}, {}, {}, {}, {}
+fire(ordinary, player, nil, meleeWeapon())
+check(refusedCount("not-special") == 0, "an ordinary zombie is no longer refused")
+check(#bulwarkCalls == 1, "an ordinary zombie reaches Bulwark, for the aura")
+check(#mccoyCalls == 0, "an ordinary zombie does not reach McCoy")
+check(#bloodhoundCalls == 0, "an ordinary zombie does not reach Bloodhound")
+check(#rageCalls == 0, "an ordinary zombie does not reach rage")
+check(bulwarkCalls[1].zType == nil,
+    "and its context carries a nil type rather than a placeholder")
 
 -- ---------------------------------------------------------------------------
 -- The registry is consulted before modData
@@ -162,8 +176,10 @@ check(RQSvHit.stats.seen == 5, "every call is counted as seen, refused or not")
 -- in its own modData is still a special. That is the path a reloaded zombie
 -- takes before the orchestrator re-adopts it.
 local reloaded = makeZombie{ id = 9, modData = { RQType = "Boss" } }
+mccoyCalls = {}
 fire(reloaded, player, nil, meleeWeapon())
-check(RQSvHit.stats.dispatched == 1, "a special known only by modData still dispatches")
+check(#mccoyCalls == 1,
+    "a special known only by modData is treated as a special, not as ordinary")
 
 -- ---------------------------------------------------------------------------
 -- Ranged classification

@@ -25,7 +25,24 @@ local nextRoll = 0
 function ZombRand(n) return nextRoll % n end
 
 local debugMode = false
-RQSvShared = { getSvConfig = function() return { debugMode = debugMode } end }
+-- The live special registry, and the walk contract Bulwark's aura lookup uses:
+-- a truthy return from the callback STOPS the walk.
+local registry = {}
+local visits = 0
+RQSvShared = {
+    getSvConfig = function()
+        return { debugMode = debugMode, juggernautBuffRadius = 5 }
+    end,
+    eachActiveZombie = function(fn)
+        local n = 0
+        for z, t in pairs(registry) do
+            n = n + 1
+            visits = visits + 1
+            if fn(z, t) then break end
+        end
+        return n
+    end,
+}
 RQDirgeLog = { write = function() end }
 RQCommon = { MODULE = "RFTDDirge" }
 local enragedAnswer = false
@@ -111,6 +128,11 @@ local function makeZombie()
         getOnlineID    = function() return 1 end,
         getModData     = function() return {} end,
         getHealth      = function() return 8.0 end,
+        -- Coordinates matter now: an unprotected type still falls through to the
+        -- aura walk, because a Glutton standing beside a Boss IS protected.
+        getX = function() return 500 end,
+        getY = function() return 500 end,
+        getZ = function() return 0 end,
         setAvoidDamage = function(_, v)
             avoidCalls = avoidCalls + 1
             check(v == true, "setAvoidDamage is only ever called with true")
@@ -154,8 +176,13 @@ local st = RQBulwark.stats
 local evaluatedBefore = st.evaluated
 fire("Glutton", true, 0)
 check(st.evaluated == evaluatedBefore, "a refused hit is not counted as evaluated")
-check(st.refused["not-protected-type"] > 0, "refusals are counted by reason")
-check(st.refused["scavenger-passive"] > 0, "the passive-Scavenger refusal is counted separately")
+-- resolve's refusal is "unprotected", not "not-protected-type". Since the aura
+-- migration it no longer turns a type away on sight - a Glutton beside a Boss
+-- IS protected - so it only refuses once BOTH self-protection and the aura walk
+-- have come back empty. rateFor still names the narrower reason for callers
+-- asking specifically about self-protection.
+check(st.refused["unprotected"] > 0,
+    "a target with neither self-protection nor an aura is refused as unprotected")
 
 enragedAnswer = false
 local soakedBefore, penBefore = st.soaked, st.penetrated
@@ -171,6 +198,151 @@ fire("Boss", true, 5)
 fire("Boss", false, 5)
 check(st.ranged == rangedBefore + 1 and st.melee == meleeBefore + 1,
     "weapon class is counted for both branches")
+
+-- ---------------------------------------------------------------------------
+-- Aura protection
+-- ---------------------------------------------------------------------------
+-- Evaluated at hit time against live sources, which is the whole point of the
+-- migration: the model this replaced granted health once and latched it, so the
+-- protection outlived its source and ignored the radius entirely.
+
+local function auraSource(zType, x, y, z, dead)
+    local o = {
+        getX = function() return x end,
+        getY = function() return y end,
+        getZ = function() return z or 0 end,
+        isDead = function() return dead == true end,
+        getOnlineID = function() return 900 end,
+        getModData = function() return {} end,
+    }
+    registry[o] = zType
+    return o
+end
+
+local function targetAt(x, y, z)
+    return {
+        getX = function() return x end,
+        getY = function() return y end,
+        getZ = function() return z or 0 end,
+        getOnlineID = function() return 901 end,
+        getModData = function() return {} end,
+        getHealth = function() return 2.0 end,
+        setAvoidDamage = function() avoidCalls = avoidCalls + 1 end,
+    }
+end
+
+local function clearRegistry() for k in pairs(registry) do registry[k] = nil end end
+
+-- An ordinary zombie beside a Juggernaut is protected; the same zombie alone is
+-- not. Nothing about the zombie changed - only what is standing next to it.
+clearRegistry()
+local ord = targetAt(10, 10)
+check(RQBulwark.auraRateFor(ord, nil, true) == nil, "an ordinary zombie alone has no aura")
+auraSource("Juggernaut", 12, 10)
+check(RQBulwark.auraRateFor(ord, nil, true) == 30, "beside a Juggernaut it soaks 30 ranged")
+check(RQBulwark.auraRateFor(ord, nil, false) == 15, "and 15 melee")
+
+-- Range and floor are live tests, not a latch.
+clearRegistry()
+auraSource("Juggernaut", 40, 10)
+check(RQBulwark.auraRateFor(ord, nil, true) == nil, "a Juggernaut out of radius protects nothing")
+clearRegistry()
+auraSource("Juggernaut", 12, 10, 1)
+check(RQBulwark.auraRateFor(ord, nil, true) == nil, "a Juggernaut one floor up protects nothing")
+
+-- A dead source protects nothing. This is the failure the old latch could not
+-- express: kill the escort and its escort stayed tough forever.
+clearRegistry()
+auraSource("Juggernaut", 12, 10, 0, true)
+check(RQBulwark.auraRateFor(ord, nil, true) == nil, "a dead Juggernaut protects nothing")
+
+-- Who protects whom.
+clearRegistry()
+auraSource("Juggernaut", 12, 10)
+check(RQBulwark.auraRateFor(targetAt(11, 10), "Screamer", true) == nil,
+    "a Juggernaut does not protect other specials - two of them are not a fortress")
+clearRegistry()
+auraSource("Boss", 12, 10)
+check(RQBulwark.auraRateFor(targetAt(11, 10), "Screamer", true) == 40,
+    "a Boss protects specials at the special rate")
+check(RQBulwark.auraRateFor(ord, nil, true) == 30, "and ordinary zombies at the ordinary rate")
+
+clearRegistry()
+local scav = auraSource("Scavenger", 12, 10)
+enragedAnswer = false
+check(RQBulwark.auraRateFor(targetAt(11, 10), "Screamer", true) == nil,
+    "a passive Scavenger protects nothing - it is eating, not leading")
+enragedAnswer = true
+check(RQBulwark.auraRateFor(targetAt(11, 10), "Screamer", true) == 40,
+    "an enraged Scavenger protects specials")
+check(RQBulwark.auraRateFor(ord, nil, true) == nil,
+    "but not the ordinary horde")
+
+-- Nothing auras itself into extra protection.
+clearRegistry()
+local selfSrc = auraSource("Boss", 10, 10)
+check(RQBulwark.auraRateFor(selfSrc, "Boss", true) == nil,
+    "a source is not its own aura target")
+
+-- ---------------------------------------------------------------------------
+-- Strongest single result, never a stack
+-- ---------------------------------------------------------------------------
+clearRegistry()
+auraSource("Boss", 11, 10)
+auraSource("Boss", 12, 10)
+local two = RQBulwark.auraRateFor(targetAt(10, 10), "Screamer", true)
+check(two == 40, "two overlapping Bosses give 40, not 80: " .. tostring(two))
+
+-- Self-protection wins when it is better, and the aura wins when IT is better.
+enragedAnswer = false
+clearRegistry()
+auraSource("Boss", 11, 10)
+avoidCalls = 0
+nextRoll = 65
+-- Juggernaut self is 60 ranged; a Boss aura offers a special 40. Self wins, so a
+-- roll of 65 must penetrate rather than being rescued by the weaker aura.
+check(RQBulwark.resolve{ zombie = targetAt(10, 10), zType = "Juggernaut", isRanged = true } == false,
+    "the weaker aura does not rescue a roll the stronger self-protection lost")
+
+-- An ordinary zombie has no self-protection at all, so the aura is all there is.
+avoidCalls = 0
+nextRoll = 10
+check(RQBulwark.resolve{ zombie = targetAt(10, 10), zType = nil, isRanged = true } == true,
+    "an ordinary zombie under a Boss aura can soak")
+check(avoidCalls == 1, "and the mutation lands on it")
+check(RQBulwark.stats.byType["ordinary"] ~= nil,
+    "ordinary targets get their own counter row rather than a nil key")
+
+-- Unprotected and un-auraed: refused by name, no roll, no mutation.
+clearRegistry()
+avoidCalls = 0
+nextRoll = 0
+check(RQBulwark.resolve{ zombie = targetAt(10, 10), zType = nil, isRanged = true } == nil,
+    "an ordinary zombie with nothing nearby is refused")
+check(avoidCalls == 0, "and is never made to avoid damage")
+check(RQBulwark.stats.refused["unprotected"] > 0, "the refusal is named")
+
+-- ---------------------------------------------------------------------------
+-- The walk is bounded and stops early
+-- ---------------------------------------------------------------------------
+-- The strongest-single-result rule means a second matching source adds nothing,
+-- so the walk breaks on the first hit rather than confirming an answer it
+-- already has.
+clearRegistry()
+for i = 1, 20 do auraSource("Boss", 11, 10) end
+visits = 0
+RQBulwark.auraRateFor(targetAt(10, 10), "Screamer", true)
+check(visits == 1, "the walk stops at the first eligible source: " .. visits .. " visited")
+
+-- A Boss already at the aura ceiling never triggers a walk at all: its own
+-- protection is 70, better than any aura could offer.
+clearRegistry()
+auraSource("Boss", 11, 10)
+visits = 0
+enragedAnswer = false
+nextRoll = 50
+RQBulwark.resolve{ zombie = targetAt(10, 10), zType = "Boss", isRanged = true }
+check(visits == 0, "a Boss does not pay for an aura walk it cannot benefit from")
 
 print(string.format("RQBulwark: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

@@ -8,8 +8,12 @@ if not isServer() then return end
 RQSvJuggernaut = RQSvJuggernaut or {}
 RQSvJuggernaut.buffTick = 0
 
--- weak-keyed so we dont hold references to dead zombie objects, just lets them get GC'd naturally
-RQSvJuggernaut.buffed = setmetatable({}, { __mode = "k" })
+-- The `buffed` weak table is GONE (2026-08-24). It latched every zombie this
+-- aura had ever touched so the one-time HP grant could not stack - and that
+-- latch was the whole problem. The grant outlived its source, so killing the
+-- Juggernaut left its escort permanently tough; walking out of the radius did
+-- nothing; and it cost one owner-directed HP command per zombie per sweep.
+-- RQBulwark now answers the same question when a hit actually lands.
 
 -- RQServer injects the active zombie table here so jugg can skip buffing special zombies
 local _activeZombies = {}
@@ -17,67 +21,15 @@ function RQSvJuggernaut.setActiveZombies(tbl)
     _activeZombies = tbl
 end
 
--- main tick - only called every ~2 seconds from the orchestrator, not every tick
-function RQSvJuggernaut.tick(zombie)
-    local cfg     = RQSvShared.getSvConfig()
-    local radius  = cfg.juggernautBuffRadius
-    local buffPct = cfg.juggernautBuffPercent / 100.0
-    local cell    = getCell()
-    if not cell then return end
-    local x   = math.floor(zombie:getX())
-    local y   = math.floor(zombie:getY())
-    local z   = math.floor(zombie:getZ())
-    local jid = zombie:getOnlineID()
-
-    local rSq = radius * radius
-    local buffCount = 0
-    for dx = -radius, radius do
-        for dy = -radius, radius do
-            if dx * dx + dy * dy <= rSq then
-                local sq = cell:getGridSquare(x + dx, y + dy, z)
-                if sq then
-                    local movs = sq:getMovingObjects()
-                    if movs then
-                        for i = 0, movs:size() - 1 do
-                            local obj = movs:get(i)
-                            -- skip dead, skip self, skip other special types, skip already buffed.
-                            -- also yield to Boss buff aura - overlap zones are boss-flavored.
-                            if obj and instanceof(obj, "IsoZombie") and not obj:isDead()
-                               and obj ~= zombie
-                               and not _activeZombies[obj]
-                               and not RQSvJuggernaut.buffed[obj]
-                               and not (RQSvBoss and RQSvBoss.buffed and RQSvBoss.buffed[obj]) then
-                                -- ownerOnly: this fires once per zombie in radius,
-                                -- so a broadcast here is the mod's peak burst.
-                                -- Only latch buffed[] when the write actually
-                                -- placed -- ownership can flip between passes, and
-                                -- an unconditional latch would leave that zombie
-                                -- permanently unbuffed. Failing means "retry next
-                                -- aura pass", which costs nothing.
-                                if RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct), true) then
-                                    RQSvJuggernaut.buffed[obj] = true
-                                    buffCount = buffCount + 1
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    if buffCount > 0 then
-        RQDirgeLog.write("Juggernaut", "[INFO] id=" .. tostring(jid)
-            .. " buffed=" .. buffCount .. " zombies at (" .. x .. "," .. y .. "," .. z .. ")"
-            .. " pct=" .. cfg.juggernautBuffPercent .. " radius=" .. radius)
-    end
-
-    -- MITIGATION REGEN REMOVED 2026-08-24 - RQMcCoy owns healing now, for all
-    -- six special types rather than this one, and it heals reactively (only
-    -- while something is still attacking) instead of unconditionally every
-    -- pass. The `juggernautMitigation` sandbox option that drove this is now
-    -- unread; settling what happens to it is Slice 6's decision, not a rename
-    -- to be made quietly here.
-end
+-- NO ALIVE BEHAVIOUR TICK, deliberately. Both of this type's jobs left in the
+-- same slice: the buff aura became a hit-time lookup in RQBulwark, and the
+-- self-regen became RQMcCoy. RQServer no longer dispatches Juggernauts on the
+-- behaviour pass at all, the same way it has never dispatched EMP zombies.
+--
+-- An empty tick() was the first version of this, and check-helpers was right to
+-- reject it: an empty body is not an implementation, and leaving one here would
+-- have cost a call per Juggernaut per pass to do nothing. When Juggernauts grow
+-- new alive behaviour, the dispatch comes back with it.
 
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.

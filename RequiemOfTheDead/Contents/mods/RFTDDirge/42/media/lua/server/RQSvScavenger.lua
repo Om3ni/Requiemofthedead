@@ -28,13 +28,11 @@ local CORPSE_SCAN_INTERVAL = 500
 -- rageStartTime: when the decay clock started. Resets on server restart mid-fight (acceptable).
 RQSvScavenger.state = {}
 
--- Specials that this scav has already aura-buffed. Weak-keyed so dead/GC'd
--- zombies fall out automatically. Read by tickRageAura's dedup check and by
--- RQScavenger's client-side paint pass (no, server table - client has its own).
-RQSvScavenger.buffed = setmetatable({}, { __mode = "k" })
+-- The `buffed` weak table is GONE (2026-08-24) with the sweep that needed it.
 
--- Injected by RQServer after svActiveZombies exists. Lets tickRageAura
--- skip non-specials cheaply (no need to scan modData on every neighbor).
+-- Injected by RQServer after svActiveZombies exists. Still read by the rage
+-- aura's successor question - "is this zombie one of ours" - which RQBulwark
+-- now asks through RQSvShared instead.
 local _activeZombies = {}
 function RQSvScavenger.setActiveZombies(tbl)
     _activeZombies = tbl
@@ -43,7 +41,6 @@ end
 local SEEK_TIMEOUT        = 45000   -- (ms) corpse-seek timeout before we give up and pick another
 local RAGE_HP_MULTIPLIER  = 5       -- rage HP = peakHP * 5. No cap, intentionally terrifying when well-fed.
 local RAGE_DECAY_DURATION = 600000  -- (ms) 10 minutes from peakHP back down to baseHealth
-local RAGE_AURA_INTERVAL  = 2000    -- (ms) cadence for the rage buff sweep, matches the jugg aura
 
 -- Tick down the rage HP. Linear from peakHP to baseHealth over the full
 -- duration. Only ever pushes HP down, never up - if the player is hitting
@@ -80,121 +77,9 @@ end
 -- via the weak-keyed `buffed` table so each target gets the +N% exactly once
 -- per scav. Boss and Jugg buffs take precedence - if either has already
 -- claimed a target, scav skips it.
-local function tickRageAura(zombie, cfg)
-    local cell = getCell()
-    if not cell then return end
-    local radius  = cfg.juggernautBuffRadius
-    local buffPct = cfg.juggernautBuffPercent / 100.0
-    local x = math.floor(zombie:getX())
-    local y = math.floor(zombie:getY())
-    local z = math.floor(zombie:getZ())
-    local rSq = radius * radius
-    for dx = -radius, radius do
-        for dy = -radius, radius do
-            if dx * dx + dy * dy <= rSq then
-                local sq = cell:getGridSquare(x + dx, y + dy, z)
-                if sq then
-                    local movs = sq:getMovingObjects()
-                    if movs then
-                        for i = 0, movs:size() - 1 do
-                            local obj = movs:get(i)
-                            if obj and instanceof(obj, "IsoZombie") and not obj:isDead()
-                               and obj ~= zombie
-                               and _activeZombies[obj]
-                               and not RQSvScavenger.buffed[obj]
-                               and not (RQSvJuggernaut and RQSvJuggernaut.buffed and RQSvJuggernaut.buffed[obj])
-                               and not (RQSvBoss and RQSvBoss.buffed and RQSvBoss.buffed[obj]) then
-                                -- ownerOnly + latch-on-success: see the matching
-                                -- comment in RQSvJuggernaut's aura. A failed
-                                -- placement simply retries next pass.
-                                if RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct), true) then
-                                    RQSvScavenger.buffed[obj] = true
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
--- Event-driven rage flip. Called from RQServer's scavPlayerHit command handler
--- when a player damages a passive scav. peakHP at the moment of trigger is the
--- basis for rageHP (so fed-ness carries through), then frozen for the rest of
--- the scav's life as the gradient denominator and decay ceiling.
--- Is this Scavenger currently raging? Asked by RQBulwark, which protects an
--- enraged Scavenger and deliberately does not protect a passive one.
---
--- Live state first, the persisted flag second - the same shape as
--- RQSvShared.typeOf and for the same reason. A Scavenger that has not been
--- ticked since a reload has no state row yet but still carries RQScavHostile,
--- and it is unambiguously still raging; answering "no" for the gap between
--- reload and first tick would hand players a window where the hardest target in
--- the game briefly stops defending itself.
-function RQSvScavenger.isEnraged(zombie)
-    if not zombie then return false end
-    local oid = zombie:getOnlineID()
-    local state = oid and RQSvScavenger.state[oid]
-    if state then return state.hostile == true end
-    return zombie:getModData()["RQScavHostile"] == true
-end
-
--- Called by RQSvHit, which has already established that this is a player
--- attack on a registered special. Takes only the zombie: the attacker's name
--- was a parameter for years and never read by a single line of this body.
-function RQSvScavenger.onPlayerHit(zombie)
-    if not zombie then return end
-    local scavID = zombie:getOnlineID()
-    if not scavID or scavID < 0 then return end
-    local state = RQSvScavenger.state[scavID]
-    if not state then return end          -- not yet ticked; client will retry on next hit
-    if state.hostile then return end      -- already raging, ignore duplicate hits
-
-    local cfg    = RQSvShared.getSvConfig()
-    local now    = getTimestampMs()
-    local rageHP = state.peakHP * RAGE_HP_MULTIPLIER
-
-    state.hostile       = true
-    state.rageStartTime = now
-    state.peakHP        = rageHP   -- FROZEN. No further bumps.
-    zombie:getModData()["RQScavHostile"] = true
-    zombie:transmitModData()
-
-    -- Cancel any in-flight eating before flipping. Co-eating: drop ourselves
-    -- from the shared cast so the survivors get the correct share count
-    -- (locked N excludes the rage-quitter). If we were the only eater this
-    -- also GCs the cast entry so the corpse goes back in the pool.
-    RQSvEating.svClearEatingIntent(zombie)
-    RQSvEating.svRemoveEaterFromCast(state.targetCorpse, scavID)
-    state.phase        = "idle"
-    state.targetCorpse = nil
-    state.targetSq     = nil
-    state.castDue      = nil
-    zombie:setUseless(false)
-    zombie:setVariable("bPathfind", true)
-    zombie:setVariable("bMoving",   false)
-    zombie:setEatBodyTarget(nil, false, 1.0)
-    RQSvShared.broadcast("castDone", { ringId = "scav_" .. scavID })
-    RQSvShared.broadcast("gluttonAnimate", {
-        onlineID = scavID, eating = false, phase = "idle",
-        x = math.floor(zombie:getX()),
-        y = math.floor(zombie:getY()),
-        z = math.floor(zombie:getZ()),
-    })
-    RQSvShared.svSetZombieHP(zombie, rageHP)
-    local zx = math.floor(zombie:getX())
-    local zy = math.floor(zombie:getY())
-    local zz = math.floor(zombie:getZ())
-    addSound(zombie, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
-
-    -- Tell clients to play the scream sound and apply the screamer disorientation
-    -- pipeline at the rage epicenter. Mirrors what boss Scream / screamer zombies
-    -- do, just delivered via a dedicated command so we don't fake a castStart bar.
-    RQSvShared.broadcast("scavRageScream", {
-        x = zx, y = zy, z = zz, onlineID = scavID,
-    })
-end
+-- tickRageAura is GONE (2026-08-24). An enraged Scavenger still protects the
+-- specials around it; RQBulwark decides that when a hit lands rather than
+-- pre-granting health that outlived the rage that earned it.
 
 -- main tick, called each alive behavior pass for scavenger zombies
 function RQSvScavenger.tick(zombie)
@@ -235,14 +120,6 @@ function RQSvScavenger.tick(zombie)
         state.peakHP = zombie:getHealth()
     end
     tickRageDecay(zombie, state, now)
-
-    -- Rage aura buff sweep, jugg-cadence. Cheap enough to run inline.
-    if state.hostile then
-        if not state.lastBuffTick or (now - state.lastBuffTick) >= RAGE_AURA_INTERVAL then
-            state.lastBuffTick = now
-            tickRageAura(zombie, cfg)
-        end
-    end
 
     repeat
         if state.phase == "eating" then

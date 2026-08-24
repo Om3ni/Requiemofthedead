@@ -1,9 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQSvBoss - the apex zombie
 -- Three things going at once:
---   1) Passive juggernaut-style buff aura, always on, sweeps every 2s.
---      Buffs ALL nearby zombies including specials (juggernauts skip specials).
---      Strength is 1.5x the configured Juggernaut buff percent.
+--   1) A protective aura over everything nearby, ordinary and special alike -
+--      but it is not applied here. RQBulwark reads it when a hit lands.
 --   2) Coin-flip skill rotation between Scream and EMPulse, 40s cooldown.
 --      Each skill uses a cast bar so the client can warn the player before it fires.
 --   3) Sprinter movement, set up at spawn via RQSvShared.applyBossSprinter.
@@ -11,9 +10,8 @@ if not isServer() then return end
 
 RQSvBoss = RQSvBoss or {}
 RQSvBoss.state = {}   -- bossID -> { lastSkillTime, lastBuffTick, castDue, currentSkill, skillX/Y/Z, baseHealth }
--- weak-keyed so dead zombies get GC'd. Tracks which zombies have already taken the boss buff
--- so the aura sweep doesnt stack indefinitely.
-RQSvBoss.buffed = setmetatable({}, { __mode = "k" })
+-- The `buffed` weak table is GONE (2026-08-24) along with the aura sweep it
+-- guarded - see RQBulwark's header. Protection is decided at hit time now.
 
 -- _activeZombies is kept for setActiveZombies compatibility but the boss buff aura
 -- intentionally ignores it - the boss buff applies to specials too, unlike juggernaut.
@@ -23,52 +21,9 @@ function RQSvBoss.setActiveZombies(tbl)
 end
 
 local BOSS_SKILL_COOLDOWN = 40000   -- (ms) hardcoded 40s between Scream/EMPulse casts. Overrides cfg.bossSkillCooldown.
-local BOSS_BUFF_INTERVAL  = 2000    -- (ms) buff aura sweep cadence. Same gating idea as Juggernaut tick (every ~2s).
-local BOSS_BUFF_MULTIPLIER = 1.5    -- boss buff is 1.5x stronger than Juggernaut. Jugg=10% -> Boss=15%, Jugg=20% -> Boss=30%, etc.
-
--- Passive buff aura sweep. Walks the radius once, applies the boss buff to any
--- unbuffed zombie (including specials) and marks them in RQSvBoss.buffed so we
--- never stack on the same target. A zombie already inside a Juggernaut aura can
--- still take the boss buff on top - the visual override is what tells the player
--- the boss is the one driving the buff in this area.
-local function svDoBossBuff(zombie, cfg)
-    local cell = getCell()
-    if not cell then return 0 end
-    local x = math.floor(zombie:getX())
-    local y = math.floor(zombie:getY())
-    local z = math.floor(zombie:getZ())
-    local radius  = cfg.juggernautBuffRadius
-    local buffPct = (cfg.juggernautBuffPercent * BOSS_BUFF_MULTIPLIER) / 100.0
-    local rSq = radius * radius
-    local count = 0
-    for ddx = -radius, radius do
-        for ddy = -radius, radius do
-            if ddx*ddx + ddy*ddy <= rSq then
-                local sq = cell:getGridSquare(x+ddx, y+ddy, z)
-                if sq then
-                    local movs = sq:getMovingObjects()
-                    if movs then
-                        for mi = 0, movs:size()-1 do
-                            local obj = movs:get(mi)
-                            if obj and instanceof(obj, "IsoZombie") and not obj:isDead()
-                               and obj ~= zombie
-                               and not RQSvBoss.buffed[obj] then
-                                -- ownerOnly + latch-on-success: see the matching
-                                -- comment in RQSvJuggernaut's aura. A failed
-                                -- placement simply retries next pass.
-                                if RQSvShared.svSetZombieHP(obj, obj:getHealth() * (1.0 + buffPct), true) then
-                                    RQSvBoss.buffed[obj] = true
-                                    count = count + 1
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return count
-end
+-- BOSS_BUFF_INTERVAL and BOSS_BUFF_MULTIPLIER went with the aura sweep. The
+-- Boss's protective reach is no longer a periodic grant with a strength
+-- multiplier; it is a rate RQBulwark reads when a hit lands.
 
 -- main tick, called each alive behavior pass for boss zombies
 function RQSvBoss.tick(zombie)
@@ -87,18 +42,6 @@ function RQSvBoss.tick(zombie)
         RQSvBoss.state[bossID] = state
     end
     local now = getTimestampMs()
-
-    -- passive buff aura sweep, throttled. runs regardless of whether a cast is active -
-    -- the buff doesnt wait its turn, the skills do.
-    -- Was an inline `now - lastBuffTick >= interval` pair. Same behaviour, but
-    -- through the one gate the whole mod now shares, so there is a single place
-    -- where "every N milliseconds" is spelled out - see RQSvShared.due.
-    if RQSvShared.due(state, "lastBuffTick", BOSS_BUFF_INTERVAL, now) then
-        local n = svDoBossBuff(zombie, cfg)
-        if n > 0 then
-            RQDirgeLog.write("Boss", "[INFO] id=" .. tostring(bossID) .. " buff aura buffed=" .. n .. " zombies")
-        end
-    end
 
     -- if a cast is already running, check if its done and execute the skill effect
     if state.castDue then

@@ -83,9 +83,6 @@ local svToCleanupDead  = {}  -- parallel to svToCleanup: true = confirmed death
 -- someone entering its awareness band, which is the only job in the pass
 -- where lateness is felt as sloppy AI rather than as nothing at all.
 local BEHAVIOUR_INTERVAL = 250
--- Unchanged in effect from the old `svJuggBuffTick >= 120`, which was two
--- seconds at a healthy 60 Hz. Now it is two seconds at any frame rate.
-local JUGG_BUFF_INTERVAL = 2000
 
 local SCAN_RANGE    = 30
 -- No organic conversion fires within GUARD_RANGE of a visible player, or on a
@@ -1125,14 +1122,10 @@ local function svOnTick()
     -- 17x17 sweep. A quarter-second of drift is a fraction of a tile against
     -- either.
     --
-    -- The Juggernaut gate moved off a tick COUNT (`>= 120`) onto the same
-    -- wall clock everything else uses - see RQSvShared.due for why. One
-    -- consequence worth stating: the old counter stretched under load and so
-    -- backed the aura off for free. It does not any more. The pass as a whole
-    -- still costs far less than it did, because what this interval gates is
-    -- much more expensive than what it no longer accidentally throttles.
+    -- The Juggernaut aura this pass used to carry is gone entirely - RQBulwark
+    -- answers the same question when a hit lands - so the second cadence that
+    -- used to live here went with it.
     local doBehaviour = RQSvShared.due(svPassState, "behaviour", BEHAVIOUR_INTERVAL, now)
-    local doJuggBuff  = RQSvShared.due(svPassState, "juggBuff", JUGG_BUFF_INTERVAL, now)
 
     -- Iterate alive special zombies and dispatch to type modules
     local cleanupCount = 0
@@ -1162,8 +1155,6 @@ local function svOnTick()
             if zombie:getHealth() > 0 then
                 if zType == "Screamer" then
                     RQSvScreamer.tick(zombie)
-                elseif zType == "Juggernaut" then
-                    if doJuggBuff then RQSvJuggernaut.tick(zombie) end
                 elseif zType == "Glutton" then
                     RQSvGlutton.tick(zombie)
                 elseif zType == "Boss" then
@@ -1171,7 +1162,9 @@ local function svOnTick()
                 elseif zType == "Scavenger" then
                     RQSvScavenger.tick(zombie)
                 end
-                -- EMP has no alive behavior; it detonates on death via zombieKilled
+                -- Juggernaut and EMP have no alive behaviour. EMP detonates on
+                -- death via zombieKilled; the Juggernaut's aura and regen both
+                -- moved out in the Bulwark work - see RQSvJuggernaut's header.
             end
         end
     end
@@ -1432,8 +1425,6 @@ Events.OnGameStart.Add(function()
     RQSvScreamer.state                = {}
     RQSvBoss.state                    = {}
     RQSvEMP.state                     = {}
-    RQSvJuggernaut.buffed             = setmetatable({}, { __mode = "k" })
-    RQSvBoss.buffed                   = setmetatable({}, { __mode = "k" })
 
     if not ModData.exists("RQZombieState") then
         ModData.create("RQZombieState")
