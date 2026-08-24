@@ -6,6 +6,11 @@
 -- in sandbox options, leave it off for normal play.
 
 require "RDWorldOverlay"
+-- Explicit, not alphabetical luck. The client walks each Lua tier across ALL
+-- mods in name order, so a shared/ file happening to sort before this one is
+-- not a dependency - the require is.
+require "RQCeiling"
+require "RQCommon"
 
 RQHealthBar = RQHealthBar or {}
 
@@ -67,32 +72,36 @@ function RQHealthBarHUD:render()
                                 if ddx * ddx + ddy * ddy <= VIEW_RANGE_SQ then
                                     local hp = obj:getHealth()
 
-                                    -- Authoritative max-HP source per type. Server-stamped values
-                                    -- win where they exist. Priority:
-                                    --   1. RQJuggMaxHP (Juggernaut) - stamped at conversion
-                                    --   2. scavClientState.peakHP (Scavenger, post-snapshot)
-                                    --   3. RQGluttonBaseHealth * gluttonMaxMult (Glutton + pre-rage
-                                    --      Scav) - the theoretical eating-cap so the bar reads
-                                    --      progressive fill instead of always 100%
-                                    --   4. fall back to current HP (Screamer/EMP/Boss, no growth)
+                                    -- Max HP now comes from RQCeiling, which the server's
+                                    -- healing path also uses. This file used to carry its own
+                                    -- four-case priority list; two models of "how healthy is
+                                    -- this supposed to be" would have drifted the first time
+                                    -- either was tuned.
+                                    --
+                                    -- The bar deliberately asks for the THEORETICAL feeding cap
+                                    -- rather than what the Glutton has actually eaten. McCoy
+                                    -- passes the earned figure, because healing to a cap it
+                                    -- never reached would be free health; a bar wants the
+                                    -- opposite, since one that reads full until the very last
+                                    -- bite tells the player nothing about a growing threat.
                                     local md = obj:getModData()
-                                    local maxHP = md["RQJuggMaxHP"]
-                                    if not maxHP then
-                                        local oid = obj:getOnlineID()
-                                        if oid and RQReconcile and RQReconcile.scavClientState then
-                                            local sc = RQReconcile.scavClientState[oid]
-                                            if sc and sc.peakHP and sc.peakHP > 0 then
-                                                maxHP = sc.peakHP
-                                            end
+                                    local zType = RQRegistry and RQRegistry.activeZombies
+                                                  and RQRegistry.activeZombies[obj:getOnlineID()]
+                                                  or md["RQType"]
+                                    local mult = (zType == "Juggernaut" and cfg.juggernautHealthMultiplier)
+                                                 or (zType and RQCommon.HEALTH_MULTIPLIER[zType])
+                                    local opts = { currentHP = hp }
+                                    local oid = obj:getOnlineID()
+                                    if oid and RQReconcile and RQReconcile.scavClientState then
+                                        local sc = RQReconcile.scavClientState[oid]
+                                        if sc and sc.peakHP and sc.peakHP > 0 then
+                                            opts.ragePeak = sc.peakHP
                                         end
                                     end
-                                    if not maxHP then
-                                        local baseHP = md["RQGluttonBaseHealth"]
-                                        if baseHP and baseHP > 0 then
-                                            local maxMult = (cfg.gluttonMaxMult or 5)
-                                            maxHP = baseHP * maxMult
-                                        end
+                                    if zType == "Glutton" or zType == "Scavenger" then
+                                        opts.eatMult = cfg.gluttonMaxMult or 5
                                     end
+                                    local maxHP = mult and RQCeiling.resolve(md, zType, mult, opts) or nil
                                     maxHP = maxHP or hp
                                     local pct = math.min(1.0, hp / math.max(maxHP, 0.0001))
 

@@ -43,6 +43,13 @@ RQSvScavenger = {
         order[#order + 1] = "rage"
     end,
 }
+local mccoyCalls = {}
+RQMcCoy = {
+    onAttacked = function(ctx)
+        mccoyCalls[#mccoyCalls + 1] = ctx
+        order[#order + 1] = "mccoy"
+    end,
+}
 local bloodhoundCalls = {}
 RQBloodhound = {
     onAttacked = function(ctx)
@@ -74,7 +81,7 @@ RQCommon = { MODULE = "RFTDDirge" }
 function require(name)
     local known = {
         RQCommon = true, RQDirgeLog = true, RQSvShared = true, RQSvScavenger = true,
-        RQBulwark = true, RQBloodhound = true,
+        RQBulwark = true, RQBloodhound = true, RQMcCoy = true,
     }
     if known[name] then return end
     error("unexpected fixture require: " .. tostring(name))
@@ -246,17 +253,27 @@ debugMode = false
 -- progressively harder to provoke, which is backwards.
 order, rageCalls, bulwarkCalls, bloodhoundCalls = {}, {}, {}, {}
 fire(scav, player, nil, rangedWeapon())
-check(#order == 3, "all three live stages ran for a ranged Scavenger hit")
+check(#order == 4, "all four stages ran for a ranged Scavenger hit")
 check(order[1] == "rage", "rage runs first")
-check(order[2] == "bloodhound", "Bloodhound acquires before mitigation is decided")
-check(order[3] == "bulwark", "Bulwark resolves last")
+check(order[2] == "mccoy", "McCoy arms before mitigation is decided")
+check(order[3] == "bloodhound", "Bloodhound acquires before mitigation is decided")
+check(order[4] == "bulwark", "Bulwark resolves last")
 
 -- A type with no rage stage still reaches the others - ordering must not be
 -- accidentally chained through the stage before it.
 order, bulwarkCalls, bloodhoundCalls = {}, {}, {}
 fire(jugg, player, nil, meleeWeapon())
-check(order[1] == "bloodhound" and order[2] == "bulwark" and #order == 2,
-    "a Juggernaut reaches Bloodhound and Bulwark without passing through rage")
+check(order[1] == "mccoy" and order[2] == "bloodhound" and order[3] == "bulwark"
+      and #order == 3,
+    "a Juggernaut reaches the other three stages without passing through rage")
+
+-- A SOAKED HIT STILL ARMS HEALING AND STILL MARKS A SHOOTER. This is the whole
+-- reason Bulwark is last: it cannot suppress the stages above it, because it
+-- has not run yet when they do.
+order, mccoyCalls, bloodhoundCalls = {}, {}, {}
+fire(boss, player, nil, rangedWeapon())
+check(#mccoyCalls == 1, "McCoy is armed regardless of what Bulwark will decide")
+check(#bloodhoundCalls == 1, "Bloodhound is offered the hit regardless of the soak")
 
 -- EVERY hit reaches Bloodhound, which decides for itself whether it is ranged.
 -- Filtering here would put the same policy in two places.

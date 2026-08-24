@@ -266,6 +266,18 @@ local function svApplyTypeHealth(zombie, cfg, zType, sourceHealth)
     if zType == "Juggernaut" then
         baseHealth = math.max(baseHealth, JUGGERNAUT_MIN_BASE_HEALTH)
     end
+    -- RQBaseHP: the PRE-conversion health, stamped here because this is the one
+    -- place that still knows it. Everything downstream that needs to ask "how
+    -- healthy is this special supposed to be" derives it as base * multiplier
+    -- rather than storing the answer - see RQCeiling.
+    --
+    -- The two older keys are not this. RQJuggMaxHP and RQGluttonBaseHealth are
+    -- both stamped AFTER conversion, so they hold base * multiplier already.
+    -- They stay, they are still written, and RQCeiling still reads them as a
+    -- fallback for zombies converted before this field existed; removing them in
+    -- the same slice that introduces the replacement would strand every special
+    -- in every existing save.
+    zombie:getModData()["RQBaseHP"] = baseHealth
     -- Deliberately NOT ownerOnly. This fires once, when a zombie becomes a
     -- special, and nothing recomputes it afterwards -- so it gets the belt-and-
     -- braces broadcast. The hot repeating callers (buff auras, regen, decay)

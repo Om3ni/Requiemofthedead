@@ -23,7 +23,7 @@ function RQWireHeadroom.observe(delta)
     -- It said the telemetry must not suppress "the authoritative zombieDelta
     -- broadcast that follows this observer" - which was true, and was an
     -- ORDERING problem wearing a pcall, the same shape as LSTour's teardown.
-    -- The caller now broadcasts FIRST and observes after (RQServer.lua:1365),
+    -- The caller now broadcasts FIRST and observes after (RQServer.lua:1290-1291),
     -- so nothing authoritative can be lost to a telemetry fault regardless of
     -- what this function grows into.
     --

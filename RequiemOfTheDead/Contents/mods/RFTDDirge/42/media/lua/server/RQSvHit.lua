@@ -34,6 +34,7 @@ require "RQCommon"
 require "RQDirgeLog"
 require "RQSvShared"
 require "RQSvScavenger"
+require "RQMcCoy"
 require "RQBloodhound"
 require "RQBulwark"
 
@@ -156,7 +157,7 @@ local function dispatch(ctx)
         RQSvScavenger.onPlayerHit(ctx.zombie)
     end
 
-    -- >>> Slice 4 inserts RQMcCoy.onAttacked(ctx) here
+    RQMcCoy.onAttacked(ctx)
     RQBloodhound.onAttacked(ctx)
 
     -- LAST. Everything above has already run, so a successful soak cannot stop

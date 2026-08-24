@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQSvJuggernaut.lua
 -- handles the alive behavior tick for Juggernaut type zombies
--- jugg has two jobs: apply a HP buff to nearby non-special zombies, and regen a little each tick
+-- jugg has one job here: apply a HP buff to nearby non-special zombies.
+-- Its old self-regen moved to RQMcCoy, which does it for every special type.
 if not isServer() then return end
 
 RQSvJuggernaut = RQSvJuggernaut or {}
@@ -70,26 +71,12 @@ function RQSvJuggernaut.tick(zombie)
             .. " pct=" .. cfg.juggernautBuffPercent .. " radius=" .. radius)
     end
 
-    local mitigation = cfg.juggernautMitigation or 0
-    if mitigation > 0 then
-        local maxHP = zombie:getModData()["RQJuggMaxHP"]
-        if maxHP and maxHP > 0 then
-            local hp = zombie:getHealth()
-            if hp < maxHP then
-                local newHP = math.min(maxHP, hp + maxHP * (mitigation / 100.0))
-                -- ownerOnly: repeats every 2s and recomputes its target, so it
-                -- self-corrects through an ownership handoff.
-                RQSvShared.svSetZombieHP(zombie, newHP, true)
-                RQDirgeLog.write("Juggernaut", "[INFO] id=" .. tostring(jid)
-                    .. " mitigation regen hp=" .. string.format("%.2f", hp)
-                    .. " -> " .. string.format("%.2f", newHP)
-                    .. " max=" .. string.format("%.2f", maxHP))
-            end
-        else
-            RQDirgeLog.write("Juggernaut", "[WARN] id=" .. tostring(jid)
-                .. " mitigation=" .. mitigation .. " but RQJuggMaxHP missing or zero")
-        end
-    end
+    -- MITIGATION REGEN REMOVED 2026-08-24 - RQMcCoy owns healing now, for all
+    -- six special types rather than this one, and it heals reactively (only
+    -- while something is still attacking) instead of unconditionally every
+    -- pass. The `juggernautMitigation` sandbox option that drove this is now
+    -- unread; settling what happens to it is Slice 6's decision, not a rename
+    -- to be made quietly here.
 end
 
 -- ---------------------------------------------------------------------------

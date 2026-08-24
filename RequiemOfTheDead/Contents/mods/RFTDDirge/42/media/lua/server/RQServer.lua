@@ -24,6 +24,7 @@ require "RQSvScavenger"
 require "RQSvScreamer"
 require "RQSvJuggernaut"
 require "RQSvBoss"
+require "RQMcCoy"       -- reactive healing for all six special types
 require "RQBloodhound"  -- ranged-attacker pursuit; updated on the behaviour pass below
 require "RQBulwark"     -- hit mitigation policy; RQSvHit dispatches it last
 require "RQSvHit"       -- the single OnHitZombie intake; must load after the type modules it dispatches to
@@ -1179,7 +1180,10 @@ local function svOnTick()
     -- registry, so it rides the behaviour pass rather than the per-tick tier.
     -- A pursuit's exits are all bounded by wall-clock deadlines and distance,
     -- neither of which a quarter-second changes.
-    if doBehaviour then RQBloodhound.update(now) end
+    if doBehaviour then
+        RQBloodhound.update(now)
+        RQMcCoy.update(now)
+    end
 
     -- Safe delete after iteration finishes
     for i = 1, cleanupCount do
@@ -1399,6 +1403,7 @@ Events.OnGameStart.Add(function()
     svSnapshotDirty   = false
     svPassState       = {}
     RQBloodhound.reset()
+    RQMcCoy.reset()
     -- Must clear alongside svPending below: a queued trailing transmit lives in
     -- that queue, so wiping the queue without clearing the flag would leave
     -- svBaselineQueued true forever and block every future coalesced transmit.
