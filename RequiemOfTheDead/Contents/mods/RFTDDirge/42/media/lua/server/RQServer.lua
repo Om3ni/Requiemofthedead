@@ -24,6 +24,7 @@ require "RQSvScavenger"
 require "RQSvScreamer"
 require "RQSvJuggernaut"
 require "RQSvBoss"
+require "RQBloodhound"  -- ranged-attacker pursuit; updated on the behaviour pass below
 require "RQBulwark"     -- hit mitigation policy; RQSvHit dispatches it last
 require "RQSvHit"       -- the single OnHitZombie intake; must load after the type modules it dispatches to
 require "RQSvEMP"
@@ -1174,6 +1175,12 @@ local function svOnTick()
         end
     end
 
+    -- Bloodhound walks only zombies with a live pursuit, never the whole
+    -- registry, so it rides the behaviour pass rather than the per-tick tier.
+    -- A pursuit's exits are all bounded by wall-clock deadlines and distance,
+    -- neither of which a quarter-second changes.
+    if doBehaviour then RQBloodhound.update(now) end
+
     -- Safe delete after iteration finishes
     for i = 1, cleanupCount do
         local zombie = svToCleanup[i]
@@ -1391,6 +1398,7 @@ Events.OnGameStart.Add(function()
     svSnapshotTimer   = 0
     svSnapshotDirty   = false
     svPassState       = {}
+    RQBloodhound.reset()
     -- Must clear alongside svPending below: a queued trailing transmit lives in
     -- that queue, so wiping the queue without clearing the flag would leave
     -- svBaselineQueued true forever and block every future coalesced transmit.

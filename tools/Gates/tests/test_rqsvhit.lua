@@ -43,6 +43,13 @@ RQSvScavenger = {
         order[#order + 1] = "rage"
     end,
 }
+local bloodhoundCalls = {}
+RQBloodhound = {
+    onAttacked = function(ctx)
+        bloodhoundCalls[#bloodhoundCalls + 1] = ctx
+        order[#order + 1] = "bloodhound"
+    end,
+}
 local bulwarkCalls = {}
 RQBulwark = {
     resolve = function(ctx)
@@ -67,7 +74,7 @@ RQCommon = { MODULE = "RFTDDirge" }
 function require(name)
     local known = {
         RQCommon = true, RQDirgeLog = true, RQSvShared = true, RQSvScavenger = true,
-        RQBulwark = true,
+        RQBulwark = true, RQBloodhound = true,
     }
     if known[name] then return end
     error("unexpected fixture require: " .. tostring(name))
@@ -237,18 +244,25 @@ debugMode = false
 -- Scavenger, and once Slices 3 and 4 land it must still arm healing and still
 -- mark a shooter. Mitigation running first would make a well-armoured target
 -- progressively harder to provoke, which is backwards.
-order, rageCalls, bulwarkCalls = {}, {}, {}
+order, rageCalls, bulwarkCalls, bloodhoundCalls = {}, {}, {}, {}
 fire(scav, player, nil, rangedWeapon())
-check(#order == 2, "both stages ran for a Scavenger hit")
+check(#order == 3, "all three live stages ran for a ranged Scavenger hit")
 check(order[1] == "rage", "rage runs first")
-check(order[2] == "bulwark", "Bulwark resolves last")
+check(order[2] == "bloodhound", "Bloodhound acquires before mitigation is decided")
+check(order[3] == "bulwark", "Bulwark resolves last")
 
--- A type with no rage stage still reaches Bulwark - the ordering must not be
+-- A type with no rage stage still reaches the others - ordering must not be
 -- accidentally chained through the stage before it.
-order, bulwarkCalls = {}, {}
+order, bulwarkCalls, bloodhoundCalls = {}, {}, {}
 fire(jugg, player, nil, meleeWeapon())
-check(order[1] == "bulwark" and #order == 1,
-    "a Juggernaut reaches Bulwark without passing through rage")
+check(order[1] == "bloodhound" and order[2] == "bulwark" and #order == 2,
+    "a Juggernaut reaches Bloodhound and Bulwark without passing through rage")
+
+-- EVERY hit reaches Bloodhound, which decides for itself whether it is ranged.
+-- Filtering here would put the same policy in two places.
+order, bloodhoundCalls = {}, {}
+fire(jugg, player, nil, meleeWeapon())
+check(#bloodhoundCalls == 1, "a melee hit still reaches Bloodhound to be refused there")
 
 -- ---------------------------------------------------------------------------
 -- The context Bulwark is handed

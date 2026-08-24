@@ -280,15 +280,84 @@ RQSvShared.svSetZombieHP         = svSetZombieHP
 -- constant the network path enforces, instead of a drifting copy.
 RQSvShared.MAX_NETWORK_HP        = MAX_NETWORK_HP
 
--- Boss sprinter recipe. setVariable("bSprinter", true) alone is just a hint
--- to the AI - the zombie keeps shambling unless WalkType and MovementSpeed
--- come along too. resetModelNextFrame is what actually swaps the run animation in.
-local function applyBossSprinter(zombie)
+-- ---------------------------------------------------------------------------
+-- Movement profile
+-- ---------------------------------------------------------------------------
+-- CORRECTED 2026-08-24, and the correction is a live behaviour change the owner
+-- authorised: Bosses were almost certainly never sprinting.
+--
+-- The recipe here used to be setWalkType("Run") + setVariable("bSprinter", true)
+-- + setVariable("MovementSpeed", 1.2) + resetModelNextFrame(). Only the last of
+-- those does anything in 42.20.3:
+--
+--   * "Run" is not a walk type. The engine's vocabulary is slow1-3 and
+--     sprint1-5 - see the zombiewalktype animation variable and its own
+--     description at IsoZombie.java:794, and the engine writing them itself at
+--     :4807-4814. getSpeedTypeFromWalkType falls through to 2 for anything it
+--     does not recognise (:3211-3222), and NetworkVariables.WalkType.fromString
+--     returns WT1 for an unknown string - so remote clients were being told the
+--     Boss walks normally.
+--   * Neither "bSprinter" nor "MovementSpeed" appears anywhere in the decompile.
+--
+-- doZombieSpeed(1) is NOT the fix either: doZombieSpeedInternal routes to
+-- doFakeShambler whenever Rand.Next(3) ~= 0, and to doShambler outright on a
+-- Shamblers server (:4726-4738), so it sprints about one call in three.
+--
+-- What the engine actually does for a sprinter, in doSprinter and
+-- doZombieSpeedInternal2 (:4748-4757, :4804-4816): a randomised sprint1-5 walk
+-- type, speedType 1, turnDelta 1.0, and a speedMod of 0.85 plus a small jitter.
+-- setSpeedType does not exist on the Lua surface, so speedType is reached the
+-- only way available - by deriving it from the walk type.
+local SPRINT_SPEED_MOD  = 0.85
+local SPRINT_TURN_DELTA = 1.0
+
+local function applySprintProfile(zombie)
     if not zombie then return end
-    zombie:setWalkType("Run")
-    zombie:setVariable("bSprinter", true)
-    zombie:setVariable("MovementSpeed", 1.2)
+    -- sprint1-5 are animation variants, not speed tiers; the engine picks one at
+    -- random and so do we.
+    zombie:setWalkType("sprint" .. tostring(ZombRand(5) + 1))
+    zombie:setSpeedTypeFromWalkType()
+    zombie:setSpeedMod(SPRINT_SPEED_MOD + ZombRand(1500) / 10000.0)
+    zombie:setTurnDelta(SPRINT_TURN_DELTA)
     zombie:resetModelNextFrame()
+end
+RQSvShared.applySprintProfile = applySprintProfile
+
+-- Everything restoreMovementProfile needs to put a zombie back exactly as it
+-- was. Taken ONCE per pursuit - re-snapshotting a zombie that is already
+-- sprinting would record the sprint as its native state and strand it there.
+local function captureMovementProfile(zombie)
+    if not zombie then return nil end
+    return {
+        walkType  = zombie:getWalkType(),
+        speedType = zombie:getSpeedType(),
+        speedMod  = zombie:getSpeedMod(),
+        turnDelta = zombie:getTurnDelta(),
+    }
+end
+RQSvShared.captureMovementProfile = captureMovementProfile
+
+-- speedType is restored by re-deriving it from the restored walk type rather
+-- than written back directly, because there is no setSpeedType on the Lua
+-- surface. For every walk type the engine itself produces the two agree by
+-- construction; the captured speedType is kept in the snapshot anyway so a
+-- disagreement is visible to a caller that wants to check.
+local function restoreMovementProfile(zombie, snap)
+    if not zombie or not snap then return false end
+    zombie:setWalkType(snap.walkType)
+    zombie:setSpeedTypeFromWalkType()
+    zombie:setSpeedMod(snap.speedMod)
+    zombie:setTurnDelta(snap.turnDelta)
+    zombie:resetModelNextFrame()
+    return true
+end
+RQSvShared.restoreMovementProfile = restoreMovementProfile
+
+-- The Boss is a PERMANENT sprinter - it is applied at conversion and on reload
+-- and nothing restores it. Bloodhound must therefore never put a Boss back to a
+-- slower profile at the end of a pursuit.
+local function applyBossSprinter(zombie)
+    applySprintProfile(zombie)
 end
 RQSvShared.applyBossSprinter = applyBossSprinter
 
