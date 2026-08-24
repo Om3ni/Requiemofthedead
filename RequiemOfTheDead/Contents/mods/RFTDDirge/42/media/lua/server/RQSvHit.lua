@@ -34,6 +34,7 @@ require "RQCommon"
 require "RQDirgeLog"
 require "RQSvShared"
 require "RQSvScavenger"
+require "RQBulwark"
 
 RQSvHit = RQSvHit or {}
 
@@ -156,7 +157,10 @@ local function dispatch(ctx)
 
     -- >>> Slice 4 inserts RQMcCoy.onAttacked(ctx) here
     -- >>> Slice 3 inserts RQBloodhound.onAttacked(ctx) here
-    -- >>> Slice 2 inserts RQBulwark.resolve(ctx) here
+
+    -- LAST. Everything above has already run, so a successful soak cannot stop
+    -- a Scavenger enraging, a healing window arming, or a shooter being marked.
+    RQBulwark.resolve(ctx)
 end
 
 -- ---------------------------------------------------------------------------

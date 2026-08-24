@@ -33,7 +33,23 @@ Events = { OnHitZombie = { Add = function(fn) listeners[#listeners + 1] = fn end
 -- it actually touches, and errors on anything unexpected, so a new dependency
 -- appearing in production shows up here rather than at runtime.
 local rageCalls = {}
-RQSvScavenger = { onPlayerHit = function(z) rageCalls[#rageCalls + 1] = z end }
+-- ONE log, written by every stage. Order is the contract this file exists to
+-- protect, so it is asserted against a single sequence rather than per-stage
+-- call counts that could both be right while the order between them is wrong.
+local order = {}
+RQSvScavenger = {
+    onPlayerHit = function(z)
+        rageCalls[#rageCalls + 1] = z
+        order[#order + 1] = "rage"
+    end,
+}
+local bulwarkCalls = {}
+RQBulwark = {
+    resolve = function(ctx)
+        bulwarkCalls[#bulwarkCalls + 1] = ctx
+        order[#order + 1] = "bulwark"
+    end,
+}
 RQDirgeLog = { write = function() end }
 local debugMode = false
 local activeZombies = {}
@@ -51,6 +67,7 @@ RQCommon = { MODULE = "RFTDDirge" }
 function require(name)
     local known = {
         RQCommon = true, RQDirgeLog = true, RQSvShared = true, RQSvScavenger = true,
+        RQBulwark = true,
     }
     if known[name] then return end
     error("unexpected fixture require: " .. tostring(name))
@@ -212,6 +229,45 @@ check(RQSvHit.probe.suppressed == suppressedBefore + 1, "suppressed lines are co
 check(RQSvHit.probe.ranged == rangedBefore + 1, "counters keep running past the log cap")
 
 debugMode = false
+
+-- ---------------------------------------------------------------------------
+-- ORDER IS THE CONTRACT
+-- ---------------------------------------------------------------------------
+-- Bulwark resolves LAST. A soaked hit is still an attack: it must still enrage a
+-- Scavenger, and once Slices 3 and 4 land it must still arm healing and still
+-- mark a shooter. Mitigation running first would make a well-armoured target
+-- progressively harder to provoke, which is backwards.
+order, rageCalls, bulwarkCalls = {}, {}, {}
+fire(scav, player, nil, rangedWeapon())
+check(#order == 2, "both stages ran for a Scavenger hit")
+check(order[1] == "rage", "rage runs first")
+check(order[2] == "bulwark", "Bulwark resolves last")
+
+-- A type with no rage stage still reaches Bulwark - the ordering must not be
+-- accidentally chained through the stage before it.
+order, bulwarkCalls = {}, {}
+fire(jugg, player, nil, meleeWeapon())
+check(order[1] == "bulwark" and #order == 1,
+    "a Juggernaut reaches Bulwark without passing through rage")
+
+-- ---------------------------------------------------------------------------
+-- The context Bulwark is handed
+-- ---------------------------------------------------------------------------
+bulwarkCalls = {}
+fire(jugg, player, nil, rangedWeapon())
+local ctx = bulwarkCalls[1]
+check(ctx ~= nil, "Bulwark receives a context")
+check(ctx.zombie == jugg, "context carries the struck zombie")
+check(ctx.attacker == player, "context carries the attacker")
+check(ctx.zType == "Juggernaut", "context carries the resolved type")
+check(ctx.isRanged == true, "context carries the ranged verdict")
+check(ctx.isPlayerAttack == true, "context asserts this is a player attack")
+check(ctx.now == clock, "context carries one timestamp read, not a fresh clock per stage")
+
+bulwarkCalls = {}
+fire(jugg, player, nil, nil)
+check(bulwarkCalls[1].isRanged == false, "an unarmed hit is not ranged")
+check(bulwarkCalls[1].weapon == nil, "an unarmed hit carries no weapon")
 
 print(string.format("RQSvHit: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

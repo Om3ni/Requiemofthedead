@@ -24,6 +24,7 @@ require "RQSvScavenger"
 require "RQSvScreamer"
 require "RQSvJuggernaut"
 require "RQSvBoss"
+require "RQBulwark"     -- hit mitigation policy; RQSvHit dispatches it last
 require "RQSvHit"       -- the single OnHitZombie intake; must load after the type modules it dispatches to
 require "RQSvEMP"
 require "RQSvLoot"

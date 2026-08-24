@@ -123,6 +123,23 @@ end
 -- when a player damages a passive scav. peakHP at the moment of trigger is the
 -- basis for rageHP (so fed-ness carries through), then frozen for the rest of
 -- the scav's life as the gradient denominator and decay ceiling.
+-- Is this Scavenger currently raging? Asked by RQBulwark, which protects an
+-- enraged Scavenger and deliberately does not protect a passive one.
+--
+-- Live state first, the persisted flag second - the same shape as
+-- RQSvShared.typeOf and for the same reason. A Scavenger that has not been
+-- ticked since a reload has no state row yet but still carries RQScavHostile,
+-- and it is unambiguously still raging; answering "no" for the gap between
+-- reload and first tick would hand players a window where the hardest target in
+-- the game briefly stops defending itself.
+function RQSvScavenger.isEnraged(zombie)
+    if not zombie then return false end
+    local oid = zombie:getOnlineID()
+    local state = oid and RQSvScavenger.state[oid]
+    if state then return state.hostile == true end
+    return zombie:getModData()["RQScavHostile"] == true
+end
+
 -- Called by RQSvHit, which has already established that this is a player
 -- attack on a registered special. Takes only the zombie: the attacker's name
 -- was a parameter for years and never read by a single line of this body.
