@@ -76,7 +76,9 @@ DFPrefs.SCHEMA = {
     -- worse than offering none. Restore this entry to re-enable it.
     { key = "opacity", kind = "int", min = 20, max = 100, step = 5,
       label = "Panel opacity", unit = "%",
-      help = "How much of the game world shows through the panel behind the text.\n\nLower values let you keep an eye on what is happening around you; higher values make dense text far easier to read against a bright or busy background. This affects panel grounds only - text and borders always draw at full strength, so raising it never dims the content.\n\nIt will not go below 20%: a fully transparent panel is one you cannot find again to fix, and the control that would undo it is drawn on the thing that just vanished." },
+      help = "How much of the game world shows through the panel behind the "
+          .. "text. Never below 20%: a fully transparent panel is one you "
+          .. "cannot find again to fix." },
 }
 
 -- ---------------------------------------------------------------------------

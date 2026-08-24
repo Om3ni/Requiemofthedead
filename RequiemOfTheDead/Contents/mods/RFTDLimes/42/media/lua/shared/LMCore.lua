@@ -329,14 +329,13 @@ local NOT_YET_ANNOUNCE = "  NOTE: the zone announce widget (M2) is not built yet
 
 Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0,     side = "both", min = 0, max = 10,
     order = 1, group = "Zone", label = "Difficulty tier", unit = "",
-    help = "The one number other modules read to decide how hard this zone is."
-        .. " The shipped ladder runs 0 (Very Easy) to 5 (Very Hard); 6-10 are"
-        .. " headroom. A zone drawn inside another starts from its parent's tier"
-        .. " and overrides it only if you set one here." })
+    help = "The one number other modules read to decide how hard this zone "
+        .. "is. 0 (Very Easy) to 5 (Very Hard), 6-10 headroom; a zone drawn "
+        .. "inside another inherits its parent's tier unless you set one."})
 Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0,     side = "both",
     order = 2, group = "Zone", label = "Overlap priority",
-    help = "Breaks a tie when the two rectangles covering a tile are the SAME SIZE."
-        .. " The smaller rectangle already wins, so this only matters for exact ties." })
+    help = "Breaks a tie when the two rectangles covering a tile are the "
+        .. "same size. Otherwise the smaller rectangle already wins."})
 Limes.fields.register("LMCore", "disabled",   { type = "boolean", default = false, side = "both",
     order = 3, group = "Zone", label = "Disabled",
     help = "Keeps the zone and its geometry but stops it answering lookups." })
@@ -350,12 +349,9 @@ Limes.fields.register("LMCore", "phases", { type = "string", default = "", side 
     rule = "Comma list: new, waxing_crescent, first_quarter, waxing_gibbous, full,"
         .. " waning_gibbous, last_quarter, waning_crescent - or waxing / waning, or 0-7."
         .. " Empty means always active.",
-    help = "Only meaningful on a PROFILE. While set, this profile's fields apply"
-        .. " only during the listed moon phases - 'full' makes it a full-moon"
-        .. " event, 'waxing,full' ramps in ahead of it. The moon follows the"
-        .. " in-game calendar (about 29.5 days per cycle, roughly 3.7 days per"
-        .. " phase), and every player's game agrees on it. Empty means the"
-        .. " profile always applies." })
+    help = "Only meaningful on a PROFILE: while set, this profile's fields "
+        .. "apply only during the listed moon phases. Empty means it always "
+        .. "applies."})
 Limes.fields.register("LMCore", "noannounce", { type = "boolean", default = false, side = "client",
     order = 4, group = "Announce", label = "No entry announce",
     help = "Suppress the on-screen title when a player walks in." .. NOT_YET_ANNOUNCE })
@@ -450,14 +446,11 @@ Limes.fields.register("LMCore", "zeds", { type = "string", default = "", side = 
     ui = "choice",
     values = { "", "none", "remove" },
     labels = { "Leave alone", "No spawns", "No spawns + sweep" },
-    help = "'No spawns' removes zombies as they are created here - silently, and"
-        .. " without leaving a corpse, because a walled safe zone that fills with"
-        .. " bodies is worse than the spawns it was meant to stop. 'No spawns +"
-        .. " sweep' also clears anything already standing inside when the zone is"
-        .. " added, edited or re-enabled; it does NOT keep killing zombies that"
-        .. " walk in through a door somebody opened. 'Leave alone' is the default."
-        .. "  Because removal is invisible, Census on the toolbar is how you watch"
-        .. " it work: it counts what is actually standing in each zone." })
+    help = "'No spawns' removes zombies as they are created here, silently "
+        .. "and without a corpse; '+ sweep' also clears anything already "
+        .. "inside when the zone is added or edited. Neither keeps killing "
+        .. "zombies that walk in later - Census counts what is actually "
+        .. "standing."})
 Limes.fields.register("LMCore", "minSprinterRisk", { type = "number", default = 0, side = "both",
     min = 0, max = 100, order = 31, group = "Zombies", label = "Sprinter risk (min)",
     help = "Lower bound of the per-zone sprinter chance band." .. NOT_YET })

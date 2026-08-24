@@ -444,6 +444,11 @@ local function build(spec, panel, x, y, w, h)
     -- where the count it undoes is already on screen. Two affordances for one
     -- destructive verb is one of them going stale.
 
+    V.logBtn = DFKit.button(panel, 0, 0, 92, "Claim log", panel, function()
+        DMClaimants.openLog()
+    end, nil, { tooltip = "When each kit was claimed, by whom, and what was "
+        .. "handed over. A bounded window, not the archive." })
+
     V.deleteBtn = DFKit.button(panel, 0, 0, 76, "Delete", panel, function()
         local k = needSelection(); if not k then return end
         DFConfirm.ask("Delete '" .. (k.label or k.id) .. "'?\n\n"
@@ -476,8 +481,14 @@ layout = function(panel, x, y, w, h)
 
     local foot = R:footer(m.btnH + m.pad)
     V.footRect = { x = foot.x, y = foot.y, w = foot.w, h = foot.h }
+    -- NOT ipairs. It stops at the first nil, so a button that failed to be
+    -- created leaves every button after it sitting at its creation spot -
+    -- which is (0, 0), on top of the caption. That is exactly what happened to
+    -- Create New when the Claim log button went missing (owner, 2026-08-24).
+    local row = { V.deleteBtn, V.giveBtn, V.logBtn, V.createBtn }
     local bx = foot.x + foot.w
-    for _, b in ipairs({ V.deleteBtn, V.giveBtn, V.logBtn, V.createBtn }) do
+    for i = 1, 4 do
+        local b = row[i]
         if b then
             bx = bx - b:getWidth()
             b:setX(bx); b:setY(foot.y)
@@ -490,6 +501,9 @@ layout = function(panel, x, y, w, h)
     -- padding. That mistake cost two screens in this suite on 2026-08-23 and
     -- the fix is the same one: Region:header (DFKit.lua:466-472), sized by
     -- rowHeight() so it survives a larger text tier.
+    -- A gap above the caption so it does not butt against the deck chrome
+    -- (owner, 2026-08-24).
+    R:header(12)
     local head = R:header(DFKit.rowHeight())
     V.headY = head.y + 2
 

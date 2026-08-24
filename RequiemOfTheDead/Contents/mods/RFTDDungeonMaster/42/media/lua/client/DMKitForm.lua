@@ -78,23 +78,13 @@ function DMKitForm.buildDef(model, grants, requires)
     -- claim.once is written from a THREE-state dial, and "" is refused here
     -- rather than defaulted. DMKitDefs gives the reason: the unchosen answer is
     -- a kit that can be farmed, and it would be discovered months later.
-    if model.answered ~= "set" then
-        -- NAMES THE DIAL, not just the question. A refusal that describes a
-        -- setting without naming it sends the reader hunting, which is exactly
-        -- how this window's sizing bug was found: the message asked for an
-        -- answer and the control it wanted was off the bottom of the pane.
-        return nil, "Set 'Claim policy', then the wait beneath it. There is no "
-            .. "default: the unchosen answer is a kit with no wait, which can "
-            .. "be farmed. Zero is a fine answer - it just has to be chosen."
-    end
-
     local def = {
         id    = model.id,
         kind  = model.kind,
         label = (model.label ~= "" and model.label) or nil,
         note  = (model.note ~= "" and model.note) or nil,
-        claim = { cooldownHours = DMKitDefs.joinCooldown(model.waitDays,
-                                                        model.waitHours) },
+        claim = { cooldownHours = DMKitDefs.joinCooldown(model.durationDays,
+                                                        model.durationHours) },
         grants = grants,
     }
 
@@ -115,7 +105,7 @@ end
 function DMKitForm.modelOf(def)
     if not def then
         return { id = "", kind = DMKitDefs.ITEM, label = "", note = "",
-                 answered = "", waitDays = 0, waitHours = 0 }
+                 durationDays = 0, durationHours = 0 }
     end
     return {
         id    = def.id or "",
@@ -124,11 +114,9 @@ function DMKitForm.modelOf(def)
         note  = def.note or "",
         -- An existing kit HAS an answer, so the dial opens on it. The
         -- "- choose -" state exists for a kit nobody has decided about yet.
-        -- An existing kit HAS an answer, whatever it is - including zero.
-        answered = "set",
-        waitDays = select(1, DMKitDefs.splitCooldown(
+        durationDays = select(1, DMKitDefs.splitCooldown(
             def.claim and def.claim.cooldownHours)),
-        waitHours = select(2, DMKitDefs.splitCooldown(
+        durationHours = select(2, DMKitDefs.splitCooldown(
             def.claim and def.claim.cooldownHours)),
     }
 end
@@ -703,12 +691,7 @@ local function kitSchema(locked)
           -- while the old one carried on existing.
           locked = locked,
           help = locked
-              and "A kit's id cannot change once it exists - quests, flags and "
-               .. "the claim record all point at it. Create a new kit and "
-               .. "delete this one if you need a different id."
-              or "The stable key. Quests reference it, a flag's 'cleared by "
-               .. "kit' names it, and the claim record is keyed by it - so it "
-               .. "is the one thing here that should never be renamed.",
+              and "This cannot be changed once created. It is what persists in the claim record.",
           validate = function(s)
               local id, why = DMKitDefs.normalizeId(s)
               if not id then return false, why end
@@ -717,40 +700,20 @@ local function kitSchema(locked)
         { key = "kind", kind = "choice", label = "Reward type",
           values = { DMKitDefs.ITEM, DMKitDefs.TRAIT, DMKitDefs.XP },
           labels = { "Items", "Trait", "Skill XP" },
-          help = "ONE kit carries ONE reward type. Handing out loot and a "
-              .. "skill boost after an event is two kits offered together, "
-              .. "each claimed on its own - they are revealed differently, "
-              .. "they fail separately, and they can sit on different claim "
-              .. "clocks. Flags and counters are bookkeeping and ride in any "
-              .. "kit." },
+          help = "Each kit carries one reward type. Items, Trait, or Skill XP." },
         { key = "label", kind = "text", label = "Name", empty = "(use the id)",
           help = "What a player sees in their Kits window. At most "
               .. DMKitDefs.LABEL_MAX .. " characters." },
         { key = "note", kind = "text", label = "Note", empty = "(none)",
           help = "Free text for whoever reads this next. Never shown to a "
               .. "player and never interpreted." },
-        { key = "answered", kind = "choice", label = "Claim policy",
-          values = { "", "set" }, labels = { "- choose -", "Set below" },
-          help = "There is deliberately no default. The unchosen answer is a "
-              .. "kit with no wait at all, which is a farm - and it would be "
-              .. "found months later by whoever noticed the loot. Answer this, "
-              .. "then set the wait underneath: leaving both at zero is a "
-              .. "legitimate choice, but it has to be a CHOICE." },
-        { key = "waitDays", kind = "int", label = "Wait: days",
+        { key = "durationDays", kind = "int", label = "Duration: days",
           min = 0, max = math.floor(DMKitDefs.COOLDOWN_MAX_HOURS / 24), step = 1,
           unit = "days", zero = "none",
-          help = "How long before a player may take this kit again, in REAL "
-              .. "time - hours off a wall clock, not game time, so a day is a "
-              .. "day whatever the day-length sandbox option says. Add the "
-              .. "hours field underneath for anything finer.  A wait longer "
-              .. "than your season is how you write 'once per wipe': there is "
-              .. "no separate once-ever setting, because the claim record is "
-              .. "cleared by a wipe anyway." },
-        { key = "waitHours", kind = "int", label = "Wait: hours",
+          help = "How long a player has to wait between claims." },
+        { key = "durationHours", kind = "int", label = "Duration: hours",
           min = 0, max = 23, step = 1, unit = "hr", zero = "none",
-          help = "Hours ON TOP of the days above. Capped at 23 - 24 hours is a "
-              .. "day, and two ways to write the same wait is two numbers to "
-              .. "keep in step." },
+          help = "Hours on top of the days above. Capped at 23." },
     }
 end
 

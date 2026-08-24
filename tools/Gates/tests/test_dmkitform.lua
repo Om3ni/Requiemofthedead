@@ -111,26 +111,25 @@ check(model.id == "anomaly_loot", "the id was lost")
 check(model.kind == "item", "the kind was lost")
 check(model.label == "Anomaly Loot", "the label was lost")
 check(model.note == "handed out after the 2026 event", "the note was lost")
-check(model.answered == "set",
-    "an existing kit did not open with its policy already answered")
-check(model.waitDays == 5 and model.waitHours == 3,
+check(model.durationDays == 5 and model.durationHours == 3,
     "the stored wait did not split into the two dials: "
-    .. tostring(model.waitDays) .. "d " .. tostring(model.waitHours) .. "h")
+    .. tostring(model.durationDays) .. "d " .. tostring(model.durationHours) .. "h")
 check(DMKitForm.modelOf{ id = "x", kind = "xp",
-                         claim = { cooldownHours = 0 } }.waitDays == 0,
+                         claim = { cooldownHours = 0 } }.durationDays == 0,
     "a kit with no wait opened showing one")
 
--- A NEW kit opens with the claim dial UNSET, so the question has to be
--- answered. The unchosen answer is a repeatable kit, which is a farm.
+-- A new kit opens with both duration dials at zero - no wait - and that is a
+-- valid kit. The "- choose -" gate was removed on 2026-08-24: two visible
+-- number fields already show what the policy is, so a dial whose only job was
+-- to make somebody acknowledge them was ceremony.
 local blank = DMKitForm.modelOf(nil)
-check(blank.answered == "",
-    "the new-kit model pre-answered the claim policy, which is the default "
-    .. "nobody chose that DMKitDefs exists to refuse")
-check(blank.waitDays == 0 and blank.waitHours == 0,
+check(blank.durationDays == 0 and blank.durationHours == 0,
     "a new kit opened with a wait nobody typed")
-check(DMKitForm.buildDef(blank, { { kind = "item", type = "Base.Axe" } },
-                          { flags = {}, counters = {} }) == nil,
-    "a kit built with no claim policy")
+local fresh = DMKitForm.buildDef(blank, { { kind = "item", type = "Base.Axe" } },
+                                 { flags = {}, counters = {} })
+check(fresh ~= nil, "a new kit could not be built")
+check(fresh.claim.cooldownHours == 0,
+    "a kit with both dials at zero did not come out with no wait")
 
 -- ---- THE ROULETTE ROUND TRIP ---------------------------------------------
 
