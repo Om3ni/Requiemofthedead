@@ -126,8 +126,16 @@ local function hAdminConvert(player, args)
         RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "missing", zType = zType, onlineID = onlineID })
         return
     end
-    if svActiveZombies[obj] then
-        RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "already", zType = svActiveZombies[obj], onlineID = onlineID })
+    -- typeOf, not a registry read. `svActiveZombies` was RQServer's LOCAL when
+    -- these handlers lived there; after the 2026-08-19 split this line read a
+    -- global that has never existed and threw on every convert (proven in the
+    -- 2026-08-24 Mosaic session - the split shipped without a runtime pass).
+    -- typeOf is registry-then-modData, which also refuses a reloaded special
+    -- that has not re-registered yet - re-converting one would re-multiply its
+    -- health, so the wider refusal is the correct one.
+    local existing = RQSvShared.typeOf(obj)
+    if existing then
+        RQSvShared.sendToPlayer(player, "adminConvertResult", { status = "already", zType = existing, onlineID = onlineID })
         return
     end
     RQServer.svTryConvert(obj, cfg, zType, true)   -- admin placement: spacing bypassed
@@ -282,17 +290,21 @@ local function hAdminReroll(player, args)
     -- so zombies currently fighting someone (or near a visible admin)
     -- refund now but re-roll only after they disengage -- expect
     -- "converted" to trail "refunded" when players are in the thick of it.
-    local before = 0
-    for _ in pairs(svActiveZombies) do before = before + 1 end
+    -- eachActiveZombie's return value IS the visit count; the no-op callback
+    -- just declines the early stop. The registry itself is RQServer's local,
+    -- reachable only through RQSvShared's injected reference - the bare
+    -- `svActiveZombies` reads that stood here since the 08-19 split were
+    -- globals that never existed.
+    local before = RQSvShared.eachActiveZombie(function() end)
 
-    svRefundSeen  = {}
-    svRefundCount = 0
-    local visited = RQServer.svRunConversionScan()
-    svRefundSeen  = nil
-    local refunded = svRefundCount
+    -- One call, not an arm/scan/disarm dance against RQServer's internals.
+    -- The old inline sequence here assigned GLOBALS named like RQServer's
+    -- refund locals, so the latch never armed and every reroll reported
+    -- "0 rolls refunded" while refunding nothing. The latch stays private to
+    -- RQServer; the seam is a function.
+    local refunded, visited = RQServer.svRefundSweep()
 
-    local after = 0
-    for _ in pairs(svActiveZombies) do after = after + 1 end
+    local after = RQSvShared.eachActiveZombie(function() end)
 
     print(string.format(
         "[Dirge] adminReroll by %s: %d rolls refunded, %d zombies visited, %d new specials (%d active)",
@@ -326,8 +338,11 @@ local function hAdminInspect(player, args)
         return
     end
 
-    local md = obj:getModData()
-    local zType = svActiveZombies[obj] or md["RQType"]
+    -- Registry-then-modData is exactly RQSvShared.typeOf; the hand-rolled pair
+    -- this replaces read `svActiveZombies` as a global that never existed here
+    -- (RQServer's local, orphaned by the 08-19 split) and threw on every
+    -- inspect.
+    local zType = RQSvShared.typeOf(obj)
     RQSvShared.sendToPlayer(player, "adminInspectResult", {
         onlineID = onlineID,
         status   = zType and "special" or "normal",

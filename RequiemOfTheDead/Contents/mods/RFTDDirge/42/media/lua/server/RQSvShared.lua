@@ -170,6 +170,17 @@ local function getSvConfig()
         gluttonWeight     = spct(sv and sv.GluttonWeight,     30),
         scavengerWeight   = spct(sv and sv.ScavengerWeight,   5),
     }
+
+    -- The operator's DebugMode drives RQDirgeLog's master switch. The switch
+    -- ships false so a release server is quiet, and until 2026-08-24 nothing
+    -- ever flipped it - every debug-gated diagnostic, the Slice 1 hit probe
+    -- included, called write() into a no-op even with DebugMode on. A whole
+    -- Mosaic session produced zero [Dirge:*] lines before that was noticed.
+    -- Wired here because this is the one place the server reads the sandbox
+    -- flag; the cache clears on the refresh interval, so a live flip
+    -- propagates without a restart.
+    RQDirgeLog.ENABLED = svConfig.debugMode
+
     return svConfig
 end
 

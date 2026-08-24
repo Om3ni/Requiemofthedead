@@ -725,8 +725,23 @@ local function svRunConversionScan()
     return visited
 end
 
+-- Arm the refund latch, run one conversion scan, disarm. The latch and its
+-- counter are deliberately locals (they gate the hot path in svCheckZombie);
+-- when RQSvAdminCmds split out on 2026-08-19 it kept the inline arm/scan/disarm
+-- sequence, which then assigned same-named GLOBALS - the local latch never
+-- armed and adminReroll refunded nothing while reporting zero. The seam is a
+-- function; the state stays private.
+local function svRefundSweep()
+    svRefundSeen  = {}
+    svRefundCount = 0
+    local visited = svRunConversionScan()
+    svRefundSeen  = nil
+    return svRefundCount, visited
+end
+
 RQServer.svTryConvert        = svTryConvert
 RQServer.svRunConversionScan = svRunConversionScan
+RQServer.svRefundSweep       = svRefundSweep
 
 local function svConversionTick()
     svTickCount = svTickCount + 1

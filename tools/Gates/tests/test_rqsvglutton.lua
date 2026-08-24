@@ -52,6 +52,7 @@ RQSvShared = {
 RQDirgeLog = { write = function() end }
 
 local corpsePresent = true
+local injectedState = nil
 RQSvEating = {
     svGluttonFindCorpse = function()
         scanCalls = scanCalls + 1
@@ -63,7 +64,7 @@ RQSvEating = {
     svRestoreAI         = function() end,
     svFinalizeEater     = function() end,
     svCorpseStillThere  = function() return corpsePresent end,
-    setGluttonState     = function() end,
+    setGluttonState     = function(tbl) injectedState = tbl end,
     svCancelEaterState  = function(_, state)
         state.phase        = "idle"
         state.targetCorpse = nil
@@ -72,9 +73,26 @@ RQSvEating = {
     end,
 }
 
+-- Recording require: the file dereferences RQSvEating at FILE SCOPE, so it
+-- must DECLARE that dependency rather than inherit it from whoever loaded it
+-- first. On 2026-08-24 the alphabetical walk pulled this file in via RQMcCoy
+-- before RQSvEating existed and the tail injection died for the whole session;
+-- the assertion below fails if the require line is ever removed again.
+local demanded = {}
+function require(name)
+    demanded[name] = true
+    if name ~= "RQSvEating" then
+        error("unexpected fixture require: " .. tostring(name))
+    end
+end
+
 RQSvGlutton = nil
 local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
+check(demanded["RQSvEating"] == true,
+    "the file declares its RQSvEating dependency - load order is not a contract")
+check(injectedState ~= nil and injectedState == RQSvGlutton.state,
+    "the eating engine received this module's state table at load")
 
 local function makeZombie(id)
     return {

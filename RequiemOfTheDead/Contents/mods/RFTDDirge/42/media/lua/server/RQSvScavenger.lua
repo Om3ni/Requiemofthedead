@@ -13,6 +13,13 @@
 -- Depends on RQSvShared and RQSvEating (corpse reservation lives there).
 if not isServer() then return end
 
+-- RQSvEating is dereferenced at FILE SCOPE (the state injection at the bottom),
+-- so the dependency is declared, not assumed from load order. RQBloodhound
+-- sorts ahead of RQSvEating in the alphabetical walk and pulled this file in
+-- first on 2026-08-24 - the injection threw against nil and eating was dead all
+-- session. Full mechanics of that failure: RQSvGlutton.lua's matching note.
+require "RQSvEating"
+
 RQSvScavenger = RQSvScavenger or {}
 
 -- Matches the Glutton's corpse-scan cadence; both feed the same eating
@@ -80,6 +87,86 @@ end
 -- tickRageAura is GONE (2026-08-24). An enraged Scavenger still protects the
 -- specials around it; RQBulwark decides that when a hit lands rather than
 -- pre-granting health that outlived the rage that earned it.
+--
+-- The two functions below were COLLATERAL of that deletion for part of
+-- 2026-08-24: the removal script's pattern swallowed its neighbours, the file
+-- stayed syntax-clean, and every fixture stubbed this module - so the loss was
+-- invisible until a fixture loaded the real file and asked for the surface
+-- RQSvHit, RQBulwark and RQBloodhound dispatch to. Restored verbatim from the
+-- pre-deletion tree.
+
+-- Is this Scavenger currently raging? Asked by RQBulwark, which protects an
+-- enraged Scavenger and deliberately does not protect a passive one.
+--
+-- Live state first, the persisted flag second - the same shape as
+-- RQSvShared.typeOf and for the same reason. A Scavenger that has not been
+-- ticked since a reload has no state row yet but still carries RQScavHostile,
+-- and it is unambiguously still raging; answering "no" for the gap between
+-- reload and first tick would hand players a window where the hardest target in
+-- the game briefly stops defending itself.
+function RQSvScavenger.isEnraged(zombie)
+    if not zombie then return false end
+    local oid = zombie:getOnlineID()
+    local state = oid and RQSvScavenger.state[oid]
+    if state then return state.hostile == true end
+    return zombie:getModData()["RQScavHostile"] == true
+end
+
+-- Called by RQSvHit, which has already established that this is a player
+-- attack on a registered special. Takes only the zombie: the attacker's name
+-- was a parameter for years and never read by a single line of this body.
+function RQSvScavenger.onPlayerHit(zombie)
+    if not zombie then return end
+    local scavID = zombie:getOnlineID()
+    if not scavID or scavID < 0 then return end
+    local state = RQSvScavenger.state[scavID]
+    if not state then return end          -- not yet ticked; client will retry on next hit
+    if state.hostile then return end      -- already raging, ignore duplicate hits
+
+    local cfg    = RQSvShared.getSvConfig()
+    local now    = getTimestampMs()
+    local rageHP = state.peakHP * RAGE_HP_MULTIPLIER
+
+    state.hostile       = true
+    state.rageStartTime = now
+    state.peakHP        = rageHP   -- FROZEN. No further bumps.
+    zombie:getModData()["RQScavHostile"] = true
+    zombie:transmitModData()
+
+    -- Cancel any in-flight eating before flipping. Co-eating: drop ourselves
+    -- from the shared cast so the survivors get the correct share count
+    -- (locked N excludes the rage-quitter). If we were the only eater this
+    -- also GCs the cast entry so the corpse goes back in the pool.
+    RQSvEating.svClearEatingIntent(zombie)
+    RQSvEating.svRemoveEaterFromCast(state.targetCorpse, scavID)
+    state.phase        = "idle"
+    state.targetCorpse = nil
+    state.targetSq     = nil
+    state.castDue      = nil
+    zombie:setUseless(false)
+    zombie:setVariable("bPathfind", true)
+    zombie:setVariable("bMoving",   false)
+    zombie:setEatBodyTarget(nil, false, 1.0)
+    RQSvShared.broadcast("castDone", { ringId = "scav_" .. scavID })
+    RQSvShared.broadcast("gluttonAnimate", {
+        onlineID = scavID, eating = false, phase = "idle",
+        x = math.floor(zombie:getX()),
+        y = math.floor(zombie:getY()),
+        z = math.floor(zombie:getZ()),
+    })
+    RQSvShared.svSetZombieHP(zombie, rageHP)
+    local zx = math.floor(zombie:getX())
+    local zy = math.floor(zombie:getY())
+    local zz = math.floor(zombie:getZ())
+    addSound(zombie, zx, zy, zz, cfg.screamerSoundRadius, cfg.screamerSoundRadius)
+
+    -- Tell clients to play the scream sound and apply the screamer disorientation
+    -- pipeline at the rage epicenter. Mirrors what boss Scream / screamer zombies
+    -- do, just delivered via a dedicated command so we don't fake a castStart bar.
+    RQSvShared.broadcast("scavRageScream", {
+        x = zx, y = zy, z = zz, onlineID = scavID,
+    })
+end
 
 -- main tick, called each alive behavior pass for scavenger zombies
 function RQSvScavenger.tick(zombie)

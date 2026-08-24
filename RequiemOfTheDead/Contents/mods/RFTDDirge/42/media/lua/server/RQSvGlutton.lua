@@ -6,6 +6,18 @@
 
 if not isServer() then return end
 
+-- RQSvEating is dereferenced at FILE SCOPE - the state injection at the bottom
+-- of this file - so it must be loaded before this file runs, and "RQServer
+-- happens to require them in the right order" is not a contract. Proven
+-- 2026-08-24: RQMcCoy sorts before RQSvEating in the server's alphabetical
+-- walk and requires this file, which ran the injection while RQSvEating was
+-- still nil. The throw was swallowed by require's own protectedCall
+-- (LuaManager.java:1391), so the server booted, McCoy kept loading, and the
+-- one line that died was the injection - every eaterArrived then crashed
+-- against a nil state table for the whole session. Same rule as CLAUDE.md's
+-- RD*-at-file-scope rule, applied to our own modules.
+require "RQSvEating"
+
 -- ========================
 -- State table
 -- gID -> { eatCount, baseHealth, phase, targetCorpse, targetSq, seekDue, castDue }

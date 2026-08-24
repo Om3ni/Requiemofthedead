@@ -33,12 +33,28 @@ local enums = {}
 for i = 1, #enumNames do enums[enumNames[i]] = {} end
 RQCommon = {
     MODULE = "RFTDDirge",
-    HEALTH_MULTIPLIER = 2,
+    -- The real shape from RQCommon.lua:103 - a per-type TABLE. The old stub
+    -- said `= 2`, which nothing ever dereferenced until getSvConfig became
+    -- callable from this fixture; a stub that lies about a shape passes right
+    -- up until the first honest read.
+    HEALTH_MULTIPLIER = {
+        Screamer   = 2,
+        Juggernaut = 10,
+        EMP        = 2,
+        Glutton    = 2,
+        Scavenger  = 2,
+        Boss       = 10,
+    },
     JUGGERNAUT_MIN_BASE_HEALTH = 100,
     ENUMS = enums,
-    ev = function() return nil end,
-    pct = function() return nil end,
+    -- Value-or-default, matching the real resolvers closely enough for
+    -- getSvConfig to be CALLABLE from a test. The old always-nil stubs made
+    -- `sev(...) * 1000` throw, so no fixture could ever reach the config
+    -- builder - which is where the DebugMode wiring under test now lives.
+    ev = function(_, value, default) return value or default end,
+    pct = function(value, default) return value or default end,
 }
+RQDirgeLog = { write = function() end }
 RDAccess = { meetsTier = function() return false end }
 MoodleType = { ENDURANCE = "Endurance" }
 CharacterStat = { ENDURANCE = "Endurance" }
@@ -239,6 +255,27 @@ check(RQSvShared.due(zeroed, "lastBuffTick", 2000, 50000) == true,
 -- against", which must not throw inside a per-tick loop.
 check(RQSvShared.due(nil, "k", 1000, 1) == true,
     "a nil state row is treated as due rather than raising")
+
+-- ---------------------------------------------------------------------------
+-- DebugMode drives RQDirgeLog's master switch
+-- ---------------------------------------------------------------------------
+-- RQDirgeLog ships ENABLED=false so a release server is quiet - and until
+-- 2026-08-24 nothing ever flipped it, so every debug-gated diagnostic
+-- (the Slice 1 hit probe included) wrote into a no-op even with the sandbox
+-- flag on. The wiring lives in getSvConfig because that is the one place the
+-- server reads the flag; both directions ride the cache-clear path a live
+-- sandbox flip would ride.
+RQDirgeLog.ENABLED = false
+SandboxVars = { RFTDDirge = { DebugMode = true } }
+RQSvShared.clearSvConfig()
+RQSvShared.getSvConfig()
+check(RQDirgeLog.ENABLED == true,
+    "DebugMode on flips the log master switch on when the config is built")
+SandboxVars.RFTDDirge.DebugMode = false
+RQSvShared.clearSvConfig()
+RQSvShared.getSvConfig()
+check(RQDirgeLog.ENABLED == false,
+    "DebugMode off drops the switch with it on the next config build")
 
 print(string.format("RQSvShared: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

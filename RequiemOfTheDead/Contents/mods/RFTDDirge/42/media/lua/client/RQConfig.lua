@@ -202,6 +202,14 @@ function RQConfig.get()
         -- sandbox so a server can hold the whole lobby to one volume.
         screamerVolume         = pct(sv and sv.ScreamerVolume, 100) / 100.0,
     }
+
+    -- Client half of the DebugMode -> RQDirgeLog wiring; the server half lives
+    -- in RQSvShared's getSvConfig with the full story. Without this the
+    -- [RQEat:Cl] navigation lines and every other client diagnostic stayed
+    -- dark regardless of the sandbox flag, because RQDirgeLog ships with its
+    -- master switch off.
+    RQDirgeLog.ENABLED = cachedConfig.debugMode
+
     return cachedConfig
 end
 
