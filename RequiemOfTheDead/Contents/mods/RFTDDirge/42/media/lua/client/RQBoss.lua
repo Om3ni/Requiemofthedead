@@ -14,8 +14,12 @@ RQBoss = RQBoss or {}
 
 -- Set of zombie objects currently inside any Boss's buff aura, rebuilt each
 -- render tick. Other modules read this to know they should yield to the boss
--- color. Weak-keyed so dead zombies dont linger.
-RQBoss.bossBuffPainted = setmetatable({}, { __mode = "k" })
+-- color.
+-- NOT weak-keyed, and it never was: Kahlua ignores `__mode` entirely
+-- (see RDLedger's header). This table is safe for a different, real reason:
+-- the whole table is REPLACED every render tick, so the previous one becomes
+-- garbage immediately and no row can outlive one frame.
+RQBoss.bossBuffPainted = {}
 
 -- Local player in range of any Boss aura this frame. Published so RQJuggernaut
 -- can OR this with its own range check before deciding to apply/release the
@@ -44,8 +48,9 @@ Events.OnRenderTick.Add(function()
     local px        = player:getX()
     local py        = player:getY()
 
-    -- rebuild the painted set fresh each frame
-    local painted = setmetatable({}, { __mode = "k" })
+    -- rebuild the painted set fresh each frame - this replacement, not any
+    -- weak-key behaviour, is what bounds the table (Kahlua has no weak tables)
+    local painted = {}
     RQBoss.bossBuffPainted = painted
     local playerInAnyBossAura = false
 
@@ -115,7 +120,7 @@ function RQBoss.onDead(zombie)
 end
 
 Events.OnGameStart.Add(function()
-    RQBoss.bossBuffPainted = setmetatable({}, { __mode = "k" })
+    RQBoss.bossBuffPainted = {}
 end)
 
 -- ---------------------------------------------------------------------------

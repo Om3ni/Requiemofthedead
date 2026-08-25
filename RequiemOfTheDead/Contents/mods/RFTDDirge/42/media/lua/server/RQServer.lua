@@ -36,7 +36,12 @@ require "RQWireHeadroom"
 -- Orchestrator-owned state
 -- ========================
 
-local svActiveZombies  = setmetatable({}, { __mode = "k" })
+-- NOT weak-keyed, and it never was: Kahlua ignores `__mode` entirely (see
+-- RDLedger). What actually bounds this table is the tick-loop eviction pass
+-- below, which drops a row the moment its zombie reads dead, grapple-husk, or
+-- id == -1. That pass is also why the pooled-object hazard described next is
+-- survivable here.
+local svActiveZombies  = {}
 -- Roll bookkeeping -- the consumed ticket and any spacing-parked winner --
 -- lives in zombie modData (RQRolled / RQPendingType), NOT in Lua tables keyed
 -- by the zombie object. Engine-verified reason (ZombiePopulationManager /
@@ -53,12 +58,12 @@ local svActiveZombies  = setmetatable({}, { __mode = "k" })
 -- is the best any Lua-side state can do. Post-reload re-rolls are accepted
 -- and made invisible by the GUARD_RANGE gate below.
 local svDeathCache     = {}   -- onlineID -> { zType, x, y, z, updatedAt }
--- Dormant-registry pid per tracked special. Parallel weak table on purpose:
+-- Dormant-registry pid per tracked special. Parallel table on purpose:
 -- svActiveZombies keeps its value shape (zombie -> zType) so every existing
 -- iteration site stays untouched. Entries share svActiveZombies' lifecycle --
 -- both are evicted in the same tick-loop cleanup pass, so the pooled-object
 -- aliasing window is identical to what the tracker already accepts.
-local svPids           = setmetatable({}, { __mode = "k" })
+local svPids           = {}
 local svProcessedDeaths = {}  -- onlineIDStr -> timestamp
 -- adminReroll support: non-nil only during the command's synchronous sweep.
 -- Dedups per-zombie refunds when overlapping player scan ranges visit the
@@ -1398,11 +1403,11 @@ end
 -- ========================
 
 Events.OnGameStart.Add(function()
-    svActiveZombies   = setmetatable({}, { __mode = "k" })
+    svActiveZombies   = {}
     -- svPids resets with it; the RQDormant GMD table deliberately does NOT --
     -- surviving restarts is the whole feature. Live specials re-mint pids via
     -- the svCheckZombie recovery branch.
-    svPids            = setmetatable({}, { __mode = "k" })
+    svPids            = {}
     svRefundSeen      = nil
     svRefundCount     = 0
     svDeathCache      = {}

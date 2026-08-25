@@ -396,7 +396,11 @@ InventoryCollapse.HANDLERS = {}
 -- ---------------------------------------------------------------------------
 
 -- Weak keys: a class table we patched should not be kept alive by this set.
-local patched = setmetatable({}, { __mode = "k" })
+-- NOT weak-keyed, and it never was: Kahlua ignores `__mode` entirely
+-- (see RDLedger's header). This table is safe for a different, real reason:
+-- it is keyed by CLASS, not by instance. ISUI classes live for the whole
+-- session by design, so there is nothing here that could ever be reclaimed.
+local patched = {}
 
 local function patchPane(cls)
     if type(cls) ~= "table" then return false end

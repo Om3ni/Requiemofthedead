@@ -84,6 +84,7 @@
 -- REJECTED rather than desynced.
 -- =============================================
 
+require "RDLedger"
 require "RQCommon"
 
 RQFlinch = RQFlinch or {}
@@ -197,24 +198,33 @@ end
 -- Returns the completed span when a reaction ENDS, otherwise nil. Deliberately
 -- returns rather than logs: the caller owns the zombie's identity and the log
 -- budget, and this file should not reach for either.
-local spans = setmetatable({}, { __mode = "k" })
+-- WAS A "WEAK" TABLE UNTIL 2026-08-25, which in Kahlua means it was a strong
+-- one: J2SEPlatform.newTable() hands back a LinkedHashMap and nothing in the
+-- engine reads `__mode` (see RDLedger's header). A zombie that unloaded
+-- mid-reaction therefore left its span row here for the life of the session,
+-- pinning the IsoZombie so the engine could never collect it. The ledger's
+-- liveness rule is what actually reclaims those now.
+local spans = RDLedger.new({
+    name = "RQFlinch.spans",
+    live = function(zombie) return zombie and not zombie:isDead() end,
+})
 
 function RQFlinch.observe(zombie, now)
     if not zombie then return nil end
     local reacting = RQFlinch.isReacting(zombie)
-    local span = spans[zombie]
+    local span = spans.get(zombie)
 
     if reacting then
         if span then
             span.frames = span.frames + 1
         else
-            spans[zombie] = { startedAt = now, frames = 1 }
+            spans.set(zombie, { startedAt = now, frames = 1 })
         end
         return nil
     end
 
     if not span then return nil end
-    spans[zombie] = nil
+    spans.remove(zombie)
 
     local finished = { ms = now - span.startedAt, frames = span.frames }
     RQFlinch.stats.spans = RQFlinch.stats.spans + 1
@@ -225,7 +235,7 @@ function RQFlinch.observe(zombie, now)
 end
 
 function RQFlinch.reset()
-    spans = setmetatable({}, { __mode = "k" })
+    spans.clear()
     RQFlinch.stats.set      = 0
     RQFlinch.stats.cleared  = 0
     RQFlinch.stats.released = 0

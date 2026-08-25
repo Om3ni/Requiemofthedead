@@ -20,6 +20,13 @@ RQChargeLevy = nil
 dofile(CHARGE_SOURCE)
 function require(name)
     if name == "RQChargeLevy" then return RQChargeLevy end
+    -- The REAL RDZombieId, not a stub. Its entire value is the rule that -1 is
+    -- the only invalid onlineID, and svSetZombieHP / svDeliverMovement now both
+    -- depend on it - a stub would let the negative-id bug back in unseen.
+    if name == "RDZombieId" then
+        dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDZombieId.lua")
+        return
+    end
     error("unexpected fixture require: " .. tostring(name))
 end
 

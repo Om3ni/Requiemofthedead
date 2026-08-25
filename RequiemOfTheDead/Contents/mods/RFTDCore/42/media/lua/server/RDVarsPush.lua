@@ -87,7 +87,7 @@ RDVars.onTouched = function(user) RDVarsPush.push(user) end
 
 -- The connect-event lottery, played the way the suite already plays it:
 -- register on whichever of the four exists on this build (StaffTools'
--- DFPlayerRoles_Server.lua:240-243; Dirge's RQServer.lua:1313 documents that
+-- DFPlayerRoles_Server.lua:240-243; Dirge's RQServer.lua:1378 documents that
 -- OnClientConnect is null on B42 dedicated servers). Duplicate fires are
 -- harmless - the push is idempotent.
 local bound = {}

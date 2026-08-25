@@ -52,7 +52,11 @@ RQMcCoy.HEAL_PCT   = HEAL_PCT
 
 -- Weak-keyed for the same reason Bloodhound's table is: a healing window must
 -- never be why a pooled zombie object stays reachable.
-local windows = setmetatable({}, { __mode = "k" })
+-- NOT weak-keyed, and it never was: Kahlua ignores `__mode` entirely
+-- (see RDLedger's header). This table is safe for a different, real reason:
+-- the expiry pass clears finished windows and the reset path clears the rest,
+-- so rows leave on their own schedule rather than on the collector's.
+local windows = {}
 RQMcCoy.windows = windows
 
 RQMcCoy.stats = {

@@ -21,6 +21,8 @@
 --      Bulwark.
 
 local ROOT = arg[1] or "."
+local ZID    = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDZombieId.lua"
+local LEDGER = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDLedger.lua"
 local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/client/RQPoise.lua"
 
 local passed, failed = 0, 0
@@ -74,6 +76,9 @@ function require(name)
     local known = { RQCommon = true, RQDirgeLog = true, RQRegistry = true,
                     RQReconcile = true, RQFlinch = true }
     if known[name] then return end
+    if name == "RDZombieId" then dofile(ZID) return end
+    -- The real ledger, for the same reason test_rqflinch loads it.
+    if name == "RDLedger" then dofile(LEDGER) return end
     error("unexpected fixture require: " .. tostring(name))
 end
 
@@ -127,6 +132,35 @@ check(#setCalls == 2, "which is the second and only other write")
 -- THE MELEE LANE runs for every qualifying update - it no-ops internally
 -- unless the zombie is genuinely mid-staggerback.
 check(releaseCalls > 0, "releaseStagger is offered the zombie each pass")
+
+-- ---------------------------------------------------------------------------
+-- THE NEGATIVE onlineID
+-- ---------------------------------------------------------------------------
+-- Shipped broken until 2026-08-25 as `if not onlineID or onlineID <= 0 then
+-- return end`. IsoZombie.onlineId is a SHORT (IsoZombie.java:325) that wraps
+-- past 32767 into negative numbers, and the engine's own validity test is
+-- always `== -1` - never `< 0`. The live reflect archive is full of ordinary
+-- zombies with ids like -10307. That test therefore denied stagger immunity to
+-- roughly half the population on any long-running server, and every symptom of
+-- it read as "Bulwarks are flaky" rather than as an id bug.
+--
+-- Nothing else in the suite pins this, so it is pinned here.
+local wrapped = makeZombie(-10307)
+types[-10307] = "Boss"
+RQPoise.update(wrapped, nowMs)
+check(wrapped.flinch == true,
+    "a Boss past the short wrap (id -10307) still gets immunity")
+
+-- 0 is a legitimate id too; only -1 is the engine's sentinel.
+local zeroId = makeZombie(0)
+types[0] = "Boss"
+RQPoise.update(zeroId, nowMs)
+check(zeroId.flinch == true, "id 0 is valid as well - only -1 is 'no id'")
+
+local noId = makeZombie(-1)
+types[-1] = "Boss"
+RQPoise.update(noId, nowMs)
+check(noId.flinch == nil, "id -1 IS refused - it means the zombie has no identity yet")
 
 -- ---------------------------------------------------------------------------
 -- Who does NOT qualify
@@ -185,10 +219,7 @@ dead.isDead = function() return true end
 RQPoise.update(dead, nowMs)
 check(dead.flinch == nil, "a dead zombie is not worth an engine call")
 
-local noID = makeZombie(-1)
-types[-1] = "Boss"
-RQPoise.update(noID, nowMs)
-check(noID.flinch == nil, "a zombie with no valid onlineID is skipped")
+-- (the -1 case is covered above, alongside the ids that must NOT be refused)
 
 -- ---------------------------------------------------------------------------
 -- Bounded instrumentation

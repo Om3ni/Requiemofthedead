@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 if not isServer() then return end
 
+require "RDZombieId"
 require "RQChargeLevy"
 
 RQSvShared = RQSvShared or {}
@@ -246,8 +247,11 @@ local function svSetZombieHP(zombie, targetHP, ownerOnly)
     end
     if targetHP < 0 then targetHP = 0 end
     zombie:setHealth(targetHP)
-    local oid = zombie:getOnlineID()
-    if not oid or oid < 0 then return false end
+    -- `oid < 0` here until 2026-08-25. onlineId is a short and wraps negative,
+    -- so that test silently refused delivery to about half the population on a
+    -- long-running server. RDZombieId carries the decompile evidence.
+    local oid = RDZombieId.of(zombie)
+    if not oid then return false end
 
     local payload = {
         onlineID = oid,
@@ -373,8 +377,11 @@ local function svDeliverMovement(zombie, walkType, speedMod, turnDelta)
     zombie:setTurnDelta(turnDelta)
     zombie:resetModelNextFrame()
 
-    local oid = zombie:getOnlineID()
-    if not oid or oid < 0 then return false end
+    -- `oid < 0` here until 2026-08-25. onlineId is a short and wraps negative,
+    -- so that test silently refused delivery to about half the population on a
+    -- long-running server. RDZombieId carries the decompile evidence.
+    local oid = RDZombieId.of(zombie)
+    if not oid then return false end
 
     -- Nullable BY DESIGN: no owner means this server already owns the zombie,
     -- so the direct write above is authoritative and a packet would be waste.

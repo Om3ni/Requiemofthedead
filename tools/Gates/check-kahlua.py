@@ -105,6 +105,32 @@ COLLECTION_METHODS = {
     "getTags": "InventoryItem.java:2661 returns Set<ItemTag> - use hasTag(tag)",
 }
 
+# ---------------------------------------------------------------------------
+# CHECK 3 - `__mode`, the weak table that is not one
+#
+# Kahlua has NO weak tables. `J2SEPlatform.newTable()` returns
+# `new KahluaTableImpl(new LinkedHashMap<Object, Object>())`
+# (J2SEPlatform.java:41-43), `KahluaTableImpl.setMetatable` stores the metatable
+# without ever inspecting it, and the string `__mode` appears NOWHERE in the
+# 42.20.3 decompile. So `setmetatable({}, { __mode = "k" })` is decoration: the
+# table is strong and pins whatever you put in it - IsoZombie objects included -
+# for the life of the process.
+#
+# THIS IS THE EXACT SHAPE CHECK 1 EXISTS FOR. Real Lua 5.1 does have weak
+# tables, so run-tests (which runs real 5.1, deliberately) is green while the
+# shipped mod leaks. Fourteen sites across seven files were written against the
+# assumption before anyone read J2SEPlatform, and the two that genuinely leaked
+# were found by hand, not by a gate.
+#
+# ZERO TOLERANCE for the same reason as check 1: there is no correct use of a
+# metafield the engine never reads. The replacement is RDLedger, where a row
+# states its liveness rule and a bounded sweep enforces it.
+#
+# Matched on the metafield rather than on setmetatable, because the table and
+# its metatable are not always written on one line.
+# ---------------------------------------------------------------------------
+WEAK_MODE = re.compile(r"__mode\s*=")
+
 ITER_CALL = re.compile(r"\b(i?pairs)\s*\(([^()]*?[:.](" + "|".join(COLLECTION_METHODS) + r")\s*\([^()]*\))")
 
 
@@ -147,6 +173,13 @@ def main():
                 if not NEXT_CALL.match(code, m.start()):
                     allowed.append((path, line_of(code, m.start()), token.strip()))
 
+        for m in WEAK_MODE.finditer(code):
+            violations.append((path, line_of(code, m.start()),
+                               "__mode: Kahlua has no weak tables - the table is "
+                               "STRONG and pins its keys for the session. Use "
+                               "RDLedger, which states a liveness rule and sweeps.",
+                               source_line(raw, m.start())))
+
         for m in ITER_CALL.finditer(code):
             method = m.group(3)
             violations.append((path, line_of(code, m.start()),
@@ -162,7 +195,7 @@ def main():
 
     if not violations:
         print("%d file(s) scanned, no Kahlua-subset violations." % scanned)
-        print("Checks bare next() and pairs() over a Java collection. It does NOT "
+        print("Checks bare next(), pairs() over a Java collection, and __mode. It does NOT "
               "check the ~200-local ceiling or BaseLib's global set - see the header.")
         return 0
 

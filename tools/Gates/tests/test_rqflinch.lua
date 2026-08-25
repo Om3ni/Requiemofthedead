@@ -15,6 +15,7 @@
 
 local ROOT = arg[1] or "."
 local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/client/RQFlinch.lua"
+local LEDGER = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDLedger.lua"
 local ANIMSETS = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/AnimSets/zombie/"
 
 -- Every node in the family, with the per-node expectations that must not
@@ -54,6 +55,11 @@ Events = { OnGameStart = { Add = function(fn) startHooks[#startHooks + 1] = fn e
 
 function require(name)
     if name == "RQCommon" then return end
+    -- The REAL ledger, not a stub: RQFlinch's span table now depends on its
+    -- liveness semantics, and a stub that merely stored rows would let a
+    -- lifetime regression pass green here - which is the whole failure mode
+    -- the ledger exists to end.
+    if name == "RDLedger" then dofile(LEDGER) return end
     error("unexpected fixture require: " .. tostring(name))
 end
 
@@ -70,7 +76,11 @@ check(ok, "module loads: " .. tostring(err))
 local function makeZombie()
     return {
         vars = {}, state = "idle", timer = 30.0,
-        staggered = false, reaction = "",
+        staggered = false, reaction = "", dead = false,
+        -- The span ledger's liveness rule calls this, so the fake implements
+        -- it. A fixture that omitted it would fail loudly here rather than
+        -- quietly in game, which is the point of modelling the real surface.
+        isDead = function(self) return self.dead end,
         setVariable = function(self, k, v) self.vars[k] = v end,
         getVariableBoolean = function(self, k) return self.vars[k] == true end,
         getCurrentActionContextStateName = function(self) return self.state end,

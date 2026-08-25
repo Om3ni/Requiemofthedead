@@ -51,6 +51,8 @@
 -- No isServer guard: media/lua/client is client-only, and no other file in this
 -- directory carries one. The per-zombie owner gate lives in update().
 
+require "RDLedger"
+require "RDZombieId"
 require "RQCommon"
 require "RQDirgeLog"
 require "RQFlinch"
@@ -78,9 +80,17 @@ RQPoise.TYPES = TYPES
 -- settles it.
 local SPAN_LOG_LIMIT = 40
 
--- Weak-keyed: this must never be the reason a dead zombie stays reachable.
--- Same rule as RQBloodhound's pursuit table.
-local tracked = setmetatable({}, { __mode = "k" })
+-- WAS A "WEAK" TABLE UNTIL 2026-08-25, and in Kahlua that meant a strong one -
+-- `__mode` is never read (see RDLedger's header). It leaked for a specific
+-- reason worth stating: update() returns early on isDead(), so a Bulwark's row
+-- was never reached again after it died and stayed here pinning the IsoZombie
+-- for the session. The ledger's liveness rule is what reclaims it now, and the
+-- background sweep is what catches the chunk-unload case that fires no death
+-- event at all.
+local tracked = RDLedger.new({
+    name = "RQPoise.tracked",
+    live = function(zombie) return zombie and not zombie:isDead() end,
+})
 RQPoise.tracked = tracked
 
 RQPoise.stats = {
@@ -114,24 +124,27 @@ function RQPoise.update(zombie, now)
     -- the owner's position updates settle it.
     if isClient() and zombie:isRemoteZombie() then return end
 
-    local onlineID = zombie:getOnlineID()
-    if not onlineID or onlineID <= 0 then return end
+    -- `<= 0` here until 2026-08-25, which denied immunity to every zombie past
+    -- the short wrap - about half the population on a long-running server. See
+    -- RDZombieId: -1 is the only invalid id, negative ids are ordinary.
+    local onlineID = RDZombieId.of(zombie)
+    if not onlineID then return end
 
     local zType = typeFor(onlineID)
     if not zType then
         -- A zombie that stops qualifying (a Scavenger row can outlive a
         -- reload) must not keep its immunity. Only touched when we actually
         -- have a row, so an ordinary zombie never costs an engine call here.
-        if tracked[zombie] then
+        if tracked.get(zombie) then
             RQFlinch.set(zombie, false)
-            tracked[zombie] = nil
+            tracked.remove(zombie)
             RQPoise.stats.released = RQPoise.stats.released + 1
         end
         return
     end
 
-    if not tracked[zombie] then
-        tracked[zombie] = zType
+    if not tracked.get(zombie) then
+        tracked.set(zombie, zType)
         RQPoise.stats.guarded = RQPoise.stats.guarded + 1
         RQPoise.stats.byType[zType] = (RQPoise.stats.byType[zType] or 0) + 1
     end
@@ -164,8 +177,7 @@ Events.OnZombieUpdate.Add(function(zombie)
 end)
 
 function RQPoise.reset()
-    tracked = setmetatable({}, { __mode = "k" })
-    RQPoise.tracked = tracked
+    tracked.clear()
     RQPoise.stats.guarded  = 0
     RQPoise.stats.released = 0
     RQPoise.stats.logged   = 0

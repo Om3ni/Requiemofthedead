@@ -75,7 +75,11 @@ local PURSUES = { Boss = true, Juggernaut = true, Scavenger = true }
 -- Weak-keyed: a pursuit must never be the reason a dead zombie stays reachable.
 -- The engine pools and recycles zombie objects, so holding one strongly here
 -- would be a leak with a very long fuse.
-local pursuits = setmetatable({}, { __mode = "k" })
+-- NOT weak-keyed, and it never was: Kahlua ignores `__mode` entirely
+-- (see RDLedger's header). This table is safe for a different, real reason:
+-- RQBloodhound.update sweeps every pass and ends a pursuit on zombie-dead,
+-- quarry-invalid or timeout, so no row survives its zombie.
+local pursuits = {}
 RQBloodhound.pursuits = pursuits
 
 RQBloodhound.stats = {
