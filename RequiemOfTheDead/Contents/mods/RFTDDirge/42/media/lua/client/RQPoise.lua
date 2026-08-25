@@ -65,7 +65,7 @@ RQPoise = RQPoise or {}
 local TYPES = {
     Boss       = true,
     Juggernaut = true,
-    Scavenger  = true,   -- enraged only; see profileFor
+    Scavenger  = true,   -- enraged only; see typeFor
 }
 RQPoise.TYPES = TYPES
 
