@@ -257,6 +257,64 @@ check(RQSvShared.due(nil, "k", 1000, 1) == true,
     "a nil state row is treated as due rather than raising")
 
 -- ---------------------------------------------------------------------------
+-- Movement writes must reach the OWNING CLIENT
+-- ---------------------------------------------------------------------------
+-- The regression: a server-side setWalkType/setSpeedMod on a client-owned
+-- zombie is erased by that client's next sync (NetworkZombiePacker.applyZombie
+-- :251-252 re-applies the packet's walk type unconditionally). On 2026-08-24
+-- Bloodhound logged sprint=true while the owner watched a Juggernaut walk, and
+-- the hit probe reported owner=client on 90 of 90 hits - so this is the normal
+-- case, not a corner. Delivery now mirrors svSetZombieHP's ownerOnly branch.
+local moveOwner = { username = "mover" }
+local moved = {}
+local moveZombie = {
+    getOnlineID = function() return 77 end,
+    getX = function() return 5.4 end,
+    getY = function() return 6.6 end,
+    getZ = function() return 0 end,
+    getOwnerPlayer = function() return moveOwner end,
+    setWalkType              = function(_, v) moved.walkType = v end,
+    setSpeedTypeFromWalkType = function() moved.derived = true end,
+    setSpeedMod              = function(_, v) moved.speedMod = v end,
+    setTurnDelta             = function(_, v) moved.turnDelta = v end,
+    resetModelNextFrame      = function() moved.reset = true end,
+}
+
+commands = {}
+check(RQSvShared.applySprintProfile(moveZombie), "a sprint on a client-owned zombie reports delivery")
+check(moved.walkType and moved.walkType:sub(1, 6) == "sprint",
+    "the sprint uses a real sprintN walk type, not a name the wire would flatten to WT1")
+check(moved.derived == true, "speed type is derived from the walk type, never written directly")
+check(#commands == 1 and commands[1].target == moveOwner
+      and commands[1].command == "applyZombieMovement",
+    "the sprint is handed to the OWNING CLIENT, whose packet would otherwise revert it")
+check(commands[1] and commands[1].payload.onlineID == 77
+      and commands[1].payload.walkType == moved.walkType
+      and commands[1].payload.speedMod == moved.speedMod,
+    "the owner receives exactly the values written server-side")
+
+-- Server-owned: the direct write is already authoritative, so a packet would
+-- be pure waste. Same rule svSetZombieHP follows.
+moveZombie.getOwnerPlayer = function() return nil end
+commands = {}
+check(RQSvShared.applySprintProfile(moveZombie), "a sprint on a server-owned zombie still reports delivery")
+check(#commands == 0, "no packet is sent for a zombie the server already owns")
+
+-- Restore rides the same path. A restore that only landed server-side would be
+-- reverted exactly like the sprint was, and a special left sprinting forever is
+-- the failure the restore exists to prevent.
+moveZombie.getOwnerPlayer = function() return moveOwner end
+commands = {}
+check(RQSvShared.restoreMovementProfile(moveZombie,
+        { walkType = "2", speedType = 2, speedMod = 0.55, turnDelta = 0.4 }),
+    "a restore reports delivery")
+check(moved.walkType == "2" and moved.speedMod == 0.55 and moved.turnDelta == 0.4,
+    "the restore puts every captured field back")
+check(#commands == 1 and commands[1].command == "applyZombieMovement"
+      and commands[1].payload.walkType == "2",
+    "the restore is delivered to the owner too, not just written locally")
+
+-- ---------------------------------------------------------------------------
 -- DebugMode drives RQDirgeLog's master switch
 -- ---------------------------------------------------------------------------
 -- RQDirgeLog ships ENABLED=false so a release server is quiet - and until

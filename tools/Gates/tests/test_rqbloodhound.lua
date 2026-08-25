@@ -218,11 +218,18 @@ RQBloodhound.update(NOW + RQBloodhound.PURSUIT_TIMEOUT + 1)
 checkRestored(z7, "timeout")
 check(RQBloodhound.stats.exits["timeout"] == 1, "the timeout exit is named")
 
--- path failure
+-- The "path failed" exit is GONE, and this is the assertion that replaces it.
+-- It used to set pathFails = 99 by hand and watch the pursuit end - a test that
+-- passed while production could never reach the same state, because nothing
+-- ever incremented pathFails. The exit was unreachable in the field and the
+-- fixture was the only thing that ever "fired" it. A zombie that genuinely
+-- cannot reach its quarry exits on the timeout above, which is what was
+-- retiring those pursuits all along.
 local z8 = freshPursuit(8)
-RQBloodhound.pursuits[z8].pathFails = 99
+RQBloodhound.pursuits[z8].pathFails = 99      -- a field nothing reads any more
 RQBloodhound.update(NOW + 100)
-checkRestored(z8, "path failed")
+check(RQBloodhound.pursuits[z8] ~= nil,
+    "a stray pathFails value no longer ends a pursuit - only the timeout does")
 
 -- reset
 local z9 = freshPursuit(9)
@@ -250,19 +257,41 @@ check(zb.walkType == "sprint3" and zb.speedMod == 0.9,
 check(RQBloodhound.pursuits[zb] == nil, "the Boss pursuit row is still dropped")
 
 -- ---------------------------------------------------------------------------
--- Repath is bounded
+-- Repath is bounded by the CLOCK, and by nothing else
 -- ---------------------------------------------------------------------------
+-- THE REGRESSION THIS FILE EXISTS FOR. Until 2026-08-24 the repath gate also
+-- required the quarry to have moved three tiles, so a shooter who stood still
+-- and sniped - the whole point of Bloodhound - got the forced path at acquire
+-- and never another one. Mosaic measured repaths=1 across a 30-second pursuit
+-- and a Boss timing out 14 tiles from a motionless player. The fixture of the
+-- day asserted that as correct ("a stationary quarry earns no repaths at all"),
+-- which is why the gate stayed green over a broken chase.
+--
+-- The quarry below NEVER MOVES. That is the point of every assertion here.
 local z11, p11 = freshPursuit(11)
 local pathsAfterAcquire = #z11.paths
+
+-- Inside the floor, nothing - the interval is still a real bound.
 for i = 1, 30 do
-    RQBloodhound.update(NOW + i * 10)     -- quarry stationary, no time elapsed
+    RQBloodhound.update(NOW + i * 10)     -- 300ms total, under REPATH_INTERVAL
 end
 check(#z11.paths == pathsAfterAcquire,
-    "a stationary quarry earns no repaths at all: " .. #z11.paths)
+    "no repath inside the interval floor, however many passes run: " .. #z11.paths)
 
-p11.x = p11.x + 10                        -- moved well past the threshold
-RQBloodhound.update(NOW + 5000)
-check(#z11.paths == pathsAfterAcquire + 1, "a quarry that moved earns exactly one repath")
+-- Past the floor, a repath - with the quarry still standing perfectly still.
+RQBloodhound.update(NOW + RQBloodhound.REPATH_INTERVAL + 1)
+check(#z11.paths == pathsAfterAcquire + 1,
+    "a STATIONARY quarry earns a repath once the interval elapses")
+
+-- And keeps earning them, because the engine can silently discard any single
+-- request (allowRepathDelay) and the only answer available is to keep asking.
+-- Ten seconds of pursuit is ten repath opportunities, not one.
+for i = 2, 10 do
+    RQBloodhound.update(NOW + i * (RQBloodhound.REPATH_INTERVAL + 1))
+end
+check(#z11.paths == pathsAfterAcquire + 10,
+    "ten seconds of standing still earns ten repaths, not one: "
+    .. (#z11.paths - pathsAfterAcquire))
 
 -- Target is re-set every pass even when no path is requested; setTarget on an
 -- unchanged target is a Java no-op, and it is what keeps the quarry pinned if

@@ -334,15 +334,75 @@ RQSvShared.MAX_NETWORK_HP        = MAX_NETWORK_HP
 local SPRINT_SPEED_MOD  = 0.85
 local SPRINT_TURN_DELTA = 1.0
 
-local function applySprintProfile(zombie)
-    if not zombie then return end
-    -- sprint1-5 are animation variants, not speed tiers; the engine picks one at
-    -- random and so do we.
-    zombie:setWalkType("sprint" .. tostring(ZombRand(5) + 1))
+-- THE ONE DELIVERY PATH FOR EVERY MOVEMENT WRITE, and the reason it exists.
+--
+-- A server-side movement write on a client-owned zombie DOES NOT SURVIVE.
+-- NetworkZombiePacker.applyZombie (:215-252) runs on every inbound sync from
+-- the owning client and unconditionally re-applies that client's values:
+--
+--     zombie.setSpeedMod(packet.speedMod / 1000f);
+--     zombie.setWalkType(packet.walkType.toString());
+--     zombie.setSpeedTypeFromWalkType();
+--
+-- The client's model of a Juggernaut does not include "sprinter", so its next
+-- packet stamps the shamble straight back over us. Proven in the 2026-08-24
+-- Mosaic session: Bloodhound logged `sprint=true` while the owner watched the
+-- zombie walk, on a run where the hit probe reported owner=client for 90 of 90
+-- hits. Client ownership is the NORM for anything a player is shooting, not an
+-- edge case.
+--
+-- So the write is delivered the way health already is (svSetZombieHP's
+-- ownerOnly branch): write locally for the server-owned case, and hand the
+-- owning client the same values so ITS next outgoing packet carries them.
+-- ZombiePacket.java:222 builds walkType from the zombie's live state, which is
+-- exactly what makes that work.
+--
+-- Nothing else may call setWalkType/setSpeedMod/setTurnDelta on a zombie. A
+-- direct write is a write that silently disappears a second later.
+local function svDeliverMovement(zombie, walkType, speedMod, turnDelta)
+    if not zombie or not walkType then return false end
+    zombie:setWalkType(walkType)
     zombie:setSpeedTypeFromWalkType()
-    zombie:setSpeedMod(SPRINT_SPEED_MOD + ZombRand(1500) / 10000.0)
-    zombie:setTurnDelta(SPRINT_TURN_DELTA)
+    zombie:setSpeedMod(speedMod)
+    zombie:setTurnDelta(turnDelta)
     zombie:resetModelNextFrame()
+
+    local oid = zombie:getOnlineID()
+    if not oid or oid < 0 then return false end
+
+    -- Nullable BY DESIGN: no owner means this server already owns the zombie,
+    -- so the direct write above is authoritative and a packet would be waste.
+    -- IsoZombie.java:454-456.
+    local owner = zombie:getOwnerPlayer()
+    if not owner then return true end
+
+    -- The raw global, not the sendToPlayer wrapper: that local is declared
+    -- further down this file, so a reference here would compile to a GLOBAL
+    -- lookup and be nil at call time. svSetZombieHP above calls the global
+    -- directly for the same reason.
+    sendServerCommand(owner, RQCommon.MODULE, "applyZombieMovement", {
+        onlineID  = oid,
+        walkType  = walkType,
+        speedMod  = speedMod,
+        turnDelta = turnDelta,
+        x = math.floor(zombie:getX()),
+        y = math.floor(zombie:getY()),
+        z = math.floor(zombie:getZ()),
+    })
+    return true
+end
+RQSvShared.svDeliverMovement = svDeliverMovement
+
+local function applySprintProfile(zombie)
+    if not zombie then return false end
+    -- sprint1-5 are animation variants, not speed tiers; the engine picks one at
+    -- random and so do we. All five are real NetworkVariables.WalkType values
+    -- (WTSprint1-5), so they survive the wire intact - unlike the "Run" the
+    -- pre-Bulwark code used, which fromString mapped to WT1.
+    return svDeliverMovement(zombie,
+        "sprint" .. tostring(ZombRand(5) + 1),
+        SPRINT_SPEED_MOD + ZombRand(1500) / 10000.0,
+        SPRINT_TURN_DELTA)
 end
 RQSvShared.applySprintProfile = applySprintProfile
 
@@ -367,12 +427,11 @@ RQSvShared.captureMovementProfile = captureMovementProfile
 -- disagreement is visible to a caller that wants to check.
 local function restoreMovementProfile(zombie, snap)
     if not zombie or not snap then return false end
-    zombie:setWalkType(snap.walkType)
-    zombie:setSpeedTypeFromWalkType()
-    zombie:setSpeedMod(snap.speedMod)
-    zombie:setTurnDelta(snap.turnDelta)
-    zombie:resetModelNextFrame()
-    return true
+    -- Through svDeliverMovement for the same reason the sprint is: a restore
+    -- that only lands server-side would be reverted by the owning client's next
+    -- packet just like the sprint was, and a zombie left sprinting forever is
+    -- the failure this whole restore path exists to prevent.
+    return svDeliverMovement(zombie, snap.walkType, snap.speedMod, snap.turnDelta)
 end
 RQSvShared.restoreMovementProfile = restoreMovementProfile
 
@@ -783,7 +842,14 @@ end
 local EMP_INNER_DMG = 0.15
 local EMP_OUTER_DMG = 0.10
 
-local function svApplyEMPBlast(x, y, z, radius, drainPercent)
+-- casterID: the onlineID of the zombie that produced this blast, or nil for a
+-- sourceless one (the admin command). THE CASTER IS IMMUNE, nothing else is.
+-- A Boss stands at its own epicentre - dSq = 0, as deep inside the inner zone
+-- as it is possible to be - so without this it knocks itself flat every single
+-- EMPulse. Owner decision 2026-08-24: caster-only, because specials shrugging
+-- off each other's blasts would read as coordination, and zombies do not
+-- coordinate. A Boss flattening a nearby Juggernaut is working as intended.
+local function svApplyEMPBlast(x, y, z, radius, drainPercent, casterID)
     local innerSq = (radius * 0.5) * (radius * 0.5)
     local outerSq = radius * radius
     local players = getOnlinePlayers()
@@ -820,12 +886,24 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent)
     end
     -- Zombies caught in the blast stumble; inner-zone zeds go down hard
     -- (mirrors the player inner/outer split). Ownership rule: only the side
-    -- that OWNS a zombie may drive its state machine - and zeds near players
-    -- (i.e. exactly the ones in a blast) are usually client-owned, which is
-    -- why the old unconditional server-side knockDown looked like a no-op in
-    -- dedicated MP. isRemoteZombie() is true here for client-owned zeds: skip
-    -- them, their owning client stumbles them from the castDone broadcast
-    -- (RQEMP.stumbleZombies). We handle only the server-owned remainder.
+    -- that OWNS a zombie may drive its state machine. Client-owned zeds are
+    -- stumbled by their owning client off the castDone broadcast
+    -- (RQEMP.stumbleZombies); we handle only the server-owned remainder.
+    --
+    -- THE TEST IS getOwnerPlayer(), NOT isRemoteZombie(), and that correction
+    -- is the point. This filter used to read `not obj:isRemoteZombie()`, with a
+    -- comment claiming that skipped client-owned zeds. It did the exact
+    -- opposite. NetworkZombieComponent.java:23 is `isRemote() { return
+    -- authOwner == null; }` - so server-side, isRemoteZombie() FALSE means a
+    -- client owns it. The old filter kept precisely the zombies it meant to
+    -- skip and skipped the only ones the server can actually drive, so
+    -- client-owned zeds were stumbled twice (here and again by their owner)
+    -- and server-owned zeds never at all. The 2026-08-24 probe caught it:
+    -- owner=client with remote=false on 90 of 90 hits.
+    --
+    -- getOwnerPlayer() is used instead because its meaning does not flip
+    -- between sides and it needs no explanation: an owner or nil. It is the
+    -- same predicate svSetZombieHP's ownerOnly branch already relies on.
     local zombiesHit = 0
     local cell = getCell()
     if cell then
@@ -839,7 +917,8 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent)
                         for mi = 0, movs:size() - 1 do
                             local obj = movs:get(mi)
                             if obj and instanceof(obj, "IsoZombie") and not obj:isDead()
-                                and not obj:isRemoteZombie()
+                                and not obj:getOwnerPlayer()
+                                and not (casterID and obj:getOnlineID() == casterID)
                                 and not obj:isReanimatedForGrappleOnly() then
                                 local zdx = obj:getX() - x
                                 local zdy = obj:getY() - y

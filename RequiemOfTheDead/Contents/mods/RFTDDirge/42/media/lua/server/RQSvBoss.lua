@@ -58,8 +58,14 @@ function RQSvBoss.tick(zombie)
             -- skill name is what the client uses to pick the right resolve effect:
             -- audible scream, buff pulse, EMP detonation. without it the client cant tell
             -- which boss skill just finished and only EMP gets a visual payoff.
+            -- casterID rides along so each client's own stumble sweep can spare
+            -- the Boss too. The server sweep and the client sweep are two halves
+            -- of one effect split by ownership, so an exclusion that only one
+            -- half honours would still flatten the Boss whenever a client owned
+            -- it - which, per the 2026-08-24 probe, is nearly always.
             RQSvShared.broadcast("castDone", { ringId = completedRingId, fixedX = x, fixedY = y, fixedZ = z,
                 skill = skill,
+                casterID = (skill == "EMPulse") and bossID or nil,
                 radius = (skill == "EMPulse") and cfg.empRadius or nil })
             if not zombie:isDead() then
                 if skill == "Scream" then
@@ -78,7 +84,10 @@ function RQSvBoss.tick(zombie)
                 elseif skill == "EMPulse" then
                     RQDirgeLog.write("Boss", "[INFO] id=" .. tostring(bossID) .. " EMPulse executed"
                         .. " at (" .. x .. "," .. y .. "," .. z .. ") radius=" .. cfg.empRadius)
-                    RQSvShared.svApplyEMPBlast(x, y, z, cfg.empRadius, cfg.empBatteryDrain)
+                    -- bossID as the caster: the Boss is standing at (x,y,z),
+                    -- its own epicentre, and without this it knocks itself
+                    -- down with every EMPulse it casts.
+                    RQSvShared.svApplyEMPBlast(x, y, z, cfg.empRadius, cfg.empBatteryDrain, bossID)
                 end
             end
         end

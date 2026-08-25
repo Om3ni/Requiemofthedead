@@ -278,6 +278,31 @@ local function onServerCommand(module, command, args)
         if not zombie or zombie:isDead() then return end
         zombie:setHealth(targetHP)
 
+    elseif command == "applyZombieMovement" then
+        -- Owner-directed, unlike applyZombieHP's broadcast. The server knows
+        -- exactly which client owns the zombie (getOwnerPlayer) and only that
+        -- client's write matters: NetworkZombiePacker.applyZombie:251-252 feeds
+        -- the OWNER's packet back over any server-side walk type, so the value
+        -- has to be set on the owner for its next outgoing packet to carry it
+        -- (ZombiePacket.java:222 builds walkType from live state).
+        --
+        -- This is what makes a Juggernaut or Scavenger actually sprint. Setting
+        -- it server-side alone was silently reverted within a sync - Bloodhound
+        -- reported sprint=true while the owner watched it walk (2026-08-24).
+        local onlineID = tonumber(args.onlineID)
+        if not onlineID or not args.walkType then return end
+        local zombie = findZombieByID(onlineID, tonumber(args.x) or 0,
+                                                tonumber(args.y) or 0,
+                                                tonumber(args.z) or 0)
+        if not zombie or zombie:isDead() then return end
+        zombie:setWalkType(args.walkType)
+        zombie:setSpeedTypeFromWalkType()
+        local speedMod = tonumber(args.speedMod)
+        if speedMod then zombie:setSpeedMod(speedMod) end
+        local turnDelta = tonumber(args.turnDelta)
+        if turnDelta then zombie:setTurnDelta(turnDelta) end
+        zombie:resetModelNextFrame()
+
     elseif command == "castStart" then
         local col    = { r = args.rR or 1, g = args.rG or 1, b = args.rB or 1, a = args.rA or 1 }
         local ringId = args.ringId
@@ -385,7 +410,7 @@ local function onServerCommand(module, command, args)
                 -- Run the owned-zombie gameplay before presentation; if a
                 -- verified VFX/audio contract ever regresses, it should not
                 -- suppress the authoritative local stumble work.
-                RQEMP.stumbleZombies(bx, by, tonumber(bz) or 0, radius)
+                RQEMP.stumbleZombies(bx, by, tonumber(bz) or 0, radius, tonumber(args.casterID))
                 RQEMP.playDetonationVFX(bx, by, bz, radius)
             end
         end

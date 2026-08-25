@@ -45,11 +45,30 @@ RQBloodhound = RQBloodhound or {}
 local CLOSE_DISTANCE   = 5        -- tiles; pursuit ends when the gap is closed
 local PURSUIT_TIMEOUT  = 30000    -- ms; a safety boundary, not a stealth reprieve
 local REPATH_INTERVAL  = 1000     -- ms; floor between path requests
-local REPATH_MOVE_SQ   = 9        -- quarry must move 3+ tiles to earn an early repath
-local MAX_PATH_FAILS   = 5
+
+-- REPATH_MOVE_SQ and MAX_PATH_FAILS were removed 2026-08-24, for two different
+-- reasons worth keeping straight.
+--
+-- REPATH_MOVE_SQ gated repaths on the quarry having moved three tiles. ANDed
+-- with the interval, that meant a stationary shooter never got a second path
+-- request - see the note in aim(). Deleted rather than rewired: with the clock
+-- doing the work, a movement term could only make the gate stricter again.
+--
+-- MAX_PATH_FAILS counted something nothing could count. `pathFails` was seeded
+-- to 0, reset to 0 on refresh, tested here - and never incremented anywhere,
+-- because pathToCharacter is void and its one failure mode (the allowRepathDelay
+-- lockout) is silent. So the "path-failed" exit could never fire. A zombie that
+-- genuinely cannot reach its quarry already exits on PURSUIT_TIMEOUT, which is
+-- what was actually retiring those pursuits all along. Detecting a real path
+-- failure needs a signal we do not have yet; TODO.md carries it.
 
 RQBloodhound.CLOSE_DISTANCE  = CLOSE_DISTANCE
 RQBloodhound.PURSUIT_TIMEOUT = PURSUIT_TIMEOUT
+-- Exported so the fixture can drive the repath cadence off the real number
+-- instead of a copy. A fixture holding its own 1000 would keep passing if this
+-- constant were retuned, which is exactly how the old movement-gated repath
+-- stayed green while the chase was broken in the field.
+RQBloodhound.REPATH_INTERVAL = REPATH_INTERVAL
 
 local PURSUES = { Boss = true, Juggernaut = true, Scavenger = true }
 
@@ -154,7 +173,6 @@ function RQBloodhound.onAttacked(ctx)
         -- the first sprint was applied, and re-capturing now would record the
         -- sprint as this zombie's native profile and strand it there forever.
         st.refreshedAt = ctx.now
-        st.pathFails   = 0
         if st.quarry ~= ctx.attacker then
             -- Most recent shooter wins. Predictable to read from the outside,
             -- and it stops one historical high-damage attacker from owning a
@@ -174,10 +192,12 @@ function RQBloodhound.onAttacked(ctx)
         startedAt    = ctx.now,
         refreshedAt  = ctx.now,
         lastRepathAt = 0,
-        quarryX      = ctx.attacker:getX(),
-        quarryY      = ctx.attacker:getY(),
+        -- repaths counts REQUESTS, not journeys. The engine may silently
+        -- discard any of them (allowRepathDelay - see aim()), and a void
+        -- method cannot tell us which, so this is a measure of how hard we
+        -- asked rather than of how often the zombie actually re-pathed. It is
+        -- read that way in the pursuit-ended line and nowhere else.
         repaths      = 0,
-        pathFails    = 0,
         profile      = RQSvShared.captureMovementProfile(zombie),
         sprintApplied = false,
     }
@@ -222,15 +242,30 @@ function RQBloodhound.aim(zombie, st, now, force)
         zombie:addAggro(quarry, 1.0)
     end
 
-    local dueByTime = (now - st.lastRepathAt) >= REPATH_INTERVAL
-    local dx = quarry:getX() - st.quarryX
-    local dy = quarry:getY() - st.quarryY
-    local movedEnough = (dx * dx + dy * dy) >= REPATH_MOVE_SQ
-
-    if force or (dueByTime and movedEnough) then
+    -- REPATH ON THE CLOCK ALONE. This used to also require the quarry to have
+    -- moved three tiles, which meant a shooter who STOOD STILL AND SNIPED - the
+    -- exact scenario this module exists for - never earned a single repath
+    -- after the forced one at acquire. The 2026-08-24 session measured it:
+    -- repaths=1 across a 30-second pursuit, where the interval calls for
+    -- roughly thirty. One Boss timed out 14 tiles from a stationary player.
+    --
+    -- The old gate also contradicted its own constants, which is how it should
+    -- have been caught by reading: REPATH_INTERVAL is documented as a "floor
+    -- between path requests" and the movement distance as earning an "early"
+    -- repath. Both describe a clock with an accelerator, not a clock ANDed with
+    -- a condition that is false whenever the target is standing still.
+    --
+    -- Retrying on the clock also recovers from a drop we cannot otherwise see.
+    -- IsoZombie.pathToCharacter:943-948 silently returns without doing anything
+    -- when allowRepathDelay > 0 and the zombie is already in PathFindState,
+    -- WalkTowardState or WalkTowardNetworkState - and the engine sets that to
+    -- 480 (:1942, :2316), decremented by GameTime.getMultiplier() per tick
+    -- (:2814), so roughly eight seconds at 60Hz. The call is void and cannot
+    -- report the drop, so the only correct response is to keep asking; the
+    -- first request after the lockout expires is the one that lands.
+    if force or (now - st.lastRepathAt) >= REPATH_INTERVAL then
         zombie:pathToCharacter(quarry)
         st.lastRepathAt = now
-        st.quarryX, st.quarryY = quarry:getX(), quarry:getY()
         st.repaths = st.repaths + 1
         RQBloodhound.stats.repaths = RQBloodhound.stats.repaths + 1
     end
@@ -257,8 +292,6 @@ function RQBloodhound.update(now)
             -- stop a special sprinting at a wall forever because the shooter is
             -- across a broken path or sealed in a room.
             reason = "timeout"
-        elseif st.pathFails >= MAX_PATH_FAILS then
-            reason = "path-failed"
         elseif distSqBetween(zombie, st.quarry) <= (CLOSE_DISTANCE * CLOSE_DISTANCE) then
             -- Closing the gap ends the SPEED, not the interest. The target is
             -- left set and ordinary zombie AI takes it from here; a fresh ranged

@@ -367,7 +367,12 @@ Events.OnTick.Add(updateSensoryEffects)
 -- that OWNS a zombie may drive its state machine. Each client handles the
 -- zeds it owns here; the server handles its remainder in svApplyEMPBlast.
 -- ========================
-function RQEMP.stumbleZombies(x, y, z, radius)
+-- casterID: onlineID of the zombie that cast this blast, or nil when there is
+-- no live caster (an EMP zombie detonates on death; the admin command has no
+-- caster at all). The client half of the caster-immunity rule - see
+-- RQSvShared.svApplyEMPBlast for the whole story. Both halves must honour it
+-- or the Boss still faceplants whenever a client owns it.
+function RQEMP.stumbleZombies(x, y, z, radius, casterID)
     local cell = getCell()
     if not cell then return end
     local zombies = cell:getZombieList()
@@ -382,6 +387,7 @@ function RQEMP.stumbleZombies(x, y, z, radius)
         -- inherit modData; knocking one down desyncs the grapple.
         if zed and not zed:isDead()
             and not (isClient() and zed:isRemoteZombie())
+            and not (casterID and zed:getOnlineID() == casterID)
             and not zed:isReanimatedForGrappleOnly()
             and math.abs(zed:getZ() - z) < 0.5 then
             local dx  = zed:getX() - x

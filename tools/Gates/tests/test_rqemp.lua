@@ -168,5 +168,65 @@ RQEMP.applySensoryEffects(bornDeafPlayer, 9, 100)
 check(bornDeafPlayer:hasDeafTrait(), "existing Deaf trait is not owned or removed by EMP")
 check(bornDeafPlayer.modData.RQEMPDeafUntil == nil, "existing Deaf trait does not arm EMP cleanup")
 
+-- ---------------------------------------------------------------------------
+-- The caster is immune to its own blast
+-- ---------------------------------------------------------------------------
+-- Owner-observed 2026-08-24: a Boss casting EMPulse knocked ITSELF down, every
+-- time. It stands at its own epicentre, so dSq = 0 - as deep inside the inner
+-- zone as it is possible to be. Neither sweep had any notion of "the thing that
+-- did this". Owner decision the same day: CASTER ONLY. Other specials stay
+-- vulnerable, because specials shrugging off each other's blasts would read as
+-- coordination, and zombies do not coordinate.
+--
+-- This is the client half. The server half (RQSvShared.svApplyEMPBlast) takes
+-- the same casterID; both must honour it, because whichever side owns the
+-- zombie is the side that stumbles it.
+local function makeStumbleZed(id, x, y)
+    return {
+        id = id, downed = false, staggered = false,
+        getOnlineID = function(self) return self.id end,
+        isDead      = function() return false end,
+        isRemoteZombie = function() return false end,
+        isReanimatedForGrappleOnly = function() return false end,
+        isCrawling  = function() return false end,
+        isOnFloor   = function() return false end,
+        getX = function() return x end,
+        getY = function() return y end,
+        getZ = function() return 0 end,
+        knockDown      = function(self) self.downed = true end,
+        setStaggerBack = function(self) self.staggered = true end,
+        setHitForce    = function() end,
+        setHitReaction = function() end,
+        reportEvent    = function() end,
+    }
+end
+
+-- True, because this sweep only ever runs on a connected client; the module's
+-- own ownership guard reads `isClient() and zed:isRemoteZombie()`, and stubbing
+-- isClient false would skip that guard entirely and test a path production
+-- never takes.
+function isClient() return true end
+
+local caster    = makeStumbleZed(500, 10, 20)   -- dead centre of the blast
+local bystander = makeStumbleZed(501, 10, 20)   -- same square, not the caster
+cell.getZombieList = function()
+    local list = { caster, bystander }
+    return { size = function() return #list end,
+             get  = function(_, i) return list[i + 1] end }
+end
+
+RQEMP.stumbleZombies(10, 20, 0, 12, 500)
+check(caster.downed == false and caster.staggered == false,
+    "the caster is untouched by its own blast")
+check(bystander.downed == true,
+    "a bystander at the same range still goes down - immunity is caster-only")
+
+-- A sourceless blast (an EMP zombie detonating on death, or the admin command)
+-- passes no casterID, and must still flatten everything in range.
+caster.downed, bystander.downed = false, false
+RQEMP.stumbleZombies(10, 20, 0, 12, nil)
+check(caster.downed == true and bystander.downed == true,
+    "with no caster named, every zombie in range is caught")
+
 print(string.format("RQEMP: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

@@ -1034,6 +1034,10 @@ local function hZombieKilled(player, args)
         RQSvShared.broadcast("castStart", RQSvShared.makeCastArgs(ringId, x, y, z,
             cfg.empCastTime, RQSvShared.COLORS.EMP, "EMP Detonating...", cfg.empRadius))
         RQSvShared.scheduleAction(cfg.empCastTime, function()
+            -- No casterID, and that is not an oversight: an EMP detonates ON
+            -- DEATH, so the caster is already excluded by the sweep's isDead
+            -- test. There is no live zombie here to be immune. A Boss EMPulse
+            -- is the case that needs one - see RQSvBoss.
             RQSvShared.broadcast("castDone", { ringId = ringId, fixedX = x, fixedY = y, fixedZ = z, radius = cfg.empRadius })
             RQSvShared.svApplyEMPBlast(x, y, z, cfg.empRadius, cfg.empBatteryDrain)
         end)
