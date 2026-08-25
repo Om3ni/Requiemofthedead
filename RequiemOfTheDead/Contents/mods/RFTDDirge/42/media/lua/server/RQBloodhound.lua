@@ -164,6 +164,16 @@ function RQBloodhound.onAttacked(ctx)
     end
     if not quarryValid(ctx.attacker) then return refuse("invalid-quarry") end
 
+    -- Nothing to pursue if the gap is already closed. update() ends a pursuit
+    -- the moment the quarry is inside CLOSE_DISTANCE, so acquiring one here
+    -- would create a row that dies on the very next pass. Measured on Mosaic
+    -- 2026-08-24: ten acquire/end pairs in five seconds, every one of them at
+    -- 4.4-4.6 tiles, because point-blank hits kept re-acquiring. The target is
+    -- still set and aggroed by the ordinary hit path; a pursuit adds nothing.
+    if distSqBetween(ctx.zombie, ctx.attacker) <= (CLOSE_DISTANCE * CLOSE_DISTANCE) then
+        return refuse("already-closed")
+    end
+
     local zombie = ctx.zombie
     local st = pursuits[zombie]
     local stats = RQBloodhound.stats
@@ -204,14 +214,21 @@ function RQBloodhound.onAttacked(ctx)
     pursuits[zombie] = st
     stats.acquired = stats.acquired + 1
 
-    -- The Boss already runs. Applying the sprint profile again would be
-    -- harmless but it would also set sprintApplied, and the exit path uses that
-    -- flag; leaving it false keeps "we changed this zombie's movement" honest.
-    if ctx.zType ~= "Boss" then
-        RQSvShared.applySprintProfile(zombie)
-        st.sprintApplied = true
-        stats.sprinted = stats.sprinted + 1
-    end
+    -- EVERY pursuing type gets the sprint, Boss included.
+    --
+    -- This used to skip Bosses on the reasoning that applyBossSprinter had
+    -- already made them permanent sprinters at conversion, so re-applying would
+    -- only muddy the sprintApplied flag. That assumption failed twice on Mosaic
+    -- - 2026-08-24 logs show `sprint=false` on every Boss pursuit while the Boss
+    -- crossed fourteen tiles at a walk - and it was always the wrong shape:
+    -- the module that needs a zombie to run should ask for it rather than trust
+    -- that somebody else did. The convert-time call stays as belt and braces.
+    --
+    -- endPursuit still refuses to restore a Boss, so this does not turn a
+    -- permanent sprinter back into a walker when the chase ends.
+    RQSvShared.applySprintProfile(zombie)
+    st.sprintApplied = true
+    stats.sprinted = stats.sprinted + 1
 
     RQBloodhound.aim(zombie, st, ctx.now, true)
 

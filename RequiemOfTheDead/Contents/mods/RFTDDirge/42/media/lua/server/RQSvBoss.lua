@@ -21,6 +21,20 @@ function RQSvBoss.setActiveZombies(tbl)
 end
 
 local BOSS_SKILL_COOLDOWN = 40000   -- (ms) hardcoded 40s between Scream/EMPulse casts. Overrides cfg.bossSkillCooldown.
+
+-- How long after a Boss first ticks before its FIRST skill may fire.
+--
+-- WHY THIS EXISTS. lastSkillTime used to be seeded to now, which meant the
+-- first skill was gated behind the full 40s cooldown - so a Boss had to survive
+-- forty seconds before it was allowed to do anything at all. Measured on Mosaic
+-- 2026-08-24: a Boss lived 36.7 seconds from spawn to death and never screamed
+-- or pulsed once. It was not a broken skill system; it died 3.3 seconds short of
+-- being permitted to act, and read to the player as a completely passive target.
+--
+-- Five seconds is a deliberate short fuse rather than zero: a Boss that casts on
+-- the very first tick would fire before anyone has seen it arrive, and the cast
+-- bar exists to be reacted to. The 40s cadence still governs everything after.
+local BOSS_FIRST_SKILL_DELAY = 5000
 -- BOSS_BUFF_INTERVAL and BOSS_BUFF_MULTIPLIER went with the aura sweep. The
 -- Boss's protective reach is no longer a periodic grant with a strength
 -- multiplier; it is a rate RQBulwark reads when a hit lands.
@@ -32,7 +46,9 @@ function RQSvBoss.tick(zombie)
     local state  = RQSvBoss.state[bossID]
     if not state then
         state = {
-            lastSkillTime = getTimestampMs(),
+            -- Backdated so the first skill is due after BOSS_FIRST_SKILL_DELAY
+            -- rather than after a full cooldown - see the constant's note.
+            lastSkillTime = getTimestampMs() - (BOSS_SKILL_COOLDOWN - BOSS_FIRST_SKILL_DELAY),
             lastBuffTick  = 0,
             castDue       = nil,
             currentSkill  = nil,

@@ -30,6 +30,13 @@ function isServer() return false end
 function isClient() return true end
 RQCommon = { MODULE = "RFTDDirge" }
 
+-- The module registers a game-start hook for its node diagnostic. Absent here
+-- on purpose in one respect: RQConfig is NOT provided, so the hook must decide
+-- it has no debug mode and do nothing rather than raising. Instrumentation must
+-- never be the reason a client fails to start.
+local startHooks = {}
+Events = { OnGameStart = { Add = function(fn) startHooks[#startHooks + 1] = fn end } }
+
 function require(name)
     if name == "RQCommon" then return end
     error("unexpected fixture require: " .. tostring(name))
@@ -111,6 +118,41 @@ if f then
     check(xml:find("<m_AnimName>", 1, true) ~= nil,
         "the node names a real animation - an abstract node would lose selection outright")
 end
+
+-- ---------------------------------------------------------------------------
+-- The diagnostic must be harmless
+-- ---------------------------------------------------------------------------
+-- It reaches for DebugLog, which may not exist, may not expose getDebugTypes,
+-- and may hand back something that is not a list. All three are survivable, and
+-- a client that fails to boot because of a temporary probe would be a far worse
+-- bug than the one it was added to find.
+check(#startHooks == 1, "the module registers its diagnostic on game start")
+
+local hookOk, hookErr = pcall(startHooks[1])
+check(hookOk, "the game-start hook survives RQConfig being absent: " .. tostring(hookErr))
+
+check(RQFlinch.armNodeDiagnostic() == false,
+    "with no DebugLog at all, the diagnostic declines rather than raising")
+
+DebugLog = { getDebugTypes = function() return nil end }
+check(RQFlinch.armNodeDiagnostic() == false, "a nil type list is survivable")
+
+DebugLog = { getDebugTypes = function() return "not a list" end }
+check(RQFlinch.armNodeDiagnostic() == false, "a non-list is survivable")
+
+local enabled = {}
+local fakeType = setmetatable({}, { __tostring = function() return "Animation" end })
+local otherType = setmetatable({}, { __tostring = function() return "Sound" end })
+DebugLog = {
+    getDebugTypes = function()
+        local l = { otherType, fakeType }
+        return { size = function() return #l end, get = function(_, i) return l[i + 1] end }
+    end,
+    setLogEnabled = function(t, on) enabled[tostring(t)] = on end,
+}
+check(RQFlinch.armNodeDiagnostic() == true, "with a real type list the diagnostic arms")
+check(enabled["Animation"] == true, "and enables exactly the Animation channel")
+check(enabled["Sound"] == nil, "leaving every other channel alone")
 
 print(string.format("RQFlinch: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

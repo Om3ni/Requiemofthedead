@@ -237,23 +237,29 @@ RQBloodhound.reset()
 checkRestored(z9, "reset")
 
 -- ---------------------------------------------------------------------------
--- The Boss is the exception
+-- The Boss is sprinted like everything else, and never restored
 -- ---------------------------------------------------------------------------
--- It is a PERMANENT sprinter, applied at conversion and again on reload.
--- Restoring it to its captured profile would be tidy bookkeeping and wrong
--- behaviour - it would end each chase slower than it started.
+-- CORRECTED 2026-08-24. This used to assert that a Boss was NOT re-sprinted,
+-- on the reasoning that conversion had already made it a permanent sprinter.
+-- Mosaic disproved that twice: every Boss pursuit logged `sprint=false` while
+-- the Boss crossed fourteen tiles at a walk. The assumption was also the wrong
+-- shape - a module that needs a zombie to run should ask, not trust that
+-- someone else did.
+--
+-- What stays true is the RESTORE exception: ending a chase must not hand a
+-- permanent sprinter back a walking profile.
 applied = {}
 local zb = makeZombie(10)
 zb.walkType, zb.speedType, zb.speedMod, zb.turnDelta = "sprint3", 1, 0.9, 1.0
 local pb = makePlayer(40, 0)
 RQBloodhound.onAttacked(ctxFor(zb, pb, "Boss", true, NOW))
-check(#applied == 0, "a Boss is not re-sprinted - it already runs")
-check(RQBloodhound.pursuits[zb].sprintApplied == false,
-    "and is not recorded as having had its movement changed")
+check(#applied == 1, "a Boss IS sprinted on acquisition, like every other type")
+check(RQBloodhound.pursuits[zb].sprintApplied == true,
+    "and is recorded as having had its movement changed")
 zb.x = 38
 RQBloodhound.update(NOW + 100)
-check(zb.walkType == "sprint3" and zb.speedMod == 0.9,
-    "ending a Boss pursuit leaves it running")
+check(zb.walkType:sub(1, 6) == "sprint",
+    "ending a Boss pursuit leaves it running rather than restoring a walk")
 check(RQBloodhound.pursuits[zb] == nil, "the Boss pursuit row is still dropped")
 
 -- ---------------------------------------------------------------------------

@@ -110,6 +110,52 @@ function RQFlinch.reset()
 end
 
 -- ---------------------------------------------------------------------------
+-- Diagnostic: did our animation node actually load?
+-- ---------------------------------------------------------------------------
+-- TEMPORARY INSTRUMENTATION, and the removal condition is written down: delete
+-- this whole block once one Mosaic boot has confirmed the node either loads or
+-- does not. It exists because the failure mode we cannot otherwise see is
+-- SILENCE - if the XML is never found, nothing throws, nothing logs, and the
+-- feature simply has no effect, which is indistinguishable from the node
+-- loading and losing selection. Three attempts at this feature have now failed
+-- in ways that looked identical from Lua, so the next one gets a witness.
+--
+-- What this does: turns on the engine's own Animation debug channel, which
+-- makes AnimState.Parse announce every node it loads
+-- ("hitreaction -> AnimNode: rqflinch"). It does NOT need -Ddebug: DebugLog is
+-- setExposed and this is the same surface vanilla's DebugLogSettings.lua uses.
+-- Anim sets load lazily on first use, so switching the channel on at game start
+-- is normally early enough to catch the zombie set being parsed.
+--
+-- Every call is presence-checked. This is instrumentation; it must not be the
+-- reason a client fails to start.
+function RQFlinch.armNodeDiagnostic()
+    if not DebugLog or not DebugLog.getDebugTypes then return false end
+    local types = DebugLog.getDebugTypes()
+    if not types or not types.size then return false end
+    for i = 0, types:size() - 1 do
+        local t = types:get(i)
+        if t and tostring(t) == "Animation" then
+            if DebugLog.setLogEnabled then
+                DebugLog.setLogEnabled(t, true)
+                print("[Dirge:Flinch] node diagnostic armed - watch for "
+                    .. "'hitreaction -> AnimNode: rqflinch' at anim-set load")
+                return true
+            end
+        end
+    end
+    return false
+end
+
+Events.OnGameStart.Add(function()
+    -- DebugMode only: the Animation channel is chatty, and a release client
+    -- should never pay for a diagnostic.
+    if RQConfig and RQConfig.get and RQConfig.get().debugMode then
+        RQFlinch.armNodeDiagnostic()
+    end
+end)
+
+-- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
 --
 -- Free software under the GNU General Public License, version 3 or later.

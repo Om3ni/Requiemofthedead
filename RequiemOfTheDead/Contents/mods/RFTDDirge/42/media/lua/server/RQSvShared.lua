@@ -36,7 +36,13 @@ function RQSvShared.svIsAdminPlayer(player)
 end
 
 local SCREAMER_SPAWN_RADIUS = 8
-local BOSS_TRIGGER_RANGE    = 20
+-- How close a player must be before a Boss will consider casting. Raised from
+-- 20 to 25 on 2026-08-24 (owner): a Boss that only reacts inside 20 tiles is
+-- comfortably out-ranged by any firearm, so the encounter reads as target
+-- practice until the player chooses to close. This is the Boss's awareness for
+-- SKILLS only - RQBloodhound has no range limit of its own and never did; it
+-- acquires on any ranged hit at any distance.
+local BOSS_TRIGGER_RANGE    = 25
 local BOSS_SKILLS           = { "Scream", "EMPulse" }  -- coin-flip pool. The Boss's protective aura is not a skill; RQBulwark reads it at hit time.
 local BOSS_SKILL_LABELS     = {
     Scream   = "Screaming...",
