@@ -112,9 +112,32 @@ end
 local function suppress(zombie)
     zombie:setStaggerBack(false)
     zombie:setKnockedDown(false)
+    -- The one that actually matters for gunfire - see isReacting().
+    zombie:setHitReaction("")
     if zombie.setStateEventDelayTimer then
         zombie:setStateEventDelayTimer(0.0)
     end
+end
+
+-- "Has this zombie just been rocked?" - and it is TWO states, not one.
+--
+-- CORRECTED 2026-08-24, after the first version of this file shipped watching
+-- only isStaggerBack() and did nothing at all against a .45. CombatManager
+-- resolves every hit into ONE of two mutually exclusive outcomes (:2410-2417):
+--
+--     if (hitReaction != HitReaction.NONE) target.setHitReaction(value);
+--     else                                 zombie.setStaggerBack(true);
+--
+-- A bullet resolves to a real directional HitReaction, so it takes the FIRST
+-- branch and staggerBack is never set. Poise was polling a flag that gunfire
+-- does not touch, which is exactly why it counted nothing and logged nothing.
+-- `hitreaction` is bound live to getHitReaction/setHitReaction as an animation
+-- variable (IsoGameCharacter.java:833), so the graph reads what we read and
+-- clearing it is how the state is refused.
+local function isReacting(zombie)
+    if zombie:isStaggerBack() then return true end
+    local reaction = zombie:getHitReaction()
+    return reaction ~= nil and reaction ~= ""
 end
 
 -- One zombie, one frame. Called from OnZombieUpdate.
@@ -152,10 +175,10 @@ function RQPoise.update(zombie, now)
         return
     end
 
-    -- EDGE-TRIGGERED. isStaggerBack() stays true for the whole 20-30 the state
-    -- runs, so counting it every frame would burn a full cycle on one bullet.
-    -- Only the rising edge is a new stagger.
-    local staggered = zombie:isStaggerBack()
+    -- EDGE-TRIGGERED. Both reaction states persist for their whole animation,
+    -- so counting every frame would burn a full cycle on one bullet. Only the
+    -- rising edge is a new hit.
+    local staggered = isReacting(zombie)
     if staggered and not st.wasStaggered then
         st.staggersLeft = st.staggersLeft - 1
         RQPoise.stats.absorbed = RQPoise.stats.absorbed + 1

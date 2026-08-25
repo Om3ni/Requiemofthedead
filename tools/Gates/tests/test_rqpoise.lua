@@ -62,7 +62,7 @@ check(#callbacks["update"] == 1, "the module registers exactly one OnZombieUpdat
 local function makeZombie(id)
     return {
         id = id,
-        staggered = false, knocked = false, timer = 99,
+        staggered = false, knocked = false, timer = 99, reaction = "",
         clears = 0,
         getOnlineID  = function(self) return self.id end,
         isDead       = function() return false end,
@@ -72,6 +72,12 @@ local function makeZombie(id)
             self.staggered = v
             if v == false then self.clears = self.clears + 1 end
         end,
+        -- The gunfire path. CombatManager sets EITHER a named hit reaction OR
+        -- staggerBack, never both (:2410-2417); a bullet always takes the
+        -- reaction branch, which is why the first version of this feature -
+        -- watching staggerBack alone - did nothing against a .45.
+        getHitReaction = function(self) return self.reaction end,
+        setHitReaction = function(self, v) self.reaction = v end,
         setKnockedDown = function(self, v) self.knocked = v end,
         setStateEventDelayTimer = function(self, v) self.timer = v end,
     }
@@ -157,6 +163,43 @@ RQPoise.update(z3, nowMs)
 z3.staggered = true
 RQPoise.update(z3, nowMs)
 check(RQPoise.stats.absorbed == absorbed2 + 1, "an ENRAGED Scavenger absorbs staggers")
+
+-- ---------------------------------------------------------------------------
+-- THE GUNFIRE PATH - the regression that shipped once already
+-- ---------------------------------------------------------------------------
+-- A bullet never sets staggerBack. CombatManager resolves it to a named
+-- HitReaction and takes the other branch entirely, so a poise implementation
+-- watching only staggerBack counts nothing, breaks never, and logs nothing -
+-- which is exactly what a .45 demonstrated on Mosaic. These assertions fail if
+-- anyone narrows the check back to the stagger flag.
+types[7] = "Boss"
+local z7 = makeZombie(7)
+local absorbedGun = RQPoise.stats.absorbed
+local brokenGun   = RQPoise.stats.broken
+
+z7.staggered = false            -- exactly as a gunshot leaves it
+z7.reaction  = "HitReactionF"   -- a named directional reaction
+RQPoise.update(z7, nowMs)
+check(RQPoise.stats.absorbed == absorbedGun + 1,
+    "a hit reaction with NO staggerBack still counts as a hit")
+check(RQPoise.stats.broken == brokenGun + 1,
+    "and a Boss at threshold one breaks poise on it")
+check(z7.reaction == "",
+    "the hit reaction is cleared - this is the flag the anim graph reads")
+
+-- And it stays cleared for the whole immunity window.
+z7.reaction = "HitReactionB"
+RQPoise.update(z7, nowMs + 2000)
+check(z7.reaction == "", "further gunfire during immunity is scrubbed too")
+
+-- A nil reaction must read as "not reacting" rather than throwing.
+local z8 = makeZombie(8)
+types[8] = "Boss"
+z8.reaction = nil
+local absorbedNil = RQPoise.stats.absorbed
+RQPoise.update(z8, nowMs)
+check(RQPoise.stats.absorbed == absorbedNil,
+    "a nil hit reaction is not a hit")
 
 -- ---------------------------------------------------------------------------
 -- Types that are not tanks are untouched
