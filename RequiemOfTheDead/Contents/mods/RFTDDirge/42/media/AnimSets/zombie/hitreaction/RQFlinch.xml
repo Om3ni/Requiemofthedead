@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RQFlinch - the "shrug it off" hit reaction.
+
+  Selected instead of the vanilla reaction whenever the RQNoFlinch animation
+  variable is true on the zombie. RQFlinch.lua (client) owns that variable and
+  RQPoise decides when to set it; the variable name is defined in one place in
+  RQFlinch.lua and MUST match the condition below. A mismatch fails silently -
+  this node simply never wins and flinches look normal.
+
+  WHY A NODE AND NOT A TRANSITION. We cannot stop the zombie entering the
+  hitreaction state: those transitions live in media/actiongroups, which
+  ActionGroup.load() reads from the base install only (getMediaFile plus
+  listFiles), with no mod path. AnimSets ARE mod-loadable - AnimationSet:54
+  goes through resolveAllDirectories -> walkGameAndModFiles. So we let the
+  state be entered and make it cost nothing.
+
+  WHY m_ConditionPriority. AnimNode.compareSelectionConditions (:287-301)
+  orders by abstract-ness, then m_ConditionPriority, then condition COUNT.
+  Winning on count alone would break the day vanilla adds a condition to a
+  sibling node, so the priority is stated outright. 100 is far above anything
+  in the vanilla zombie set, which leaves all of them unmodified.
+
+  m_SpeedScale is what makes this work: the reaction animation still plays, at
+  twenty times speed, so it is over inside a frame or two and the zombie is
+  back to acting. It reads as a twitch rather than as nothing happening, which
+  is the intent - the Boss should look like it noticed and did not care.
+-->
+<animNode>
+	<m_Name>RQFlinchSuppressed</m_Name>
+	<m_AnimName>Zombie_ShotChestL</m_AnimName>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.0</m_BlendTime>
+	<m_BlendOutTime>0.0</m_BlendOutTime>
+	<m_SpeedScale>20.0</m_SpeedScale>
+	<m_ConditionPriority>100</m_ConditionPriority>
+	<m_Conditions x_name="rqf1a2b3-0001-4000-8000-rftddirge0001">
+		<m_Name>RQNoFlinch</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+</animNode>

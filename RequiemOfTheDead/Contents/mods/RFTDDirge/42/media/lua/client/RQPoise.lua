@@ -7,19 +7,20 @@
 -- swing - because each hit re-triggers the stagger before the last one ends.
 --
 -- WHY BULWARK CANNOT FIX THIS, and why raising its soak rates would have been
--- wasted work. Stagger is not part of the damage path. The ATTACKING client
--- decides it and ships it in the hit packet's zombieFlags (bit 1), and
--- `zombie/network/fields/hit/Zombie.java:63-73` applies those flags in BOTH
--- preProcess() and postProcess() - on either side of the server's own damage
--- processing. Bulwark's soak exits at IsoGameCharacter.java:5711, before
--- hitConsequences ever runs, so server-side a soaked hit really does produce no
--- stagger; the flag simply arrives from the packet anyway. A fully soaked hit
--- still staggers.
+-- wasted work. The flinch is not part of the damage path. CombatManager
+-- resolves each hit into a reaction on the ATTACKING side, and Bulwark's soak
+-- exits at IsoGameCharacter.java:5711 - before hitConsequences ever runs - so
+-- server-side a soaked hit produces no reaction at all. The client reacts
+-- regardless. A fully soaked hit still flinches.
 --
--- WHY NOT JUST SHORTEN IT. StaggerBackState.getMaxStaggerTime is
--- `35 * hitForce * staggerTimeMod` CLAMPED TO [20, 30] (:58-64). A
--- staggerTimeMod of zero still yields 20. Duration was never the lever -
--- FREQUENCY is, so the fix has to stop the state being entered at all.
+-- WHY NOT JUST SHORTEN THE STAGGER. StaggerBackState.getMaxStaggerTime is
+-- `35 * hitForce * staggerTimeMod` CLAMPED TO [20, 30] (:58-64), so a
+-- staggerTimeMod of zero still yields 20. Duration was never the lever, and in
+-- any case gunfire does not use that state - see isReacting() below.
+--
+-- HOW THE FLINCH IS ACTUALLY DEFEATED: not by refusing it, which we cannot do
+-- from Lua, but by making it cost nothing. RQFlinch owns that mechanism and
+-- explains it; this file owns only the policy of when to ask for it.
 --
 -- THE MODEL: poise. A tank absorbs a rolled number of staggers, then becomes
 -- immune for a rolled window. Bounded by construction rather than statistically
@@ -28,12 +29,16 @@
 -- break point is not something a player can count off.
 --
 -- WHY THIS IS CLIENT-SIDE while the rest of the mitigation family is not.
--- Stagger is entered by the animation graph on the machine simulating the
+-- The reaction is entered by the animation graph on the machine simulating the
 -- zombie, and that is the owning client for anything a player is shooting -
 -- the hit probe recorded owner=client on 90 of 90 hits. There is nothing for
--- the server to clear. Bulwark therefore owns a server-side soak and this file
+-- the server to do. Bulwark therefore owns a server-side soak and this file
 -- owns a client-side poise rule; that split is real and is stated rather than
 -- hidden.
+--
+-- ADDING A TYPE is one row in PROFILES below. The mechanism is type-agnostic,
+-- so extending poise to another zombie is a data change, not a code change.
+-- Boss is the one to watch first: it is the type the stunlock was reported on.
 -- =============================================
 
 -- No isServer guard: media/lua/client is client-only, and no other file in this
@@ -41,6 +46,7 @@
 
 require "RQCommon"
 require "RQDirgeLog"
+require "RQFlinch"
 require "RQRegistry"
 require "RQReconcile"
 
@@ -65,7 +71,7 @@ RQPoise.poise = poise
 RQPoise.stats = {
     absorbed  = 0,   -- staggers counted against a threshold
     broken    = 0,   -- times a tank reached its threshold and went immune
-    suppressed = 0,  -- update passes where a stagger flag was cleared
+    suppressed = 0,  -- update passes spent inside an immunity window
     byType    = {},
 }
 
@@ -79,6 +85,9 @@ local function freshCycle(profile)
         staggersLeft = roll(profile.hitsMin, profile.hitsMax),
         immuneUntil  = 0,
         wasStaggered = false,
+        -- Mirrors what RQFlinch has been told, so the variable is written only
+        -- on transitions rather than every frame.
+        suppressed   = false,
     }
 end
 
@@ -99,24 +108,21 @@ local function profileFor(onlineID)
     return profile, zType
 end
 
--- Clear the stagger and knockdown flags for one update.
+-- Suppression is RQFlinch's job now; this file only decides WHEN.
 --
--- setStateEventDelayTimer is used WHEN PRESENT to end a stagger already in
--- progress - StaggerBackState.enter parks the state on that timer (:33), so
--- zeroing it retires the state on the next evaluation instead of waiting out
--- the full 20-30. It is reached by inheritance from IsoMovingObject:1960 rather
--- than declared on IsoZombie, and no vanilla Lua call site proves that
--- inherited surface, so its ABSENCE is handled rather than assumed. Clearing
--- the flags is the load-bearing part; the timer is a bonus that makes the
--- transition instant instead of merely preventing the next one.
-local function suppress(zombie)
-    zombie:setStaggerBack(false)
-    zombie:setKnockedDown(false)
-    -- The one that actually matters for gunfire - see isReacting().
-    zombie:setHitReaction("")
-    if zombie.setStateEventDelayTimer then
-        zombie:setStateEventDelayTimer(0.0)
-    end
+-- WHAT WAS REMOVED HERE, so nobody rebuilds it. This used to clear
+-- staggerBack, knockedDown and the hit reaction string, and zero the state
+-- event timer. All four were verified inert against gunfire on Mosaic
+-- (2026-08-24): the flags are read by the graph, but the transition fires
+-- between the hit and our next OnZombieUpdate, so we were always one frame
+-- late and the animation already owned the zombie. Poise logged its breaks
+-- correctly while the Boss kept flinching. Clearing a flag after the state has
+-- been entered achieves nothing, and leaving those calls in as decoration
+-- would have been four engine calls per frame per tank doing exactly that.
+--
+-- RQFlinch wins instead by changing what the reaction COSTS - see its header.
+local function suppress(zombie, on)
+    RQFlinch.set(zombie, on)
 end
 
 -- "Has this zombie just been rocked?" - and it is TWO states, not one.
@@ -157,8 +163,13 @@ function RQPoise.update(zombie, now)
     local profile, zType = profileFor(onlineID)
     if not profile then
         -- A Scavenger that stops qualifying (it cannot un-enrage, but a row can
-        -- outlive a reload) must not keep a stale cycle around.
-        poise[zombie] = nil
+        -- outlive a reload) must not keep a stale cycle around - NOR a stale
+        -- suppression. Only touched when we actually have a row, so an ordinary
+        -- zombie never costs an engine call here.
+        if poise[zombie] then
+            suppress(zombie, false)
+            poise[zombie] = nil
+        end
         return
     end
 
@@ -170,9 +181,23 @@ function RQPoise.update(zombie, now)
 
     if now < st.immuneUntil then
         RQPoise.stats.suppressed = RQPoise.stats.suppressed + 1
-        suppress(zombie)
+        -- EDGE-WRITTEN, not written every frame. Unlike the flag-clearing this
+        -- replaced, the variable LATCHES - it stays true until we clear it - so
+        -- re-asserting it each pass would be pure waste, and forgetting to
+        -- clear it would leave the tank permanently unflinchable.
+        if not st.suppressed then
+            suppress(zombie, true)
+            st.suppressed = true
+        end
         st.wasStaggered = false
         return
+    end
+
+    -- Out of the window: hand the flinch back. This is the half a one-shot
+    -- clear never needed and a latching variable absolutely does.
+    if st.suppressed then
+        suppress(zombie, false)
+        st.suppressed = false
     end
 
     -- EDGE-TRIGGERED. Both reaction states persist for their whole animation,
@@ -191,7 +216,8 @@ function RQPoise.update(zombie, now)
             RQDirgeLog.write("Poise", "[INFO] " .. zType .. " id=" .. tostring(onlineID)
                 .. " powers through for " .. tostring(st.immuneUntil - now) .. "ms"
                 .. " (next break in " .. tostring(st.staggersLeft) .. " staggers)")
-            suppress(zombie)
+            suppress(zombie, true)
+            st.suppressed = true
             st.wasStaggered = false
             return
         end
