@@ -9,6 +9,7 @@ RQCore = RQCore or {}
 -- Load in dependency order
 require "RQDirgeLog"
 require "RQConfig"
+require "RQZombieCache"
 require "RQRegistry"
 require "RQCastBar"
 require "RQRing"
@@ -106,32 +107,26 @@ local function clearCastRing(ringId)
     RQRing.clear(ringId .. "_inner")
 end
 
--- Search for living zombie by onlineID near specified coordinates.
--- Expanded to 15 tiles to account for zombie movement between
--- server conversion and client receiving the broadcast.
+-- Resolve a living zombie by onlineID.
+--
+-- REWRITTEN 2026-08-25. This used to walk a 31x31 block of grid squares - 961
+-- getGridSquare calls, each iterating that square's moving objects - centred on
+-- a CACHED position passed in by the caller. Two things were wrong with it:
+--
+--   COST. RQHighlight calls this once per special per render tick. At 60fps
+--   with three specials that is roughly 173,000 grid-square lookups a second.
+--
+--   CORRECTNESS. The cached position only refreshed on RQReconcile's periodic
+--   baseline pull, so a moving special outran its own cache and fell outside
+--   the +/-15 window. RQReflect logged 718 of those (DRIFT) in one archive.
+--   We were paying six figures a second to fail.
+--
+-- RQZombieCache is an onlineID -> object map, so there is no search window and
+-- nothing to drift out of. The x/y/z parameters are now IGNORED and kept only
+-- so the six existing call sites did not have to change in the same slice;
+-- they are vestigial and should come off when the callers are next touched.
 local function findZombieByID(onlineID, x, y, z)
-    local cell = getCell()
-    if not cell then return nil end
-    local searchID = tonumber(onlineID)
-    if not searchID then return nil end
-    for dx = -15, 15 do
-        for dy = -15, 15 do
-            local sq = cell:getGridSquare(x + dx, y + dy, z)
-            if sq then
-                local movs = sq:getMovingObjects()
-                if movs then
-                    for i = 0, movs:size() - 1 do
-                        local obj = movs:get(i)
-                        if obj and instanceof(obj, "IsoZombie") and not obj:isDead()
-                           and obj:getOnlineID() == searchID then
-                            return obj
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return nil
+    return RQZombieCache.get(tonumber(onlineID))
 end
 
 -- Expose for RQHighlight, RQJuggernaut, etc.
