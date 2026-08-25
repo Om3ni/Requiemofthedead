@@ -4,27 +4,52 @@
 
   Selected instead of the vanilla reaction whenever the RQNoFlinch animation
   variable is true on the zombie. RQFlinch.lua (client) owns that variable and
-  RQPoise decides when to set it; the variable name is defined in one place in
+  RQPoise decides who gets it; the variable name is defined in one place in
   RQFlinch.lua and MUST match the condition below. A mismatch fails silently -
-  this node simply never wins and flinches look normal.
+  this node simply never wins and flinches look normal. test_rqflinch.lua reads
+  this file and compares, because that is the half a Lua test can actually
+  prove.
 
-  WHY A NODE AND NOT A TRANSITION. We cannot stop the zombie entering the
+  WHY A NODE AND NOT A TRANSITION. We cannot stop the zombie ENTERING the
   hitreaction state: those transitions live in media/actiongroups, which
   ActionGroup.load() reads from the base install only (getMediaFile plus
   listFiles), with no mod path. AnimSets ARE mod-loadable - AnimationSet:54
   goes through resolveAllDirectories -> walkGameAndModFiles. So we let the
   state be entered and make it cost nothing.
 
-  WHY m_ConditionPriority. AnimNode.compareSelectionConditions (:287-301)
-  orders by abstract-ness, then m_ConditionPriority, then condition COUNT.
-  Winning on count alone would break the day vanilla adds a condition to a
-  sibling node, so the priority is stated outright. 100 is far above anything
-  in the vanilla zombie set, which leaves all of them unmodified.
+  WHY THIS ACTUALLY ENDS THE STATE, verified 2026-08-25. The exit transition
+  actiongroups/zombie/hitreaction/to_idle.xml is:
+      <eventOccurred>ActiveAnimFinishing</eventOccurred>
+  - an ANIMATION event, not a flag test. So shortening the animation genuinely
+  shortens the state. This is the load-bearing fact of the whole feature, and
+  it is why the two earlier flag-clearing attempts could never have worked.
+  Contrast staggerback/to_idle.xml, which exits on a stateEventDelayTimer
+  instead and is therefore immune to speed scaling - RQFlinch.releaseStagger
+  handles that lane separately.
 
-  m_SpeedScale is what makes this work: the reaction animation still plays, at
-  twenty times speed, so it is over inside a frame or two and the zombie is
-  back to acting. It reads as a twitch rather than as nothing happening, which
-  is the intent - the Boss should look like it noticed and did not care.
+  WHY m_ConditionPriority. AnimNode.compareSelectionConditions (AnimNode.java
+  :287-301) orders by abstract-ness, then m_ConditionPriority, then condition
+  COUNT, and AnimState.addNode (:78-91) inserts highest-first. Winning on count
+  alone would break the day vanilla adds a condition to a sibling node, so the
+  priority is stated outright. Vanilla zombie nodes leave it at the 0 default
+  (AnimNode.java:45-46), so 100 wins without modifying any of them.
+
+  m_SpeedScale is what makes this work. It is a STRING field
+  (AnimNode.java:93-94 - it also accepts a variable name), and the reaction
+  animation still plays, at twenty times speed, so it is over inside a frame or
+  two and the zombie is back to acting. It reads as a twitch rather than as
+  nothing happening, which is the intent - a Bulwark should look like it
+  noticed and did not care.
+
+  THE EVENTS ARE THE KNOCKDOWN HALF. ZombieHitReactionState.animEvent
+  (:103-109) is the only thing that knocks a zombie down during a hit
+  reaction: "KnockDown" calls setKnockedDown(true), "CancelKnockDown" calls
+  setKnockedDown(false). IsoZombie.knockDown() has no Java callers at all, so
+  for gunfire the animation event IS the mechanism. This node therefore emits
+  no KnockDown and cancels any that is pending - which is how a Bulwark
+  becomes immune to being put on the floor without us fighting a flag race.
+  SetState is carried over from vanilla ShotDefault.xml purely so the hit
+  still sounds like a hit (:124-134).
 -->
 <animNode>
 	<m_Name>RQFlinchSuppressed</m_Name>
@@ -32,11 +57,21 @@
 	<m_Looped>false</m_Looped>
 	<m_BlendTime>0.0</m_BlendTime>
 	<m_BlendOutTime>0.0</m_BlendOutTime>
-	<m_SpeedScale>20.0</m_SpeedScale>
+	<m_SpeedScale>20.00</m_SpeedScale>
 	<m_ConditionPriority>100</m_ConditionPriority>
 	<m_Conditions x_name="rqf1a2b3-0001-4000-8000-rftddirge0001">
 		<m_Name>RQNoFlinch</m_Name>
 		<m_Type>BOOL</m_Type>
 		<m_Value>true</m_Value>
 	</m_Conditions>
+	<m_Events x_name="rqf1a2b3-0002-4000-8000-rftddirge0002">
+		<m_EventName>CancelKnockDown</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-0003-4000-8000-rftddirge0003">
+		<m_EventName>SetState</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
 </animNode>

@@ -1,16 +1,17 @@
 -- RQFlinch fixture - the mechanism half of stagger immunity.
 --
--- WHY THIS FILE EXISTS. Two earlier attempts at stagger immunity both failed
--- while looking correct in Lua, and both would still pass a fixture that only
+-- WHY THIS FILE EXISTS. Three attempts at stagger immunity failed while
+-- looking correct in Lua, and all three would still pass a fixture that only
 -- checked "did we call the setter". So the thing pinned here is the CONTRACT
 -- BETWEEN THE LUA AND THE XML: the variable name RQFlinch writes must be the
--- one media/AnimSets/zombie/hitreaction/RQFlinch.xml keys on. A mismatch fails
+-- one media/AnimSets/zombie/hitreaction/RQFlinch.xml keys on, and the node
+-- must still carry the events that do the knockdown half. A mismatch fails
 -- SILENTLY in game - the node never wins, flinches look normal, and nothing
 -- logs - which is precisely the failure mode this suite exists to make loud.
 --
--- The last assertion reads the shipped XML and compares it to the Lua. That is
--- deliberate: it is the only part of this feature a Lua-only test can actually
--- prove, and it is the part most likely to rot.
+-- The XML block at the bottom reads the shipped node and compares it to the
+-- Lua. That is deliberate: it is the only part of this feature a Lua-only test
+-- can prove, and it is the part most likely to rot.
 
 local ROOT = arg[1] or "."
 local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/client/RQFlinch.lua"
@@ -30,10 +31,6 @@ function isServer() return false end
 function isClient() return true end
 RQCommon = { MODULE = "RFTDDirge" }
 
--- The module registers a game-start hook for its node diagnostic. Absent here
--- on purpose in one respect: RQConfig is NOT provided, so the hook must decide
--- it has no debug mode and do nothing rather than raising. Instrumentation must
--- never be the reason a client fails to start.
 local startHooks = {}
 Events = { OnGameStart = { Add = function(fn) startHooks[#startHooks + 1] = fn end } }
 
@@ -46,11 +43,22 @@ RQFlinch = nil
 local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
 
+-- The fake implements the VERIFIED engine surface and nothing else, so a call
+-- to a method the engine does not expose fails here rather than in game
+-- (CLAUDE.md section 2). Every method below was read out of the 42.20.3
+-- decompile: setVariable/getVariableBoolean on IsoGameCharacter,
+-- getCurrentActionContextStateName at :1473, setStateEventDelayTimer at
+-- IsoMovingObject.java:1960.
 local function makeZombie()
     return {
-        vars = {},
+        vars = {}, state = "idle", timer = 30.0,
+        staggered = false, reaction = "",
         setVariable = function(self, k, v) self.vars[k] = v end,
         getVariableBoolean = function(self, k) return self.vars[k] == true end,
+        getCurrentActionContextStateName = function(self) return self.state end,
+        setStateEventDelayTimer = function(self, v) self.timer = v end,
+        isStaggerBack  = function(self) return self.staggered end,
+        getHitReaction = function(self) return self.reaction end,
     }
 end
 
@@ -74,15 +82,98 @@ RQFlinch.set(z2, "yes")
 check(z2.vars[RQFlinch.VARIABLE] == true, "a truthy value is normalised to boolean true")
 
 -- ---------------------------------------------------------------------------
+-- isReacting - BOTH lanes
+-- ---------------------------------------------------------------------------
+-- The bug that cost the first shipped attempt. CombatManager resolves a hit
+-- into EITHER a named reaction OR a stagger, never both (:2410-2417). A bullet
+-- always takes the reaction branch, so watching staggerBack alone sees
+-- nothing at all from gunfire.
+local r = makeZombie()
+check(RQFlinch.isReacting(r) == false, "an untouched zombie is not reacting")
+
+r.staggered = true
+check(RQFlinch.isReacting(r) == true, "the melee lane: staggerBack counts")
+r.staggered = false
+
+r.reaction = "ShotChestStepL"
+check(RQFlinch.isReacting(r) == true, "the gunfire lane: a hit reaction counts")
+
+r.reaction = ""
+check(RQFlinch.isReacting(r) == false,
+    "an EMPTY reaction string is not a reaction - the engine clears it to \"\" on exit")
+
+-- ---------------------------------------------------------------------------
+-- releaseStagger - the melee lane
+-- ---------------------------------------------------------------------------
+-- stateEventDelayTimer is a GENERIC countdown. ZombieEatBodyState:55 and
+-- ZombieIdleState:81 wait on the same field, so zeroing it outside staggerback
+-- would cut short unrelated behaviour - including our own Gluttons mid-meal.
+-- The narrow gate is the whole safety argument and is pinned here.
+local s = makeZombie()
+s.state = "idle"
+check(RQFlinch.releaseStagger(s) == false, "an idle zombie is refused")
+check(s.timer == 30.0, "and its timer is untouched")
+
+s.state = "eatbody"
+RQFlinch.releaseStagger(s)
+check(s.timer == 30.0, "a Glutton mid-meal keeps its timer - this is the dangerous case")
+
+s.state = "staggerback"
+check(RQFlinch.releaseStagger(s) == true, "a staggering zombie is released")
+check(s.timer == 0.0, "by zeroing the timer its exit transition waits on")
+
+-- The state name comes from a folder name and vanilla compares these with
+-- equalsIgnoreCase throughout (PlayerSitOnFurnitureState.java:120).
+local s2 = makeZombie()
+s2.state = "StaggerBack"
+check(RQFlinch.releaseStagger(s2) == true, "the state name is matched case-insensitively")
+
+-- ---------------------------------------------------------------------------
+-- observe - the witness
+-- ---------------------------------------------------------------------------
+-- Measures how long a reaction LASTS, which is the effect we care about
+-- rather than a proxy for it. A vanilla reaction animation runs about a
+-- second, so a span of one or two frames can only mean our node won.
+RQFlinch.reset()
+local o = makeZombie()
+check(RQFlinch.observe(o, 1000) == nil, "a quiet zombie produces no span")
+
+o.reaction = "ShotChestStepL"
+check(RQFlinch.observe(o, 1000) == nil, "the frame a reaction STARTS produces nothing")
+check(RQFlinch.observe(o, 1016) == nil, "nor does one still in progress")
+
+o.reaction = ""
+local span = RQFlinch.observe(o, 1032)
+check(span ~= nil, "the frame it ENDS produces the completed span")
+check(span.frames == 2, "with every reacting frame counted: " .. tostring(span and span.frames))
+check(span.ms == 32, "and the wall-clock duration: " .. tostring(span and span.ms))
+check(RQFlinch.stats.spans == 1, "the span is counted")
+check(RQFlinch.stats.longest == 32, "and tracked as the worst so far")
+
+check(RQFlinch.observe(o, 1100) == nil, "a closed span is not reported twice")
+
+-- A longer reaction must displace the record; that is the number that tells
+-- the owner whether the node is winning.
+o.reaction = "ShotChestStepL"
+RQFlinch.observe(o, 2000)
+o.reaction = ""
+local slow = RQFlinch.observe(o, 3200)
+check(slow.ms == 1200, "a full-speed reaction is measured too")
+check(RQFlinch.stats.longest == 1200, "and becomes the new worst case")
+
+-- ---------------------------------------------------------------------------
 -- Nil safety
 -- ---------------------------------------------------------------------------
 -- Called from a per-frame path over a weak table; a collected zombie must not
 -- take the update pass down with it.
 check(RQFlinch.set(nil, true) == false, "a nil zombie is refused rather than raising")
 check(RQFlinch.isSet(nil) == false, "isSet on nil is false, not an error")
+check(RQFlinch.isReacting(nil) == false, "isReacting on nil is false")
+check(RQFlinch.releaseStagger(nil) == false, "releaseStagger on nil is false")
+check(RQFlinch.observe(nil, 0) == nil, "observe on nil is nil")
 
 -- ---------------------------------------------------------------------------
--- Counters
+-- Counters and lifecycle
 -- ---------------------------------------------------------------------------
 RQFlinch.reset()
 local z3 = makeZombie()
@@ -91,6 +182,12 @@ RQFlinch.set(z3, true)
 RQFlinch.set(z3, false)
 check(RQFlinch.stats.set == 2 and RQFlinch.stats.cleared == 1,
     "set and cleared are counted separately")
+
+check(#startHooks == 1, "the module registers exactly one game-start hook")
+local hookOk, hookErr = pcall(startHooks[1])
+check(hookOk, "and it runs cleanly: " .. tostring(hookErr))
+check(RQFlinch.stats.set == 0 and RQFlinch.stats.spans == 0,
+    "the game-start hook resets the counters for the new session")
 
 -- ---------------------------------------------------------------------------
 -- THE LUA/XML CONTRACT
@@ -107,52 +204,33 @@ if f then
         .. tostring(RQFlinch.VARIABLE) .. ")")
     check(xml:find("<m_Type>BOOL</m_Type>", 1, true) ~= nil,
         "the condition is typed BOOL, matching setVariable(key, boolean)")
-    check(xml:find("<m_ConditionPriority>", 1, true) ~= nil,
-        "the node states an explicit priority rather than relying on condition count")
+
     -- Selection is abstract-ness, then priority, then condition count
-    -- (AnimNode.compareSelectionConditions:287-301). Vanilla zombie nodes carry
-    -- no explicit priority, so any positive value wins; the assertion is that
-    -- we did not ship a zero.
+    -- (AnimNode.compareSelectionConditions:287-301), and AnimState.addNode
+    -- (:78-91) inserts highest-first. Vanilla zombie nodes leave the priority
+    -- at its 0 default (AnimNode.java:45-46), so any positive value wins; the
+    -- assertion is that we did not ship a zero.
     local priority = tonumber(xml:match("<m_ConditionPriority>(%d+)</m_ConditionPriority>") or "0")
     check(priority > 0, "the priority is positive, so the node outranks vanilla: " .. priority)
+
     check(xml:find("<m_AnimName>", 1, true) ~= nil,
         "the node names a real animation - an abstract node would lose selection outright")
+
+    -- m_SpeedScale is the entire gunfire mechanism: hitreaction exits on
+    -- <eventOccurred>ActiveAnimFinishing</eventOccurred>, so a fast animation
+    -- is a short state. Shipping a 1.0 here would load, win, and do nothing.
+    local speed = tonumber(xml:match("<m_SpeedScale>([%d%.]+)</m_SpeedScale>") or "1")
+    check(speed >= 5, "the speed scale actually shortens the reaction: " .. speed)
+
+    -- THE KNOCKDOWN HALF. ZombieHitReactionState.animEvent (:103-109) is the
+    -- only thing that floors a zombie during a hit reaction, and it is driven
+    -- entirely by these events. Our node must cancel knockdown and must never
+    -- request one.
+    check(xml:find("<m_EventName>CancelKnockDown</m_EventName>", 1, true) ~= nil,
+        "the node cancels knockdown - this is what makes a Bulwark unfloorable")
+    check(xml:find("<m_EventName>KnockDown</m_EventName>", 1, true) == nil,
+        "and never REQUESTS one, which would floor the zombie it is protecting")
 end
-
--- ---------------------------------------------------------------------------
--- The diagnostic must be harmless
--- ---------------------------------------------------------------------------
--- It reaches for DebugLog, which may not exist, may not expose getDebugTypes,
--- and may hand back something that is not a list. All three are survivable, and
--- a client that fails to boot because of a temporary probe would be a far worse
--- bug than the one it was added to find.
-check(#startHooks == 1, "the module registers its diagnostic on game start")
-
-local hookOk, hookErr = pcall(startHooks[1])
-check(hookOk, "the game-start hook survives RQConfig being absent: " .. tostring(hookErr))
-
-check(RQFlinch.armNodeDiagnostic() == false,
-    "with no DebugLog at all, the diagnostic declines rather than raising")
-
-DebugLog = { getDebugTypes = function() return nil end }
-check(RQFlinch.armNodeDiagnostic() == false, "a nil type list is survivable")
-
-DebugLog = { getDebugTypes = function() return "not a list" end }
-check(RQFlinch.armNodeDiagnostic() == false, "a non-list is survivable")
-
-local enabled = {}
-local fakeType = setmetatable({}, { __tostring = function() return "Animation" end })
-local otherType = setmetatable({}, { __tostring = function() return "Sound" end })
-DebugLog = {
-    getDebugTypes = function()
-        local l = { otherType, fakeType }
-        return { size = function() return #l end, get = function(_, i) return l[i + 1] end }
-    end,
-    setLogEnabled = function(t, on) enabled[tostring(t)] = on end,
-}
-check(RQFlinch.armNodeDiagnostic() == true, "with a real type list the diagnostic arms")
-check(enabled["Animation"] == true, "and enables exactly the Animation channel")
-check(enabled["Sound"] == nil, "leaving every other channel alone")
 
 print(string.format("RQFlinch: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

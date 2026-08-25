@@ -1,20 +1,24 @@
--- RQPoise fixture - a tank absorbs a rolled number of staggers, then powers
--- through for a rolled window.
+-- RQPoise fixture - Bulwarks do not flinch, full stop.
 --
 -- WHY THIS FILE EXISTS. A .45 kept a Boss staggered for an entire encounter
--- (owner, 2026-08-24). This file covers the POLICY - when a tank should stop
--- caring about being shot. The mechanism that makes it true lives in RQFlinch
--- and is covered by test_rqflinch.
+-- (owner, 2026-08-24). This file covers the POLICY - WHO stops caring about
+-- being shot. The mechanism that makes it true lives in RQFlinch and is
+-- covered by test_rqflinch.
 --
--- Three things are most likely to go wrong here, and all three are pinned:
---   1. EDGE-TRIGGERING. A reaction persists for its whole animation, so a
---      naive counter burns a cycle per FRAME instead of per bullet.
---   2. THE GUNFIRE PATH. A bullet sets a hit reaction and never touches
---      staggerBack; the first shipped version watched only the stagger flag
---      and did nothing at all.
---   3. HANDING THE FLINCH BACK. Suppression latches now, so forgetting to
---      clear it leaves a tank permanently unflinchable - a failure the old
---      one-shot flag clear could not have.
+-- REWRITTEN 2026-08-25 when the policy became flat immunity (owner decision).
+-- The absorb-a-rolled-count-then-break cycle is gone, and with it the three
+-- things this fixture used to guard. What replaces them is narrower but
+-- catches the failures the new shape can actually have:
+--   1. QUALIFYING. A passive Scavenger is not a tank; only an enraged one is.
+--      Getting this wrong makes the sleeper-threat design pointless.
+--   2. HANDING THE FLINCH BACK. Immunity latches on the zombie, so a zombie
+--      that stops qualifying and is not released stays permanently
+--      unflinchable - and because the variable lives on the engine object,
+--      nothing in Lua would show it.
+--   3. NOT REWRITING EVERY FRAME. The variable is read back rather than
+--      shadowed, so the write must happen only when it is actually missing.
+--      A regression here is invisible in game and costs a write per frame per
+--      Bulwark.
 
 local ROOT = arg[1] or "."
 local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/client/RQPoise.lua"
@@ -32,30 +36,31 @@ end
 function isServer() return false end
 function isClient() return true end
 
--- Deterministic rolls: always the LOW end of any range, so thresholds are
--- exact and the assertions below say what they mean.
-function ZombRand(a, b)
-    if b == nil then return 0 end
-    return a
-end
-
 local types = {}
 RQRegistry = { getType = function(id) return types[id] end }
 
 -- The mechanism, recorded rather than simulated. RQPoise's job is to decide
--- WHEN a zombie should stop caring about being shot; RQFlinch's job is to make
--- that true. This fixture asserts the decision, and test_rqflinch covers the
+-- WHO should stop caring about being shot; RQFlinch's job is to make that
+-- true. This fixture asserts the decision, and test_rqflinch covers the
 -- mechanism separately.
-local flinchCalls = {}
+local setCalls, releaseCalls = {}, 0
+local nextSpan = nil
 RQFlinch = {
     set = function(zombie, on)
-        flinchCalls[#flinchCalls + 1] = { zombie = zombie, on = on }
-        zombie.flinchSuppressed = on
+        setCalls[#setCalls + 1] = { zombie = zombie, on = on }
+        zombie.flinch = on and true or false
         return true
     end,
+    -- Reads the engine back, exactly as production does. Defaults to false so
+    -- a fresh zombie looks like one that has never been written to.
+    isSet = function(zombie) return zombie.flinch == true end,
+    releaseStagger = function() releaseCalls = releaseCalls + 1; return true end,
+    observe = function() local s = nextSpan; nextSpan = nil; return s end,
 }
 RQReconcile = { scavClientState = {} }
-RQDirgeLog = { write = function() end }
+
+local logLines = {}
+RQDirgeLog = { write = function(_, line) logLines[#logLines + 1] = line end }
 RQCommon = { MODULE = "RFTDDirge" }
 
 local callbacks = {}
@@ -80,177 +85,151 @@ local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
 check(#callbacks["update"] == 1, "the module registers exactly one OnZombieUpdate listener")
 
-local function makeZombie(id)
+-- No setVariable / setStaggerBack / setKnockedDown / setStateEventDelayTimer
+-- on this fake ON PURPOSE. Poise delegates every engine write to RQFlinch, so
+-- if a future change starts writing flags here directly, this fixture throws
+-- rather than quietly passing.
+local function makeZombie(id, remote)
     return {
         id = id,
-        staggered = false, reaction = "",
-        flinchSuppressed = nil,
-        getOnlineID  = function(self) return self.id end,
-        isDead       = function() return false end,
-        isRemoteZombie = function() return false end,
-        isStaggerBack  = function(self) return self.staggered end,
-        -- No setStaggerBack/setKnockedDown/setStateEventDelayTimer: poise no
-        -- longer writes engine flags at all. If a future change reintroduces
-        -- one, this fixture throws rather than silently passing.
-        -- The gunfire path. CombatManager sets EITHER a named hit reaction OR
-        -- staggerBack, never both (:2410-2417); a bullet always takes the
-        -- reaction branch, which is why the first version of this feature -
-        -- watching staggerBack alone - did nothing against a .45.
-        getHitReaction = function(self) return self.reaction end,
+        flinch = nil,
+        getOnlineID    = function(self) return self.id end,
+        isDead         = function() return false end,
+        isRemoteZombie = function() return remote == true end,
     }
 end
 
 -- ---------------------------------------------------------------------------
--- Edge triggering
+-- Qualifying
 -- ---------------------------------------------------------------------------
--- isStaggerBack() stays true for the 20-30 the state runs. If poise counted
--- every frame, one bullet would consume a whole Boss cycle and the feature
--- would do nothing at all.
+local boss = makeZombie(1)
 types[1] = "Boss"
-local z1 = makeZombie(1)
-z1.staggered = true
-for _ = 1, 20 do RQPoise.update(z1, nowMs) end     -- one stagger, held 20 frames
-check(RQPoise.stats.absorbed == 1,
-    "a stagger held across many frames counts ONCE: " .. RQPoise.stats.absorbed)
+RQPoise.update(boss, nowMs)
+check(boss.flinch == true, "a Boss is made immune on its first update")
+check(#setCalls == 1, "and that took exactly one write")
+check(RQPoise.stats.guarded == 1, "the Boss is counted as guarded")
+check(RQPoise.stats.byType["Boss"] == 1, "and counted against its type")
+
+-- THE PER-FRAME COST. The variable latches on the engine object, so once it
+-- reads back true there is nothing to write.
+for _ = 1, 20 do RQPoise.update(boss, nowMs) end
+check(#setCalls == 1,
+    "immunity is asserted once, not re-written every frame: " .. #setCalls)
+check(RQPoise.stats.guarded == 1, "and the zombie is only counted once")
+
+-- SELF-HEALING. A chunk reload rebuilds the zombie with an empty variable
+-- slot; the next update must notice and re-assert rather than trust a cache.
+boss.flinch = nil
+RQPoise.update(boss, nowMs)
+check(boss.flinch == true, "immunity is re-asserted after the variable is lost")
+check(#setCalls == 2, "which is the second and only other write")
+
+-- THE MELEE LANE runs for every qualifying update - it no-ops internally
+-- unless the zombie is genuinely mid-staggerback.
+check(releaseCalls > 0, "releaseStagger is offered the zombie each pass")
 
 -- ---------------------------------------------------------------------------
--- Boss: low roll is 1 stagger, then 5000ms immune
+-- Who does NOT qualify
 -- ---------------------------------------------------------------------------
--- The first stagger above already met the Boss threshold of 1, so the zombie
--- should be immune now and RQFlinch asked to suppress.
-check(RQPoise.stats.broken == 1, "reaching the threshold breaks poise exactly once")
-check(z1.flinchSuppressed == true, "breaking poise asks RQFlinch to suppress")
+local plain = makeZombie(2)
+types[2] = "Screamer"
+RQPoise.update(plain, nowMs)
+check(plain.flinch == nil,
+    "a Screamer is left staggerable - being fragile is the point")
 
--- LATCHING, not per-frame. The old mechanism cleared a flag every pass; the
--- variable RQFlinch sets stays true until cleared, so re-asserting it each
--- frame would be pure waste. One write in, one write out.
-local callsAfterBreak = #flinchCalls
-local absorbedBefore = RQPoise.stats.absorbed
-z1.staggered = true
-RQPoise.update(z1, nowMs + 1000)
-RQPoise.update(z1, nowMs + 1100)
-check(#flinchCalls == callsAfterBreak,
-    "suppression is not re-written on every frame of the window")
-check(z1.flinchSuppressed == true, "and it stays suppressed throughout")
-check(RQPoise.stats.absorbed == absorbedBefore,
-    "a stagger during immunity is not counted against the next cycle")
+local unknown = makeZombie(3)
+RQPoise.update(unknown, nowMs)
+check(unknown.flinch == nil, "an unregistered zombie is left alone entirely")
 
--- Immunity is 5000ms at the low roll; at 5001 it is over. The distinction that
--- matters is COUNTED vs SCRUBBED: a stagger inside the window is discarded
--- without touching the counter, one outside it is processed. The flag ends up
--- false either way here, because a Boss at the low roll of 1 breaks poise again
--- on that very stagger - which is the profile working, not a failure.
--- Immunity is 5000ms at the low roll. Expiry must HAND THE FLINCH BACK - the
--- half a one-shot flag clear never needed, and the way a latching variable
--- leaves a tank permanently unflinchable if it is forgotten.
-local brokenAtExpiry = RQPoise.stats.broken
-z1.staggered = false
-RQPoise.update(z1, nowMs + 5001)
-check(z1.flinchSuppressed == false,
-    "the window expiring returns the zombie to normal flinching")
-
-z1.staggered = true
-RQPoise.update(z1, nowMs + 5002)
-check(RQPoise.stats.absorbed == absorbedBefore + 1,
-    "once the window expires a stagger is processed rather than scrubbed")
-check(RQPoise.stats.broken == brokenAtExpiry + 1,
-    "and at a threshold of one, that stagger immediately opens the next window")
+-- A remote zombie belongs to another client; deciding for it would have two
+-- machines fighting over the same variable.
+local remote = makeZombie(4, true)
+types[4] = "Boss"
+RQPoise.update(remote, nowMs)
+check(remote.flinch == nil, "a remote zombie is skipped - its owner decides")
 
 -- ---------------------------------------------------------------------------
--- Juggernaut takes more hits to break
+-- The Scavenger rule
 -- ---------------------------------------------------------------------------
-types[2] = "Juggernaut"
-local z2 = makeZombie(2)
-local brokenBefore = RQPoise.stats.broken
-for i = 1, 2 do                      -- low roll for Juggernaut is 2 staggers
-    z2.staggered = true
-    RQPoise.update(z2, nowMs + i)
-    z2.staggered = false
-    RQPoise.update(z2, nowMs + i)    -- falling edge, so the next one is new
-end
-check(RQPoise.stats.broken == brokenBefore + 1,
-    "a Juggernaut breaks poise on its second stagger, not its first")
-check(RQPoise.stats.byType["Juggernaut"] == 1, "the break is attributed to the type")
+-- A passive Scavenger is a sleeper threat and takes full stagger. Only rage
+-- makes it a Bulwark.
+local scav = makeZombie(5)
+types[5] = "Scavenger"
+RQPoise.update(scav, nowMs)
+check(scav.flinch == nil, "a passive Scavenger is NOT immune")
+
+RQReconcile.scavClientState[5] = { enraged = true }
+RQPoise.update(scav, nowMs)
+check(scav.flinch == true, "an enraged Scavenger is")
+
+-- ...and losing the row hands the flinch back, exactly once.
+local releasedBefore = RQPoise.stats.released
+RQReconcile.scavClientState[5] = nil
+RQPoise.update(scav, nowMs)
+check(scav.flinch == false,
+    "a Scavenger that stops qualifying is handed its flinch back")
+check(RQPoise.stats.released == releasedBefore + 1, "and is counted as released")
+
+RQPoise.update(scav, nowMs)
+check(RQPoise.stats.released == releasedBefore + 1,
+    "releasing is idempotent - a non-qualifying zombie costs nothing after")
 
 -- ---------------------------------------------------------------------------
--- A passive Scavenger is NOT a tank
+-- Guards
 -- ---------------------------------------------------------------------------
--- Same rule as Bulwark: rage is what armours a Scavenger. A passive one takes
--- full damage and full stagger, which is the sleeper-threat design.
-types[3] = "Scavenger"
-local z3 = makeZombie(3)
-RQReconcile.scavClientState[3] = { enraged = false }
-z3.staggered = true
-RQPoise.update(z3, nowMs)
-check(z3.flinchSuppressed == nil, "a passive Scavenger is never suppressed")
-check(RQPoise.poise[z3] == nil, "and it carries no poise state at all")
+check(pcall(RQPoise.update, nil, nowMs), "a nil zombie is refused rather than raising")
 
-RQReconcile.scavClientState[3] = { enraged = true }
-local absorbed2 = RQPoise.stats.absorbed
-z3.staggered = false
-RQPoise.update(z3, nowMs)
-z3.staggered = true
-RQPoise.update(z3, nowMs)
-check(RQPoise.stats.absorbed == absorbed2 + 1, "an ENRAGED Scavenger absorbs staggers")
-
--- ---------------------------------------------------------------------------
--- THE GUNFIRE PATH - the regression that shipped once already
--- ---------------------------------------------------------------------------
--- A bullet never sets staggerBack. CombatManager resolves it to a named
--- HitReaction and takes the other branch entirely, so a poise implementation
--- watching only staggerBack counts nothing, breaks never, and logs nothing -
--- which is exactly what a .45 demonstrated on Mosaic. These assertions fail if
--- anyone narrows the check back to the stagger flag.
-types[7] = "Boss"
-local z7 = makeZombie(7)
-local absorbedGun = RQPoise.stats.absorbed
-local brokenGun   = RQPoise.stats.broken
-
-z7.staggered = false            -- exactly as a gunshot leaves it
-z7.reaction  = "HitReactionF"   -- a named directional reaction
-RQPoise.update(z7, nowMs)
-check(RQPoise.stats.absorbed == absorbedGun + 1,
-    "a hit reaction with NO staggerBack still counts as a hit")
-check(RQPoise.stats.broken == brokenGun + 1,
-    "and a Boss at threshold one breaks poise on it")
-check(z7.flinchSuppressed == true,
-    "a gunshot with no staggerBack still drives poise to suppress")
-
--- A nil reaction must read as "not reacting" rather than throwing.
-local z8 = makeZombie(8)
-types[8] = "Boss"
-z8.reaction = nil
-local absorbedNil = RQPoise.stats.absorbed
-RQPoise.update(z8, nowMs)
-check(RQPoise.stats.absorbed == absorbedNil,
-    "a nil hit reaction is not a hit")
-
--- ---------------------------------------------------------------------------
--- Types that are not tanks are untouched
--- ---------------------------------------------------------------------------
-types[4] = "Glutton"
-local z4 = makeZombie(4)
-z4.staggered = true
-RQPoise.update(z4, nowMs)
-check(z4.flinchSuppressed == nil, "a Glutton is never suppressed - it is not a tank")
-
-types[5] = nil
-local z5 = makeZombie(5)
-z5.staggered = true
-RQPoise.update(z5, nowMs)
-check(z5.flinchSuppressed == nil, "an ordinary zombie is untouched")
-
--- ---------------------------------------------------------------------------
--- Ownership
--- ---------------------------------------------------------------------------
--- Poise must be a single-authority decision; every client rolling its own
--- threshold would break the same zombie at different moments.
+local dead = makeZombie(6)
 types[6] = "Boss"
-local z6 = makeZombie(6)
-z6.isRemoteZombie = function() return true end
-z6.staggered = true
-RQPoise.update(z6, nowMs)
-check(z6.flinchSuppressed == nil, "a zombie this client does not own is left to its owner")
+dead.isDead = function() return true end
+RQPoise.update(dead, nowMs)
+check(dead.flinch == nil, "a dead zombie is not worth an engine call")
+
+local noID = makeZombie(-1)
+types[-1] = "Boss"
+RQPoise.update(noID, nowMs)
+check(noID.flinch == nil, "a zombie with no valid onlineID is skipped")
+
+-- ---------------------------------------------------------------------------
+-- Bounded instrumentation
+-- ---------------------------------------------------------------------------
+-- Span logging is the only evidence RQFlinch's node is winning selection, so
+-- it is worth having - but a long firefight must not turn the log into a
+-- per-hit stream. CLAUDE.md section 14: instrumentation is bounded or it does
+-- not ship.
+RQPoise.reset()
+logLines = {}
+local logged = makeZombie(7)
+types[7] = "Boss"
+for i = 1, 200 do
+    nextSpan = { ms = 40, frames = 2 }
+    RQPoise.update(logged, nowMs + i)
+end
+check(RQPoise.stats.logged < 200, "span logging stops well short of one line per hit")
+check(RQPoise.stats.logged == #logLines,
+    "every counted span produced exactly one line: "
+    .. RQPoise.stats.logged .. " vs " .. #logLines)
+check(logLines[1]:find("frames", 1, true) ~= nil,
+    "and the line reports the frame count, which is the number that settles it")
+local capped = RQPoise.stats.logged
+for i = 1, 50 do
+    nextSpan = { ms = 40, frames = 2 }
+    RQPoise.update(logged, nowMs + 200 + i)
+end
+check(RQPoise.stats.logged == capped,
+    "and the cap holds - further spans are counted but silent: " .. RQPoise.stats.logged)
+
+-- ---------------------------------------------------------------------------
+-- Reset
+-- ---------------------------------------------------------------------------
+RQPoise.reset()
+check(RQPoise.stats.guarded == 0 and RQPoise.stats.released == 0
+    and RQPoise.stats.logged == 0, "reset clears every counter")
+-- pairs, not next: Kahlua has no next() and the suite does not use it even in
+-- fixtures, so a copied line never carries it into shipping code (CLAUDE.md 3).
+local remaining = 0
+for _ in pairs(RQPoise.stats.byType) do remaining = remaining + 1 end
+check(remaining == 0, "including the per-type table")
 
 print(string.format("RQPoise: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end
