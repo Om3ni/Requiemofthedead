@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RQFlinch - the getup, compressed. The back half of the crit-headshot chain:
+  shothead-* dumps the zombie into onground, onground routes here the moment
+  its flag conditions pass (actiongroups/zombie/onground/to_getup-fromOnBack.xml
+  - flags only, no timer), and this state exits to idle on
+  <eventOccurred>ActiveAnimFinishing</eventOccurred>. Fast animation, short
+  floor time. See hitreaction-shothead-fwd/RQFlinch.xml for the chain.
+
+  Copied from vanilla getUpFromOnBack.xml with our condition, priority, speed,
+  and zeroed blend-in. TWO THINGS HERE ARE LOAD-BEARING and must survive any
+  edit: the SetOnFloor(false) event is what actually clears bOnFloor (at 20x it
+  fires within the first frames), and IsAlmostUp is the AI's cue that the
+  zombie is standing again. Both kept verbatim from vanilla, timeline
+  percentages included.
+-->
+<animNode>
+	<m_Name>RQFlinchGetUpFromOnBack</m_Name>
+	<m_AnimName>Zombie_GetUp</m_AnimName>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.0</m_BlendTime>
+	<m_EarlyTransitionOut>true</m_EarlyTransitionOut>
+	<m_SpeedScale>20.00</m_SpeedScale>
+	<m_SyncTrackingEnabled>false</m_SyncTrackingEnabled>
+	<m_ConditionPriority>100</m_ConditionPriority>
+	<m_Conditions x_name="rqf1a2b3-4001-4000-8000-rftddirge4001">
+		<m_Name>RQNoFlinch</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Events x_name="f3725719-cbf4-4fa3-ad3c-7c8cbcb2c1a8">
+		<m_EventName>IsAlmostUp</m_EventName>
+		<m_TimePc>0.5</m_TimePc>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="ab56ac07-b7db-416f-9df1-81f1e5c46d85">
+		<m_EventName>SetOnFloor</m_EventName>
+		<m_TimePc>0.5</m_TimePc>
+		<m_ParameterValue>false</m_ParameterValue>
+	</m_Events>
+	<m_Transitions>
+		<m_Target>lunge1</m_Target>
+		<m_blendInTime>0.2</m_blendInTime>
+	</m_Transitions>
+	<m_Transitions>
+		<m_Target>lunge2</m_Target>
+		<m_blendInTime>0.2</m_blendInTime>
+	</m_Transitions>
+	<m_Transitions>
+		<m_Target>defaultIdle</m_Target>
+		<m_blendInTime>0.2</m_blendInTime>
+	</m_Transitions>
+</animNode>

@@ -4,18 +4,36 @@
 -- looking correct in Lua, and all three would still pass a fixture that only
 -- checked "did we call the setter". So the thing pinned here is the CONTRACT
 -- BETWEEN THE LUA AND THE XML: the variable name RQFlinch writes must be the
--- one media/AnimSets/zombie/hitreaction/RQFlinch.xml keys on, and the node
--- must still carry the events that do the knockdown half. A mismatch fails
+-- one every node in media/AnimSets/zombie/*/RQFlinch.xml keys on, and each
+-- node must still carry the events its state depends on. A mismatch fails
 -- SILENTLY in game - the node never wins, flinches look normal, and nothing
 -- logs - which is precisely the failure mode this suite exists to make loud.
 --
--- The XML block at the bottom reads the shipped node and compares it to the
+-- The XML block at the bottom reads every shipped node and compares it to the
 -- Lua. That is deliberate: it is the only part of this feature a Lua-only test
 -- can prove, and it is the part most likely to rot.
 
 local ROOT = arg[1] or "."
 local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/client/RQFlinch.lua"
-local NODE   = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/AnimSets/zombie/hitreaction/RQFlinch.xml"
+local ANIMSETS = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/AnimSets/zombie/"
+
+-- Every node in the family, with the per-node expectations that must not
+-- drift. `fallOnFront` mirrors vanilla exactly - it is what routes onground
+-- into the matching getup - and `cancelKnockDown` states which value the node
+-- carries (bwd's false is vanilla's own, and a no-op by
+-- ZombieHitReactionState.java:103).
+local NODES = {
+    { path = "hitreaction/RQFlinch.xml",
+      cancelKnockDown = "true" },
+    { path = "hitreaction-shothead-fwd/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "true" },
+    { path = "hitreaction-shothead-fwd02/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "true" },
+    { path = "hitreaction-shothead-bwd/RQFlinch.xml",
+      cancelKnockDown = "false", fallOnFront = "false" },
+    { path = "getup-fromOnBack/RQFlinch.xml",  setOnFloor = true },
+    { path = "getup-fromOnFront/RQFlinch.xml", setOnFloor = true },
+}
 
 local passed, failed = 0, 0
 local function check(ok, message)
@@ -194,42 +212,64 @@ check(RQFlinch.stats.set == 0 and RQFlinch.stats.spans == 0,
 -- ---------------------------------------------------------------------------
 -- The half that actually breaks. If these drift, the feature silently does
 -- nothing in game and no log line appears anywhere.
-local f = io.open(NODE, "r")
-check(f ~= nil, "the AnimSets node ships alongside the module")
-if f then
-    local xml = f:read("*a")
-    f:close()
-    check(xml:find("<m_Name>" .. RQFlinch.VARIABLE .. "</m_Name>", 1, true) ~= nil,
-        "the node keys on exactly the variable RQFlinch writes ("
-        .. tostring(RQFlinch.VARIABLE) .. ")")
-    check(xml:find("<m_Type>BOOL</m_Type>", 1, true) ~= nil,
-        "the condition is typed BOOL, matching setVariable(key, boolean)")
+for _, node in ipairs(NODES) do
+    local label = node.path
+    local f = io.open(ANIMSETS .. node.path, "r")
+    check(f ~= nil, label .. " ships alongside the module")
+    if f then
+        local xml = f:read("*a")
+        f:close()
+        check(xml:find("<m_Name>" .. RQFlinch.VARIABLE .. "</m_Name>", 1, true) ~= nil,
+            label .. " keys on exactly the variable RQFlinch writes ("
+            .. tostring(RQFlinch.VARIABLE) .. ")")
+        check(xml:find("<m_Type>BOOL</m_Type>", 1, true) ~= nil,
+            label .. ": the condition is typed BOOL, matching setVariable(key, boolean)")
 
-    -- Selection is abstract-ness, then priority, then condition count
-    -- (AnimNode.compareSelectionConditions:287-301), and AnimState.addNode
-    -- (:78-91) inserts highest-first. Vanilla zombie nodes leave the priority
-    -- at its 0 default (AnimNode.java:45-46), so any positive value wins; the
-    -- assertion is that we did not ship a zero.
-    local priority = tonumber(xml:match("<m_ConditionPriority>(%d+)</m_ConditionPriority>") or "0")
-    check(priority > 0, "the priority is positive, so the node outranks vanilla: " .. priority)
+        -- Selection is abstract-ness, then priority, then condition count
+        -- (AnimNode.compareSelectionConditions:287-301), and AnimState.addNode
+        -- (:78-91) inserts highest-first. Vanilla zombie nodes leave the
+        -- priority at its 0 default (AnimNode.java:45-46), so any positive
+        -- value wins; the assertion is that we did not ship a zero.
+        local priority = tonumber(xml:match("<m_ConditionPriority>(%d+)</m_ConditionPriority>") or "0")
+        check(priority > 0, label .. ": positive priority outranks vanilla: " .. priority)
 
-    check(xml:find("<m_AnimName>", 1, true) ~= nil,
-        "the node names a real animation - an abstract node would lose selection outright")
+        check(xml:find("<m_AnimName>", 1, true) ~= nil,
+            label .. " names a real animation - an abstract node would lose selection outright")
 
-    -- m_SpeedScale is the entire gunfire mechanism: hitreaction exits on
-    -- <eventOccurred>ActiveAnimFinishing</eventOccurred>, so a fast animation
-    -- is a short state. Shipping a 1.0 here would load, win, and do nothing.
-    local speed = tonumber(xml:match("<m_SpeedScale>([%d%.]+)</m_SpeedScale>") or "1")
-    check(speed >= 5, "the speed scale actually shortens the reaction: " .. speed)
+        -- m_SpeedScale is the entire mechanism: every covered state exits on
+        -- <eventOccurred>ActiveAnimFinishing</eventOccurred>, so a fast
+        -- animation is a short state. Shipping a 1.0 would load, win, and do
+        -- nothing.
+        local speed = tonumber(xml:match("<m_SpeedScale>([%d%.]+)</m_SpeedScale>") or "1")
+        check(speed >= 5, label .. ": the speed scale actually shortens the state: " .. speed)
 
-    -- THE KNOCKDOWN HALF. ZombieHitReactionState.animEvent (:103-109) is the
-    -- only thing that floors a zombie during a hit reaction, and it is driven
-    -- entirely by these events. Our node must cancel knockdown and must never
-    -- request one.
-    check(xml:find("<m_EventName>CancelKnockDown</m_EventName>", 1, true) ~= nil,
-        "the node cancels knockdown - this is what makes a Bulwark unfloorable")
-    check(xml:find("<m_EventName>KnockDown</m_EventName>", 1, true) == nil,
-        "and never REQUESTS one, which would floor the zombie it is protecting")
+        -- THE KNOCKDOWN HALF. ZombieHitReactionState.animEvent (:103-109) is
+        -- the only thing that floors a zombie during a hit reaction, and it is
+        -- driven entirely by these events. No node of ours may request one.
+        check(xml:find("<m_EventName>KnockDown</m_EventName>", 1, true) == nil,
+            label .. " never REQUESTS a knockdown")
+        if node.cancelKnockDown then
+            check(xml:find("<m_EventName>CancelKnockDown</m_EventName>%s*<m_Time>Start</m_Time>%s*"
+                    .. "<m_ParameterValue>" .. node.cancelKnockDown .. "</m_ParameterValue>") ~= nil,
+                label .. ": CancelKnockDown carries vanilla's value (" .. node.cancelKnockDown .. ")")
+        end
+
+        -- FallOnFront routes onground into the MATCHING getup
+        -- (actiongroups/zombie/onground/to_getup-fromOn*.xml condition
+        -- fallOnFront); flipping it would play a back-getup from a front fall.
+        if node.fallOnFront then
+            check(xml:find("<m_EventName>FallOnFront</m_EventName>%s*<m_Time>Start</m_Time>%s*"
+                    .. "<m_ParameterValue>" .. node.fallOnFront .. "</m_ParameterValue>") ~= nil,
+                label .. ": FallOnFront matches vanilla (" .. node.fallOnFront .. ")")
+        end
+
+        -- SetOnFloor(false) is what actually clears bOnFloor on the way up; a
+        -- getup node without it leaves the zombie logically on the floor.
+        if node.setOnFloor then
+            check(xml:find("<m_EventName>SetOnFloor</m_EventName>", 1, true) ~= nil,
+                label .. " keeps the SetOnFloor event that clears bOnFloor")
+        end
+    end
 end
 
 print(string.format("RQFlinch: %d passed, %d failed", passed, failed))

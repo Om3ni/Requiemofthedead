@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RQFlinch - the crit-headshot fall (backward), compressed. See
+  hitreaction-shothead-fwd/RQFlinch.xml for why this state cannot be refused
+  and why shortening it works.
+
+  FallOnFront is FALSE here, exactly as in vanilla's ShotHeadBwd.xml: this fall
+  lands on the back, and the flag is what routes onground into getup-fromOnBack
+  rather than getup-fromOnFront. CancelKnockDown false is also vanilla's value,
+  kept as-is - Boolean.parseBoolean("false") makes the event a no-op
+  (ZombieHitReactionState.java:103), and ZombieOnGroundState.exit clears the
+  flag regardless (:52), so forcing it true here would change nothing and
+  diverge from the node we claim to mirror.
+-->
+<animNode>
+	<m_Name>RQFlinchShotHeadBwd</m_Name>
+	<m_AnimName>Zombie_ShotHeadFallBwd</m_AnimName>
+	<m_DeferredBoneName>Bip01</m_DeferredBoneName>
+	<m_deferredBoneAxis>Z</m_deferredBoneAxis>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.0</m_BlendTime>
+	<m_BlendOutTime>0.0</m_BlendOutTime>
+	<m_SpeedScale>20.00</m_SpeedScale>
+	<m_ConditionPriority>100</m_ConditionPriority>
+	<m_Conditions x_name="rqf1a2b3-3001-4000-8000-rftddirge3001">
+		<m_Name>RQNoFlinch</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Events x_name="798e7f93-f590-4406-ac66-30ef3ab26861">
+		<m_EventName>FallOnFront</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>false</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="56075d24-161e-47e7-8c02-2045c23ee69d">
+		<m_EventName>CancelKnockDown</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>false</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="2f401c7e-050c-484a-be3b-8b18adcbedf8">
+		<m_EventName>SetState</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="e0f9de88-c8a8-4fcc-90e7-5a6e6f800cc6">
+		<m_EventName>PlaySound</m_EventName>
+		<m_TimePc>0.5</m_TimePc>
+		<m_ParameterValue>BodyHitGround</m_ParameterValue>
+	</m_Events>
+</animNode>

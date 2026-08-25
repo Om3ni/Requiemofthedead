@@ -8,6 +8,11 @@
 --
 -- THE POLICY, owner decision 2026-08-25: FLAT IMMUNITY. A Bulwark does not
 -- stumble and cannot be put on the floor. There is no counter and no window.
+-- One stated exception, engine-imposed: a critical firearm hit routes into the
+-- shothead fall on the reaction string alone, in the same tick that set it, so
+-- it cannot be refused from Lua - RQFlinch compresses that fall to ~10 frames
+-- instead. A crit reads as a dip-and-recover; everything else lands as a
+-- 2-6 frame twitch.
 --
 -- WHAT THIS REPLACED, and why the replacement is not a loss. This file used to
 -- implement poise: absorb a rolled number of staggers, then go immune for a

@@ -45,6 +45,21 @@
 --     The timer itself is public though - IsoMovingObject.java:1960 - so we
 --     zero it. That is RQFlinch.releaseStagger.
 --
+--   CRITICAL HIT -> the `hitreaction-shothead-*` fall chain. A crit resolves
+--     to SHOT_HEAD_FWD/FWD02/BWD (CombatManager.resolveHitReaction:2313-2331)
+--     and the actiongroup routes into the fall on the reaction STRING alone,
+--     inside the same engine tick that set it - every Lua hit event
+--     (OnHitZombie, IsoZombie.java:1107; OnWeaponHitCharacter,
+--     IsoGameCharacter.java:5705) fires BEFORE hitConsequences writes the
+--     string, so there is no code of ours between the write and the read.
+--     This lane cannot be refused, only COMPRESSED: nodes in the three
+--     shothead states and both getup states (all exit on ActiveAnimFinishing;
+--     onground between them is flag-gated transit) shrink the measured
+--     125-frame / 2083ms floor trip to roughly ten frames. A crit reads as a
+--     dip-and-recover, not a knockdown. Measured before the fix, Mosaic
+--     2026-08-25: twelve suppressed hits at 2-6 frames, then one crit took
+--     the boss down for the full two seconds.
+--
 -- The two halves of the animation graph load DIFFERENTLY, and that asymmetry
 -- is the entire reason the gunfire lane is possible at all:
 --

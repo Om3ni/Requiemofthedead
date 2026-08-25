@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RQFlinch - the crit-headshot fall, compressed. One of five nodes covering the
+  knockdown chain; the design rationale lives in
+  media/AnimSets/zombie/hitreaction/RQFlinch.xml and RQFlinch.lua.
+
+  WHY THIS STATE CANNOT BE REFUSED, only shortened. A critical firearm hit
+  resolves to SHOT_HEAD_FWD/FWD02/BWD (CombatManager.resolveHitReaction,
+  :2313-2331), and actiongroups/zombie/hitreaction/to_hitreaction-shothead-*.xml
+  routes here on the reaction STRING alone - no knockdown flag to cancel. The
+  string is written and the graph reads it inside the same engine tick, with no
+  Lua event in between (OnHitZombie fires at IsoZombie.java:1107, BEFORE
+  super.Hit runs hitConsequences), so entry is a fact by the time any code of
+  ours runs. Measured on Mosaic 2026-08-25: twelve suppressed hits at 2-6
+  frames, then one crit and a 125-frame / 2083ms floor trip.
+
+  WHY SHORTENING WORKS: this state's only living exit is
+  <eventOccurred>ActiveAnimFinishing</eventOccurred> -> onground
+  (actiongroups/zombie/hitreaction-shothead-fwd/to_onground.xml), so a fast
+  animation is a short state, and the getup states this chains into carry
+  RQFlinch nodes of their own.
+
+  Copied from vanilla ShotHeadFwd.xml, changed only by: our condition, an
+  explicit priority (vanilla's node has none, so ours wins only while the
+  variable is true), speed 20, and zeroed blends (a 0.5s blend-in would outlive
+  a 60ms animation). The FallOnFront/CancelKnockDown/SetState/PlaySound events
+  are vanilla's, kept verbatim: FallOnFront routes the correct getup, and
+  SetOnFloor bookkeeping downstream depends on the fall having been recorded.
+-->
+<animNode>
+	<m_Name>RQFlinchShotHeadFwd</m_Name>
+	<m_AnimName>Zombie_ShotHeadFallFwd</m_AnimName>
+	<m_DeferredBoneName>Bip01</m_DeferredBoneName>
+	<m_deferredBoneAxis>Z</m_deferredBoneAxis>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.0</m_BlendTime>
+	<m_BlendOutTime>0.0</m_BlendOutTime>
+	<m_SpeedScale>20.00</m_SpeedScale>
+	<m_ConditionPriority>100</m_ConditionPriority>
+	<m_Conditions x_name="rqf1a2b3-1001-4000-8000-rftddirge1001">
+		<m_Name>RQNoFlinch</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Events x_name="798e7f93-f590-4406-ac66-30ef3ab26861">
+		<m_EventName>FallOnFront</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="56075d24-161e-47e7-8c02-2045c23ee69d">
+		<m_EventName>CancelKnockDown</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="2f401c7e-050c-484a-be3b-8b18adcbedf8">
+		<m_EventName>SetState</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="829ed2a6-b54d-4093-8918-0be1e6def3c3">
+		<m_EventName>PlaySound</m_EventName>
+		<m_TimePc>0.5</m_TimePc>
+		<m_ParameterValue>BodyHitGround</m_ParameterValue>
+	</m_Events>
+</animNode>
