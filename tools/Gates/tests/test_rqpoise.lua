@@ -58,6 +58,14 @@ RQFlinch = {
     isSet = function(zombie) return zombie.flinch == true end,
     releaseStagger = function() releaseCalls = releaseCalls + 1; return true end,
     observe = function() local s = nextSpan; nextSpan = nil; return s end,
+    -- The REAL routeText contract, not a convenience: nil for no span and nil
+    -- for an empty route, so the caller can leave the clause off entirely. A
+    -- stub that always returned a string would let RQPoise ship " via " with
+    -- nothing after it and this fixture would never notice.
+    routeText = function(span)
+        if not span or not span.route or #span.route == 0 then return nil end
+        return table.concat(span.route, ", ")
+    end,
 }
 RQReconcile = { scavClientState = {} }
 
@@ -242,6 +250,9 @@ check(RQPoise.stats.logged == #logLines,
     .. RQPoise.stats.logged .. " vs " .. #logLines)
 check(logLines[1]:find("frames", 1, true) ~= nil,
     "and the line reports the frame count, which is the number that settles it")
+check(logLines[1]:find("via", 1, true) == nil,
+    "a span with no route prints no empty 'via' clause: " .. logLines[1])
+
 local capped = RQPoise.stats.logged
 for i = 1, 50 do
     nextSpan = { ms = 40, frames = 2 }
@@ -249,6 +260,19 @@ for i = 1, 50 do
 end
 check(RQPoise.stats.logged == capped,
     "and the cap holds - further spans are counted but silent: " .. RQPoise.stats.logged)
+
+-- The route is the half that names a LANE. A 2000ms span says the suppression
+-- lost; "via hitreaction, knockeddown-shotChestL" says where, which is the
+-- evidence the knockdown-ordering question needs and cannot get from reading
+-- the animation graph (see hitreaction/RQFlinch.xml).
+RQPoise.reset()
+logLines = {}
+nextSpan = { ms = 2083, frames = 125,
+             route = { "hitreaction", "knockeddown-shotChestL", "onground" } }
+RQPoise.update(logged, nowMs + 400)
+check(#logLines == 1, "a routed span still logs exactly one line")
+check(logLines[1]:find("via hitreaction, knockeddown-shotChestL, onground", 1, true) ~= nil,
+    "the lane reaches the log line: " .. logLines[1])
 
 -- ---------------------------------------------------------------------------
 -- Reset

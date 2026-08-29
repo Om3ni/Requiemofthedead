@@ -24,7 +24,37 @@
 -- gets found by a player months later.
 -- =============================================
 
+require "RDShared"   -- badNum; see usable() below
+
 RQCeiling = RQCeiling or {}
+
+-- Is this modData value real evidence?
+--
+-- MODDATA IS SAVE DATA, AND SAVE DATA IS NOT OURS. It outlives the build that
+-- wrote it, survives hand edits, and any other mod can write to the same
+-- table, so a key can come back holding a string, a boolean or nothing at all.
+-- Every arm below already refuses with a named reason for a missing key or a
+-- bad multiplier; a key holding the wrong TYPE is the same class of bad input
+-- and now gets the same treatment. Before 2026-08-25 it did not: `stamped > 0`
+-- compared straight against whatever was there and threw "attempt to compare
+-- number with string".
+--
+-- WHY NOT SIMPLY LET IT THROW, which is this repo's default tie-break. Because
+-- both callers are hot and one of them is a RENDER path: RQHealthBar.lua:104
+-- resolves a ceiling per frame for every visible special. UIManager.render()
+-- catches per element, so the throw would not take the UI down - it would be
+-- logged every frame for every affected zombie, which buries the cause it was
+-- meant to reveal. A named refusal reaches the same operator through the same
+-- log, once per decision, and says which key was wrong. The refusal is not
+-- silent: `resolve` hands the reason back and the caller does nothing rather
+-- than inventing a ceiling.
+--
+-- badNum is Core's (RDShared.lua) and also rejects NaN and both infinities - a
+-- stored inf would otherwise pass `> 0` and produce an infinite ceiling, which
+-- is a special that can never be healed to full and a health bar stuck at 0%.
+local function usable(v)
+    return not RDShared.badNum(v) and v > 0
+end
 
 -- ---------------------------------------------------------------------------
 -- reconstructBase - for specials converted before RQBaseHP existed
@@ -36,19 +66,37 @@ RQCeiling = RQCeiling or {}
 -- and low for a hurt one, which fails safe - a low ceiling under-heals rather
 -- than inflating a special past what it should be.
 function RQCeiling.reconstructBase(md, zType, mult)
-    if not md or not mult or mult <= 0 then return nil, "no-multiplier" end
+    if not md or RDShared.badNum(mult) or mult <= 0 then return nil, "no-multiplier" end
 
     local stamped = md["RQBaseHP"]
-    if stamped and stamped > 0 then return stamped, "stamped" end
+    if usable(stamped) then return stamped, "stamped" end
 
     local juggMax = md["RQJuggMaxHP"]
-    if zType == "Juggernaut" and juggMax and juggMax > 0 then
+    if zType == "Juggernaut" and usable(juggMax) then
         return juggMax / mult, "legacy-jugg"
     end
 
     local gluttonBase = md["RQGluttonBaseHealth"]
-    if gluttonBase and gluttonBase > 0 then
+    if usable(gluttonBase) then
         return gluttonBase / mult, "legacy-glutton"
+    end
+
+    -- A key holding the wrong TYPE is a different diagnosis from no key at all:
+    -- the first means the save is damaged or another mod is writing our
+    -- namespace, the second is just an old conversion. Worth the extra reason -
+    -- these strings are what an operator reads when healing stops working.
+    --
+    -- badNum, NOT `not usable`. usable() also rejects zero and negatives, and
+    -- those are legitimately "not evidence" rather than "corrupt" - a stored 0
+    -- is what an interrupted conversion leaves behind. Reporting it as
+    -- non-numeric would send someone hunting a save corruption that is not
+    -- there. (Written the loose way first; test_rqceiling caught it on the
+    -- first run, because a perfectly good RQJuggMaxHP on a Screamer is PRESENT
+    -- and merely inapplicable, and was being reported as corrupt.)
+    if (stamped ~= nil and RDShared.badNum(stamped))
+        or (juggMax ~= nil and RDShared.badNum(juggMax))
+        or (gluttonBase ~= nil and RDShared.badNum(gluttonBase)) then
+        return nil, "non-numeric"
     end
 
     return nil, "unreconstructable"
@@ -80,7 +128,10 @@ end
 function RQCeiling.resolve(md, zType, mult, opts)
     opts = opts or {}
 
-    if opts.ragePeak and opts.ragePeak > 0 then
+    -- Same reasoning as usable() above, and the client path makes it matter:
+    -- RQHealthBar reads this peak out of RQReconcile.scavClientState, which is
+    -- populated from the wire.
+    if usable(opts.ragePeak) then
         return opts.ragePeak, "rage-peak"
     end
 
@@ -90,11 +141,11 @@ function RQCeiling.resolve(md, zType, mult, opts)
     local ceiling = base * mult
 
     local eatMult = opts.eatMult
-    if eatMult and eatMult > 1.0 then
+    if usable(eatMult) and eatMult > 1.0 then
         ceiling = ceiling * eatMult
     end
 
-    if opts.currentHP and opts.currentHP > ceiling then
+    if usable(opts.currentHP) and opts.currentHP > ceiling then
         ceiling = opts.currentHP
     end
 

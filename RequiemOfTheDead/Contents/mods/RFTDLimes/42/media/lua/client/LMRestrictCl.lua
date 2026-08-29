@@ -145,7 +145,11 @@ local function bounce()
     -- local player, checked non-nil above.
     local x, y = p:getX(), p:getY()
 
-    local no, zone = denied(x, y, "noplayers")
+    -- deniedFor, not denied: the zone's noplayersPass list can clear THIS
+    -- player (their role name or a role capability), and a cleared player's
+    -- position inside the zone is a legitimate place to stand - it feeds
+    -- lastGood like anywhere else.
+    local no, zone = LMRestrictShared.deniedFor(p, x, y, "noplayers")
     if not no then
         lastGood = { x, y }
         return

@@ -54,6 +54,11 @@ require "DMKitDefs"
 
 DMRegistry = DMRegistry or {}
 
+-- Version registration (owner-approved 2026-08-25). Shared tier so both
+-- sides carry it; the server-side HELLO (RDLife.lua:219) is the consumer.
+require "RDShared"   -- explicit: file-scope RD* use must not ride on load order
+RDShared.registerMod("RFTDDungeonMaster", "1.2.1")   -- keep in sync with mod.info
+
 local traitById   -- id (tostring form) -> CharacterTrait
 local traitList   -- { { id, label }, ... }, sorted by label
 local traitTex    -- id -> Texture, for surfaces that draw one
@@ -153,6 +158,62 @@ function DMRegistry.perk(name)
         return nil, "no skill called '" .. name .. "'"
     end
     return p
+end
+
+-- Every skill as { id, label }, sorted for display - the authoring form's
+-- Skill field is the consumer. Built 2026-08-25 to close the gap the trait
+-- picker had: both fields were typed from memory, and a form that refuses an
+-- id it never offered is teaching by refusal.
+--
+-- THE WALK IS PerkFactory.PerkList BY size()/get(i), zero-based, which is the
+-- shape RDLife.lua:82-83 already uses - PerkFactory, Perk and Perks are all
+-- exposed (LuaManager.java:1757-1759) and PerkList is a public STATIC field,
+-- so it is reachable where an instance field would not be. Kahlua cannot
+-- iterate a Java collection at all (CLAUDE.md sect. 3), so pairs() over it
+-- would pass every fixture and throw on a live server.
+--
+-- None and MAX are the enum's own sentinels and are excluded for the same
+-- reason DMRegistry.perk treats MAX as a miss: offering them would put two
+-- guaranteed refusals at the top of an alphabetical list.
+--
+-- Built lazily and cached: perks are fixed after boot, and a list built at
+-- file scope would be empty forever (the same trap buildTraits documents).
+local perkList = nil
+
+local function buildPerks()
+    perkList = {}
+    if not (PerkFactory and PerkFactory.PerkList) then return end
+    local list = PerkFactory.PerkList
+    for i = 0, list:size() - 1 do
+        local perk = list:get(i)
+        local t = perk and perk:getType()
+        if t and t ~= PerkFactory.Perks.None and t ~= PerkFactory.Perks.MAX then
+            local id = perk:getId()
+            if id then
+                -- getName is the TRANSLATED display string; the id is what the
+                -- server resolves. Both are shown, only the id is submitted.
+                perkList[#perkList + 1] = { id = id, label = perk:getName() or id }
+            end
+        end
+    end
+    table.sort(perkList, function(a, b)
+        if a.label == b.label then return a.id < b.id end
+        return a.label < b.label
+    end)
+end
+
+function DMRegistry.perks()
+    if not perkList then buildPerks() end
+    local out = {}
+    for i = 1, #perkList do
+        out[i] = { id = perkList[i].id, label = perkList[i].label }
+    end
+    return out
+end
+
+-- Drops both caches. A fixture - or a script reload - can make them rebuild.
+function DMRegistry.forgetPerks()
+    perkList = nil
 end
 
 -- ---------------------------------------------------------------------------

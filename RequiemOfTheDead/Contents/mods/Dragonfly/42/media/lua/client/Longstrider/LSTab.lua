@@ -111,7 +111,7 @@ local function build(spec, panel, x, y, w, h)
 
     -- Forward declarations
     local toursList, cornerFields, cellField, dwellField, gridBtn
-    local runSelBtn, runAllBtn, abortBtn, progress, stats, renameBtn, deleteBtn
+    local runSelBtn, runAllBtn, abortBtn, progress, stats, deleteBtn
     local routeBtn, nextBtn
     local rebuildList, recompute, syncFields, selectTour
 
@@ -159,7 +159,7 @@ local function build(spec, panel, x, y, w, h)
     -- Vanilla ISButton.lua:386-392 applies the normal accepted-action tint.
     addBtn:enableAcceptColor()
 
-    renameBtn = mkBtn("Rename", PAD + 62, 66, listBtnY, function()
+    mkBtn("Rename", PAD + 62, 66, listBtnY, function()
         local t = LSTours.getSelected()
         if not t then DFFeedback.bad("Select a tour first."); return end
         -- Vanilla callers construct, initialise, and show this modal directly
@@ -235,7 +235,7 @@ local function build(spec, panel, x, y, w, h)
         addLabel(name, r1y)
         cornerFields[#cornerFields + 1] = addField("", 54, r1y, false, nil)
     end
-    local setBtn = mkBtn("Set", cur, 54, r1y, function()
+    mkBtn("Set", cur, 54, r1y, function()
         local t = LSTours.getSelected()
         if not t then DFFeedback.bad("Select a tour first."); return end
         local x1, y1, x2, y2 = num(cornerFields[1]), num(cornerFields[2]), num(cornerFields[3]), num(cornerFields[4])

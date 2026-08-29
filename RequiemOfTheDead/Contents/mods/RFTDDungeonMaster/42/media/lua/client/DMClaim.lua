@@ -80,18 +80,7 @@ C.kits = nil    -- nil until the server answers; {} means "none", which differs
 -- Pure
 -- ---------------------------------------------------------------------------
 
--- Sorted by what the row draws, with the id as a total-order tiebreak - two
--- seasons of "Anomaly Loot" would otherwise swap places on every refresh.
-function DMClaim.sorted(kits)
-    local out = {}
-    for _, k in ipairs(kits or {}) do out[#out + 1] = k end
-    table.sort(out, function(a, b)
-        local la, lb = tostring(a.label or a.id), tostring(b.label or b.id)
-        if la ~= lb then return la < lb end
-        return tostring(a.id) < tostring(b.id)
-    end)
-    return out
-end
+-- Display order lives in DMKitDefs.displayOrder (promoted 2026-08-25).
 
 -- The row's right-hand column. A repeatable kit says how many times this player
 -- has taken it, because that is the only number they can act on; a one-time kit
@@ -273,7 +262,7 @@ end
 function DMClaim.rebuild()
     if not C.listBox then return end
     DFKit.refillList(C.listBox, function(box)
-        for _, k in ipairs(DMClaim.sorted(C.kits)) do
+        for _, k in ipairs(DMKitDefs.displayOrder(C.kits)) do
             box:addItem(k.label or k.id, k).height = DFKit.rowHeight()
         end
     end)

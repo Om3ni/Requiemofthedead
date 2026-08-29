@@ -28,19 +28,22 @@ import sys
 
 from luascan import REPO, all_lua_files, lua_files, rel as relpath
 
-# TWO java roots, in preference order. 42.20.3 is the current verification
-# target and wins any name both trees carry. But its DECOMPILE-PROVENANCE.txt
-# records `scope: PZ-authored only`, so it holds 3,625 classes against 42.20.2's
-# 13,793 - everything PZ wrote, and nothing it merely bundles. Citations into
-# bundled library code therefore resolve only in the older, fuller tree:
-# org/luaj/kahluafork/ (the LuaJ fork Kahlua is built on, including
-# FuncState.java) is the case that surfaced this. Falling back keeps those
-# verifiable instead of reporting a correct citation as a missing file.
+# Java roots, in preference order. 42.20.4 is the current verification
+# target and wins any name multiple trees carry. Its DECOMPILE-PROVENANCE.txt
+# (like 42.20.3's) records `scope: PZ-authored only`, so it holds ~3,625
+# classes against 42.20.2's 13,793 - everything PZ wrote, and nothing it
+# merely bundles. Citations into bundled library code therefore resolve only
+# in the older, fuller tree: org/luaj/kahluafork/ (the LuaJ fork Kahlua is
+# built on, including FuncState.java) is the case that surfaced this. Falling
+# back keeps those verifiable instead of reporting a correct citation as a
+# missing file. 42.20.3 stays listed so citations verified against it keep
+# resolving until each is re-read against 42.20.4.
 JAVA_ROOTS = [
+    os.path.join(REPO, "PZ_Engine_Decompiled_42.20.4-b0bbce05d5"),
     os.path.join(REPO, "PZ_Engine_Decompiled_42.20.3-70207f62e0"),
     os.path.join(REPO, "PZ_Engine_Decompiled_42.20.2-ffe7a8a4b1"),
 ]
-LUA_ROOT = os.path.join(REPO, "PZ_Vanilla_Lua_42.20.3-70207f62e0")
+LUA_ROOT = os.path.join(REPO, "PZ_Vanilla_Lua_42.20.4-b0bbce05d5")
 
 # Names that cannot resolve anywhere and are not meant to.
 #

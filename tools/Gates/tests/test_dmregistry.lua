@@ -78,6 +78,10 @@ local scriptManager = { getItem = function(_, ft) return items[ft] end }
 function getScriptManager() return scriptManager end
 
 require = function() return true end
+-- The REAL RDShared: DMRegistry registers the mod version at file scope now
+-- (2026-08-25), and the sixteen-stub sweep's rule applies - load the real
+-- module rather than teaching a stub its surface.
+dofile(MOD .. "/RFTDCore/42/media/lua/shared/RDShared.lua")
 RDVarDefs, DMRoll, DMKitDefs, DMRegistry = nil, nil, nil, nil
 local ok, err = pcall(dofile, MOD .. "/RFTDCore/42/media/lua/shared/RDVarDefs.lua")
 check(ok, "RDVarDefs loads: " .. tostring(err))

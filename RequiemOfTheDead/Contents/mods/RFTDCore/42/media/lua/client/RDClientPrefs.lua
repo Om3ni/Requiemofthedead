@@ -28,6 +28,8 @@
 
 if isServer() then return end
 
+require "RDFile"
+
 RDClientPrefs = RDClientPrefs or {}
 
 -- Format: one "key=value" per line, value "true" / "false" / a number.
@@ -61,8 +63,9 @@ end
 -- Create a store bound to one file.
 --
 -- The name must end .txt: getFileWriter checks a CASE-SENSITIVE lowercase
--- allowlist of ini|cfg|txt|log and returns nil for anything else, silently
--- (LuaManager.java:9884). Callers pass the whole filename rather than a mod id
+-- allowlist of ini|cfg|txt|log|json and returns nil for anything else, silently
+-- (LuaManager.java:1045, the contains() at :5526). Callers pass the whole
+-- filename rather than a mod id
 -- because the two existing files are already named and renaming one would
 -- discard every preference a player has set.
 function RDClientPrefs.store(filename)
@@ -103,18 +106,16 @@ function RDClientPrefs.store(filename)
         -- reader then applies in order, so the last write would win by accident
         -- rather than by intent.
         --
-        -- The nil check IS the failure path. getFileWriter returns nil for a
-        -- refused extension or a failed open, catching both its own IOException
-        -- sites (LuaManager.java:5523-5555), and LuaFileWriter delegates to
-        -- PrintWriter, which records I/O errors on a flag rather than raising
-        -- them (:9850-9868). In-memory state is kept either way.
-        local w = getFileWriter(filename, true, false)
-        if not w then return end
+        -- Mechanism in RDFile (2026-08-25). The literal \r\n stays: it is the
+        -- byte format every existing player prefs file already carries, so
+        -- the conversion preserves it exactly rather than trading it for the
+        -- platform separator. In-memory state is kept either way.
+        local parts = {}
         for k, v in pairs(cache) do
             local s = serializeValue(v)
-            if s then w:write(k .. "=" .. s .. "\r\n") end
+            if s then parts[#parts + 1] = k .. "=" .. s .. "\r\n" end
         end
-        w:close()
+        RDFile.rewrite(filename, table.concat(parts))
     end
 
     -- get(key, default): the stored value, or `default` if unset.

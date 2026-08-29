@@ -73,21 +73,13 @@ local function configuredName()
 end
 
 local function emitSchema()
-    -- No guard, and this file is where the reading came from: getFileWriter
-    -- returns nil for a refused extension or a failed open and does not throw
-    -- (LuaManager.java:5523-5555) - the `if w` below IS the error path - while
-    -- write/close delegate to PrintWriter, which records an I/O error in an
-    -- internal flag rather than raising it (:9850-9868). RDJson.encode is total
-    -- for any payload (RDJson.lua:103-139), and schemaTable walks our own
-    -- closed event registry. Core's appendLine and rewrite in RDLog already
-    -- write bare on exactly this reading.
-    --
+    -- Mechanism in RDFile (2026-08-25); its header carries the engine facts
+    -- the block here used to state - fittingly, since this file is where that
+    -- reading originally came from. RDJson.encode is total for any payload
+    -- (RDJson.lua:103-139) and schemaTable walks our own closed registry.
     -- Rewritten whole, so EXT_DOC; the bare ".json" is refused since 42.20.
-    local w = getFileWriter(DIR .. "schema" .. RDShared.EXT_DOC, true, false)
-    if w then
-        w:write(RDJson.encode(RDEvents.schemaTable()) .. "\n")
-        w:close()
-    end
+    RDFile.rewrite(DIR .. "schema" .. RDShared.EXT_DOC,
+        RDJson.encode(RDEvents.schemaTable()) .. "\n")
     schemaDirty = false
 end
 

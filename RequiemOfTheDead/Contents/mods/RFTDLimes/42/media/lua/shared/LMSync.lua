@@ -40,8 +40,8 @@
 --   pasteChunk   the same route for layers past that ceiling: split client
 --                side, reassembled by index here, then one authoritative parse
 --   import       fallback by filename in the Zomboid/Lua/ jail, for a box
---                where the export already sits next to the server
---                (LMSync.requestImport("phunzones.txt") from the Lua console)
+--                where the file already sits next to the server
+--                (LMSync.requestImport("limes-zones.json") from the Lua console)
 --   saveZones    the M4 editor's Save: a DIFF against a stated revision, which
 --                comes straight back out as a delta. The only edit route that
 --                does not replace the whole store.
@@ -49,6 +49,12 @@
 require "RDNet"
 require "RDWire"     -- the chunker sizes itself with RDWire's model (Reaper's rule)
 require "LMCore"
+
+-- Version registration (owner-approved 2026-08-25). Registered HERE and not in
+-- LMCore, which is deliberately engine-free so run-tests can load it raw -
+-- this file is the mod's engine-wiring home and is shared-tier on both sides.
+require "RDShared"   -- explicit: file-scope RD* use must not ride on load order
+RDShared.registerMod("RFTDLimes", "1.2.1")   -- keep in sync with mod.info
 require "LMIni"
 require "LMEdit"
 
@@ -501,10 +507,13 @@ if isServer() then
                     .. " store, so saving it would not be an edit. Rejoin to pull"
                     .. " the zones, then redo your changes."
             else
+                -- "Press Revert", not "reopen the tab": the draft is module
+                -- state on the client and survives the tab, so reopening
+                -- rebuilds nothing - advice that stranded an admin once.
                 msg = string.format(
                     "save refused: you were editing revision %s, the store is on %d."
-                    .. " Someone else saved first - reopen the tab to pick up their"
-                    .. " changes before redoing yours.", tostring(rev), Limes.revision)
+                    .. " Someone else saved first - press Revert to take their"
+                    .. " changes, then redo yours.", tostring(rev), Limes.revision)
             end
             RDNet.reply(player, TOKEN, "notice", { msg = msg })
             return
@@ -538,6 +547,30 @@ if isServer() then
                             .. "' profiles entry " .. i .. " is not a name" })
                         return
                     end
+                end
+            end
+            -- The structural keys that joined the record 2026-08-26, same
+            -- doctrine as profiles: refuse a shape the resolver was never
+            -- written for rather than store it. An unknown kind is refused
+            -- here too - validate() would error on it after the fold anyway,
+            -- but a trust boundary is default-deny, not eventually-deny.
+            if rec.kind ~= nil and rec.kind ~= "tier" and rec.kind ~= "profile" then
+                RDNet.reply(player, TOKEN, "notice", { msg = "save refused: '" .. name
+                    .. "' has kind '" .. tostring(rec.kind) .. "', which is not a record kind" })
+                return
+            end
+            if rec.tier ~= nil and type(rec.tier) ~= "string" then
+                RDNet.reply(player, TOKEN, "notice", { msg = "save refused: '" .. name
+                    .. "' has a tier slot that is not a name" })
+                return
+            end
+            if rec.moon ~= nil then
+                if type(rec.moon) ~= "table"
+                    or (rec.moon.phases ~= nil and type(rec.moon.phases) ~= "string")
+                    or (rec.moon.fields ~= nil and type(rec.moon.fields) ~= "table") then
+                    RDNet.reply(player, TOKEN, "notice", { msg = "save refused: '" .. name
+                        .. "' has a malformed moon overlay" })
+                    return
                 end
             end
         end
@@ -699,30 +732,29 @@ if isServer() then
     if Events.OnDisconnect then Events.OnDisconnect.Add(dropAssembly) end
     if Events.OnPlayerDisconnect then Events.OnPlayerDisconnect.Add(dropAssembly) end
 
-    -- The filename route, against the Zomboid/Lua/ jail.
+    -- The filename route, against the Zomboid/Lua/ jail. For setups too big
+    -- to paste: drop the schema-1 JSON (or an .ini backup) next to the server
+    -- and name it - "limes-zones.json" is what the offline converter's
+    -- download button produces. The candidate probe died with the PhunZones
+    -- dialect (S2), so a filename is required now.
     RDNet.register(TOKEN, "import", { capability = "any", rate = 6 }, function(player, args)
         local who = adminGate(player)
         if not who then return end
         local file = args and tostring(args.file or "") or ""
-        local text
         if file == "" then
-            file, text = LMPersist.findImportCandidate()
-            if not text then
-                RDNet.reply(player, TOKEN, "notice",
-                    { msg = "no import candidate found in Zomboid/Lua/ (tried "
-                        .. table.concat(LMPersist.IMPORT_CANDIDATES, ", ") .. ")" })
-                return
-            end
-        else
-            if file:find("[/\\]") or file:find("%.%.") then
-                RDNet.reply(player, TOKEN, "notice", { msg = "bare filename only (Zomboid/Lua/)" })
-                return
-            end
-            text = LMPersist.readAll(file)
-            if not text then
-                RDNet.reply(player, TOKEN, "notice", { msg = file .. " not found in Zomboid/Lua/" })
-                return
-            end
+            RDNet.reply(player, TOKEN, "notice",
+                { msg = "name the file to import from Zomboid/Lua/ - e.g."
+                    .. " LMSync.requestImport(\"limes-zones.json\")" })
+            return
+        end
+        if file:find("[/\\]") or file:find("%.%.") then
+            RDNet.reply(player, TOKEN, "notice", { msg = "bare filename only (Zomboid/Lua/)" })
+            return
+        end
+        local text = LMPersist.readAll(file)
+        if not text then
+            RDNet.reply(player, TOKEN, "notice", { msg = file .. " not found in Zomboid/Lua/" })
+            return
         end
         finishImport(player, who, file, text)
     end)

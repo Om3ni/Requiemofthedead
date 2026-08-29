@@ -21,7 +21,6 @@ local TEXT_Y_OFFSET = -22  -- distance above the bar to draw the numeric overlay
 local VIEW_RANGE_SQ = 900 -- don't bother rendering past 30 tiles
 
 local hudPanel = nil
-local hudActive = false
 
 -- The 1x1 click-through element and its pass-through handlers live in Core now
 -- (RDWorldOverlay, 2026-08-19). The comment this replaces already said "same
@@ -156,14 +155,12 @@ function RQHealthBarHUD:render()
 end
 
 local function onGameStart()
-    hudActive = false
     if hudPanel and hudPanel.javaObject then
         -- Vanilla ISUIElement.removeFromUIManager() is nil-safe and only removes
         -- the backing element (ISUIElement.lua:1373-1380).
         hudPanel:removeFromUIManager()
     end
     hudPanel = RDWorldOverlay.attach(RQHealthBarHUD)
-    hudActive = true
 end
 
 Events.OnGameStart.Add(onGameStart)

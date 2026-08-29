@@ -128,11 +128,11 @@ function InvList:onMouseDoubleClick(x, y)
     if self.onEditSelected then self.onEditSelected() end
 end
 
-function InvList:render()
-    self:setStencilRect(0, 0, self.width, self.height)
-    ISScrollingListBox.render(self)
-    self:clearStencilRect()
-end
+-- No render override here. ISScrollingListBox:prerender draws every row
+-- ITSELF inside a stencil it sets and clears (ISScrollingListBox.lua:505,
+-- :541, scrollbar clamp :494-496), and :render draws no rows at all - it is
+-- a joypad focus border (:642-647). The setStencil/render/clearStencil
+-- wrapper that sat here clipped nothing; rows never could escape.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Modal class

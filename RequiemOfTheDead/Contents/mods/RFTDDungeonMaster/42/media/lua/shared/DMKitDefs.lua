@@ -862,6 +862,25 @@ function DMKitDefs.grantsOfKind(grants, kind)
     return out
 end
 
+-- The one display order for a kit list, derived purely from kit shape - which
+-- is why it lives here and not in either window. Sorted by what the row DRAWS
+-- (label, falling back to id), with the id as a total-order tiebreak: two kits
+-- may legitimately share a label ("Anomaly Loot" for two seasons), and without
+-- the tiebreak those two swap places on every refresh. The wire delivers
+-- whatever order the store's pairs() produced, and a catalogue that reshuffles
+-- between two reads of an unchanged server is a list nobody can scan.
+-- Promoted 2026-08-25 from identical copies in DMKitsTab and DMClaim.
+function DMKitDefs.displayOrder(kits)
+    local out = {}
+    for _, k in ipairs(kits or {}) do out[#out + 1] = k end
+    table.sort(out, function(a, b)
+        local la, lb = tostring(a.label or a.id), tostring(b.label or b.id)
+        if la ~= lb then return la < lb end
+        return tostring(a.id) < tostring(b.id)
+    end)
+    return out
+end
+
 return DMKitDefs
 
 -- ---------------------------------------------------------------------------

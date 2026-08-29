@@ -1,6 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQBoss - client visuals for the apex zombie
--- Server (RQSvBoss) owns the skill rotation and the passive buff aura.
+-- Server (RQSvBoss) owns the skill rotation. The passive buff aura it used to
+-- own is RQBulwark's now - resolved per hit against the zombie struck, rather
+-- than granted once to everything standing nearby.
 -- Client owns: persistent boss-color ring on each Boss, plus a per-frame paint
 -- pass that colors every zombie inside the boss aura in Boss color (regular
 -- AND special). The painted-zombie set is published as RQBoss.bossBuffPainted
@@ -21,10 +23,11 @@ RQBoss = RQBoss or {}
 -- garbage immediately and no row can outlive one frame.
 RQBoss.bossBuffPainted = {}
 
--- Local player in range of any Boss aura this frame. Published so RQJuggernaut
--- can OR this with its own range check before deciding to apply/release the
--- weapon debuff - the two auras share a single apply/release pair to avoid
--- race conditions when the player is inside both at once.
+-- The player-in-aura flag this file used to publish is gone (2026-08-25), and
+-- so is the note that described it. It existed for one consumer: RQJuggernaut
+-- OR'd it with its own range check to drive a shared weapon-debuff
+-- apply/release pair. Both sides of that pair went with Dirge's RQSuppress
+-- terms on 2026-08-24, so the flag had been written and read by nobody since.
 
 -- Cached on first render. Cant read at file scope because RQConfig may not
 -- be loaded yet when this file runs - the server-options receive path used
@@ -45,22 +48,15 @@ Events.OnRenderTick.Add(function()
     local cell      = getCell()
     local radius    = cfg.juggernautBuffRadius
     local rSq       = radius * radius
-    local px        = player:getX()
-    local py        = player:getY()
 
     -- rebuild the painted set fresh each frame - this replacement, not any
     -- weak-key behaviour, is what bounds the table (Kahlua has no weak tables)
     local painted = {}
     RQBoss.bossBuffPainted = painted
-    local playerInAnyBossAura = false
 
     for onlineID, zType in pairs(RQRegistry.activeZombies) do
         if zType == "Boss" then
-            local pos  = RQReconcile.lastKnownPos[onlineID]
-            local lx   = pos and pos.x or 0
-            local ly   = pos and pos.y or 0
-            local lz   = pos and pos.z or 0
-            local boss = RQCore.findZombieByID(onlineID, lx, ly, lz)
+            local boss = RQCore.findZombieByID(onlineID)
             if boss then
                 if not boss:isDead() then
                     local bx = math.floor(boss:getX())
@@ -68,12 +64,10 @@ Events.OnRenderTick.Add(function()
                     local bz = math.floor(boss:getZ())
                     RQRing.update("boss_aura_" .. onlineID, bx, by, bz, radius, BOSS_RING_COLOR)
 
-                    -- player range check for weapon debuff coordination
-                    local pdx = px - bx
-                    local pdy = py - by
-                    if pdx*pdx + pdy*pdy <= rSq then
-                        playerInAnyBossAura = true
-                    end
+                    -- Same removal as RQJuggernaut's: the player-distance test
+                    -- here fed the aura flag RQSuppress read, and has fed
+                    -- nothing since 2026-08-24. Per Boss, per render tick.
+                    -- Removed 2026-08-25; rSq stays for the paint pass below.
 
                     -- paint every zombie inside this boss's aura. unlike Juggernaut,
                     -- specials count too - the boss color overrides their type color.

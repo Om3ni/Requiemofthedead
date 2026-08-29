@@ -19,8 +19,11 @@
 -- than from a number.
 --
 -- THIS REPLACES the Juggernaut-only mitigation loop that used to live in
--- RQSvJuggernaut. Worth being clear that JuggernautMitigation defaults to 0, so
--- for most operators this is not a swap - it is healing where there was none.
+-- RQSvJuggernaut. Worth being clear that its sandbox option,
+-- JuggernautMitigation, defaulted to 0 - so for most operators this was not a
+-- swap, it is healing where there was none. That option was removed outright on
+-- 2026-08-25 once nothing read it; McCoy's own numbers are code constants with
+-- no sandbox surface yet, which is a slice 7 decision.
 --
 -- A SOAKED HIT STILL ARMS THE WINDOW. Bulwark cancelling the damage does not
 -- make the attack not have happened; the next tick simply finds nothing to
@@ -223,6 +226,20 @@ function RQMcCoy.update(now)
     return live
 end
 
+-- NO OnGameStart HOOK, AND THAT IS DELIBERATE. `reset()` below is a TEST
+-- affordance, not a lifecycle hook, and wiring it to OnGameStart the way the
+-- client-side RQFlinch/RQPoise/RQRing modules do would be a bug, not a fix:
+-- this file is dedicated-server-only (the isServer gate above) and
+-- **OnGameStart does not fire on a dedicated server** (IngameState.java:844).
+-- That exact mistake already cost one Mosaic session - RQServer's OnGameStart
+-- re-injection was the "would-be healer" that never fired in the 2026-08-24
+-- runtime defect log.
+--
+-- Nor is a hook needed. On a dedicated server a game restart IS a process
+-- restart, so this table starts empty either way; there is no leave-a-world-and-
+-- join-another path of the kind that makes the client hooks necessary. The
+-- server-side equivalent, if one were ever wanted, is OnServerStarted
+-- (GameServer.java:1443).
 function RQMcCoy.reset()
     for zombie in pairs(windows) do windows[zombie] = nil end
 end

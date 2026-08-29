@@ -21,9 +21,11 @@
 --   Memoirs/_all.log                 slim human pipe timeline (no heavy payloads):
 --                                    <epochSec>|<gameDay>|<EVENT>|user=<name>|k=v...
 --
--- The compound ".jsonl.log" / ".json.txt" names are FORCED by the engine, not a
--- style choice: since 42.20 getFileWriter refuses any extension outside
--- ("ini","cfg","txt","log") and returns nil. This silently destroyed both files
+-- The compound ".jsonl.log" / ".json.txt" names follow RDShared's convention:
+-- since 42.20 getFileWriter refuses any extension outside
+-- ("ini","cfg","txt","log","json") and returns nil - which killed ".jsonl",
+-- though ".json" itself is allowed (LuaManager.java:1045; RDShared's header
+-- owns the correction). This silently destroyed both files
 -- for a day - writeLine's `if not w then return end` meant no error surfaced
 -- anywhere - and _all.log was the only survivor because it already ended ".log".
 -- The full rule, the traps, and why append-capable getFileWriter is the only
@@ -58,6 +60,7 @@ if not isServer() then return end
 -- client. Memoir's mod.info already declares require=RFTDCore, so this adds no new
 -- dependency - it just stops the one constant that must not drift from being copied.
 require "RDShared"
+require "RDFile"
 require "MMRoster"
 
 MMAudit = MMAudit or {}
@@ -202,18 +205,21 @@ function MMAudit.writeFailures()
     return writeFailCount
 end
 
--- getFileWriter contains its own create/open IOException boundary and returns nil.
--- LuaFileWriter.write/close directly delegate to PrintWriter on a valid receiver
--- (LuaManager.java:9857-9868), so they are called directly. The whole record is
--- one sink result: callers can preserve gameplay while the failure stays visible.
+-- Mechanism in RDFile (2026-08-25); the per-SINK failure accounting stays
+-- here - "which archive is dropping records" is this module's question, and
+-- RDFile's floor counter cannot answer it. The whole record is one sink
+-- result: callers can preserve gameplay while the failure stays visible.
 local function writeLine(sink, path, append, line)
-    local w = getFileWriter(DIR .. path, true, append)
-    if not w then
+    local ok
+    if append then
+        ok = RDFile.appendLine(DIR .. path, line)
+    else
+        ok = RDFile.rewrite(DIR .. path, line .. "\n")
+    end
+    if not ok then
         reportWriteFailure(sink, path)
         return false
     end
-    w:write(line .. "\n")
-    w:close()
     return true
 end
 

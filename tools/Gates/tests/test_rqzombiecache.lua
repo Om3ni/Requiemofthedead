@@ -17,7 +17,7 @@
 
 local ROOT = arg[1] or "."
 local LEDGER = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDLedger.lua"
-local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/client/RQZombieCache.lua"
+local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/shared/RQZombieCache.lua"
 
 local passed, failed = 0, 0
 local function check(ok, message)

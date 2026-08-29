@@ -21,6 +21,8 @@
 
 if not isServer() then return end
 
+require "RDFile"
+
 require "RDShared"   -- explicit: file-scope RD* use must not ride on load order (see MMSvShared header)
 require "DFRoleShared"
 
@@ -66,12 +68,12 @@ local function loadOverrides()
 end
 
 local function saveOverrides(overrides)
-    local writer = getFileWriter(OVERRIDES_FILE, true, false)
-    if not writer then return end
+    -- Mechanism in RDFile (2026-08-25); the file is a complete snapshot.
+    local lines = {}
     for username, roleName in pairs(overrides) do
-        writer:write(username .. FIELD_DELIM .. roleName .. "\n")
+        lines[#lines + 1] = username .. FIELD_DELIM .. roleName
     end
-    writer:close()
+    RDFile.rewriteLines(OVERRIDES_FILE, lines)
 end
 
 -- In-memory cache of username -> roleName. Loaded from disk once, then kept in

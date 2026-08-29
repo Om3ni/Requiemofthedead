@@ -29,7 +29,10 @@ Events = {
     OnServerCommand = { Add = function(fn) serverCommandHandlers[#serverCommandHandlers + 1] = fn end },
 }
 
-RDShared = { MODULE = "RFTDCore", registerMod = function() end }
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
 local pushed = {}
 DFLog = { push = function(row) pushed[#pushed + 1] = row end }
 

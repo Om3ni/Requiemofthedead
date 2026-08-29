@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RQFlinch - shot mid-getup, compressed. Sibling of hitreaction-onfloor; the
+  design rationale is in hitreaction/RQFlinch.xml and RQFlinch.lua.
+
+  THE DOORWAY. getup-fromOnFront/to_hitreaction-gettingUp.xml has three
+  transitions and the live one for gunfire is the second: <isTrue>hashitreaction</isTrue>
+  plus <isTrue>bOnFloor</isTrue>, with no compare against any particular
+  reaction string. So ANY hit landing while the zombie is on the floor and
+  getting up face-down routes here - and getup-fromOnFront is the back half of
+  our own compressed crit chain, entered from onground whenever fallOnFront is
+  true. bOnFloor stays true until the getup node's SetOnFloor(false) fires at
+  the halfway mark, which at 20x is a window of a frame or two rather than the
+  half-second vanilla leaves open. Narrow, not closed.
+
+  There is a second, engine-side doorway: CombatManager.java:2407 rewrites
+  HitReaction.FLOOR to GETTING_UP_FRONT when the target is in ZombieGetUpState
+  and isFallOnFront(). That one is the vehicle lane, since FLOOR is only ever
+  written by a vehicle impact (IsoGameCharacter.java:11643) or bent fences
+  (BentFences.java:362,370) - not by gunfire.
+
+  WHAT IT COSTS UNCOVERED: vanilla's GettingUpFront emits KnockDown at Start -
+  setOnFloor(true) and setKnockedDown(true) (ZombieHitReactionState.java:106-109)
+  - and runs unscaled. So a shot landing in that window put a Bulwark back on
+  the floor with the knockdown flag re-armed, which is exactly the outcome the
+  feature exists to prevent.
+
+  Exit is <eventOccurred>ActiveAnimFinishing</eventOccurred> -> onground, so
+  speed scaling shortens it. Copied from vanilla GettingUpFront.xml, changed
+  only by: our condition, an explicit priority, speed 20, zeroed blend, and
+  KnockDown swapped for CancelKnockDown. FallOnFront, Collide and SetState are
+  vanilla's, kept verbatim - FallOnFront(true) is what sends onground back into
+  getup-fromOnFront rather than getup-fromOnBack.
+
+  As in RQFlinchBack.xml, dropping KnockDown does not leave bOnFloor unset:
+  it was already true (a condition of every transition that reaches here) and
+  onground sets it again on entry (ZombieOnGroundState.java:41-43).
+
+  ONE NODE, no condition beyond ours, because vanilla has exactly one
+  non-ragdoll node in this state and it carries no conditions at all.
+-->
+<animNode>
+	<m_Name>RQFlinchGettingUpFront</m_Name>
+	<m_AnimName>Zombie_OnKnees_ToFloorFront</m_AnimName>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.0</m_BlendTime>
+	<m_BlendOutTime>0.0</m_BlendOutTime>
+	<m_SpeedScale>20.00</m_SpeedScale>
+	<m_SyncTrackingEnabled>false</m_SyncTrackingEnabled>
+	<m_ConditionPriority>100</m_ConditionPriority>
+	<m_Conditions x_name="rqf1a2b3-6201-4000-8000-rftddirge6201">
+		<m_Name>RQNoFlinch</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Events x_name="rqf1a2b3-6202-4000-8000-rftddirge6202">
+		<m_EventName>FallOnFront</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-6203-4000-8000-rftddirge6203">
+		<m_EventName>CancelKnockDown</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-6204-4000-8000-rftddirge6204">
+		<m_EventName>Collide</m_EventName>
+		<m_TimePc>0.1</m_TimePc>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-6205-4000-8000-rftddirge6205">
+		<m_EventName>SetState</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+</animNode>

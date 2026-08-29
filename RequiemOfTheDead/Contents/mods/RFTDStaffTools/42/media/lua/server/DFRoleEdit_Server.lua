@@ -14,6 +14,8 @@
 
 if not isServer() then return end
 
+require "RDFile"
+
 require "RDShared"       -- RDShared.textSafe sanitises the persisted record
 require "DFRoleShared"   -- explicit: the client walks lua tiers alphabetically
                          -- across mods, so load order cannot be assumed (CLAUDE.md 4)
@@ -77,15 +79,15 @@ local function loadOverrides()
 end
 
 local function saveOverrides(overrides)
-    local writer = getFileWriter(OVERRIDES_FILE, true, false)
-    if not writer then return end
+    -- Mechanism in RDFile (2026-08-25); the file is a complete snapshot.
+    local lines = {}
     for name, o in pairs(overrides) do
-        writer:write(name .. FIELD_DELIM
+        lines[#lines + 1] = name .. FIELD_DELIM
             .. string.format("%.4f,%.4f,%.4f", o.r or 1, o.g or 1, o.b or 1) .. FIELD_DELIM
             .. table.concat(o.capabilities or {}, ",") .. FIELD_DELIM
-            .. (o.description or "") .. "\n")
+            .. (o.description or "")
     end
-    writer:close()
+    RDFile.rewriteLines(OVERRIDES_FILE, lines)
 end
 
 local function applyAllOverrides()

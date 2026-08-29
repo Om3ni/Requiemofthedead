@@ -42,6 +42,8 @@ if isServer() then return end
 require "DFKit"
 require "DFForm"
 require "DFItemQuery"
+require "DFTypeAhead"
+require "DMRegistry"
 require "DFConfirm"
 require "DMKitDefs"
 require "ISUI/ISScrollingListBox"
@@ -50,6 +52,12 @@ require "ISUI/ISContextMenu"
 
 DMKitForm = DMKitForm or {}
 local F = DMKitForm
+
+-- Built on first use, then held for the window's life: both registries are
+-- fixed after boot, and rebuilding per keystroke would walk the whole trait
+-- table on every character typed.
+local traitEntries = nil
+local perkEntries  = nil
 
 local TOKEN = "RFTDDungeonMaster"
 local FONT  = DFKit.font.small
@@ -330,10 +338,23 @@ function DMKitForm.rowSchema(kind, allowList)
         return {
             { key = "id", kind = "text", label = "Trait id",
               rule = "The namespaced registry id",
-              help = "The full id, namespace included - a mod trait and a "
-                  .. "vanilla one can share a short name, so the short form is "
-                  .. "ambiguous. The server checks it against the trait "
-                  .. "registry when the kit is saved.",
+              help = "Type any part of the name and pick from the list. The "
+                  .. "id carries its namespace - a mod trait and a vanilla one "
+                  .. "can share a short name, so the short form is ambiguous "
+                  .. "and the picker is what stops you having to remember "
+                  .. "which is which.",
+              -- Wired 2026-08-25. DMRegistry.traits() had been built FOR this
+              -- picker and had zero callers, so the field asked an admin to
+              -- type `base:Brave` from memory and refused anything else.
+              -- DFTypeAhead ranks the bare part after the separator, which is
+              -- "Brave" here and "Axe" in `Base.Axe` - one ranker, both
+              -- registries (see its header for why it is not DFItemQuery).
+              suggest = function(q)
+                  if not traitEntries then
+                      traitEntries = DFTypeAhead.build(DMRegistry.traits(), { ":" })
+                  end
+                  return DFTypeAhead.suggest(traitEntries, q, 8)
+              end,
               validate = function(s)
                   if type(s) ~= "string" or s == "" then
                       return false, "A trait id is required."
@@ -345,8 +366,18 @@ function DMKitForm.rowSchema(kind, allowList)
         return {
             { key = "perk", kind = "text", label = "Skill",
               rule = "A perk name, e.g. Woodwork",
-              help = "The server resolves it against the perk list when the "
-                  .. "kit is saved.",
+              help = "Type any part of the name and pick from the list. The "
+                  .. "server resolves it against the perk list when the kit "
+                  .. "is saved.",
+              -- Wired 2026-08-25 alongside the trait field. Skills have no
+              -- namespace, so the ranker sees id and label only - which is
+              -- exactly what the separator parameter is for.
+              suggest = function(q)
+                  if not perkEntries then
+                      perkEntries = DFTypeAhead.build(DMRegistry.perks(), {})
+                  end
+                  return DFTypeAhead.suggest(perkEntries, q, 8)
+              end,
               validate = function(s)
                   if type(s) ~= "string" or s == "" then
                       return false, "A skill is required."
@@ -967,6 +998,9 @@ function Editor:removeGrant()
     -- it is the one removal an admin cannot eyeball. It gets a confirmation;
     -- the others are one Add away from being back.
     if not DMKitForm.isEditable(self.grants[i]) then
+        -- DFConfirm is Core since 2026-08-25 (the promotion retired the
+        -- Dragonfly-absent guard that briefly sat here - everything
+        -- hard-requires Core, so absence is a load-order fault we want loud).
         DFConfirm.ask("Remove " .. line .. "?\n\nThis form cannot recreate a "
             .. "roulette, so it would have to be written back into the store file by hand.",
             function() table.remove(win.grants, i); win:rebuild() end)

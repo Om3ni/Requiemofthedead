@@ -12,9 +12,9 @@
 -- syncs with a server, and would mean an admin's font size resets when they
 -- join a different box. A preference is about the person, not the save.
 -- getFileWriter lands in Zomboid/Lua/ and is gated by a CASE-SENSITIVE
--- lowercase extension allowlist of ini|cfg|txt|log (LuaManager.java:9884), so
--- the name below is .txt and must stay that way - ".TXT" fails the gate, and
--- so does no extension at all.
+-- lowercase extension allowlist of ini|cfg|txt|log|json (LuaManager.java:1045,
+-- the contains() at :5526), so the name below is .txt and must stay that way -
+-- ".TXT" fails the gate, and so does no extension at all.
 --
 -- THE CACHED-FONT PROBLEM, stated plainly because it bounds what this can do.
 -- Most tabs in the family capture their font once, at file scope:
@@ -33,6 +33,8 @@
 -- target is checked for existence first, so load order cannot break it.
 
 if isServer() then return end
+
+require "RDFile"
 
 DFPrefs = DFPrefs or {}
 
@@ -172,28 +174,16 @@ end
 
 function DFPrefs.save()
     clampState()
-    -- No guard. getFileWriter returns nil for a refused extension or a failed
-    -- open, catching both of its own IOException sites (LuaManager.java:5523-5555),
-    -- and LuaFileWriter.writeln/close delegate to PrintWriter, which records I/O
-    -- errors on an internal flag rather than raising them (:9850-9868). The nil
-    -- check below IS the failure path; in-memory state is kept either way.
-    --
-    -- create = true, append = false: this file is a complete snapshot
-    -- every time, so appending would grow it forever with stale lines that
-    -- the reader would then apply in order and the last one would win by
-    -- accident rather than by intent.
-    local w = getFileWriter(DFPrefs.FILE, true, false)
-    if not w then return end
-    -- writeln, not write with an embedded \n. getFileWriter returns a
-    -- LuaManager.LuaFileWriter (LuaManager.java:9850) whose writeln appends
-    -- System.lineSeparator(); hand-rolling "\n" writes a bare LF that
-    -- Windows tooling renders as one long line. BufferedReader.readLine
-    -- strips either on the way back in, so this is about the file being
-    -- readable by a human, not about the parser.
+    -- Mechanism in RDFile (2026-08-25). rewriteDoc: a complete snapshot each
+    -- save (appending would grow stale lines the reader applies in order),
+    -- writeln-based so the file stays human-readable in Windows tooling -
+    -- both properties now stated once in RDFile's header. In-memory state is
+    -- kept whether the write lands or not.
+    local lines = {}
     for k in pairs(DEFAULTS) do
-        w:writeln(string.format("%s=%d", k, math.floor(DFPrefs.state[k] or 0)))
+        lines[#lines + 1] = string.format("%s=%d", k, math.floor(DFPrefs.state[k] or 0))
     end
-    w:close()
+    RDFile.rewriteDoc(DFPrefs.FILE, lines)
 end
 
 -- ---------------------------------------------------------------------------

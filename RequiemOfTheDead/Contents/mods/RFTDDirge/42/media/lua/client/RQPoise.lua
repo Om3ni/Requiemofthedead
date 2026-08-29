@@ -165,9 +165,16 @@ function RQPoise.update(zombie, now)
     local span = RQFlinch.observe(zombie, now)
     if span and RQPoise.stats.logged < SPAN_LOG_LIMIT then
         RQPoise.stats.logged = RQPoise.stats.logged + 1
+        -- The ROUTE is the half that names a lane. A long span alone says the
+        -- suppression lost; the state list says WHERE - which is the evidence
+        -- the knockdown-ordering question needs and could not get from
+        -- reading the graph (hitreaction/RQFlinch.xml). Omitted entirely when
+        -- empty rather than printed as an empty clause.
+        local route = RQFlinch.routeText(span)
         RQDirgeLog.write("Poise", "[INFO] " .. zType .. " id=" .. tostring(onlineID)
             .. " reaction ended in " .. tostring(span.frames) .. " frames / "
             .. tostring(span.ms) .. "ms"
+            .. (route and (" via " .. route) or "")
             .. (RQPoise.stats.logged == SPAN_LOG_LIMIT and " (span log full)" or ""))
     end
 end

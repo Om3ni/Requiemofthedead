@@ -1,0 +1,19 @@
+{
+  "_comment": "Per-mod ceiling on unused/write-only locals (luacheck W211/W221/W231). Lower is free; raising it means a slice left a declaration nothing reads - resolve it or state the decision. See check-deadlocals.py.",
+  "mods": {
+    "BBLibrary": 0,
+    "Dragonfly": 0,
+    "RFTDBanBox": 0,
+    "RFTDCore": 0,
+    "RFTDDirge": 1,
+    "RFTDDungeonMaster": 0,
+    "RFTDHusbandry": 1,
+    "RFTDLastRites": 0,
+    "RFTDLimes": 0,
+    "RFTDMemoir": 0,
+    "RFTDOddsAndEnds": 0,
+    "RFTDReaper": 0,
+    "RFTDReclamation": 0,
+    "RFTDStaffTools": 1
+  }
+}

@@ -116,9 +116,70 @@ if repository_stamp is None or deploy.SPDX not in repository_stamp \
         or not repository_stamp.rstrip().endswith(deploy.FOOT[-1]):
     failures.append("repository stamper drifted from the shared notice")
 
+# ---------------------------------------------------------------------------
+# THE CACHED-SESSION PROBE.
+#
+# steamcmd's password prompt needs a real console; a child on a piped stdin
+# gets nothing typed into it and fails ninety seconds later claiming a bad
+# password (owner, 2026-08-28). The push therefore refuses to start until a
+# session is cached, so this probe is what stands between the deploy and that
+# dead prompt - and a false "cached" reading puts it straight back.
+# ---------------------------------------------------------------------------
+probe_checks = 0
+with tempfile.TemporaryDirectory(prefix="rftd-steam-") as _tmp:
+    _steamcmd = os.path.join(_tmp, "steamcmd.exe")
+    open(_steamcmd, "w").close()
+    _cfg_dir = os.path.join(_tmp, "config")
+    os.makedirs(_cfg_dir)
+    _cfg = os.path.join(_cfg_dir, "config.vdf")
+
+    def _pc(ok, message):
+        global probe_checks
+        if ok:
+            probe_checks += 1
+        else:
+            failures.append(message)
+
+    # No config at all: unknown, NOT "cached" - a fresh steamcmd must still be
+    # able to reach the login path rather than be told it is already logged in.
+    _pc(deploy.credentials_cached(_steamcmd, "someone") is None,
+        "a missing config.vdf did not read as unknown")
+
+    # A config with no Accounts block is a definite "never logged in".
+    open(_cfg, "w").write('"InstallConfigStore"\n{\n\t"Software" "x"\n}\n')
+    _pc(deploy.credentials_cached(_steamcmd, "someone") is False,
+        "a config without an Accounts block did not read as uncached")
+
+    # The real shape: Accounts holds one nested block per account. The brace
+    # counter must span that nesting - a non-greedy match stops at the inner
+    # close and never sees the second account.
+    open(_cfg, "w").write(
+        '"InstallConfigStore"\n{\n'
+        '\t"Software"\n\t{\n\t\t"Valve" "1"\n\t}\n'
+        '\t"Accounts"\n\t{\n'
+        '\t\t"FirstUser"\n\t\t{\n\t\t\t"SteamID" "76561190000000001"\n\t\t}\n'
+        '\t\t"SecondUser"\n\t\t{\n\t\t\t"SteamID" "76561190000000002"\n\t\t}\n'
+        '\t}\n}\n')
+    _pc(deploy.credentials_cached(_steamcmd, "FirstUser") is True,
+        "a cached account was not recognised")
+    _pc(deploy.credentials_cached(_steamcmd, "SecondUser") is True,
+        "the second account in the block was missed - brace counting broke")
+    # Steam is case-insensitive about the account name and records whatever
+    # case was typed; a case mismatch must not send a logged-in user to login.
+    _pc(deploy.credentials_cached(_steamcmd, "firstuser") is True,
+        "a case-different account name was not matched")
+    _pc(deploy.credentials_cached(_steamcmd, "Stranger") is False,
+        "an account that never logged in read as cached")
+    # A name that appears ELSEWHERE in the document is not a login.
+    open(_cfg, "w").write(
+        '"InstallConfigStore"\n{\n\t"LastUser" "Ghost"\n'
+        '\t"Accounts"\n\t{\n\t}\n}\n')
+    _pc(deploy.credentials_cached(_steamcmd, "Ghost") is False,
+        "a name outside the Accounts block counted as a cached login")
+
 if failures:
     for failure in failures:
         print("FAIL deploy-workshop: " + failure)
     raise SystemExit(1)
 
-print(f"deploy-workshop: {len(cases) + 4 + rival_checks} passed, 0 failed")
+print(f"deploy-workshop: {len(cases) + 4 + rival_checks + probe_checks} passed, 0 failed")

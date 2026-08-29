@@ -86,6 +86,7 @@ if not isServer() then return end
 -- RDGuardian -> RDMeter -> here. Safe below the isServer() guard, which has
 -- already returned on the client where this file self-aborts.
 require "RDShared"
+require "RDFile"
 
 RDLog = RDLog or {}
 
@@ -184,32 +185,25 @@ end
 -- answer; anything else means records are being dropped RIGHT NOW.
 function RDLog.writeFailures() return writeFailCount end
 
--- No guard on any of the three sinks below. getFileWriter returns nil for a
--- denied path or a failed open (LuaManager.java:5523-5555) - that nil IS the
--- refusal these count - and LuaFileWriter.write/close delegate to PrintWriter,
--- which records I/O errors on an internal flag rather than raising them
--- (LuaManager.java:9850-9868). writeFailCount still counts every refusal.
+-- The MECHANISM moved to RDFile (2026-08-25) - these locals were the
+-- canonical copy twelve other files had re-derived, and exposing them is what
+-- retired the family. What stays here is RDLog's own POLICY on a refusal:
+-- the CRITICAL per-extension shout and writeFailures(), which the forensic
+-- consumers read. RDFile keeps its own floor-level count; the two answer
+-- different questions ("is the suite dropping writes anywhere" vs "is the
+-- FORENSIC ARCHIVE dropping records"), so neither replaces the other.
 local function appendLine(path, line)
-    local w = getFileWriter(path, true, true)
-    if not w then reportRefused(path); return false end
-    w:write(line .. "\n")
-    w:close()
+    if not RDFile.appendLine(path, line) then reportRefused(path); return false end
     return true
 end
 
 local function appendMany(path, lines)
-    local w = getFileWriter(path, true, true)
-    if not w then reportRefused(path); return false end
-    for i = 1, #lines do w:write(lines[i] .. "\n") end
-    w:close()
+    if not RDFile.appendMany(path, lines) then reportRefused(path); return false end
     return true
 end
 
 local function rewrite(path, content)
-    local w = getFileWriter(path, true, false)   -- truncate: the only "delete"
-    if not w then reportRefused(path); return false end
-    w:write(content)
-    w:close()
+    if not RDFile.rewrite(path, content) then reportRefused(path); return false end
     return true
 end
 
@@ -225,13 +219,10 @@ end
 --
 -- The recovery is unchanged because it never depended on catching anything: a
 -- head line we cannot read is indistinguishable from one that is not there,
--- and both mean "rebuild it".
+-- and both mean "rebuild it". (Mechanism in RDFile; the read-vs-write lane
+-- doctrine above travelled into that file's header.)
 local function readFirstLine(path)
-    local r = getFileReader(path, false)
-    if not r then return nil end
-    local line = r:readLine()
-    r:close()
-    return line
+    return RDFile.readFirstLine(path)
 end
 
 -- Stream/segment names must stay path-safe; ".." is refused by the engine but

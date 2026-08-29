@@ -41,9 +41,27 @@ if not exist "%LUA%" (
 if not exist "%OUT%" mkdir "%OUT%"
 del /q "%OUT%\*.jsonl" 2>nul
 
+rem THE ROLL CALL. A fixture that dies at LOAD - syntax fault, missing global
+rem at file scope, dofile of a moved path - never reaches its own "N passed"
+rem tally, so among 100+ fixtures the one interpreter error scrolls past
+rem mid-run and nothing at the end says which file produced no tally. The
+rem exit code was always right; ATTRIBUTION was the gap (2026-08-22, two
+rem fixtures found only by running each one by hand). So: collect every
+rem failing fixture's name and print the list after the loop.
+set "DEAD="
 for %%T in ("%~dp0tests\test_*.lua") do (
     "%LUA%" "%%T" "%ROOT%" "%OUT%"
-    if !errorlevel! gtr 0 set FAIL=1
+    if !errorlevel! gtr 0 (
+        set FAIL=1
+        set "DEAD=!DEAD! %%~nT"
+    )
+)
+if defined DEAD (
+    echo.
+    echo FAILED fixture^(s^):!DEAD!
+    echo A name with no "N passed, M failed" tally above died at LOAD - run it
+    echo alone to see the interpreter error:  Gates\lua5.1.exe Gates\tests\^<name^>.lua .
+    echo.
 )
 
 rem Independent confirmation: Lua asserting on its own output only proves the

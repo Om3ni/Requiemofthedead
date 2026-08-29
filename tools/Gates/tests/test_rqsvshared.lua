@@ -27,13 +27,22 @@ function require(name)
         dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDZombieId.lua")
         return
     end
+    -- The id lane of svFindZombieByOnlineID resolves through the cache. A
+    -- minimal stand-in is enough here because the cache's own behaviour has
+    -- its own fixture (test_rqzombiecache); this fixture only needs the seam.
+    if name == "RQZombieCache" then
+        RQZombieCache = RQZombieCache or { get = function() return nil end }
+        return
+    end
     error("unexpected fixture require: " .. tostring(name))
 end
 
 local enumNames = {
     "SCREAMER_INTERVAL", "SCREAMER_CAST", "SCREAMER_RANGE", "SCREAMER_SOUND",
     "SCREAMER_SPAWN_MIN", "SCREAMER_SPAWN_MAX", "SCREAMER_THRESHOLD", "JUGG_RADIUS",
-    "JUGG_BUFF", "EMP_RANGE", "EMP_CAST", "EMP_RADIUS", "EMP_DRAIN", "GLUTTON_RADIUS",
+    -- JUGG_BUFF went with JuggernautBuffPercent on 2026-08-25; JUGG_RADIUS
+    -- stays, because JuggernautBuffRadius is still live (RQBulwark.lua:162).
+    "EMP_RANGE", "EMP_CAST", "EMP_RADIUS", "EMP_DRAIN", "GLUTTON_RADIUS",
     "GLUTTON_MULT", "BOSS_COOLDOWN", "CAST_4",
 }
 local enums = {}
@@ -92,6 +101,10 @@ check(#commands == 1 and commands[1].target == owner and commands[1].command == 
     "owner-only update targets the owning client")
 check(commands[1] and commands[1].payload.onlineID == 42 and commands[1].payload.targetHP == 25,
     "owner delivery retains the exact authoritative payload")
+check(commands[1] and commands[1].payload.x == nil and commands[1].payload.y == nil
+      and commands[1].payload.z == nil,
+    "the payload is id-only - x/y/z came off the wire 2026-08-25 (owner-approved), "
+    .. "the client resolves through RQZombieCache and never read them")
 
 zombie.getOwnerPlayer = function() return nil end
 check(RQSvShared.svSetZombieHP(zombie, 26, true), "server-owned update remains authoritative")
@@ -183,19 +196,34 @@ check(#warnings == 1 and warnings[1]:find("2 of 2", 1, true)
     "callback failures produce one bounded summary with the first error")
 
 function instanceof(value, className) return value and value.className == className end
-local shutDown, smashed = 0, 0
+local smashed = 0
 local blastSquare
+local conditionSet = nil
+
+-- THE RADIO IS A CANARY, not a subject. A branch here used to call
+-- dd:setIsTurnedOn(false), which mutates the server's copy and transmits
+-- nothing - transmitDeviceDataState is `if (GameClient.client)` and this file
+-- is server-only (DeviceData.java:932-942). It was removed 2026-08-27, and
+-- this fixture exists so re-adding it fails loudly here instead of shipping as
+-- a TV that stays on for every client. See the block comment at the deletion.
 local radio = { className = "IsoRadio" }
 local device = {
-    getParent = function() return radio end,
-    getIsTurnedOn = function() return true end,
-    setIsTurnedOn = function(_, value)
-        check(value == false, "EMP shutdown passes the engine's off state")
-        shutDown = shutDown + 1
+    getParent      = function() return radio end,
+    getIsTurnedOn  = function() return true end,
+    setIsTurnedOn  = function()
+        error("the server must never flip device power directly - it does not replicate")
     end,
 }
 radio.getDeviceData = function() return device end
 radio.getSquare = function() return blastSquare end
+
+-- The generator IS the mechanism now: damaging it to 0 is what cuts grid power,
+-- and the engine turns each device off and transmits that itself.
+local generator = {
+    className    = "IsoGenerator",
+    getCondition = function() return 80 end,
+    setCondition = function(_, value) conditionSet = value end,
+}
 local window = {
     className = "IsoWindow",
     getSquare = function() return blastSquare end,
@@ -203,22 +231,31 @@ local window = {
     smashWindow = function() smashed = smashed + 1 end,
 }
 blastSquare = {
-    getObjects = function() return javaList({ radio, window }) end,
+    getObjects = function() return javaList({ generator, radio, window }) end,
 }
 function getCell()
     return { getGridSquare = function() return blastSquare end }
 end
 RQSvShared.svDamageWorldElectronics(10, 20, 0, 0, 25)
-check(shutDown == 1 and smashed == 1, "EMP directly mutates live radios and windows")
+check(smashed == 1, "EMP smashes a live window in the blast")
+check(conditionSet == 60, "EMP damages generator condition by the drain percentage")
 
-device.getParent = function() return nil end
+-- setCondition clamps to 0-100 itself (IsoGenerator.java:504), so a drain that
+-- would overshoot is the engine's problem, not ours - but the subtraction must
+-- not hand it a negative in the first place.
+generator.getCondition = function() return 10 end
+RQSvShared.svDamageWorldElectronics(10, 20, 0, 0, 100)
+check(conditionSet == 0, "a full-severity drain floors condition at zero, never below")
+
+generator.getCondition = function() return 80 end
 window.getSquare = function() return nil end
+smashed, conditionSet = 0, nil
 RQSvShared.svDamageWorldElectronics(10, 20, 0, 0, 25)
-check(shutDown == 1 and smashed == 1, "EMP skips world objects detached during the scan")
+check(smashed == 0 and conditionSet == 60,
+    "EMP skips a window detached during the scan without skipping its peers")
 
-device.getParent = function() return radio end
 window.getSquare = function() return blastSquare end
-device.setIsTurnedOn = function() error("fixture shutdown fault") end
+window.smashWindow = function() error("fixture smash fault") end
 check(not pcall(RQSvShared.svDamageWorldElectronics, 10, 20, 0, 0, 25),
     "an unexpected live-object mutation fault is not swallowed")
 
@@ -251,12 +288,14 @@ check(RQSvShared.due(multi, "slow", 2000, 1000) == true,
 check(RQSvShared.due(multi, "fast", 250, 1100) == false,
     "stamping one key does not disturb another")
 
--- A zero stamp is a real stamp, not an absent one. RQSvBoss seeds
--- lastBuffTick = 0 at state creation, and Lua's only falsey values are nil and
--- false - so 0 must be read as "fired at time zero", which is long overdue.
-local zeroed = { lastBuffTick = 0 }
-check(RQSvShared.due(zeroed, "lastBuffTick", 2000, 50000) == true,
-    "a zero stamp reads as long overdue, matching the Boss's seeded state")
+-- A zero stamp is a real stamp, not an absent one. Lua's only falsey values
+-- are nil and false, so 0 must read as "fired at time zero" - long overdue -
+-- never as "no stamp yet". No live caller seeds 0 today (RQSvBoss's
+-- lastBuffTick did until the field was cut 2026-08-25), but absent-vs-zero is
+-- exactly the boundary a rewrite would fumble, so the contract stays pinned.
+local zeroed = { stamp = 0 }
+check(RQSvShared.due(zeroed, "stamp", 2000, 50000) == true,
+    "a zero stamp reads as long overdue, not as an absent one")
 
 -- Callers pass a table they already own; a nil row means "no state to throttle
 -- against", which must not throw inside a per-tick loop.
@@ -299,6 +338,8 @@ check(commands[1] and commands[1].payload.onlineID == 77
       and commands[1].payload.walkType == moved.walkType
       and commands[1].payload.speedMod == moved.speedMod,
     "the owner receives exactly the values written server-side")
+check(commands[1] and commands[1].payload.x == nil,
+    "movement payload is id-only too - same wire trim as applyZombieHP")
 
 -- Server-owned: the direct write is already authoritative, so a packet would
 -- be pure waste. Same rule svSetZombieHP follows.
@@ -341,6 +382,97 @@ RQSvShared.clearSvConfig()
 RQSvShared.getSvConfig()
 check(RQDirgeLog.ENABLED == false,
     "DebugMode off drops the switch with it on the next config build")
+
+-- ---------------------------------------------------------------------------
+-- svCheckZoneSprinter - the zone-risk sprinter contract (Limes S8)
+-- ---------------------------------------------------------------------------
+-- The dial arrives only on the per-zone cfg overlay (getEffectiveRules), the
+-- roll is one-shot per zombie and only burns on ground with a share, specials
+-- are excluded on both sides, and a committed sprinter self-heals a walk type
+-- an owning client stamped back. Every property here is one the design doc
+-- states; a fixture drift is a contract drift.
+
+local effCalls, shareForTest = 0, 0
+RQPhunZones = {
+    getEffectiveRules = function(_, _, cfg)
+        effCalls = effCalls + 1
+        return setmetatable({ sprinterShare = shareForTest }, { __index = cfg })
+    end,
+}
+local rand = 0
+ZombRand = function() return rand end
+
+-- moveZombie gains the live walk-type read the self-heal branch uses; wired to
+-- the same `moved` record the delivery writes, so the stub behaves like the
+-- engine's own state.
+moveZombie.getWalkType = function() return moved.walkType end
+moveZombie.getOwnerPlayer = function() return nil end   -- server-owned: no packets to count
+
+local md = { RQConverted = true }
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(md.RQSprintRolled == nil and md.RQSprinter == nil,
+    "a converted special never enters the sprinter lottery")
+
+md = {}
+shareForTest = 100
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(md.RQSprintRolled == nil and effCalls == 0,
+    "an unsettled special lottery defers the sprint roll - no overlay even computed")
+md = { RQRolled = true, RQPendingType = "Screamer" }
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(md.RQSprintRolled == nil,
+    "a parked special win defers too - the two lotteries can never both pay out")
+
+md = { RQRolled = true }
+shareForTest = 0
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(effCalls == 1 and md.RQSprintRolled == nil,
+    "shareless ground burns nothing - the zombie stays eligible where risk exists")
+
+shareForTest = 50
+rand = 99
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(md.RQSprintRolled == true and md.RQSprinter == nil,
+    "a losing roll on risk ground is consumed without minting a sprinter")
+effCalls = 0
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(effCalls == 0, "a settled loser never pays the overlay lookup again")
+
+md = { RQRolled = true }
+moved = {}
+rand = 0
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(md.RQSprinter == true and moved.walkType
+      and moved.walkType:sub(1, 6) == "sprint",
+    "a winning roll mints a sprinter and delivers the sprint profile")
+
+-- Self-heal: the owning client's packets can stamp a walk back over the
+-- profile (NetworkZombiePacker.applyZombie). A committed sprinter re-delivers
+-- when its live walk type has reverted, and only then.
+moved.walkType = "1"
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(moved.walkType:sub(1, 6) == "sprint",
+    "a stamped-over sprinter is re-delivered on the next visit")
+local before = moved
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(moved == before and moved.walkType:sub(1, 6) == "sprint",
+    "a sprinter already sprinting is left alone")
+
+md.RQConverted = true
+moved.walkType = "1"
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(moved.walkType == "1",
+    "a sprinter that later converts is the special's to move, not ours")
+
+SandboxVars.RFTDDirge.Enabled = false
+RQSvShared.clearSvConfig()
+md = { RQRolled = true }
+effCalls = 0
+RQSvShared.svCheckZoneSprinter(moveZombie, md)
+check(effCalls == 0 and md.RQSprintRolled == nil,
+    "a disabled Dirge rolls nothing and burns nothing")
+SandboxVars.RFTDDirge.Enabled = nil
+RQSvShared.clearSvConfig()
 
 print(string.format("RQSvShared: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

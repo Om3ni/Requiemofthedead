@@ -23,6 +23,18 @@ end
 
 function isServer() return true end
 
+-- RQCeiling requires RDShared (badNum, its save-data type gate), and this
+-- dofile runs BEFORE the fixture's own require stub further down - so the stub
+-- has to exist by here or the real Lua loader goes hunting for a .dll. The REAL
+-- RDShared, not a stub: the type gate keys on badNum's exact semantics.
+function require(name)
+    if name == "RDShared" then
+        dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
+        return
+    end
+    error("unexpected fixture require before load: " .. tostring(name))
+end
+
 RQCeiling = nil
 dofile(CEILING_SOURCE)
 
@@ -53,7 +65,8 @@ RQSvScavenger = { state = {} }
 
 function require(name)
     local known = { RQCommon = true, RQCeiling = true, RQDirgeLog = true,
-                    RQSvShared = true, RQSvGlutton = true, RQSvScavenger = true }
+                    RQSvShared = true, RQSvGlutton = true, RQSvScavenger = true,
+                    RDShared = true }
     if known[name] then return end
     error("unexpected fixture require: " .. tostring(name))
 end

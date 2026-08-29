@@ -77,6 +77,7 @@ local clock = 1000000
 -- file-scope call is registerMod, which is a table write.
 require = function() return true end
 dofile(CORE .. "/shared/RDShared.lua")
+dofile(CORE .. "/shared/RDFile.lua")
 RDShared.nowMs = function() return clock end
 
 require = function() return true end

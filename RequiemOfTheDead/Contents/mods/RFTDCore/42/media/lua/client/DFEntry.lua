@@ -178,7 +178,6 @@ end
 function DFEntry:createChildren()
     ISPanel.createChildren(self)
 
-    local c  = DFKit.col
     local eh = entryH()
     local ey = self.entryY or (titleH() + PAD)
 

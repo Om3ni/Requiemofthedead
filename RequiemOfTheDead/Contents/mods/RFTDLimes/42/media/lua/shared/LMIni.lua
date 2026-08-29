@@ -90,6 +90,33 @@ function LMIni.parse(text)
                     .. "' before any [section], skipped"
             elseif key == "inherits" then
                 if value ~= "" then cur.inherits = value end
+            elseif key == "kind" then
+                -- STRUCTURAL: the record-kind marker. "zone" and "" normalise
+                -- to absent (absent = zone is the migration story); anything
+                -- else is preserved verbatim so validate() can NAME an unknown
+                -- kind instead of this parser silently discarding it.
+                if value ~= "" and value ~= "zone" then cur.kind = value end
+            elseif key == "tier" then
+                -- STRUCTURAL: the tier slot, a record NAME - never autoTyped,
+                -- because a store written before the slot existed says
+                -- `tier = 5` and that must survive as the STRING "5" for the
+                -- migration to map, not become a number the resolver cannot
+                -- look up as a key.
+                if value ~= "" then cur.tier = value end
+            elseif key:match("^moon_") then
+                -- The tier moon overlay, encoded flat: `moon_phases` is the
+                -- gate, every other `moon_<key>` is an overlay dial. Flat
+                -- keys rather than a sub-section keep "one section = one
+                -- record" true for duplicate detection, sorting and identity;
+                -- the JSON schema nests the same data as moon.{phases,fields}.
+                -- Fields may not START with moon_ (LMEdit.keyProblem refuses
+                -- them), so the prefix is unambiguous on the way back in.
+                cur.moon = cur.moon or { fields = {} }
+                if key == "moon_phases" then
+                    if value ~= "" then cur.moon.phases = value end
+                else
+                    cur.moon.fields[key:sub(6)] = autoType(value)
+                end
             elseif key == "profiles" then
                 -- STRUCTURAL, like rects, and it must be: through the field
                 -- fall-through this would land as one string - and worse,
@@ -135,8 +162,14 @@ function LMIni.serialize(rawZones)
         local name = names[i]
         local z = rawZones[name]
         out[#out + 1] = "\n[" .. name .. "]\n"
+        if z.kind and z.kind ~= "zone" then
+            out[#out + 1] = "kind = " .. tostring(z.kind) .. "\n"
+        end
         if z.inherits then
             out[#out + 1] = "inherits = " .. tostring(z.inherits) .. "\n"
+        end
+        if z.tier then
+            out[#out + 1] = "tier = " .. tostring(z.tier) .. "\n"
         end
         if z.profiles and #z.profiles > 0 then
             out[#out + 1] = "profiles = " .. table.concat(z.profiles, ",") .. "\n"
@@ -149,6 +182,18 @@ function LMIni.serialize(rawZones)
                         .. RDJson.fmtNum(r[3]) .. "," .. RDJson.fmtNum(r[4])
             end
             out[#out + 1] = "rects = " .. table.concat(parts, " ; ") .. "\n"
+        end
+        if z.moon then
+            if z.moon.phases and z.moon.phases ~= "" then
+                out[#out + 1] = "moon_phases = " .. encodeValue(z.moon.phases) .. "\n"
+            end
+            local mkeys = {}
+            for k in pairs(z.moon.fields or {}) do mkeys[#mkeys + 1] = k end
+            table.sort(mkeys)
+            for j = 1, #mkeys do
+                out[#out + 1] = "moon_" .. mkeys[j] .. " = "
+                    .. encodeValue(z.moon.fields[mkeys[j]]) .. "\n"
+            end
         end
         local keys = {}
         for k in pairs(z.fields or {}) do keys[#keys + 1] = k end

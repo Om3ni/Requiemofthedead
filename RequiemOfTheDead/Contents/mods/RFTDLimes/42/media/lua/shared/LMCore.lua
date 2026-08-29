@@ -8,7 +8,7 @@
 -- which is what a consumer holding a standing side effect needs in order to
 -- unwind it (§5.1). Everything else in this mod is a producer feeding this
 -- file: LMPersist reads the .ini into it, LMSync carries it over the wire,
--- LMImport translates a PhunZones export into its raw shape. Consumers on the
+-- LMImport reads the sharing dialects into its raw shape. Consumers on the
 -- client and the server read the SAME resolved records through the SAME
 -- functions, which is the whole zero-steady-state-wire design: a lookup is a
 -- local table scan, never a packet.
@@ -19,14 +19,31 @@
 -- (every number a double, no integer subtype) without a stub layer. Keep it
 -- that way: engine wiring belongs in LMSync/LMPersist, not here.
 --
+-- THREE KINDS, ONE STORE (S1 of the 2026-08-26 redesign). A record's `kind`
+-- says what it IS: absent = a ZONE (a place - the migration story is that every
+-- pre-kind record reads as one), "tier" = a rung on the difficulty ladder,
+-- "profile" = a named ruleset zones apply. Tier and profile records are
+-- TERMINAL: no rects, no inherits, no tier, no profiles - they are bags other
+-- records consume, never places, and validate() enforces it. A zone's `tier`
+-- is a SLOT naming a tier record, resolved nearest-ancestor-wins down the
+-- inherits chain; the named tier's fields merge as the WEAKEST bag, under
+-- _default, under the chain. A tier may carry a `moon` overlay - a second bag
+-- gated by the ONE phase mechanism (Limes.phasesActive, the same gate profiles
+-- use) that beats the tier's base dials while the moon is in phase.
+--
 -- RAW vs RESOLVED, the two shapes this file speaks:
 --
---   raw zone      { inherits = "Name"|nil,
---                   rects    = { {x1,y1,x2,y2}, ... },   -- may be empty: template
+--   raw record    { kind     = "tier"|"profile"|nil,     -- nil = zone
+--                   inherits = "Name"|nil,               -- zones only
+--                   tier     = "TierName"|nil,           -- zones only (the slot)
+--                   rects    = { {x1,y1,x2,y2}, ... },   -- zones only; may be empty: template
+--                   profiles = { "Name", ... }|nil,      -- zones only
+--                   moon     = { phases = "full,...",    -- tiers only
+--                                fields = { ... } }|nil,
 --                   fields   = { key = value, ... } }    -- sparse; unset = inherit
 --
---   resolved zone { name, template, disabled, priority, area, inherits,
---                   rects = normalized copy,
+--   resolved      { name, kind, tier, template, disabled, priority, area,
+--                   inherits, rects = normalized copy,
 --                   fields = full inheritance-flattened map }
 --
 -- Resolution happens ONCE per apply (boot, baseline, delta), never per lookup:
@@ -67,10 +84,13 @@ Limes.fields = Limes.fields or {}
 local specs = {}     -- field name -> { owner, type, default, min, max }
 
 -- Names the record structure itself uses; a field by these names would shadow
--- them in the .ini section and in resolved records. `profiles` joined 2026-08-07:
--- it is the ordered list of profile names a record applies, structural like
--- rects, never a field.
-local RESERVED = { rects = true, inherits = true, name = true, profiles = true }
+-- them in the .ini section and in resolved records. `profiles` joined 2026-08-07
+-- (the ordered list of profile names a record applies); `kind`, `tier` and
+-- `moon` joined 2026-08-26 with the record-kind model - tier stopped being a
+-- number field and became the slot naming a tier record, so a FIELD by that
+-- name would shadow the slot in every serialization.
+local RESERVED = { rects = true, inherits = true, name = true, profiles = true,
+                   kind = true, tier = true, moon = true }
 
 -- Fields the RESOLVER itself reads (rebuild/getLocation). These must reach every
 -- machine or the two sides resolve differently in silence - the worst class of
@@ -276,8 +296,15 @@ function Limes.fields.stripServerOnly(rawZones)
         -- reaches a client, the client's draft base never has it, and the next
         -- save of an unrelated dial folds the record back WITHOUT it - profile
         -- membership deleted by editing a number, with no symptom until then.
-        out[name] = { inherits = rec.inherits, rects = rec.rects,
-                      profiles = rec.profiles, fields = fields }
+        -- `kind`, `tier` and `moon` joined the whitelist the day they joined
+        -- the record (2026-08-26), for exactly that reason. moon rides WHOLE,
+        -- server-only dials included: the overlays are a handful of keys on a
+        -- handful of tier records, and under-sending is the correctness bug
+        -- (the save path replaces records wholesale, so a stripped overlay
+        -- would need its own carry-across in LMSync to avoid erasure).
+        out[name] = { kind = rec.kind, inherits = rec.inherits, tier = rec.tier,
+                      rects = rec.rects, profiles = rec.profiles,
+                      moon = rec.moon, fields = fields }
     end
     return out
 end
@@ -302,36 +329,43 @@ local function coerce(spec, v)
 end
 
 -- ---------------------------------------------------------------------------
--- Core's own fields. Satellite vocabularies (dirge*, sprinter risks, no*
--- restriction flags, lewtkey, zeds) are registered by their consumers at their
--- milestone; until then those keys ride the unknown-key path - preserved,
--- warned once - which doubles as the admin-visible list of fields that have no
--- consumer installed yet.
+-- Core's own fields. Satellite vocabularies (dirge* and friends) are
+-- registered by their consumers at their milestone; until then those keys
+-- ride the unknown-key path - preserved, warned once - which doubles as the
+-- admin-visible list of fields that have no consumer installed yet.
 -- ---------------------------------------------------------------------------
 
 -- side: the widget's vocabulary is client-consumed; disabled/priority are
--- resolver-critical (forced "both" regardless); tier is a scalar both halves
--- read. Satellites declare their own - loot tables and dirge weights are the
--- server-only cases the tag exists for.
+-- resolver-critical (forced "both" regardless). Satellites declare their own -
+-- loot tables and dirge weights are the server-only cases the tag exists for.
+--
+-- `tier` is NOT here any more (2026-08-26): it stopped being a number field
+-- and became the structural slot naming a tier record - see the header. The
+-- scalar consumers used to read off it survives as `rank`, which tier records
+-- carry and zones resolve through their tier bag.
 Limes.mods.register("LMCore", { label = "Zone basics", order = 0,
     description = "The fields every zone has, whatever else is installed." })
 
--- The honesty suffix, in two flavours. A dial that implies an effect it does not
--- have is worse than no dial, so a field whose consumer is not built yet says so
--- in the one place an admin will read it. Declared HERE rather than beside the
--- restriction block that first used it, because the announce vocabulary needs it
--- too and a `local` is only in scope after its own line - the restrictions loop
--- happens to sit below, which made that easy to miss.
-local NOT_YET = "  NOTE: no module is enforcing this yet - the value is stored,"
-             .. " replicated and preserved, but nothing reads it."
+-- The honesty suffix. A dial that implies an effect it does not have is worse
+-- than no dial, so a field whose consumer is not built yet says so in the one
+-- place an admin will read it. The general-purpose flavour (NOT_YET) retired
+-- with S8: every field carrying it gained its consumer (zeds -> LMZeds,
+-- lootReduce -> LMLoot) - reintroduce it with the next consumer-less field
+-- rather than shipping one bare.
 local NOT_YET_ANNOUNCE = "  NOTE: the zone announce widget (M2) is not built yet,"
              .. " so this is stored and replicated but nothing displays it."
 
-Limes.fields.register("LMCore", "tier",       { type = "number",  default = 0,     side = "both", min = 0, max = 10,
-    order = 1, group = "Zone", label = "Difficulty tier", unit = "",
-    help = "The one number other modules read to decide how hard this zone "
-        .. "is. 0 (Very Easy) to 5 (Very Hard), 6-10 headroom; a zone drawn "
-        .. "inside another inherits its parent's tier unless you set one."})
+-- Set on TIER records: the rung's position on the ladder, 1 = gentlest. It
+-- merges into zones through the tier bag like any other tier dial, so "how
+-- hard is this zone, as one number" is answered by the resolved `rank` - the
+-- honest successor to the old per-zone tier number, now derived from the
+-- ladder instead of typed onto ninety zones. No default: a zone with no tier
+-- anywhere in its chain genuinely has no rank, and consumers should see that.
+Limes.fields.register("LMCore", "rank", { type = "number", side = "both", min = 1,
+    order = 1, group = "Tier", label = "Ladder position", step = 1,
+    help = "Where this tier sits on the difficulty ladder - 1 is the gentlest "
+        .. "rung. Zones resolve it through their tier, so other modules can "
+        .. "still read one number for 'how hard'."})
 Limes.fields.register("LMCore", "priority",   { type = "number",  default = 0,     side = "both",
     order = 2, group = "Zone", label = "Overlap priority",
     help = "Breaks a tie when the two rectangles covering a tile are the "
@@ -388,9 +422,10 @@ Limes.fields.register("LMCore", "order",      { type = "number",  default = 0,  
 -- the registry keeps it that way. Where nothing is enforcing yet the help text
 -- says so outright rather than letting a dial imply an effect it does not have.
 --
--- side = "both" throughout except lewtkey: restrictions gate client menus AND
--- server actions, so both halves need them. Loot is read only where containers
--- are filled, which is the server.
+-- side = "both" throughout: restrictions gate client menus AND server
+-- actions, so both halves need them, and the editor has to show every dial
+-- to let anyone set it. Genuinely large or secret payloads - loot TABLES,
+-- if they ever exist - are what "server" is reserved for.
 -- ---------------------------------------------------------------------------
 
 -- ENFORCED since 2026-08-06 by LMRestrictSv / LMRestrictCl, each at the tier the
@@ -431,6 +466,20 @@ for i, r in ipairs(RESTRICTIONS) do
         order = 10 + i, group = "Restrictions", label = r[2], help = r[3] .. r[4] })
 end
 
+-- The one restriction with an exemption list (2026-08-27): while `noplayers`
+-- is set, anyone whose ROLE NAME or role CAPABILITY appears here walks
+-- through. The matching rules live in LMRestrictShared.passes; only the
+-- boundary honours this - the action flags carry no exemptions, because an
+-- admin who may pass a fence does not thereby get to sledge inside it.
+Limes.fields.register("LMCore", "noplayersPass", { type = "string", default = "", side = "both",
+    order = 19, group = "Restrictions", label = "No-entry pass list",
+    ui = "text", maxLen = 128, empty = "(no exceptions)",
+    rule = "Comma list of role names or role capability names - holders may"
+        .. " enter a No-player-entry zone. Role names match case-insensitively.",
+    help = "Exceptions to 'No player entry': players whose role, or a"
+        .. " capability their role carries, is listed here pass the boundary."
+        .. " Everyone else is turned back as usual."})
+
 -- ENFORCED since 2026-08-06 by LMZeds, so no NOT_YET note here - it is the one
 -- field in this block that does something. Removal is deliberately silent (a
 -- corpse in a walled safe zone is worse than the spawn it replaces), which is
@@ -451,21 +500,79 @@ Limes.fields.register("LMCore", "zeds", { type = "string", default = "", side = 
         .. "inside when the zone is added or edited. Neither keeps killing "
         .. "zombies that walk in later - Census counts what is actually "
         .. "standing."})
-Limes.fields.register("LMCore", "minSprinterRisk", { type = "number", default = 0, side = "both",
-    min = 0, max = 100, order = 31, group = "Zombies", label = "Sprinter risk (min)",
-    help = "Lower bound of the per-zone sprinter chance band." .. NOT_YET })
-Limes.fields.register("LMCore", "maxSprinterRisk", { type = "number", default = 0, side = "both",
-    min = 0, max = 100, order = 32, group = "Zombies", label = "Sprinter risk (max)",
-    help = "Upper bound of the per-zone sprinter chance band." .. NOT_YET })
+-- RETIRED 2026-08-27 (S2 of the redesign), never having grown a consumer:
+-- minSprinterRisk/maxSprinterRisk (the per-zone band's successor is
+-- dirgeSprinterShare, registered by LMDirge and enforced since S8) and
+-- lewtkey (superseded by profile loot rules, lootReduce below). Not merely
+-- deleted here - LMImport.migrateLadder strips them from every store it
+-- touches, so they do not linger as unregistered cargo warning on every boot.
 
--- side = "both" for the same reason as the dirge vocabulary: the editor has
--- to show it to let anyone set it. Genuinely large or secret payloads - the
--- loot TABLES themselves, when M3 brings them - stay server-only.
-Limes.fields.register("LMCore", "lewtkey", { type = "string", default = "", side = "both",
-    order = 40, group = "Loot", label = "Loot table key",
-    ui = "text", maxLen = 48, empty = "(none)",
-    rule = "The name of a loot profile. Leave empty for the zone's normal loot.",
-    help = "Names the loot profile applied to containers in this zone." .. NOT_YET })
+-- The loot-reduction list, one string field so it rides sync, draft, diff and
+-- the .ini as ordinary field cargo (a field's whole-value override IS the
+-- "nearest source wins wholesale" merge the design locked). The canonical
+-- grammar is semicolon-joined rules, `Base.Axe=25; cat:Ammo=50` - an item
+-- fullType or a cat:-prefixed category, = the percent REMOVED. Ini keys
+-- cannot hold dots ([%w_]+), which is why the rules live in a VALUE.
+-- Limes.parseLootReduce below owns the grammar; validate() names what does
+-- not parse, and resolution passes the string through untouched.
+--
+-- ENFORCED since S8 (2026-08-27) by LMLoot, so no NOT_YET note here - the
+-- rules are applied server-side inside OnFillContainer, before the engine
+-- ships a container's contents anywhere. The cut is invisible by nature (a
+-- player only ever sees the final contents), which is why LMLoot keeps
+-- per-zone counters and announces each zone's first cut per boot.
+Limes.fields.register("LMCore", "lootReduce", { type = "string", default = "", side = "both",
+    order = 41, group = "Loot", label = "Loot reduction",
+    ui = "text", maxLen = 512, empty = "(none)",
+    rule = "Semicolon list: Base.Axe=25; cat:Ammo=50 - an item type or a cat: "
+        .. "category, = the percent removed (0-100).",
+    help = "Cuts container loot: each rule names an item type or a cat: "
+        .. "category and how much of it to remove. The nearest source that "
+        .. "sets this replaces the whole list - rules never mix across "
+        .. "profiles or parents." })
+
+-- The lootReduce grammar, in one place. Returns entries (array of
+-- { kind = "item"|"category", name, pct }) and bad (the raw rule strings that
+-- did not parse). Junk never throws and never half-applies: a bad rule lands
+-- in `bad` whole, which is what validate() reports and what a consumer skips.
+function Limes.parseLootReduce(text)
+    local entries, bad = {}, {}
+    for tok in tostring(text or ""):gmatch("[^;]+") do
+        local t = tok:match("^%s*(.-)%s*$")
+        if t ~= "" then
+            local name, pct = t:match("^(.-)%s*=%s*(%d+)$")
+            local kind = "item"
+            if name then
+                local cat = name:match("^cat:%s*(.+)$")
+                if cat then kind, name = "category", cat end
+            end
+            local n = tonumber(pct)
+            local okName = name and name ~= ""
+                and ((kind == "category" and name:match("^[%w_]+$") ~= nil)
+                  or (kind == "item" and name:match("^[%w_%.]+$") ~= nil))
+            if okName and n and n >= 0 and n <= 100 then
+                entries[#entries + 1] = { kind = kind, name = name, pct = n }
+            else
+                bad[#bad + 1] = t
+            end
+        end
+    end
+    return entries, bad
+end
+
+-- The inverse: entries back to the canonical string. parse(format(e)) is the
+-- identity for well-formed entries (pinned in the suite), which is what lets
+-- the loot widget edit ROWS while the store keeps holding one field, and the
+-- exporter emit the structured array from the same data.
+function Limes.formatLootReduce(entries)
+    local parts = {}
+    for i = 1, #(entries or {}) do
+        local e = entries[i]
+        parts[#parts + 1] = (e.kind == "category" and ("cat:" .. e.name) or e.name)
+            .. "=" .. tostring(math.floor(tonumber(e.pct) or 0))
+    end
+    return table.concat(parts, "; ")
+end
 
 -- ---------------------------------------------------------------------------
 -- Store state
@@ -533,6 +640,7 @@ end
 
 local function sameRecord(a, b)
     if a.inherits ~= b.inherits or a.template ~= b.template
+        or a.kind ~= b.kind or a.tier ~= b.tier
         or a.disabled ~= b.disabled or a.priority ~= b.priority
         or a.area ~= b.area or #a.rects ~= #b.rects then
         return false
@@ -625,8 +733,13 @@ end
 -- independently-implemented resolver, and the activation gate is the one part
 -- of the two that must never be allowed to drift: both call THIS function, so
 -- there is exactly one answer to "is this profile on right now" per machine.
-local function phaseActive(rec)
-    local phases = rec.fields and rec.fields.phases
+--
+-- Limes.phasesActive is the gate itself, split out (2026-08-26) because the
+-- tier moon overlay is the SECOND phase-gated bag and the locked design says
+-- one mechanism, never two: a profile's `phases` field and a tier's
+-- `moon.phases` run through this same function, so "what is active tonight"
+-- has one answer whichever kind of bag is asking.
+function Limes.phasesActive(phases)
     if phases == nil or phases == "" then return true end
     if not (LMMoon and LMMoon.parsePhases) then return true end
     local set = LMMoon.parsePhases(phases)
@@ -634,6 +747,10 @@ local function phaseActive(rec)
     local phase = Limes.moonPhase and Limes.moonPhase() or nil
     if phase == nil then return false end
     return set[phase] == true
+end
+
+local function phaseActive(rec)
+    return Limes.phasesActive(rec.fields and rec.fields.phases)
 end
 
 function Limes.profileActive(rec)
@@ -664,51 +781,50 @@ local function appendBags(bags, rec, name, raw, warnings)
         if not prof then
             warnings[#warnings + 1] = name .. ": applies unknown profile '" .. tostring(pname) .. "'"
         elseif phaseActive(prof) then
-            bags[#bags + 1] = { fields = prof.fields, profile = true }
+            bags[#bags + 1] = { fields = prof.fields, external = true }
         end
     end
     bags[#bags + 1] = { fields = rec.fields }
 end
 
--- Flatten one zone's inheritance chain into a fresh field map. Chain order:
--- "_default" first (implicit root under every zone), then each ancestor from
--- the top down, the zone's own fields last - so nearer always wins. Within
--- one record, its profiles come before its own fields (own always wins), and
--- a later profile beats an earlier one.
-local function flattenChain(name, raw, warnings)
-    local chain, seen, cur = {}, {}, name
-    while cur do
-        if seen[cur] then
-            warnings[#warnings + 1] = name .. ": inheritance cycle at '" .. cur .. "', chain cut"
-            break
-        end
+-- The tier SLOT: the nearest record walking up the inherits chain that names
+-- one, with "_default" as the fallback root - the same shape the field chain
+-- walks, so "a zone takes its parent's tier unless it sets its own" is
+-- literally true. Terminal records never carry the slot (validate enforces
+-- it), so there is no recursion to guard beyond the chain's own cycle check.
+--
+-- EXPORTED because LMEdit resolves the same slot against the DRAFT, and a
+-- second implementation is how the two resolvers would drift - the
+-- profileActive precedent. Returns tierName, sourceRecordName - or nil, nil.
+function Limes.resolveTier(name, raw)
+    local seen, cur = {}, name
+    while cur and not seen[cur] do
         seen[cur] = true
         local rec = raw[cur]
-        if not rec then
-            warnings[#warnings + 1] = name .. ": inherits unknown zone '" .. cur .. "'"
-            break
-        end
-        table.insert(chain, 1, rec)
+        if not rec then break end
+        if rec.tier ~= nil and rec.tier ~= "" then return tostring(rec.tier), cur end
         cur = rec.inherits
     end
-    if name ~= "_default" and raw["_default"] and not seen["_default"] then
-        table.insert(chain, 1, raw["_default"])
+    if not seen["_default"] then
+        local root = raw["_default"]
+        if root and root.tier ~= nil and root.tier ~= "" then
+            return tostring(root.tier), "_default"
+        end
     end
+    return nil, nil
+end
 
-    local bags = {}
-    for i = 1, #chain do
-        appendBags(bags, chain[i], name, raw, warnings)
-    end
-
+-- Merge an ordered bag list into a fresh, coerced field map - later bags win.
+local function mergeBags(bags, name, warnings)
     local out = {}
     for i = 1, #bags do
         for k, v in pairs(bags[i].fields or {}) do
-            -- A profile never contributes `phases`: that key is the profile's
-            -- own activation condition, not cargo to hand down. Without this
-            -- skip, applying a full-moon profile would write phases onto the
-            -- ZONE's resolved fields, where it means nothing and reads as
-            -- config.
-            if not (bags[i].profile and k == "phases") then
+            -- An external bag (a profile's, or a tier's) never contributes
+            -- `phases`: on a profile that key is its own activation condition,
+            -- not cargo to hand down. Without this skip, applying a full-moon
+            -- profile would write phases onto the ZONE's resolved fields,
+            -- where it means nothing and reads as config.
+            if not (bags[i].external and k == "phases") then
                 local spec = specs[k]
                 if spec then
                     local typed = coerce(spec, v)
@@ -731,6 +847,65 @@ local function flattenChain(name, raw, warnings)
         end
     end
     return out
+end
+
+-- Flatten one record's sources into a fresh field map. Bag order, weakest
+-- first: the resolved TIER's bag (base dials, then its moon overlay while the
+-- moon is in phase), "_default", then each ancestor from the top down, the
+-- record's own fields last - so nearer always wins. Within one record, its
+-- profiles come before its own fields (own always wins), and a later profile
+-- beats an earlier one.
+--
+-- TERMINAL RECORDS RESOLVE TO THEIR OWN FIELDS ONLY. A tier or profile is a
+-- bag other records consume, not a place: folding _default (or a tier bag)
+-- under one would make the Tiers panel display map-wide baseline values as
+-- the rung's own dials - and hand them back to every zone through the bag.
+local function flattenChain(name, raw, warnings, tierName)
+    local rec0 = raw[name]
+    if rec0 and (rec0.kind == "tier" or rec0.kind == "profile") then
+        return mergeBags({ { fields = rec0.fields } }, name, warnings)
+    end
+
+    local chain, seen, cur = {}, {}, name
+    while cur do
+        if seen[cur] then
+            warnings[#warnings + 1] = name .. ": inheritance cycle at '" .. cur .. "', chain cut"
+            break
+        end
+        seen[cur] = true
+        local rec = raw[cur]
+        if not rec then
+            warnings[#warnings + 1] = name .. ": inherits unknown zone '" .. cur .. "'"
+            break
+        end
+        table.insert(chain, 1, rec)
+        cur = rec.inherits
+    end
+    if name ~= "_default" and raw["_default"] and not seen["_default"] then
+        table.insert(chain, 1, raw["_default"])
+    end
+
+    local bags = {}
+    if tierName then
+        local trec = raw[tierName]
+        if not trec then
+            warnings[#warnings + 1] = name .. ": tier '" .. tierName
+                .. "' is not in the store - resolved without tier dials"
+        elseif trec.kind ~= "tier" then
+            warnings[#warnings + 1] = name .. ": tier '" .. tierName
+                .. "' is not a tier record - its fields do not apply"
+        else
+            bags[#bags + 1] = { fields = trec.fields, external = true }
+            local m = trec.moon
+            if m and Limes.phasesActive(m.phases) then
+                bags[#bags + 1] = { fields = m.fields, external = true }
+            end
+        end
+    end
+    for i = 1, #chain do
+        appendBags(bags, chain[i], name, raw, warnings)
+    end
+    return mergeBags(bags, name, warnings)
 end
 
 -- Returns the lifecycle events this rebuild implies (§5.1). Callers stamp the
@@ -759,11 +934,20 @@ local function rebuild(warnings)
                 bbox = { r[1], r[2], r[3], r[4] }
             end
         end
-        local fields = flattenChain(name, rawStore, warnings)
+        local raw0 = rawStore[name]
+        local terminal = raw0.kind == "tier" or raw0.kind == "profile"
+        -- The slot resolves before the bags merge, from raw records only, so
+        -- there is no circularity: the tier DECIDES the weakest bag, it is
+        -- never decided by one.
+        local tierName = nil
+        if not terminal then tierName = Limes.resolveTier(name, rawStore) end
+        local fields = flattenChain(name, rawStore, warnings, tierName)
         local rec = {
             name     = name,
-            inherits = rawStore[name].inherits,
-            profiles = rawStore[name].profiles,
+            kind     = raw0.kind,
+            tier     = tierName,
+            inherits = raw0.inherits,
+            profiles = raw0.profiles,
             template = (#rects == 0),
             disabled = fields.disabled == true,
             priority = tonumber(fields.priority) or 0,
@@ -975,41 +1159,34 @@ end
 -- an implicit root (flattenChain already prepends raw["_default"] when it
 -- exists), and the inheritance contract is demonstrated rather than described.
 --
--- Only `tier` carries values here, because tier is the one scalar LMCore itself
--- registers that means anything to a satellite later. LMDirge's vocabulary
--- lands on these same templates at M1 - that is the intended growth path, not a
--- second ladder.
+-- THE SHIPPED LADDER IS FIVE TIER RECORDS (redesign, 2026-08-26): Newcomer,
+-- Easy, Medium, Spicy, IDDQL - the owner's names, exactly as spelt, IDDQL
+-- included. They replace the six inherits-templates the old seed shipped
+-- (Very_Easy..Very_Hard), which put the difficulty ladder INTO the zone tree
+-- and made every zone file itself under its rung - the 2026-08-05 tree
+-- failure. A tier record is not in the tree; a zone points at it through the
+-- slot.
 --
--- THE NAMES ARE THE FAMILY'S EXISTING LADDER, deliberately (corrected
--- 2026-08-04). An earlier revision shipped a namespaced Tier_Calm/Normal/
--- Harsh/Lethal set on a 0-10 scale, reasoning that a prefix avoids colliding
--- with imported PhunZones names. It avoided a collision that could not happen -
--- the seed only ever lands in an EMPTY store, and an import replaces the store
--- wholesale - while creating a worse problem: a fresh install and a migrated
--- install would speak different vocabularies for the same concept, and an
--- admin reading an inherits chain would have to know which kind of server they
--- were on. Measured against the live layer, all six rungs are in real use
--- (0:4 zones, 1:3, 2:6, 3:4, 4:7, 5:4), so six is what ships.
+-- Only `rank` carries a value here, because position on the ladder is the one
+-- dial LMCore itself owns. Dirge weights, sprinter shares and moon overlays
+-- landed on these same records at S8 - the intended growth path, not a
+-- second ladder. `_default` seeds with its tier slot on Medium, so a fresh
+-- map has a whole-map baseline rung the same way the old seed's _default
+-- carried tier = 2.
 --
--- `tier` stays registered 0-10. The ladder occupies 0-5 and the headroom costs
--- nothing, whereas narrowing a registered range is how stored values get
--- silently eaten.
---
--- Known wart, not fixed here: Medium (2) and Intermediate (3) are English
--- synonyms on adjacent rungs, which is very likely why Intermediate was
--- deleted from the live layer in the first place. Renaming means rewriting
--- every child's `inherits`, so it waits for the M4 editor, which can do the
--- rename and the rewrite atomically.
+-- The S2 migration maps stores built on the old ladder onto this one
+-- (Very_Easy -> Newcomer ... Very_Hard -> IDDQL, Medium and Intermediate
+-- collapsing to Medium); the seed itself still only ever lands in an EMPTY
+-- store, so the two vocabularies never coexist on one server.
 -- ---------------------------------------------------------------------------
 
 Limes.SEED = {
-    _default     = {                        fields = { tier = 2 } },
-    Very_Easy    = { inherits = "_default", fields = { tier = 0 } },
-    Easy         = { inherits = "_default", fields = { tier = 1 } },
-    Medium       = { inherits = "_default", fields = { tier = 2 } },
-    Intermediate = { inherits = "_default", fields = { tier = 3 } },
-    Hard         = { inherits = "_default", fields = { tier = 4 } },
-    Very_Hard    = { inherits = "_default", fields = { tier = 5 } },
+    _default = { tier = "Medium" },
+    Newcomer = { kind = "tier", fields = { rank = 1 } },
+    Easy     = { kind = "tier", fields = { rank = 2 } },
+    Medium   = { kind = "tier", fields = { rank = 3 } },
+    Spicy    = { kind = "tier", fields = { rank = 4 } },
+    IDDQL    = { kind = "tier", fields = { rank = 5 } },
 }
 
 local function copyRaw(src)
@@ -1024,8 +1201,14 @@ local function copyRaw(src)
             profiles = {}
             for i, p in ipairs(rec.profiles) do profiles[i] = p end
         end
-        out[name] = { inherits = rec.inherits, rects = rects,
-                      profiles = profiles, fields = fields }
+        local moon = nil
+        if rec.moon then
+            moon = { phases = rec.moon.phases, fields = {} }
+            for k, v in pairs(rec.moon.fields or {}) do moon.fields[k] = v end
+        end
+        out[name] = { kind = rec.kind, inherits = rec.inherits, tier = rec.tier,
+                      rects = rects, profiles = profiles, moon = moon,
+                      fields = fields }
     end
     return out
 end

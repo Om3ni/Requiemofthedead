@@ -8,13 +8,15 @@
 --               into a diff-noise generator (the writer's whole discipline is
 --               deterministic output: sorted sections, sorted keys).
 --   AUTOTYPE    "true"/"25"/"Gun Stores" come back boolean/number/string; the
---               registry heals the rest. An admin hand-editing `tier = 5` must
---               not produce the string "5" reaching a numeric consumer.
+--               registry heals the rest. (`tier` is the one deliberate
+--               exception since the record-kind model: the slot is a NAME and
+--               never autoTypes, so a legacy `tier = 5` survives as the
+--               string the migration maps.)
 --   THE JOURNAL the writeLog line lands BEFORE the truncate-overwrite - that
 --               ordering IS the crash diagnosis story (§8), so it is pinned as
 --               behaviour, not left as a comment.
---   FULL CYCLE  production fixture -> import -> serialize -> parse -> apply:
---               the exact first-boot path the shadow install will run.
+--   FULL CYCLE  a pre-redesign .ini -> parse -> migrate -> save -> re-parse ->
+--               apply: the exact boot path an old server runs once.
 --
 -- Usage (normally via tools\run-tests.bat):
 --   lua5.1.exe tools/tests/test_lmpersist.lua <repo-root>
@@ -79,6 +81,8 @@ for _, src in ipairs({
     LIMES .. "/shared/LMImport.lua",
     LIMES .. "/server/LMPersist.lua",
 }) do
+-- The REAL RDFile (write mechanism since 2026-08-25).
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
     local ok, err = pcall(dofile, src)
     if not ok then
         print("FATAL: could not load " .. src)
@@ -130,7 +134,11 @@ rects = 1,2,3
 eq("two rects parsed",            #zones.Downtown.rects, 2)
 eq("rect numbers with spaces",    zones.Downtown.rects[2][3], 500)
 eq("inherits parsed",             zones.Downtown.inherits, "Hard")
-eq("number autotyped",            zones.Downtown.fields.tier, 5)
+-- tier is the structural SLOT since the record-kind model: never autoTyped,
+-- so a pre-migration numeric value survives as the string the S2 migration
+-- will map. autoType itself is pinned on sprinters (float) and nofire below.
+eq("tier lands in the slot as a string", zones.Downtown.tier, "5")
+eq("...never in the fields",      zones.Downtown.fields.tier, nil)
 eq("boolean autotyped",           zones.Downtown.fields.nofire, true)
 eq("string stays string",         zones.Downtown.fields.title, "Down Town")
 eq("string with spaces survives", zones.Downtown.fields.lewtkey, "Gun Stores")
@@ -156,8 +164,10 @@ local text2 = LMPersist.serialize(zones2)
 eq("serialize(parse(serialize)) is byte-identical", text1, text2)
 
 isTrue("sections sorted", text1:find("%[Broken%].*%[Downtown%].*%[Hard%]"), "section order wrong")
-isTrue("keys sorted within a section", text1:find("lewtkey.-nofire.-tier.-title"), "key order wrong")
-eq("round-tripped value intact", zones2.Downtown.fields.tier, 5)
+-- Structural keys lead the section (inherits, tier), fields follow sorted.
+isTrue("structure leads, fields sorted after",
+    text1:find("inherits = Hard.-tier = 5.-lewtkey.-nofire.-title"), "key order wrong")
+eq("round-tripped value intact", zones2.Downtown.tier, "5")
 eq("round-tripped rects intact", zones2.Downtown.rects[2][4], 250)
 
 -- Newlines cannot survive in a value: the grammar is one line per key.
@@ -188,45 +198,54 @@ eq("readAll returns what save wrote (modulo trailing newline)",
 eq("readAll on absent file is nil",   LMPersist.readAll("NotThere.ini"), nil)
 
 -- ---------------------------------------------------------------------------
--- Full first-boot cycle: fixture -> import -> save -> parse -> apply
+-- Full boot cycle for a PRE-REDESIGN file: parse -> migrate -> save ->
+-- re-parse -> apply. This is the path an old server's ini walks exactly once;
+-- the second boot reads the migrated file and the migration notes nothing.
 -- ---------------------------------------------------------------------------
 
-local f = io.open(ROOT .. "/docs/dirge-phunzones.md", "rb")
-if not f then
-    print("FATAL: fixture not found")
-    os.exit(2)
-end
-local fixture = f:read("*a")
-f:close()
+FS["RFTDLimes.ini"] = [[
+[_default]
+tier = 2
 
-local ok, res = LMImport.parsePhunZones(fixture)
-isTrue("fixture imports", ok, res)
+[Very_Hard]
+inherits = _default
+tier = 5
+dirgeSpawnChance = 25
 
-LMPersist.save(res.zones, "first-boot import", "server")
+[Louisville]
+inherits = Very_Hard
+rects = 11907,993,14695,4215 ; 12361,4215,12863,4472
+minSprinterRisk = 20
+title = Louisville
+]]
+
 local reloaded, w4 = LMPersist.parse(LMPersist.readAll("RFTDLimes.ini"))
-eq("production data reloads without warnings", #w4, 0)
+eq("the old file parses without warnings", #w4, 0)
+local notes = LMImport.migrateLadder(reloaded)
+isTrue("the migration reports its work", #notes > 0, "no notes")
+LMPersist.save(reloaded, "ladder migration", "server")
 
-local n1, n2 = 0, 0
-for _ in pairs(res.zones) do n1 = n1 + 1 end
-for _ in pairs(reloaded) do n2 = n2 + 1 end
-eq("every zone survives the disk trip", n2, n1)
-eq("Louisville tier survives",         reloaded.Louisville.fields.tier, 5)
-eq("Louisville rects survive",         #reloaded.Louisville.rects, 3)
-eq("Louisville inherits survives",     reloaded.Louisville.inherits, "Very_Hard")
-eq("dirge dial survives as a number",  reloaded.Louisville.fields.dirgeSpawnChance, 25)
+local again, w5 = LMPersist.parse(LMPersist.readAll("RFTDLimes.ini"))
+eq("the migrated file reloads without warnings", #w5, 0)
+eq("...and re-migrates to silence", #LMImport.migrateLadder(again), 0)
+eq("Louisville stands on IDDQL",       again.Louisville.tier, "IDDQL")
+eq("...off the ladder",                again.Louisville.inherits, nil)
+eq("...sprinter band stripped",        again.Louisville.fields.minSprinterRisk, nil)
+eq("the rung carries the old dials",   again.IDDQL.fields.dirgeSpawnChance, 25)
+eq("...as a tier record",              again.IDDQL.kind, "tier")
 
-local applyWarnings = Limes.apply(reloaded, 1)
-isTrue("production data applies (warnings are unregistered-consumer keys only)",
-    Limes.revision == 1, "apply failed")
-local lv = Limes.getLocation(12000, 2000)   -- inside Louisville rect 2
+local applyWarnings = Limes.apply(again, 1)
+isTrue("the migrated store applies",   Limes.revision == 1, "apply failed")
+local lv = Limes.getLocation(12000, 2000)   -- inside Louisville rect 1
 isTrue("live lookup lands in Louisville", lv and lv.name == "Louisville",
     lv and lv.name or "nil")
-eq("resolved tier through the whole pipe", lv and lv.fields.tier, 5)
+eq("resolved tier through the whole pipe", lv and lv.tier, "IDDQL")
+eq("...and the rung's dial reaches the zone", lv and lv.fields.dirgeSpawnChance, 25)
 
--- The serialize of the reloaded store still matches itself (idempotence held
--- across the import shapes too).
-eq("production round trip is stable",
-    LMPersist.serialize(reloaded), LMPersist.serialize(LMPersist.parse(LMPersist.serialize(reloaded))))
+-- The serialize of the migrated store still matches itself (idempotence held
+-- across the migration shapes too).
+eq("migrated round trip is stable",
+    LMPersist.serialize(again), LMPersist.serialize(LMPersist.parse(LMPersist.serialize(again))))
 
 print(string.format("LMPersist: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

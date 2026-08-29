@@ -196,28 +196,14 @@ function T.showVehicleMenu(row)
         o.notAvailable = true
     end
 
-    -- The family's row-action extension point, exactly as the necro tab
-    -- consumes it: another mod can hang an option on this tab without either
-    -- side knowing about the other.
-    if DFRegistry and DFRegistry.getRowActions then
-        for _, spec in ipairs(DFRegistry.getRowActions("rcVehicles") or {}) do
-            local enabled = true
-            if spec.capability and RDAccess then
-                enabled = RDAccess.roleHas(getPlayer(), spec.capability)
-            end
-            -- No guard. It was a pure silencer: the result was never
-            -- inspected, so a throwing row action produced no message, no
-            -- fallback and no clue - while the engine wrote a full Lua stack
-            -- trace at throw time anyway (KahluaThread.java:865, :1100).
-            -- There is no granularity to buy either; exactly one handler runs
-            -- per click, so there are no peers for it to protect. And these
-            -- are suite mods registering through DFRegistry, not the foreign
-            -- callers the comment implied.
-            local opt = ctx:addOption(spec.label, row, function(rowData)
-                spec.handler(rowData)
-            end)
-            if not enabled then opt.notAvailable = true end
-        end
+    -- The family's row-action extension point. The consuming body lives in
+    -- Core now (DFRegistry.addRowActions, promoted 2026-08-25) - this file's
+    -- no-guard reading of it is the one the promotion adopted, so the
+    -- reasoning travelled there with the code. The existence check stays:
+    -- this menu builds off vanilla's context, so it must work with Dragonfly
+    -- absent.
+    if DFRegistry and DFRegistry.addRowActions then
+        DFRegistry.addRowActions(ctx, "rcVehicles", row)
     end
 
     -- Destructive last, and through the tab's own confirm path so the modal,

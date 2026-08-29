@@ -2,19 +2,12 @@
 -- RQRing - ground circles via WorldMarkers
 -- Shows range indicators under zombies and at blast sites.
 -- Handles create/update/remove so callers don't have to think
--- about marker lifecycle. Also supports flashing mode for
--- things that need attention.
+-- about marker lifecycle.
 
 RQRing = RQRing or {}
 
 -- Active range rings: ringId -> { marker, x, y, z, radius }
 local activeRings = {}
-
--- Flash state: ringId -> { visible, lastToggle }
-local flashState = {}
-
--- Flash interval (milliseconds)
-local FLASH_INTERVAL = 300
 
 -- Tile-to-marker scale for ring rendering. PZ's addGridSquareMarker takes a
 -- "size" param that doesnt render 1:1 with tile distance - the visible circle
@@ -94,8 +87,6 @@ function RQRing.clear(ringId)
         ring.marker:remove()
     end
     activeRings[ringId] = nil
-    -- Also clean flash state to prevent stale entries
-    flashState[ringId] = nil
 end
 
 -- Update range ring position (only redraw when position changes)
@@ -113,47 +104,11 @@ function RQRing.update(ringId, x, y, z, radius, color)
     RQRing.show(ringId, x, y, z, radius, color)
 end
 
--- Flash range ring (called each frame, internally controls toggle frequency)
-function RQRing.flash(ringId, x, y, z, radius, color)
-    if isRingBlockedByGate(ringId) then return end
-    local now = getTimestampMs()
-    local state = flashState[ringId]
+-- Flashing mode (flash/stopFlash + flashState) was cut 2026-08-25: nothing in
+-- the mod ever called flash, and once it was gone stopFlash had decayed into a
+-- duplicate of clear(). RQCore's cast teardown calls clear() directly now.
 
-    if not state then
-        flashState[ringId] = { visible = true, lastToggle = now }
-        RQRing.show(ringId, x, y, z, radius, color)
-        return
-    end
-
-    if now - state.lastToggle >= FLASH_INTERVAL then
-        state.lastToggle = now
-        state.visible = not state.visible
-        if state.visible then
-            RQRing.show(ringId, x, y, z, radius, color)
-        else
-            -- Remove marker but keep flash state
-            local ring = activeRings[ringId]
-            if ring and ring.marker then
-                ring.marker:remove()
-            end
-            activeRings[ringId] = nil
-        end
-    elseif state.visible then
-        RQRing.update(ringId, x, y, z, radius, color)
-    end
-end
-
--- Stop flashing and clear range ring
-function RQRing.stopFlash(ringId)
-    flashState[ringId] = nil
-    local ring = activeRings[ringId]
-    if ring then
-        if ring.marker then ring.marker:remove() end
-        activeRings[ringId] = nil
-    end
-end
-
--- Clear all range rings and flash state (called on game restart)
+-- Clear all range rings (called on game restart)
 -- FIX: collect IDs first, then clear, to avoid modifying table during pairs()
 function RQRing.clearAll()
     local toRemove = {}
@@ -169,7 +124,6 @@ function RQRing.clearAll()
         end
         activeRings[toRemove[i]] = nil
     end
-    flashState = {}
 end
 
 Events.OnGameStart.Add(RQRing.clearAll)

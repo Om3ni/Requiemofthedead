@@ -22,6 +22,11 @@ local SRC  = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDReclamation/42/media/l
 
 isServer = function() return true end   -- the only engine global RCAudit needs at load
 
+-- The REAL RDFile (write mechanism since 2026-08-25); require stubbed so the
+-- module's own `require "RDFile"` resolves against it rather than the real
+-- loader hunting for a dll.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
+require = function() return true end
 local okLoad, err = pcall(dofile, SRC)
 if not okLoad then
     print("FATAL: could not load " .. SRC)

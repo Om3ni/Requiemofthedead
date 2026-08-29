@@ -1,30 +1,33 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- LMEditView - "Zone Selector": the map, the zone tree, and one zone's policies.
+-- LMEditView - "Zone Selector": the tree of PLACES, the map, and the actions.
 --
--- SHAPE (§11.3, decided from the first render). Every control is in one bar
--- along the top, the Husbandry/Vehicles idiom. Nothing runs along the bottom -
--- the selection line, the help line and the reserved problem rows all went,
--- because they were a fixed strip of mostly-blank that the map was paying for.
--- The map is full height on the right. The left column is two stacked cells:
+-- REBUILT FOR THE 2026-08-26 REDESIGN (S3). The shape the owner signed off in
+-- the interactive prototype (docs/limes-editor-mockup.html):
 --
--- The left column is the zone TREE, full height: zones drawn inside zones are
--- children, and children display under their parent, indented, because that is
--- what they are.
+--   TOOLBAR      New Zone on the left; status, Revert and Save on the right.
+--                That is ALL of it - the nine-button bar read as amateur hour
+--                and each of those actions belongs to a zone anyway, so they
+--                live where the zone is: the right-click menu. Share... opens
+--                the operations window (import/export/census/clear/teleport).
 --
--- THE SPLIT IS GEOMETRY vs POLICY. This tab finds a zone, draws it, shapes it
--- and says where it lives; Details says what it does. Every settable field -
--- including LMCore's own tier/priority/announce - lives on Details, so a dial
--- has exactly one home. The one exception is Disable, which is a toolbar button
--- here because it changes what the MAP means.
+--   THE TREE     places only (LMEdit:tree() filters tier/profile records) -
+--                inherits-nested, family-striped, with per-row depth guides.
+--                Each row: swatch, name, the resolved TIER as a right-aligned
+--                badge (bright when the zone sets its own slot, dim lowercase
+--                when it inherits it - the prototype's affordance), and a
+--                profile-count chip. Click selects, double-click frames.
 --
--- CONTAINMENT MAKES A CHILD, with one guard. Drop a zone inside another and it
--- adopts that zone as its parent (LMEdit:reparentByContainment). The guard is
--- for imported data: a zone whose current parent is a geometry-less TEMPLATE has
--- a deliberate link - `Riverside inherits Hard` is the tier ladder, not a
--- position - and a drag must not silently break it. So auto-reparenting applies
--- when the zone has no parent, or a parent that occupies space; a template link
--- is only changed on purpose, with the Reparent button, which says what it will
--- do before it does it.
+--   RIGHT-CLICK  the actions, per zone: Edit Details..., New Child Zone,
+--                Set Tier > (the ladder, by rank), Apply Profile > (toggle),
+--                Set Parent > (geometry-holding zones only), Rename,
+--                Duplicate, Disable/Enable, Delete Rectangle, Zoom on Map,
+--                and Delete last, separated. External row actions registered
+--                via DFRegistry under tab id "limes" append after ours.
+--
+-- CONTAINMENT MAKES A CHILD, unchanged: drop a zone inside another and it
+-- adopts that zone as its parent (LMEdit:reparentByContainment); Set Parent >
+-- is the precise path. A tier link can no longer be broken by a drag because
+-- tier is not a parent any more - it is the slot, and only Set Tier moves it.
 --
 -- EVERYTHING STILL WRITES TO A DRAFT. No packets until Save (§6.1 rules 2-4).
 
@@ -43,12 +46,6 @@ local selected = nil    -- zone name
 local statusMsg, statusGood = "", false
 local statusW = 0       -- px the status label may occupy; layout() measures it
 
--- Client-side mirror of the census switch, for the button's label only. The
--- server owns the real state; this is never read back as truth, so a rebuild
--- showing "off" while the server is still on costs a wrong caption and nothing
--- else. Not persisted, matching the server's own refusal to persist it.
-local censusAuto = false
-
 local LEFT_W  = 268
 -- No split any more: the tree owns the whole left column (2026-08-05). The
 -- properties form that used to sit under it moved to Details, which is now
@@ -57,7 +54,7 @@ local LEFT_W  = 268
 -- it was getting 58% of a 268px column while a form sat underneath.
 local FONT_HGT   = getTextManager():getFontHeight(UIFont.Small)
 
-local rebuildTree, refreshChrome, selectZone, frameSelected
+local rebuildTree, refreshChrome, selectZone, frameSelected, showZoneMenu, treeDrop
 
 -- ---------------------------------------------------------------------------
 -- The tree widget
@@ -80,10 +77,35 @@ function TreeList:doDrawItem(y, item, alt)
     if not n then return y + self.itemheight end
     local h = self.itemheight
 
+    -- FAMILY striping, not row striping: every row of one top-level family
+    -- shares a ground, so the eye reads "this block belongs together" instead
+    -- of counting zebra lines - the prototype's idiom, kept exactly.
     if n.name == selected then
         self:drawRect(0, y, self.width, h - 1, 0.55, 0.20, 0.35, 0.55)
-    elseif alt then
-        self:drawRect(0, y, self.width, h - 1, 0.18, 0.08, 0.08, 0.08)
+    elseif n.fam and n.fam % 2 == 1 then
+        self:drawRect(0, y, self.width, h - 1, 0.05, 1, 1, 1)
+    end
+
+    -- The live drop target (S4): a bright border on the whole row - "onto",
+    -- never "between". Selection green is the constitution's attention colour
+    -- and this is precisely an attention moment.
+    --
+    -- Vanilla rows are keyed `itemindex` (ISScrollingListBox.lua:146); the
+    -- first build compared `item.index`, a key vanilla never sets, so the
+    -- border never drew on a real target and the whole gesture read as flat
+    -- until the release popup (owner-reported 2026-08-28). The dragMoved and
+    -- dragTarget guards matter as much as the key: on a plain click both
+    -- sides of the old comparison were nil, and nil == nil lit every row.
+    local lifted = self.dragMoved and self.dragName == n.name
+    if self.dragMoved and self.dragTarget
+            and self.dragTarget == item.itemindex then
+        self:drawRectBorder(0, y, self.width, h - 1, 0.9, 0.56, 0.89, 0.20)
+    end
+    -- The row in hand: dimmed in place under an ash hairline, while the ghost
+    -- chip drawn in render() carries its name with the cursor - the lift half
+    -- of the prototype's A3 gesture.
+    if lifted then
+        self:drawRectBorder(0, y, self.width, h - 1, 0.35, 0.79, 0.81, 0.76)
     end
 
     local x = 4 + n.depth * INDENT
@@ -98,20 +120,36 @@ function TreeList:doDrawItem(y, item, alt)
     local c = LMMapEditor and LMMapEditor.colourFor and LMMapEditor.colourFor(n.name)
              or { 0.8, 0.8, 0.8 }
     local sy = y + math.floor((h - 8) / 2)
-    self:drawRect(x, sy, 8, 8, n.template and 0.35 or 1, c[1], c[2], c[3])
+    self:drawRect(x, sy, 8, 8,
+        (n.template and 0.35 or 1) * (lifted and 0.4 or 1), c[1], c[2], c[3])
     if n.template then self:drawRectBorder(x, sy, 8, 8, 0.8, c[1], c[2], c[3]) end
 
     local tx = x + 14
     local ty = y + rowText(h)
-    local a  = n.off and 0.45 or 1
+    local a  = (n.off and 0.45 or 1) * (lifted and 0.4 or 1)
     self:drawText(n.name, tx, ty, 0.92, 0.92, 0.92, a, UIFont.Small)
 
-    -- The badge says what the row IS, on the right where it does not push the
-    -- name around: a folder count, a rect count, "off", or nothing at all.
+    -- Right-aligned, right to left: the profile chip, then the tier badge.
+    -- The tier reads BRIGHT when this zone sets its own slot and dim
+    -- lowercase when it inherits one - a value that is yours versus a value
+    -- that is merely visible, the same distinction the forms draw.
+    local bx = self.width - 8
+    if n.prof and n.prof > 0 then
+        local ptxt = n.prof .. " prof"
+        local pw = getTextManager():MeasureStringX(UIFont.Small, ptxt)
+        bx = bx - pw
+        self:drawText(ptxt, bx, ty, 0.44, 0.73, 0.89, a * 0.9, UIFont.Small)
+        bx = bx - 8
+    end
     local badge = n.badge
     if badge and badge ~= "" then
         local bw = getTextManager():MeasureStringX(UIFont.Small, badge)
-        self:drawText(badge, self.width - bw - 8, ty, 0.62, 0.68, 0.75, a, UIFont.Small)
+        bx = bx - bw
+        if n.ownTier then
+            self:drawText(badge, bx, ty, 0.79, 0.81, 0.76, a, UIFont.Small)
+        else
+            self:drawText(badge, bx, ty, 0.43, 0.46, 0.42, a, UIFont.Small)
+        end
     end
     return y + h
 end
@@ -123,6 +161,89 @@ function TreeList:onMouseDown(x, y)
     if not (row and row.item) then return end
     self.selected = idx
     selectZone(row.item.name)
+    -- Arm the drag (S4). It only BECOMES one after the pointer has moved -
+    -- a click is not a five-pixel journey - and only commits on a valid
+    -- middle-band target at release.
+    self.dragName  = row.item.name
+    self.pressY    = y
+    self.dragMoved = false
+    self.dragTarget = nil
+end
+
+-- Drag-to-reparent (S4), the DFLayoutEditor row-drag idiom with two
+-- deliberate differences: the live band is the target row's MIDDLE and its
+-- edges are dead - this tree is name-sorted identically on every machine, so
+-- there is no "between rows" to drop into - and the drop ASKS before acting,
+-- because a new parent rewrites what half the zone's fields resolve to.
+function TreeList:onMouseMove(dx, dy)
+    ISScrollingListBox.onMouseMove(self, dx, dy)
+    if not self.dragName then return end
+    local my = self:getMouseY()
+    if not self.dragMoved then
+        if math.abs(my - (self.pressY or my)) < 5 then return end
+        self.dragMoved = true
+    end
+    self.dragTarget = nil
+    local i = self:rowAt(self:getMouseX(), my)
+    if i >= 1 and i <= #self.items then
+        local row = self.items[i]
+        local name = row and row.item and row.item.name
+        if name and name ~= self.dragName then
+            local off = (my - self:getYScroll()) - (i - 1) * self.itemheight
+            if off > self.itemheight * 0.2 and off < self.itemheight * 0.8 then
+                self.dragTarget = i
+            end
+        end
+    end
+end
+
+function TreeList:onMouseUp(x, y)
+    -- Through to the base FIRST: its whole body is `vscroll.scrolling =
+    -- false`, and skipping it leaves a scrollbar drag latched on
+    -- (ISScrollingListBox.lua:135-139 - the DFLayoutEditor lesson).
+    ISScrollingListBox.onMouseUp(self, x, y)
+    local name, target, moved = self.dragName, self.dragTarget, self.dragMoved
+    self.dragName, self.dragTarget, self.dragMoved = nil, nil, false
+    if not (name and moved and target) then return end
+    local row = self.items[target]
+    local tname = row and row.item and row.item.name
+    if tname then treeDrop(name, tname) end
+end
+
+-- Releasing off the list CANCELS rather than dropping on the last row the
+-- pointer crossed: a drag that left the list is a drag the admin abandoned.
+function TreeList:onMouseUpOutside(x, y)
+    ISScrollingListBox.onMouseUpOutside(self, x, y)
+    self.dragName, self.dragTarget, self.dragMoved = nil, nil, false
+end
+
+-- The drag ghost: from the first real drag frame the zone's name rides the
+-- cursor as a chip - "Renfield > Louisville" once a live target is under it -
+-- so the gesture is visibly a lift instead of a held click that surprises
+-- with a popup at release (the prototype's A3 promise; the rows alone could
+-- not show it, owner-reported 2026-08-28). Drawn in render(), after the base
+-- has painted rows and children, so it rides above both. Sight-green on the
+-- chip only while a drop would land; ash means "release does nothing here".
+function TreeList:render()
+    ISScrollingListBox.render(self)
+    if not (self.dragMoved and self.dragName) then return end
+    local txt = self.dragName
+    if self.dragTarget then
+        local row = self.items[self.dragTarget]
+        local tname = row and row.item and row.item.name
+        if tname then txt = self.dragName .. " > " .. tname end
+    end
+    local w  = getTextManager():MeasureStringX(UIFont.Small, txt) + 12
+    local h  = FONT_HGT + 6
+    local gx = self:getMouseX() + 14
+    local gy = self:getMouseY() - math.floor(h / 2)
+    self:drawRect(gx, gy, w, h, 0.92, 0.07, 0.09, 0.07)
+    if self.dragTarget then
+        self:drawRectBorder(gx, gy, w, h, 0.9, 0.56, 0.89, 0.20)
+    else
+        self:drawRectBorder(gx, gy, w, h, 0.6, 0.43, 0.46, 0.42)
+    end
+    self:drawText(txt, gx + 6, gy + 3, 0.79, 0.81, 0.76, 1, UIFont.Small)
 end
 
 -- DOUBLE-CLICK GOES THERE. Selecting a zone and then hunting for it on a
@@ -140,6 +261,19 @@ function TreeList:onMouseDoubleClick(x, y)
     if not (row and row.item) then return end
     selectZone(row.item.name)
     frameSelected()
+end
+
+-- Right-click is where the zone's actions live (see header). Selection
+-- follows the click first, so the menu and the map agree about which zone is
+-- being acted on - a menu on an unselected row would read as acting on the
+-- highlighted one.
+function TreeList:onRightMouseUp(x, y)
+    local idx = self:rowAt(x, y)
+    if idx <= 0 then return end
+    local row = self.items[idx]
+    if not (row and row.item) then return end
+    selectZone(row.item.name)
+    showZoneMenu(row.item.name)
 end
 
 -- ---------------------------------------------------------------------------
@@ -196,9 +330,21 @@ local function onStoreChanged()
         return
     end
     if draft:isDirty() then
-        setStatus("Another admin saved (store is now revision " .. tostring(Limes.revision)
-            .. "). Your edits are against revision " .. draft:revision()
-            .. " and will be refused - Revert and redo them.")
+        -- A dirty draft whose changes ALREADY MATCH the new store is our own
+        -- save coming back as the delta broadcast, not a conflict. Before
+        -- this test, every successful save left the draft dirty against a
+        -- bumped revision, the panel accused "another admin", and the second
+        -- save was refused with advice (reopen the tab) that rebuilt nothing
+        -- - the draft is module state and survives the tab. Rebase and say
+        -- what actually happened.
+        if draft:landedIn(Limes.raw()) then
+            newDraft()
+            setStatus("Saved - store now revision " .. tostring(Limes.revision) .. ".", true)
+        else
+            setStatus("Another admin saved (store is now revision " .. tostring(Limes.revision)
+                .. "). Your edits are against revision " .. draft:revision()
+                .. " and will be refused - Revert to take theirs, then redo yours.")
+        end
     else
         newDraft()
         setStatus("Store updated to revision " .. tostring(Limes.revision) .. ".", true)
@@ -223,8 +369,11 @@ local function isTemplate(name)
     return not (rec and rec.rects and #rec.rects > 0)
 end
 
--- Auto-reparent after a geometry change. See the header for why a template
--- parent is left alone.
+-- Auto-reparent after a geometry change. The template guard survives the
+-- redesign for a different reason than it was born with: tier links are slots
+-- now and no drag can touch them, but a LEGACY kind-less template can still
+-- be somebody's deliberate parent, and a drag must not silently break that
+-- either. Set Parent > in the right-click menu is the on-purpose path.
 local function autoReparent(name)
     if not (draft and draft:get(name)) then return end
     local cur = draft:get(name).inherits
@@ -237,23 +386,6 @@ local function autoReparent(name)
     end
 end
 
-local function reparentNow()
-    if not selected then return end
-    local parent = draft:containerOf(selected)
-    local cur    = draft:get(selected).inherits
-    if parent == cur then
-        setStatus(parent and (selected .. " already inherits from " .. parent .. ".")
-                         or  (selected .. " is not inside any zone, and inherits from nothing."))
-        return
-    end
-    draft:reparentByContainment(selected)
-    setStatus(parent
-        and (selected .. " now inherits from " .. parent .. " (was "
-             .. (cur or "nothing") .. ").")
-        or  (selected .. " now inherits from nothing (was " .. (cur or "nothing") .. ")."), true)
-    LMEditView.refresh()
-end
-
 -- ---------------------------------------------------------------------------
 -- Chrome
 -- ---------------------------------------------------------------------------
@@ -261,17 +393,31 @@ end
 rebuildTree = function()
     if not (ui and ui.tree and draft) then return end
     local nodes = draft:tree()
+    local fam = -1
     DFKit.refillList(ui.tree, function(box)
         for i = 1, #nodes do
             local n   = nodes[i]
             local rec = draft:get(n.name)
             local nr  = rec.rects and #rec.rects or 0
+            if n.depth == 0 then fam = fam + 1 end
+            n.fam = fam
             n.template = (nr == 0)
             n.off = rec.fields and (rec.fields.disabled == true or rec.fields.disabled == "true")
-            if nr == 0        then n.badge = "template"
-            elseif nr > 1     then n.badge = nr .. " rects"
-            else                   n.badge = nil end
-            if n.off then n.badge = (n.badge and (n.badge .. " - off")) or "off" end
+            -- The badge is the resolved TIER - the one thing the redesign puts
+            -- on every row - bright for an own slot, dim lowercase for an
+            -- inherited one. "off" outranks it: a dead zone's rung is trivia.
+            local tname = draft:effectiveTier(n.name)
+            n.ownTier = rec.tier ~= nil
+            if n.off then
+                n.badge, n.ownTier = "off", true
+            elseif tname then
+                n.badge = n.ownTier and tname or tname:lower()
+            elseif n.template then
+                n.badge, n.ownTier = "template", false
+            else
+                n.badge = nil
+            end
+            n.prof = #draft:profilesOf(n.name)
             box:addItem(n.name, n)
             if n.name == selected then box.selected = box:size() end
         end
@@ -288,21 +434,6 @@ refreshChrome = function()
 
     ui.saveBtn.enable   = (n > 0 and errs == 0)
     ui.revertBtn.enable = (n > 0)
-
-    local rec = selected and draft:get(selected)
-    local nr  = rec and rec.rects and #rec.rects or 0
-    ui.delRectBtn.enable  = (nr > 0)
-    ui.frameBtn.enable    = (nr > 0)
-    ui.reparentBtn.enable = (nr > 0)
-    ui.renameBtn.enable   = (selected ~= nil)
-    ui.deleteBtn.enable   = (selected ~= nil)
-    ui.toggleBtn.enable   = (selected ~= nil)
-    if rec then
-        local off = rec.fields and (rec.fields.disabled == true or rec.fields.disabled == "true")
-        ui.toggleBtn:setTitle(off and "Enable" or "Disable")
-    else
-        ui.toggleBtn:setTitle("Disable")
-    end
 
     -- The status line is only rewritten by the things that have something to
     -- say. Left alone here it keeps the last real message instead of being
@@ -452,6 +583,261 @@ local function save()
         .. " to the server - waiting for the verdict...")
 end
 
+-- The Tiers and Profiles panels (S5/S6) edit THIS view's draft - one draft,
+-- one Save, exactly as the Details view has always worked - and each carries
+-- its own Save/Revert pair, so they call in here rather than owning a second
+-- save path that could disagree about revisions.
+LMEditView.saveDraft   = save
+LMEditView.revertDraft = revert
+function LMEditView.draftCounts()
+    if not draft then return 0, 0 end
+    local n = select(3, draft:changeSet())
+    return n, draft:errorCount()
+end
+
+-- ---------------------------------------------------------------------------
+-- The right-click menu - the zone's actions, where the zone is
+-- ---------------------------------------------------------------------------
+
+-- A child arrives INSIDE its parent: named first (the same grammar gate as
+-- Add), pointed at the parent, and given a starter box centred in the
+-- parent's largest rectangle so the relationship is visible the moment the
+-- menu closes. A template parent (legacy) gets the view-centre box instead.
+local function newChildZone(parent)
+    askText("New child of " .. parent .. " (letters, digits, _ - . only):", "",
+        function(name)
+            local ok, why = draft:create(name)
+            if not ok then setStatus(why); return end
+            draft:setInherits(name, parent)
+            local prec = draft:get(parent)
+            local placed = nil
+            local best, bestArea = nil, -1
+            for i = 1, #(prec.rects or {}) do
+                local r = prec.rects[i]
+                local area = (r[3] - r[1] + 1) * (r[4] - r[2] + 1)
+                if area > bestArea then best, bestArea = r, area end
+            end
+            if best then
+                local rw = best[3] - best[1] + 1
+                local rh = best[4] - best[2] + 1
+                local cw = math.max(4, math.floor(rw / 3))
+                local ch = math.max(4, math.floor(rh / 3))
+                local x1 = best[1] + math.floor((rw - cw) / 2)
+                local y1 = best[2] + math.floor((rh - ch) / 2)
+                draft:addRect(name, { x1, y1, x1 + cw - 1, y1 + ch - 1 })
+                placed = 1
+            elseif editor then
+                placed = editor:addRectAtView(name)
+            end
+            selectZone(name, placed)
+            setStatus("Created " .. name .. " inside " .. parent
+                .. " - drag its handles to shape it.", true)
+        end)
+end
+
+local function duplicateZone(name)
+    local rec = draft:get(name)
+    if not rec then return end
+    local copy = name .. "_2"
+    local i = 2
+    while draft:exists(copy) do i = i + 1; copy = name .. "_" .. i end
+    draft:create(copy, rec)
+    -- Nudged off the original so the twin is visible AND grabbable; identical
+    -- geometry would be an invisible duplicate that only the tree betrays.
+    local crec = draft:get(copy)
+    for j = 1, #(crec.rects or {}) do
+        local r = crec.rects[j]
+        r[1], r[2], r[3], r[4] = r[1] + 10, r[2] + 10, r[3] + 10, r[4] + 10
+    end
+    selectZone(copy)
+    setStatus("Duplicated " .. name .. " as " .. copy
+        .. " (policies, profiles and tier carried; geometry nudged).", true)
+    LMEditView.refresh()
+end
+
+local function setTierTo(name, tier)
+    local ok, why = draft:setTier(name, tier)
+    if not ok then setStatus(why); return end
+    setStatus(tier and (name .. " stands on " .. tier .. " now.")
+                    or (name .. " inherits its tier again."), true)
+    LMEditView.refresh()
+end
+
+local function toggleProfileOn(name, prof)
+    local have = false
+    for _, p in ipairs(draft:profilesOf(name)) do
+        if p == prof then have = true break end
+    end
+    if have then
+        draft:removeProfile(name, prof)
+        setStatus("Removed profile " .. prof .. " from " .. name .. ".", true)
+    else
+        local ok, why = draft:addProfile(name, prof)
+        if not ok then setStatus(why); return end
+        setStatus("Applied profile " .. prof .. " to " .. name
+            .. " (later profiles beat earlier - reorder in Details).", true)
+    end
+    LMEditView.refresh()
+end
+
+local function setParentTo(name, parent)
+    local ok, why = draft:setInherits(name, parent)
+    if not ok then setStatus(why); return end
+    setStatus(parent and (name .. " is a child of " .. parent .. " now.")
+                     or  (name .. " is top-level now."), true)
+    LMEditView.refresh()
+end
+
+-- Everything reachable by walking inherits DOWN from `name` - adopting one of
+-- these as a parent would close a loop, so Set Parent > never offers them.
+local function descendantsOf(name)
+    local out, frontier = {}, { [name] = true }
+    local moved = true
+    while moved do
+        moved = false
+        for _, other in ipairs(draft:names()) do
+            local r = draft:get(other)
+            if r and r.inherits and frontier[r.inherits]
+                and not frontier[other] then
+                frontier[other] = true
+                out[other] = true
+                moved = true
+            end
+        end
+    end
+    return out
+end
+
+-- The drop half of drag-to-reparent (S4). Refusals are stated, never silent;
+-- the commit goes through the same confirm shape every destructive gesture
+-- in the suite uses, wording pinned to the prototype's popup.
+treeDrop = function(name, target)
+    if not draft then return end
+    local rec, trec = draft:get(name), draft:get(target)
+    if not (rec and trec) then return end
+    if trec.kind ~= nil then
+        setStatus(target .. " is not a place - zones can only be children of zones.")
+        return
+    end
+    if rec.inherits == target then
+        setStatus(name .. " is already a child of " .. target .. ".")
+        return
+    end
+    if descendantsOf(name)[target] then
+        setStatus("That would make " .. name .. " its own ancestor - not done.")
+        return
+    end
+    local eff = draft:effectiveTier(target)
+    local msg = "Make " .. name .. " a child of " .. target .. "?"
+        .. (eff and ("\n\nIt will take " .. target .. "'s tier (" .. eff
+            .. ") unless it sets its own.") or "")
+        .. "\n\nNothing leaves this machine until you press Save."
+    local function go()
+        draft:setInherits(name, target)
+        setStatus(name .. " is a child of " .. target .. " now.", true)
+        LMEditView.refresh()
+    end
+    if DFConfirm and DFConfirm.ask then DFConfirm.ask(msg, go) else go() end
+end
+
+showZoneMenu = function(name)
+    if not (draft and draft:get(name)) then return end
+    local rec = draft:get(name)
+    local context = ISContextMenu.get(0, getMouseX() + 8, getMouseY() + 8)
+
+    context:addOption("Edit Details...", nil, function()
+        if LMDetailsWindow and not LMDetailsWindow.instance then
+            LMDetailsWindow.toggle()
+        end
+        -- Already open: the window follows the shared selection on its own.
+    end)
+    context:addOption("New Child Zone...", nil, function() newChildZone(name) end)
+
+    -- Set Tier >: the ladder by rank, "(inherit)" first, the current OWN slot
+    -- marked. Submenu idiom verified: ISContextMenu.lua:1075 (addSubMenu),
+    -- :1199 (getNew); usage ISInventoryPaneContextMenu.lua:506-507.
+    local tiers = {}
+    for _, tn in ipairs(draft:names()) do
+        local tr = draft:get(tn)
+        if tr.kind == "tier" then tiers[#tiers + 1] = tn end
+    end
+    table.sort(tiers, function(a, b)
+        local ra = tonumber(draft:get(a).fields and draft:get(a).fields.rank) or 99
+        local rb = tonumber(draft:get(b).fields and draft:get(b).fields.rank) or 99
+        if ra ~= rb then return ra < rb end
+        return a < b
+    end)
+    local tierOpt = context:addOption("Set Tier", nil, nil)
+    local tierSub = context:getNew(context)
+    context:addSubMenu(tierOpt, tierSub)
+    local inhLabel = "(inherit)"
+    if rec.tier == nil then
+        local eff = draft:effectiveTier(name)
+        if eff then inhLabel = "(inherit: " .. eff .. ")  <" end
+    end
+    tierSub:addOption(inhLabel, nil, function() setTierTo(name, nil) end)
+    for _, tn in ipairs(tiers) do
+        local rank = draft:get(tn).fields and draft:get(tn).fields.rank
+        local label = (rank and (tostring(rank) .. "  ") or "") .. tn
+        if rec.tier == tn then label = label .. "  <" end
+        tierSub:addOption(label, nil, function() setTierTo(name, tn) end)
+    end
+
+    -- Apply Profile >: a toggle - applied ones are marked and click off,
+    -- candidates click on.
+    local applied = draft:profilesOf(name)
+    local cands   = draft:profileCandidates(name)
+    if #applied > 0 or #cands > 0 then
+        local profOpt = context:addOption("Apply Profile", nil, nil)
+        local profSub = context:getNew(context)
+        context:addSubMenu(profOpt, profSub)
+        for _, p in ipairs(applied) do
+            profSub:addOption(p .. "  <", nil, function() toggleProfileOn(name, p) end)
+        end
+        for _, p in ipairs(cands) do
+            profSub:addOption(p, nil, function() toggleProfileOn(name, p) end)
+        end
+    end
+
+    -- Set Parent >: places with geometry only, minus self and descendants.
+    local desc = descendantsOf(name)
+    local parentOpt = context:addOption("Set Parent", nil, nil)
+    local parentSub = context:getNew(context)
+    context:addSubMenu(parentOpt, parentSub)
+    parentSub:addOption(rec.inherits == nil and "(top level)  <" or "(top level)",
+        nil, function() setParentTo(name, nil) end)
+    for _, other in ipairs(draft:names()) do
+        local o = draft:get(other)
+        if other ~= name and not desc[other] and o.kind == nil
+            and o.rects and #o.rects > 0 then
+            local label = other
+            if rec.inherits == other then label = label .. "  <" end
+            parentSub:addOption(label, nil, function() setParentTo(name, other) end)
+        end
+    end
+
+    context:addOption("Rename...", nil, function() renameZone() end)
+    context:addOption("Duplicate", nil, function() duplicateZone(name) end)
+
+    local off = rec.fields and (rec.fields.disabled == true or rec.fields.disabled == "true")
+    context:addOption(off and "Enable" or "Disable", nil, function() toggleZone() end)
+
+    if editor and editor.rectIdx and rec.rects and #rec.rects > 0 then
+        context:addOption("Delete Rectangle " .. editor.rectIdx, nil,
+            function() deleteRect() end)
+    end
+    if rec.rects and #rec.rects > 0 then
+        context:addOption("Zoom on Map", nil, function() frameSelected() end)
+    end
+
+    -- External row actions (other mods extending the Zones tab) land between
+    -- ours and Delete, which stays LAST and alone - the danger slot.
+    if DFRegistry and DFRegistry.addRowActions then
+        DFRegistry.addRowActions(context, "limes", { name = name })
+    end
+    context:addOption("Delete...", nil, function() deleteZone() end)
+end
+
 -- ---------------------------------------------------------------------------
 -- The DFViews contract
 -- ---------------------------------------------------------------------------
@@ -527,67 +913,19 @@ function LMEditView.attach(panel)
         return b
     end
 
-    local addBtn      = btn("Add zone", 84, addZone, "action",
+    -- THE WHOLE TOOLBAR (redesign): New Zone, Share..., and the draft strip.
+    -- Everything else lives on the zone, in the right-click menu.
+    local addBtn = btn("New Zone", 84, addZone, "action",
         "Create a zone in the draft. Names take letters, digits, _ - and . only:"
         .. " anything else is silently lost when the server re-reads its file, so it"
-        .. " is refused here instead.")
-    local renameBtn   = btn("Rename", 68, renameZone, "action",
-        "Rename the selected zone AND repoint every zone that inherits from it, in"
-        .. " one step. Done separately the children spend the interval pointing at a"
-        .. " zone that no longer exists.")
-    local deleteBtn   = btn("Delete", 64, deleteZone, "danger",
-        "Remove the selected zone from the draft. Nothing leaves this machine until Save.")
-    local toggleBtn   = btn("Disable", 72, toggleZone, "action",
-        "Turn the selected zone off without deleting it. It keeps its geometry and"
-        .. " stops answering lookups.")
-    local delRectBtn  = btn("Delete rect", 88, deleteRect, "action",
-        "Remove the highlighted rectangle. A zone with none left is a template: it"
-        .. " still exists and can still be inherited from, it just has no place on the map.")
-    local frameBtn    = btn("Frame", 58, function() frameSelected() end, "action",
-        "Zoom and centre on the whole selected zone, including parts of it elsewhere"
-        .. " on the map.")
-    local reparentBtn = btn("Reparent", 78, reparentNow, "action",
-        "Point the selected zone at whatever now contains it. Runs automatically"
-        .. " after a drag - EXCEPT when the current parent is a template, because"
-        .. " that link is a deliberate one (a tier, not a place) and a drag must not"
-        .. " silently break it. This is how you change it on purpose.")
-    local importBtn   = btn("Import...", 78, function()
+        .. " is refused here instead.\n\nRight-click any zone for everything else -"
+        .. " tier, profiles, parent, rename, delete.")
+    local shareBtn = btn("Share...", 72, function()
             if LMImportWindow then LMImportWindow.toggle() end
         end, "action",
-        "Paste a PhunZones layer, wipe the store, or teleport to a zone - in a window"
-        .. " with its own log, so a long import reports somewhere you can scroll and copy.")
-
-    -- THE CENSUS PAIR. Global operations, so they sit with Import rather than
-    -- with the per-zone buttons - nothing here acts on the selection.
-    --
-    -- They exist because zeds enforcement is SILENT by design (a corpse in a
-    -- walled safe zone is worse than the spawn it replaces), which leaves no way
-    -- to watch it work from inside the game. The census is that way: it counts
-    -- what is actually standing in each zone, prints it next to the settings that
-    -- produced it, and reconciles its own totals so the report says whether to
-    -- trust it. Server log, not here - it is evidence to read beside the .ini.
-    local censusBtn = btn("Census", 62, function()
-            if LMSync and LMSync.printCensus then
-                LMSync.printCensus(false)
-                setStatus("Census requested - the report is in the server log.")
-            end
-        end, "action",
-        "Count the zombies actually standing in every zone right now and print them"
-        .. " to the SERVER log beside each zone's settings. Zones on unloaded ground"
-        .. " report 'unloaded' rather than a zero they have not earned.")
-
-    local censusAutoBtn = btn("Auto: off", 74, function()
-            censusAuto = not censusAuto
-            if LMSync and LMSync.setCensus then LMSync.setCensus(censusAuto) end
-            -- This closure can outlive the tab. The completed server toggle
-            -- does not require a label to remain, so make teardown explicit.
-            if ui and ui.censusAutoBtn then
-                ui.censusAutoBtn:setTitle("Auto: " .. (censusAuto and "on" or "off"))
-            end
-        end, "action",
-        "Repeat the census every ten GAME minutes. Off by default and never"
-        .. " persisted: a diagnostic that survives a restart is one somebody"
-        .. " forgot to turn off.")
+        "The operations window: import or export a zone setup (zones JSON), run the"
+        .. " zombie census, wipe the store, or teleport to a zone - with its own"
+        .. " scrollable log.")
 
     local saveBtn   = btn("Save to server", 118, save, "primary",
         "Send this draft's changes - and only its changes - as one command. The"
@@ -602,9 +940,7 @@ function LMEditView.attach(panel)
 
     ui = {
         tree = tree, status = status, counts = counts,
-        addBtn = addBtn, renameBtn = renameBtn, deleteBtn = deleteBtn, toggleBtn = toggleBtn,
-        delRectBtn = delRectBtn, frameBtn = frameBtn, reparentBtn = reparentBtn,
-        importBtn = importBtn, censusBtn = censusBtn, censusAutoBtn = censusAutoBtn,
+        addBtn = addBtn, shareBtn = shareBtn,
         saveBtn = saveBtn, revertBtn = revertBtn,
     }
 
@@ -633,39 +969,30 @@ function LMEditView.layout(panel, x, y, w, h)
     local m = DFKit.metrics
     local PAD, BTN, GAP = m.pad, m.btnH, 4
 
-    -- One toolbar across the top; the body is everything under it.
+    -- One short toolbar: two buttons left, the draft strip right, the status
+    -- line breathing in between. It fits the deck's minimum with room to
+    -- spare now, so the old second-row wrap is gone with the buttons that
+    -- forced it.
     local tx, ty = x + PAD, y + PAD
     local function place(b) b:setX(tx); b:setY(ty); tx = tx + b:getWidth() + GAP end
-    place(ui.addBtn); place(ui.renameBtn); place(ui.deleteBtn)
-    tx = tx + 8
-    place(ui.toggleBtn); place(ui.delRectBtn); place(ui.frameBtn); place(ui.reparentBtn)
-    tx = tx + 8
-    place(ui.importBtn); place(ui.censusBtn); place(ui.censusAutoBtn)
+    place(ui.addBtn); place(ui.shareBtn)
 
-    -- Save and Revert at the far right, away from Delete: one careless click
-    -- apart and opposite in meaning. On a pane too narrow for both - the
-    -- deck's minimum leaves ~650px of content and this toolbar wants ~840 -
-    -- they take a SECOND row instead of landing on top of Import, which was
-    -- the other half of "the toolbar falls apart when the deck is small".
     local saveX   = x + w - PAD - ui.saveBtn:getWidth()
     local revertX = saveX - GAP - ui.revertBtn:getWidth()
-    local wrapped = revertX < tx + 8
-    local rowY    = wrapped and (ty + BTN + GAP) or ty
-    ui.saveBtn:setX(saveX);     ui.saveBtn:setY(rowY)
-    ui.revertBtn:setX(revertX); ui.revertBtn:setY(rowY)
+    ui.saveBtn:setX(saveX);     ui.saveBtn:setY(ty)
+    ui.revertBtn:setX(revertX); ui.revertBtn:setY(ty)
 
-    -- The status line takes whatever its row leaves - beside the toolbar
-    -- normally, beside Save/Revert on the wrapped row - and layout() records
+    -- The status line takes whatever the row leaves, and layout() records
     -- that budget so setStatus can clip every future message to it too.
-    local stX = wrapped and (x + PAD) or (tx + 8)
+    local stX = tx + 8
     ui.status:setX(stX)
-    ui.status:setY(rowY + 5)
+    ui.status:setY(ty + 5)
     statusW = math.max(0, revertX - GAP - stX)
     ui.status:setName(statusW > 0
         and DFKit.fitText(statusMsg, DFKit.font.small, statusW)
         or statusMsg)
 
-    local bodyY = rowY + BTN + PAD
+    local bodyY = ty + BTN + PAD
     local bodyH = math.max(120, (y + h) - bodyY - PAD)
 
     -- Left column: the tree, full height, with one counts line under it. The

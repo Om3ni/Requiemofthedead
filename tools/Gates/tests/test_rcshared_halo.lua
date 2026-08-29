@@ -14,7 +14,10 @@ Events = {
     OnServerStarted = { Add = function() end },
 }
 function isServer() return false end
-RDShared = { registerMod = function() end }
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
 RDEvents = { registerNamespace = function() end }
 function require(name)
     if name == "RDShared" then return RDShared end

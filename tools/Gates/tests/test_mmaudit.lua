@@ -58,17 +58,11 @@ function isServer() return true end
 function isClient() return false end
 require = function() end
 
--- The bundle copy reads these at file scope. `require` is a no-op stub here, so
--- the real RDShared never loads and the global has to be supplied outright -
--- otherwise MMAudit dies with "attempt to index global 'RDShared'". Values must
--- track RDShared.lua; the per-target filenames above encode the same strings, so
--- a drift between them shows up as a failed assertion rather than silence.
-RDShared = {
-    EXT_STREAM        = ".jsonl.log",
-    EXT_DOC           = ".json.txt",
-    EXT_STREAM_LEGACY = ".jsonl",
-    EXT_DOC_LEGACY    = ".json",
-}
+-- The REAL RDShared - the old four-field stub duplicated its EXT_* strings
+-- and would have masked a Core-side change to them, the exact drift this
+-- fixture exists to catch. Its only file-scope call is registerMod.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
 Events = setmetatable({}, { __index = function(t, k)
     local e = { Add = function() end }; rawset(t, k, e); return e
 end })
@@ -214,7 +208,10 @@ local function runSuite(MA, EV, LA, enforceExt)
     -- the allowlist and is not being fixed - and asserting against a frozen tree
     -- would just paint the suite red for a fact already recorded in the header.
     if enforceExt then
-        local allowed = { ini = true, cfg = true, txt = true, log = true }
+        -- The engine's real set (LuaManager.java:1045) - json included. A
+        -- fixture modelling a NARROWER set than the engine would fail a write
+        -- the game accepts, which is the inverse of the bug this exists for.
+        local allowed = { ini = true, cfg = true, txt = true, log = true, json = true }
         local badExt
         for _, w in ipairs(writes) do
             local ext = w.path:match("%.([^%.]+)$")

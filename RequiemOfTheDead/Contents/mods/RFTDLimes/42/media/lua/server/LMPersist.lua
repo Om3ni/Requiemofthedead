@@ -4,13 +4,13 @@
 -- THE DISK CONTRACT (§8). One human-editable file, jailed to Zomboid/Lua/:
 --
 --   [ZoneName]
---   inherits = Very_Hard
+--   inherits = Louisville
+--   tier = IDDQL
 --   rects = 12361,4215,12863,4472 ; 11907,993,14695,4215
---   tier = 5
 --   title = Louisville
 --
 -- ".ini" is on the 42.20 getFileWriter extension allowlist
--- (LuaManager.java:9884; lowercase mandatory, the check is case-sensitive and
+-- (LuaManager.java:1045; lowercase mandatory, the check is case-sensitive and
 -- reads the substring after the LAST dot) - and the extension is the point:
 -- admins hand-edit this file, editors syntax-highlight it. Values are stringly
 -- on disk; TYPES live in LMCore's field registry, which coerces on resolve.
@@ -28,28 +28,25 @@
 -- ("who edited what") rides it by design.
 --
 -- BOOT ORDER (OnServerStarted): defaults <- RFTDLimes.ini <- editor deltas,
--- with the §8.1 template seed as the last resort when the .ini is absent and
--- no import candidate exists.
--- First boot with no .ini probes IMPORT_CANDIDATES in Zomboid/Lua/ and runs
--- the §9 one-way import on the first hit, writing the .ini it will read
--- forevermore. "phunzones.txt" leads the list because that is the name
--- PhunZones2 itself persists under on the 42.20 dedi (grabbed off the
--- production box 2026-08-02; the write-extension allowlist forces .txt on it
--- too) - so a fresh Limes install on the box that matters imports the real
--- dataset with zero admin ceremony. Re-import later is the capability-gated
--- RDNet command in LMSync.
+-- with the §8.1 ladder seed as the last resort when the .ini is absent.
+-- The ini is migrated on the way in (LMImport.migrateLadder - a no-op on a
+-- current store) and the migrated form is written straight back, so a
+-- pre-redesign file is rewritten exactly once and reads clean forever after.
 --
--- BOTH CASINGS of the PhunZones filename are probed. Their source constant is
--- "PhunZones.txt" (core.lua: Core.const.modifiedLuaFile) while the copy taken
--- off production arrived lowercase; the 42.20 allowlist check is
--- case-sensitive and the dedi is Linux, so guessing one casing silently loses
--- the fallback route on the box it exists for. Cheap to probe, expensive to
--- get wrong.
+-- THE FIRST-BOOT PHUNZONES PROBE IS GONE (S2, 2026-08-27). It existed so a
+-- fresh install on the production box could eat the live layer with zero
+-- ceremony; the redesign moved that translation OFFLINE
+-- (tools/limes-zone-converter.html), whose output is pasted or dropped as
+-- schema-1 JSON through the capability-gated import in LMSync. A boot-time
+-- importer that restructures somebody else's format is exactly the
+-- complexity the offline tool exists to hold.
 --
 -- parse()/serialize() are pure (stock Lua 5.1) and sit above the engine
 -- section so tools\run-tests.bat exercises the round trip without a game.
 
 if not isServer() then return end
+
+require "RDFile"
 
 require "RDJson"
 require "LMCore"
@@ -58,8 +55,7 @@ require "LMImport"
 
 LMPersist = LMPersist or {}
 
-LMPersist.FILE              = "RFTDLimes.ini"
-LMPersist.IMPORT_CANDIDATES = { "phunzones.txt", "PhunZones.txt", "PhunZonesExport.lua" }
+LMPersist.FILE = "RFTDLimes.ini"
 
 -- ---------------------------------------------------------------------------
 -- The .ini dialect now lives in shared/LMIni.lua, so the CLIENT can read the
@@ -120,18 +116,10 @@ LMPersist.BACKUP = "RFTDLimes.backup.ini"
 
 function LMPersist.snapshot(why, who)
     local text = LMPersist.serialize(Limes.raw())
-    -- No guard. getFileWriter does NOT throw on a name it refuses - it returns
-    -- nil (LuaManager.java:5526), catching both of its own IOException sites,
-    -- and LuaFileWriter.write/close delegate to PrintWriter, which records I/O
-    -- errors internally rather than raising them (:9850-9868). `ok` staying
-    -- false on a nil writer is still the reported failure path.
-    local w = getFileWriter(LMPersist.BACKUP, true, false)
-    local ok = false
-    if w then
-        w:write(text)
-        w:close()
-        ok = true
-    end
+    -- Mechanism in RDFile (2026-08-25); its header carries the engine facts
+    -- the comment here used to re-derive. This caller's policy: `ok` feeds the
+    -- journal line and the forensic record either way.
+    local ok = RDFile.rewrite(LMPersist.BACKUP, text)
     -- No guard. writeLog cannot raise into Lua: ZLogger.write wraps the whole
     -- write INCLUDING rotation in catch(Exception) (ZLogger.java:52-58,
     -- :96-103), a failed open leaves a null stream whose writes are dropped by
@@ -153,18 +141,9 @@ function LMPersist.save(rawZones, why, who)
     -- be dropped by disk trouble but can never stop the save it explains.
     writeLog("RFTDLimes", string.format("save begin: %s by %s, %d zones, %d bytes",
         tostring(why), tostring(who), n, #text))
-    -- No guard. getFileWriter does NOT throw on a name it refuses - it returns
-    -- nil (LuaManager.java:5526), catching both of its own IOException sites,
-    -- and LuaFileWriter.write/close delegate to PrintWriter, which records I/O
-    -- errors internally rather than raising them (:9850-9868). `ok` staying
-    -- false on a nil writer is still the reported failure path.
-    local w = getFileWriter(LMPersist.FILE, true, false)
-    local ok = false
-    if w then
-        w:write(text)
-        w:close()
-        ok = true
-    end
+    -- Same conversion as snapshot's, same policy: `ok` drives the forensic
+    -- record and the loud SAVE FAILED print below.
+    local ok = RDFile.rewrite(LMPersist.FILE, text)
     if ok then
         forensic("LM.SAVE", { why = tostring(why), who = tostring(who), zones = n, bytes = #text })
     else
@@ -179,35 +158,6 @@ end
 -- Boot
 -- ---------------------------------------------------------------------------
 
--- First candidate that exists in the jail; nil if none do.
-function LMPersist.findImportCandidate()
-    for i = 1, #LMPersist.IMPORT_CANDIDATES do
-        local name = LMPersist.IMPORT_CANDIDATES[i]
-        local text = LMPersist.readAll(name)
-        if text then return name, text end
-    end
-    return nil
-end
-
-local function bootImport()
-    local file, text = LMPersist.findImportCandidate()
-    if not text then return nil end
-    print("[Limes] no " .. LMPersist.FILE .. " but found " .. file
-        .. " - running the one-way import")
-    local ok, res = LMImport.parsePhunZones(text)
-    if not ok then
-        print("[Limes] import failed: " .. tostring(res))
-        forensic("LM.IMPORT_FAIL", { file = file, err = tostring(res) })
-        return nil
-    end
-    for i = 1, #res.warnings do
-        print("[Limes] import: " .. res.warnings[i])
-    end
-    LMPersist.save(res.zones, "first-boot import from " .. file, "server")
-    forensic("LM.IMPORT", { file = file, zones = res.count, warnings = #res.warnings })
-    return res.zones
-end
-
 local function boot()
     local zones = nil
     local text = LMPersist.readAll(LMPersist.FILE)
@@ -215,8 +165,15 @@ local function boot()
         local warnings
         zones, warnings = LMPersist.parse(text)
         for i = 1, #warnings do print("[Limes] " .. LMPersist.FILE .. ": " .. warnings[i]) end
-    else
-        zones = bootImport()
+        -- The one-shot ladder migration, then the file is rewritten in the
+        -- migrated form so it never migrates again. A current store notes
+        -- nothing and skips the save.
+        local notes = LMImport.migrateLadder(zones)
+        if #notes > 0 then
+            for i = 1, #notes do print("[Limes] migrate: " .. notes[i]) end
+            LMPersist.save(zones, "ladder migration (" .. #notes .. " notes)", "server")
+            forensic("LM.MIGRATE", { notes = #notes })
+        end
     end
     zones = zones or {}
     local warnings = Limes.apply(zones, 1)
@@ -228,8 +185,9 @@ local function boot()
     -- any non-empty store - that is what keeps a deleted template deleted
     -- instead of resurrecting it every boot.
     if Limes.seedIfEmpty() then
-        LMPersist.save(Limes.raw(), "first-boot template seed", "server")
-        print("[Limes] empty store - seeded " .. #Limes.zoneNames() .. " templates")
+        LMPersist.save(Limes.raw(), "first-boot ladder seed", "server")
+        print("[Limes] empty store - seeded the tier ladder ("
+            .. #Limes.zoneNames() .. " records)")
     end
 
     print("[Limes] store up: " .. #Limes.zoneNames() .. " zones, revision " .. Limes.revision)

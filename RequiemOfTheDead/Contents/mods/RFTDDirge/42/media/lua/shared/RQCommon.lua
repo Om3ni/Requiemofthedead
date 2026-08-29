@@ -72,7 +72,6 @@ RQCommon.ENUMS = {
     SCREAMER_SPAWN_MAX = {15, 20, 25, 30},                 -- default idx=3 -> 25
     SCREAMER_THRESHOLD = {3, 5, 8, 10, 15},                -- default idx=2 -> 5
     JUGG_RADIUS        = {3, 5, 8, 12, 20},                -- default idx=3 -> 8
-    JUGG_BUFF          = {5, 10, 15, 20, 25},              -- default idx=2 -> 10%
     EMP_RANGE          = {5, 10, 15, 20, 30},              -- default idx=3 -> 15
     EMP_CAST           = {1, 2, 3, 5, 8},                  -- default idx=3 -> 3s
     EMP_RADIUS         = {3, 5, 8, 12, 20},                -- default idx=3 -> 8

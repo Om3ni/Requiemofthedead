@@ -44,7 +44,7 @@ function RQScavenger.getHighlightColor(onlineID)
     return getScavColor(state)
 end
 
--- Rage ring + special-only outline paint + player-in-aura flag.
+-- Rage ring + special-only outline paint.
 -- Near-clone of RQJuggernaut's render tick, with three inversions:
 --   1. Gated on `state.enraged` (passive scavs render nothing extra)
 --   2. Ring color is the live rage gradient, not a constant
@@ -58,18 +58,12 @@ Events.OnRenderTick.Add(function()
     local cell   = getCell()
     local radius = cfg.juggernautBuffRadius
     local rSq    = radius * radius
-    local px     = player:getX()
-    local py     = player:getY()
 
     for onlineID, zType in pairs(RQRegistry.activeZombies) do
         if zType == "Scavenger" then
             local state = RQReconcile.scavClientState[onlineID]
             if state and state.enraged then
-                local pos = RQReconcile.lastKnownPos[onlineID]
-                local lx  = pos and pos.x or 0
-                local ly  = pos and pos.y or 0
-                local lz  = pos and pos.z or 0
-                local scav = RQCore.findZombieByID(onlineID, lx, ly, lz)
+                local scav = RQCore.findZombieByID(onlineID)
                 if scav then
                     if not scav:isDead() then
                         local zx = math.floor(scav:getX())

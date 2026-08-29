@@ -70,20 +70,23 @@ local CLOCK  = EPOCH0
 local function setClock(sec) CLOCK = sec end
 local function setHours(h) CLOCK = EPOCH0 + math.floor(h * 3600) end
 
-local RDShared = {
-    DIR        = "RFTD/",
-    EXT_STREAM = ".jsonl.log",
-    EXT_DOC    = ".json.txt",
-    nowMs      = function() return CLOCK * 1000 end,
-    nowSec     = function() return CLOCK end,
-    gameDay    = function() return 0 end,
-}
-_G.RDShared = RDShared
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+dofile(BASE .. "/shared/RDShared.lua")
+-- The REAL RDFile too: RDLog's sinks route through it since 2026-08-25, and
+-- the fixture's in-memory FS is what it opens against.
+dofile(BASE .. "/shared/RDFile.lua")
+local RDShared = _G.RDShared
+RDShared.nowMs   = function() return CLOCK * 1000 end
+RDShared.nowSec  = function() return CLOCK end
+RDShared.gameDay = function() return 0 end
 
 local realRequire = require
 local function loadRDLog()
     require = function(name)
         if name == "RDShared" then return RDShared end
+        if name == "RDFile" then return RDFile end
         return realRequire(name)
     end
     local loaded, err = pcall(dofile, BASE .. "/server/RDLog.lua")

@@ -49,10 +49,18 @@ local randSeq = 0
 function ZombRand() randSeq = randSeq + 1; return randSeq end
 
 local gameDay = 1.0
-RDShared = { mods = {}, nowMs = function() return clockMs end,
-             nowSec = function() return clockSec end,
-             gameDay = function() return gameDay end,
-             debugOn = function() return false end }
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
+-- Fixture-controlled INPUTS override the real surface: the clocks, the debug
+-- gate, and the registry CONTENT (RDShared's own file-scope registerMod put
+-- RFTDCore in it; these HELLO tests decide the roster themselves).
+RDShared.mods    = {}
+RDShared.nowMs   = function() return clockMs end
+RDShared.nowSec  = function() return clockSec end
+RDShared.gameDay = function() return gameDay end
+RDShared.debugOn = function() return false end
 
 -- LuaManager.java:1757-1759 exposes PerkFactory, Perk and Perks. The production
 -- loop consumes the Java ArrayList through size/get, so preserve that shape.

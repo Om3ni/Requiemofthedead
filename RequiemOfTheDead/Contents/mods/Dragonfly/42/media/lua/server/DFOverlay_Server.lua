@@ -186,20 +186,13 @@ Events.OnServerStarted.Add(function()
     ensure()
 
     DFServer.registerHandler{
-        action = "layoutGet",
-        -- No dispatcher capability ON PURPOSE - see AUTHORITY in the header. Staff
-        -- is the gate for a read, and it is checked here rather than being left to
-        -- the absence of a caller.
+        action     = "layoutGet",
+        -- "any" = any capability at all: staff is the gate for a read. The
+        -- dispatcher grew this shape 2026-08-25; the self-gate-and-self-audit
+        -- that sat here compensated for what it could not then declare.
+        capability = "any",
         run = function(player, args)
-            if not DFCore.hasAnyCapability(player) then
-                -- Audited HERE because the dispatcher cannot. It logs a command
-                -- with no declared capability as an ordinary accepted one
-                -- (DFServer.lua:92), so a refusal decided inside the handler
-                -- would otherwise appear in the log as a success.
-                DFCore.audit("layoutGet", player, "REFUSED: not staff")
-                return { ok = false, reason = "not permitted" }
-            end
-            local key = tostring(args.key or "")
+            local key = tostring((args or {}).key or "")
             if not DFOverlay.validKey(key) then
                 return { ok = false, reason = "bad page key" }
             end
@@ -209,23 +202,25 @@ Events.OnServerStarted.Add(function()
     }
 
     DFServer.registerHandler{
-        action = "layoutSet",
+        action     = "layoutSet",
+        -- A FUNCTION gate, because the answer depends on the payload: __server
+        -- needs ChangeAndReloadServerOptions, a sandbox page needs
+        -- SandboxOptions, and a role can hold either without the other. The
+        -- dispatcher took function gates 2026-08-25, so this - the one handler
+        -- whose gate genuinely could not be declared - now declares it, and
+        -- its refusals land in the audit log the same way everyone else's do.
+        -- A malformed key passes the gate and is refused by the domain check
+        -- below, where the reply can say WHY (the gate only answers yes/no).
+        capability = function(player, args)
+            local key = tostring((args or {}).key or "")
+            if not DFOverlay.validKey(key) then return true end
+            if RDAccess.roleHas(player, capabilityFor(key)) then return true end
+            return false, "missing " .. capabilityFor(key) .. " for " .. key
+        end,
         run = function(player, args)
             local key = tostring(args.key or "")
             if not DFOverlay.validKey(key) then
                 return { ok = false, reason = "bad page key" }
-            end
-            -- The gate that matters, and it is per page. Domain validation inside
-            -- the handler is not a fallback for a missing dispatcher capability
-            -- here; it IS the correct gate, because the answer depends on the
-            -- payload (CLAUDE.md sect. 13).
-            if not RDAccess.roleHas(player, capabilityFor(key)) then
-                -- Audited here for the same reason as layoutGet: this is the one
-                -- handler in the suite whose gate genuinely cannot be declared,
-                -- because the answer depends on the payload.
-                DFCore.audit("layoutSet", player,
-                    "REFUSED: missing " .. capabilityFor(key) .. " for " .. key)
-                return { ok = false, reason = "missing capability for " .. key }
             end
 
             local ok, kept, dropped, mirrored = DFOverlay_Server.set(

@@ -42,17 +42,67 @@
 
 if not isServer() then return end
 
+require "RDShared"   -- badNum is read at file scope below; declare it (CLAUDE.md sect. 4)
 require "HBData"
 
 HBFarmHand = HBFarmHand or {}
 
--- coordKey -> { x = , y = , z = }. In memory only, and deliberately NOT
--- GlobalModData: a new persisted key is a save-schema change, which
--- CLAUDE.md sect. 13 makes a compatibility decision rather than an
--- implementation one. The cost of that choice is stated honestly in
--- HBFarmHand.coverage below.
+-- coordKey -> { x = , y = , z = }, backed by the "HBFarmHand" GlobalModData
+-- table since 2026-08-25 (owner approved the new persisted key - it was held
+-- back as a save-schema decision, and the restart gap it closed was the one
+-- stated cost of the in-memory first version: a coop went unserviced after
+-- every restart until something happened to see it again).
+--
+-- RQDormant's pattern, for RQDormant's reasons: GMD is already in RAM,
+-- survives restarts by definition, and needs no sync plumbing. Same accepted
+-- limit too - durability rides the engine's save cadence, so a force-kill
+-- can lose the tail of registry changes; a coop lost that way merely waits
+-- to be seen once, which is the OLD behaviour as the fallback instead of as
+-- the design. This table must NEVER be transmitted or nested into anything
+-- a client requests.
+--
+-- Rows are plain {x,y,z} numbers - exactly what the .bin can carry. A
+-- malformed row (NaN/inf coordinate from a corrupt save) would poison the
+-- pass's getGridSquare calls forever, so load-time sanitation drops them;
+-- global_mod_data.bin is a full atomic rewrite per save, so a dropped row
+-- vanishes from disk at the next autosave.
+local SCHEMA_VERSION = 1
+local store = nil
 local registry = {}
 local registryCount = 0
+
+-- badNum lives in RDShared (promoted 2026-08-25).
+local badNum = RDShared.badNum
+
+local function sanitize(t)
+    if t.schemaVersion ~= SCHEMA_VERSION or type(t.records) ~= "table" then
+        t.schemaVersion = SCHEMA_VERSION
+        t.records = {}
+        return t
+    end
+    for k, pos in pairs(t.records) do
+        if type(pos) ~= "table" or badNum(pos.x) or badNum(pos.y) or badNum(pos.z) then
+            t.records[k] = nil
+        end
+    end
+    return t
+end
+
+local function bindStore()
+    store = sanitize(ModData.getOrCreate("HBFarmHand"))
+    registry = store.records
+    registryCount = 0
+    for _ in pairs(registry) do registryCount = registryCount + 1 end
+    HBFarmHand.stats.registered = registryCount
+end
+
+Events.OnInitGlobalModData.Add(function()
+    -- Re-fetch on every init: after a restart the engine has loaded a fresh
+    -- table from disk and any cached reference would be stale (RQDormant's
+    -- same note).
+    bindStore()
+    print("[HB] farm hand: " .. registryCount .. " coop(s) restored from GlobalModData")
+end)
 
 -- Read-only counters. Hutch upkeep is the module whose failure is hardest to
 -- see from outside - it either runs or silently does not, and the symptom
@@ -110,7 +160,9 @@ end
 function HBFarmHand.coverage()
     return {
         registered = registryCount,
-        note = "in-memory; refills as hutches are seen after a restart",
+        note = "persisted in GlobalModData; a force-kill can lose changes "
+            .. "since the last save, and a coop lost that way re-registers "
+            .. "when next seen",
     }
 end
 

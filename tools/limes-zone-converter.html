@@ -1,0 +1,480 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Limes Zone Converter — PhunZones → Limes schema</title>
+<style>
+  body { margin: 0; padding: 24px 0 60px 0; background: #050605; color: #c9cec2;
+         font-family: system-ui, "Segoe UI", sans-serif; font-size: 12px; }
+  .wrap { width: 1100px; margin: 0 auto; }
+  h1 { font-size: 18px; color: #e4e8df; font-weight: 600; margin: 0 0 2px 0; }
+  .sub { font-size: 11px; color: #6d766b; margin-bottom: 16px; line-height: 1.5; }
+  .panel { background: #0d100d; border: 1px solid #222b22; border-radius: 3px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; height: 24px;
+         padding: 0 12px; background: #131813; border: 1px solid #222b22; border-radius: 3px;
+         font-size: 12px; color: #c9cec2; cursor: pointer; }
+  .btn:hover { background: #182018; }
+  .btn.armed { border-color: #8fe232; }
+  .grp { font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: #6d766b;
+         padding: 8px 10px 4px 10px; }
+  textarea { width: 100%; box-sizing: border-box; height: 200px; background: #0a0c0a;
+             border: 1px solid #222b22; border-radius: 3px; color: #c9cec2;
+             font: 11px/1.5 Consolas, monospace; padding: 8px; outline: none; resize: vertical; }
+  textarea:focus { border-color: #4a7420; }
+  pre { margin: 0; padding: 8px 10px; font: 11px/1.5 Consolas, monospace; color: #c9cec2;
+        white-space: pre-wrap; word-break: break-all; max-height: 340px; overflow-y: auto; }
+  .warn { color: #a8873c; }
+  .err  { color: #9c3a2e; }
+  .ok   { color: #2e7d54; }
+  .stat { font-size: 11px; color: #6d766b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Limes Zone Converter</h1>
+  <div class="sub">
+    Offline, one-way: a PhunZones v2 export (the <code>PhunZones.txt</code> Lua table) in,
+    a Limes schema-1 JSON document out. Nothing leaves this page; nothing is executed —
+    the file is parsed by grammar, never evaluated. Nothing is silently lost: difficulty
+    archetypes become <b>tier records</b> carrying their production dials, rect-less
+    behavior templates become <b>profiles</b> (zones that inherited them now apply them),
+    <code>_default</code> survives as the defaults record, and <code>lewtkey</code> values
+    become profile stubs to fill in the Profiles panel. Only the sprinter min/max bands are
+    dropped — superseded by tier sprinter rules — and every drop is reported. Import the
+    result through the Zones tab's Import, which accepts only this schema.
+  </div>
+
+  <div class="panel">
+    <div class="grp">Input — PhunZones.txt</div>
+    <div style="padding: 0 10px 10px 10px; display: flex; flex-direction: column; gap: 8px;">
+      <textarea id="in" placeholder="Paste the file's contents here, or use the picker below."></textarea>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <input type="file" id="file" accept=".txt,.lua" style="color: #6d766b; font-size: 11px;">
+        <div style="flex: 1;"></div>
+        <div class="btn armed" id="go">Convert</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top: 12px; display: none;" id="repPanel">
+    <div class="grp">Report</div>
+    <div style="padding: 0 10px 6px 10px;" class="stat" id="stats"></div>
+    <pre id="report"></pre>
+  </div>
+
+  <div class="panel" style="margin-top: 12px; display: none;" id="outPanel">
+    <div class="grp">Output — Limes schema 1</div>
+    <pre id="out"></pre>
+    <div style="display: flex; gap: 8px; padding: 10px;">
+      <div class="btn" id="copy">Copy JSON</div>
+      <div class="btn" id="dl">Download .json</div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------------------
+// Restricted Lua-literal parser — a JS port of RDLuaLiteral.parse (the same
+// grammar Core uses in game): tables, strings, numbers, booleans, nil,
+// -- line comments, depth cap 32, errors with line numbers. No evaluation.
+// ---------------------------------------------------------------------------
+const MAX_DEPTH = 32;
+
+function luaParse(text) {
+  if (typeof text !== "string") return { err: "no text" };
+  let pos = 0;
+  const lineOf = p => text.slice(0, p).split("\n").length;
+  const fail = (p, why) => ({ err: "line " + lineOf(p) + ": " + why });
+
+  function skipWs() {
+    for (;;) {
+      const before = pos;
+      while (pos < text.length && " \t\r\n".includes(text[pos])) pos++;
+      if (text.startsWith("--", pos)) {
+        const nl = text.indexOf("\n", pos);
+        pos = nl < 0 ? text.length : nl;
+      }
+      if (pos === before) return;
+    }
+  }
+  function parseString() {
+    const quote = text[pos];
+    let out = "", i = pos + 1;
+    while (i < text.length) {
+      const c = text[i];
+      if (c === "\\") {
+        const n = text[i + 1];
+        if (n === "n") out += "\n";
+        else if (n === "t") out += "\t";
+        else if (n === "r") out += "\r";
+        else if (n === "\\") out += "\\";
+        else if (n === quote) out += quote;
+        else out += n;
+        i += 2;
+      } else if (c === quote) { pos = i + 1; return { v: out }; }
+      else { out += c; i++; }
+    }
+    return fail(pos, "unterminated string");
+  }
+  function parseTable(depth) {
+    if (depth > MAX_DEPTH) return fail(pos, "table nesting exceeds " + MAX_DEPTH);
+    const out = {}; let arrayN = 0;
+    pos++; // past {
+    for (;;) {
+      skipWs();
+      const c = text[pos];
+      if (c === undefined) return fail(pos, "unterminated table");
+      if (c === "}") { pos++; return { v: out }; }
+      let key = null;
+      if (c === "[") {
+        pos++;
+        const k = parseValue(depth + 1);
+        if (k.err) return k;
+        skipWs();
+        if (text[pos] !== "]") return fail(pos, "expected ]");
+        pos++; skipWs();
+        if (text[pos] !== "=") return fail(pos, "expected = after ]");
+        pos++;
+        key = k.v;
+      } else {
+        const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(text.slice(pos));
+        if (m && !["true", "false", "nil"].includes(m[1])) {
+          key = m[1];
+          pos += m[0].length;
+        }
+      }
+      const v = parseValue(depth + 1);
+      if (v.err) return v;
+      if (key !== null) out[key] = v.v;
+      else out[++arrayN] = v.v;
+      skipWs();
+      const sep = text[pos];
+      if (sep === "," || sep === ";") pos++;
+      else if (sep !== "}" && sep !== undefined) return fail(pos, "expected , ; or }");
+    }
+  }
+  function parseValue(depth) {
+    skipWs();
+    const c = text[pos];
+    if (c === "{") return parseTable(depth);
+    if (c === '"' || c === "'") return parseString();
+    if (text.startsWith("true", pos))  { pos += 4; return { v: true }; }
+    if (text.startsWith("false", pos)) { pos += 5; return { v: false }; }
+    if (text.startsWith("nil", pos))   { pos += 3; return { v: null }; }
+    const m = /^-?\d+\.?\d*/.exec(text.slice(pos));
+    if (m) { pos += m[0].length; return { v: Number(m[0]) }; }
+    return fail(pos, "unexpected character '" + (c || "") + "'");
+  }
+
+  skipWs();
+  if (text.startsWith("return", pos)) pos += 6;
+  const v = parseValue(1);
+  if (v.err) return v;
+  if (typeof v.v !== "object" || v.v === null) return { err: "top level is not a table" };
+  skipWs();
+  if (pos < text.length) return fail(pos, "trailing content");
+  return v;
+}
+
+// ---------------------------------------------------------------------------
+// Conversion: PhunZones v2 -> Limes schema 1.
+// ---------------------------------------------------------------------------
+const TIER_BY_DIFF = [null, "Newcomer", "Easy", "Medium", "Spicy", "IDDQL"];
+const ARCHETYPES = { Very_Easy: 1, Easy: 2, Medium: 3, Intermediate: 3, Hard: 4, Very_Hard: 5 };
+const BOOL_KEYS = ["nobuilding", "nodestruction", "nopickup", "noplacing", "noscrap",
+                   "nosafehouse", "nofire", "noplayers", "noannounce", "disabled"];
+const DIRGE_KEYS = ["dirgeSpawnChance", "dirgeScreamerWeight", "dirgeJuggernautWeight",
+                    "dirgeEMPWeight", "dirgeGluttonWeight", "dirgeScavengerWeight",
+                    "dirgeScreamerSpacing", "dirgeJuggernautSpacing", "dirgeEMPSpacing",
+                    "dirgeGluttonSpacing", "dirgeScavengerSpacing"];
+const DROP_KEYS = ["minSprinterRisk", "maxSprinterRisk", "bandits", "modsRequired",
+                   "modsAllRequired", "modsExcluded", "region", "zone", "isVoid", "isolated"];
+const HANDLED = new Set(["points", "inherits", "difficulty", "title", "subtitle",
+                         "lewtkey", "order", ...BOOL_KEYS, ...DIRGE_KEYS, ...DROP_KEYS]);
+
+function toBool(v) {
+  if (v === true || v === "true" || v === 1 || v === "1") return true;
+  if (v === false || v === "false" || v === 0 || v === "0") return false;
+  return null;
+}
+function slug(name) {
+  // Leading/trailing underscores are legal in the name grammar (_default is real).
+  const s = String(name).replace(/[^A-Za-z0-9_.\-]+/g, "_");
+  return s || "Zone";
+}
+
+function convert(luaText) {
+  const warnings = [], records = {};
+  const parsed = luaParse(luaText);
+  if (parsed.err) return { err: "parse failed: " + parsed.err };
+  const data = parsed.v.data;
+  if (typeof data !== "object" || data === null) return { err: "no data table in export" };
+  if (parsed.v.version !== 2) warnings.push("export version is " + parsed.v.version + ", expected 2 — converting anyway");
+
+  const srcNames = Object.keys(data).filter(k => typeof data[k] === "object" && data[k] !== null);
+  const hasGeom = n => collectRects(data[n]).rects.length > 0;
+
+  function collectRects(rec) {
+    const rects = [], bad = [];
+    const pts = rec.points;
+    if (typeof pts === "object" && pts !== null) {
+      for (const k of Object.keys(pts)) {
+        const p = pts[k];
+        const nums = (typeof p === "object" && p !== null) ? [p[1], p[2], p[3], p[4]].map(Number) : [];
+        if (nums.length === 4 && nums.every(n => Number.isFinite(n))) {
+          const [a, b, c, d] = nums.map(Math.floor);
+          rects.push([Math.min(a, c), Math.min(b, d), Math.max(a, c), Math.max(b, d)]);
+        } else bad.push(k);
+      }
+    }
+    return { rects, bad };
+  }
+
+  // Tier resolution through the inherits chain; archetype names terminate it.
+  function resolveDiff(name, seen) {
+    if (seen.has(name)) return null;
+    seen.add(name);
+    const rec = data[name];
+    if (!rec) return ARCHETYPES[name] || null;
+    if (typeof rec.difficulty === "number") return Math.max(1, Math.min(5, Math.round(rec.difficulty)));
+    if (typeof rec.difficulty === "string" && rec.difficulty !== "") {
+      const n = Number(rec.difficulty);
+      if (Number.isFinite(n)) return Math.max(1, Math.min(5, Math.round(n)));
+    }
+    if (typeof rec.inherits === "string" && rec.inherits !== "") return resolveDiff(rec.inherits, seen);
+    return null;
+  }
+  function realParent(name, seen) {
+    if (seen.has(name)) return null;
+    seen.add(name);
+    const rec = data[name];
+    if (!rec || typeof rec.inherits !== "string" || rec.inherits === "") return null;
+    const p = rec.inherits;
+    if (data[p] && hasGeom(p)) return p;
+    return realParent(p, seen);
+  }
+
+  // Identity: slug keys, keep display names.
+  const idOf = {}, used = new Set();
+  for (const n of srcNames) {
+    let id = slug(n);
+    while (used.has(id)) id += "_2";
+    used.add(id); idOf[n] = id;
+    if (id !== n) warnings.push(n + ": key not .ini-safe, stored as '" + id + "' (display name kept)");
+  }
+
+  // Classification. Nothing is merely "dropped": a rect-less record is either
+  // an archetype (its dials become a TIER record), the _default root (kept as
+  // the rect-less defaults zone), or a behavior template (becomes a PROFILE).
+  const kindOf = {};
+  for (const n of srcNames) {
+    kindOf[n] = hasGeom(n) ? "zone"
+      : n === "_default" ? "default"
+      : ARCHETYPES[n] !== undefined ? "archetype"
+      : "proftpl";
+  }
+
+  // Shared field extraction: PhunZones' stringly bag -> typed Limes fields.
+  function typedFields(n, rec) {
+    const fields = {};
+    if (typeof rec.subtitle === "string" && rec.subtitle !== "") fields.subtitle = rec.subtitle;
+    if (rec.order !== undefined) {
+      const o = Number(rec.order);
+      if (Number.isFinite(o)) fields.priority = o;
+    }
+    for (const k of BOOL_KEYS) {
+      if (rec[k] === undefined) continue;
+      const b = toBool(rec[k]);
+      if (b === null) { if (rec[k] !== "") warnings.push(n + "." + k + " = '" + rec[k] + "' is not a boolean, omitted"); }
+      else if (b) fields[k] = true;      // false = unset in PhunZones idiom
+    }
+    if (rec.zeds === "remove" || rec.zeds === "none") fields.zeds = rec.zeds;
+    else if (rec.zeds !== undefined && rec.zeds !== "") warnings.push(n + ".zeds = '" + rec.zeds + "' (expected remove|none), omitted");
+    for (const k of DIRGE_KEYS) {
+      if (rec[k] === undefined || rec[k] === "") continue;
+      const v = Number(rec[k]);
+      if (Number.isFinite(v)) fields[k] = v;
+      else warnings.push(n + "." + k + " = '" + rec[k] + "' is not a number, omitted");
+    }
+    for (const k of Object.keys(rec)) {
+      if (HANDLED.has(k) || k === "zeds" || k === "title") continue;
+      const v = rec[k];
+      if (typeof v === "object" && v !== null) warnings.push(n + "." + k + ": table-valued key cannot cross, dropped");
+      else { fields[k] = v; warnings.push(n + "." + k + ": unknown key, preserved verbatim"); }
+    }
+    if (rec.minSprinterRisk !== undefined || rec.maxSprinterRisk !== undefined)
+      warnings.push(n + ": sprinter min/max band dropped — superseded by tier sprinter rules");
+    return fields;
+  }
+
+  // Tiers from archetypes: their production dials survive as tier records.
+  // Every tier carries `rank` — its ladder position, the same 1-5 the badge
+  // shows and the same dial the in-game seed carries — so zones resolve one
+  // "how hard" number through the bag.
+  const tierEmitted = {};
+  let tierCount = 0;
+  for (const n of srcNames) {
+    if (kindOf[n] !== "archetype") continue;
+    const tname = TIER_BY_DIFF[ARCHETYPES[n]];
+    const fields = typedFields(n, data[n]);
+    if (typeof data[n].lewtkey === "string" && data[n].lewtkey !== "")
+      warnings.push(n + ".lewtkey dropped — a tier cannot reference a profile; put loot on a profile instead");
+    if (tierEmitted[tname]) {
+      warnings.push(n + ": also maps to tier " + tname + " — " + tierEmitted[tname] + "'s dials kept, this one's skipped");
+      continue;
+    }
+    fields.rank = ARCHETYPES[n];
+    tierEmitted[tname] = n; tierCount++;
+    records[tname] = { kind: "tier", fields };
+    if (n !== tname) warnings.push(n + ": archetype converted to tier '" + tname + "' with its production dials");
+  }
+
+  // Behavior templates become profiles.
+  let proftplCount = 0;
+  for (const n of srcNames) {
+    if (kindOf[n] !== "proftpl") continue;
+    proftplCount++;
+    const p = { kind: "profile" };
+    const disp = typeof data[n].title === "string" && data[n].title !== "" ? data[n].title : (idOf[n] !== n ? n : null);
+    if (disp) p.name = disp;
+    const fields = typedFields(n, data[n]);
+    if (Object.keys(fields).length) p.fields = fields;
+    if (typeof data[n].lewtkey === "string" && data[n].lewtkey !== "")
+      warnings.push(n + ": lewtkey '" + data[n].lewtkey + "' — fold its loot rules into this profile in the Profiles panel");
+    records[idOf[n]] = p;
+    warnings.push(n + ": rect-less template converted to profile '" + idOf[n] + "' — zones that inherited it now apply it");
+  }
+
+  // The _default root: kept as the rect-less defaults record.
+  if (data._default && kindOf._default === "default") {
+    const fields = typedFields("_default", data._default);
+    if (Object.keys(fields).length) records._default = { fields };
+  }
+
+  // lewtkey stubs (created on demand per distinct key).
+  const profileStubs = new Map(); // display -> id
+  function lootStub(key) {
+    let pid = profileStubs.get(key);
+    if (!pid) {
+      pid = slug(key);
+      while (used.has(pid)) pid += "_2";
+      used.add(pid);
+      profileStubs.set(key, pid);
+    }
+    return pid;
+  }
+
+  // Profiles a zone acquires from templates in its inherits chain (nearest LAST,
+  // because Limes order is precedence and later wins).
+  function chainProfiles(n) {
+    const out = []; let cur = data[n] && data[n].inherits; const seen = new Set([n]);
+    while (typeof cur === "string" && cur !== "" && !seen.has(cur)) {
+      seen.add(cur);
+      if (kindOf[cur] === "proftpl") out.push(idOf[cur]);
+      cur = data[cur] && data[cur].inherits;
+    }
+    return out.reverse();
+  }
+
+  let zoneCount = 0;
+  for (const n of srcNames) {
+    if (kindOf[n] !== "zone") continue;
+    const rec = data[n];
+    const { rects, bad } = collectRects(rec);
+    bad.forEach(i => warnings.push(n + ": points[" + i + "] is not four numbers, skipped"));
+    zoneCount++;
+    const out = { rects };
+    const disp = typeof rec.title === "string" && rec.title !== "" ? rec.title : (idOf[n] !== n ? n : null);
+    if (disp) out.name = disp;
+
+    // parent: nearest ancestor with geometry present in the file
+    const parent = realParent(n, new Set());
+    if (parent) out.parent = idOf[parent];
+    else if (typeof rec.inherits === "string" && rec.inherits !== "" && !ARCHETYPES[rec.inherits] && !data[rec.inherits])
+      warnings.push(n + ": inherits '" + rec.inherits + "', which is not in this file — parent dropped");
+
+    // tier: explicit when the zone's own chain answer differs from its parent's
+    const ownDiff = resolveDiff(n, new Set());
+    const parentDiff = parent ? resolveDiff(parent, new Set()) : null;
+    if (ownDiff !== null && ownDiff !== parentDiff) {
+      out.tier = TIER_BY_DIFF[ownDiff];
+      // A referenced rung must exist even when no archetype carried dials for
+      // it — a dangling slot resolves, but only as a warning on every boot.
+      if (!records[out.tier]) {
+        records[out.tier] = { kind: "tier", fields: { rank: ownDiff } };
+        tierCount++;
+        warnings.push("tier '" + out.tier + "' referenced by " + n + " but no archetype carried its dials — created with rank only");
+      }
+    }
+    else if (ownDiff === null && parent === null) warnings.push(n + ": no difficulty anywhere in its chain — tier left to the store default");
+
+    const fields = typedFields(n, rec);
+    if (Object.keys(fields).length) out.fields = fields;
+
+    const profs = chainProfiles(n);
+    if (typeof rec.lewtkey === "string" && rec.lewtkey !== "" && rec.lewtkey !== "none")
+      profs.push(lootStub(rec.lewtkey));
+    if (profs.length) out.profiles = [...new Set(profs)];
+    records[idOf[n]] = out;
+  }
+
+  for (const [disp, pid] of profileStubs) {
+    const p = { kind: "profile", loot: [] };
+    if (pid !== disp) p.name = disp;
+    records[pid] = p;
+    warnings.push("profile stub '" + disp + "' created from lewtkey — its loot rules are EMPTY; author them in the Profiles panel");
+  }
+
+  return {
+    doc: { schema: 1, revision: 0, records },
+    warnings,
+    stats: { zones: zoneCount, tiers: tierCount, profiles: proftplCount + profileStubs.size },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Page wiring (skipped under node, so the same file smoke-tests headlessly).
+// ---------------------------------------------------------------------------
+if (typeof document !== "undefined") {
+  const $ = id => document.getElementById(id);
+  let lastJson = "";
+  $("file").addEventListener("change", e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { $("in").value = r.result; };
+    r.readAsText(f);
+  });
+  $("go").addEventListener("click", () => {
+    const res = convert($("in").value);
+    $("repPanel").style.display = "block";
+    if (res.err) {
+      $("stats").innerHTML = '<span class="err">FAILED</span>';
+      $("report").innerHTML = '<span class="err">' + res.err.replace(/</g, "&lt;") + "</span>";
+      $("outPanel").style.display = "none";
+      return;
+    }
+    $("stats").innerHTML = '<span class="ok">converted</span> — '
+      + res.stats.zones + " zones, " + res.stats.tiers + " tier(s), "
+      + res.stats.profiles + " profile(s), " + res.warnings.length + " warning(s)";
+    $("report").innerHTML = res.warnings.length
+      ? res.warnings.map(w => '<span class="warn">' + w.replace(/</g, "&lt;") + "</span>").join("\n")
+      : '<span class="ok">clean — nothing dropped, nothing coerced</span>';
+    lastJson = JSON.stringify(res.doc, null, 2);
+    $("out").textContent = lastJson;
+    $("outPanel").style.display = "block";
+  });
+  $("copy").addEventListener("click", () => navigator.clipboard.writeText(lastJson));
+  $("dl").addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([lastJson], { type: "application/json" }));
+    a.download = "limes-zones.json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+}
+if (typeof module !== "undefined") module.exports = { convert, luaParse };
+</script>
+</body>
+</html>

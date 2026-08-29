@@ -465,11 +465,11 @@ function HutchList:onMouseDown(x, y)
     end
 end
 
-function HutchList:render()
-    self:setStencilRect(0, 0, self.width, self.height)
-    ISScrollingListBox.render(self)
-    self:clearStencilRect()
-end
+-- No render override here. ISScrollingListBox:prerender draws every row
+-- ITSELF inside a stencil it sets and clears (ISScrollingListBox.lua:505,
+-- :541, scrollbar clamp :494-496), and :render draws no rows at all - it is
+-- a joypad focus border (:642-647). The setStencil/render/clearStencil
+-- wrapper that sat here clipped nothing; rows never could escape.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Occupant pane - what is actually inside the selected hutch
@@ -507,11 +507,11 @@ function OccList:doDrawItem(y, item, alt)
     return y + self.itemheight
 end
 
-function OccList:render()
-    self:setStencilRect(0, 0, self.width, self.height)
-    ISScrollingListBox.render(self)
-    self:clearStencilRect()
-end
+-- No render override here. ISScrollingListBox:prerender draws every row
+-- ITSELF inside a stencil it sets and clears (ISScrollingListBox.lua:505,
+-- :541, scrollbar clamp :494-496), and :render draws no rows at all - it is
+-- a joypad focus border (:642-647). The setStencil/render/clearStencil
+-- wrapper that sat here clipped nothing; rows never could escape.
 
 -- NOTE THE GAP: there is no getter for animalOutside. IsoHutch exposes
 -- addAnimalOutside() but nothing to read the list back (it is a public instance

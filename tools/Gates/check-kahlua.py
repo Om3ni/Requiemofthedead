@@ -133,6 +133,26 @@ WEAK_MODE = re.compile(r"__mode\s*=")
 
 ITER_CALL = re.compile(r"\b(i?pairs)\s*\(([^()]*?[:.](" + "|".join(COLLECTION_METHODS) + r")\s*\([^()]*\))")
 
+# ---------------------------------------------------------------------------
+# CHECK 4 - loadstring / loadstream, removed by the engine (2026-08-26)
+#
+# Until 42.20.3 Kahlua's compiler registered both as globals
+# (LuaCompiler.register, called from J2SEPlatform.setupEnvironment).
+# 42.20.4-b0bbce05d5 deleted the register method and its call outright -
+# J2SEPlatform.java:53-67 in the 42.20.3 tree has the call at :65, the 42.20.4
+# tree ends setupEnvironment at setupLibraryText - so both names now resolve
+# to nil on a live server while real Lua 5.1 (run-tests) happily has
+# loadstring. The same shape as check 1, with the same zero tolerance: there
+# is no correct use of a global that does not exist. The replacement for
+# reading a Lua literal back is RDLuaLiteral.parse, which parses the data
+# grammar and cannot execute anything.
+#
+# Same lookbehind as NEXT_CALL: `Foo.loadstring(` would be someone's own
+# function, and a bare call is the one that resolves against the missing
+# global.
+# ---------------------------------------------------------------------------
+LOADSTRING_CALL = re.compile(r"(?<![A-Za-z0-9_.:])(loadstring|loadstream)\s*\(")
+
 
 def line_of(text, pos):
     return text.count("\n", 0, pos) + 1
@@ -187,6 +207,14 @@ def main():
                                % (m.group(1), method, COLLECTION_METHODS[method]),
                                source_line(raw, m.start())))
 
+        for m in LOADSTRING_CALL.finditer(code):
+            violations.append((path, line_of(code, m.start()),
+                               "bare %s(): removed from the Lua environment in "
+                               "42.20.4 (LuaCompiler.register deleted) - parse "
+                               "the literal with RDLuaLiteral.parse instead"
+                               % m.group(1),
+                               source_line(raw, m.start())))
+
     if args.audit and allowed:
         print("QUALIFIED - a method call or our own function, not the missing global:")
         for path, line, token in allowed:
@@ -195,8 +223,9 @@ def main():
 
     if not violations:
         print("%d file(s) scanned, no Kahlua-subset violations." % scanned)
-        print("Checks bare next(), pairs() over a Java collection, and __mode. It does NOT "
-              "check the ~200-local ceiling or BaseLib's global set - see the header.")
+        print("Checks bare next(), pairs() over a Java collection, __mode, and bare "
+              "loadstring()/loadstream() (removed in 42.20.4). It does NOT check the "
+              "~200-local ceiling or BaseLib's global set - see the header.")
         return 0
 
     by_mod = {}

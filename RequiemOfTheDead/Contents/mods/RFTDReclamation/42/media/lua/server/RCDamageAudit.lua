@@ -18,6 +18,8 @@
 
 if not isServer() then return end
 
+require "RDFile"
+
 RCDamageAudit = RCDamageAudit or {}
 
 local FILE = "RFTDReclamation_Damage.txt"
@@ -73,16 +75,11 @@ local function steamIdOf(player)
     return "-"
 end
 
--- No guards, same reading as RCAudit: getFileWriter returns nil rather than
--- throwing (LuaManager.java:5523-5555), and LuaFileWriter.write/close delegate
--- to PrintWriter, which records I/O errors internally rather than raising
--- (:9850-9868). "A full disk must not break the damage path" described a throw
--- that cannot happen.
+-- Mechanism in RDFile (2026-08-25); the engine facts the comment here used
+-- to re-derive (nil-not-throw open, PrintWriter swallowing I/O errors) live
+-- in that file's header now. Append only.
 local function write(line)
-    local writer = getFileWriter(FILE, true, true) -- createIfNull, append (never truncate)
-    if not writer then return end
-    writer:write(line .. "\n")
-    writer:close()
+    RDFile.appendLine(FILE, line)
 end
 
 local function onClientCommand(module, command, player, args)

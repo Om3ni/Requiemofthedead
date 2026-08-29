@@ -342,6 +342,20 @@ end
 -- Reset hook for game start, mirroring the other server modules. Restores
 -- everything first: a reset that dropped the table would leave any live
 -- sprinter stuck at speed.
+-- NO OnGameStart HOOK, AND THAT IS DELIBERATE. `reset()` below is a TEST
+-- affordance, not a lifecycle hook, and wiring it to OnGameStart the way the
+-- client-side RQFlinch/RQPoise/RQRing modules do would be a bug, not a fix:
+-- this file is dedicated-server-only (the isServer gate above) and
+-- **OnGameStart does not fire on a dedicated server** (IngameState.java:844).
+-- That exact mistake already cost one Mosaic session - RQServer's OnGameStart
+-- re-injection was the "would-be healer" that never fired in the 2026-08-24
+-- runtime defect log.
+--
+-- Nor is a hook needed. On a dedicated server a game restart IS a process
+-- restart, so this table starts empty either way; there is no leave-a-world-and-
+-- join-another path of the kind that makes the client hooks necessary. The
+-- server-side equivalent, if one were ever wanted, is OnServerStarted
+-- (GameServer.java:1443).
 function RQBloodhound.reset()
     local all = {}
     for zombie in pairs(pursuits) do all[#all + 1] = zombie end

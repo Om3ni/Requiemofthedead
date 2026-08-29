@@ -40,6 +40,13 @@ for _, rel in ipairs({ "shared/LMCore.lua", "shared/LMEdit.lua" }) do
     end
 end
 
+-- `risk` stands where the old `tier` number field did in these fixtures: tier
+-- became the structural SLOT with the record-kind model (its own section at
+-- the end), and everything here that used it was exercising ordinary field
+-- mechanics. Registered with the old registration's clamp so the coercion
+-- expectations carry over unchanged.
+Limes.fields.register("TEdit", "risk", { type = "number", default = 0, min = 0, max = 10 })
+
 local pass, fail = 0, 0
 local function eq(name, got, want)
     if got == want then pass = pass + 1
@@ -71,8 +78,8 @@ end
 -- field of the kind M2/M3 will eventually claim.
 local function fixture()
     return {
-        _default = { fields = { tier = 2 } },
-        Hard     = { inherits = "_default", fields = { tier = 4 } },
+        _default = { fields = { risk = 2 } },
+        Hard     = { inherits = "_default", fields = { risk = 4 } },
         Riverside = {
             inherits = "Hard",
             rects  = { { 6000, 5000, 6500, 5400 } },
@@ -96,9 +103,9 @@ local d   = LMEdit.new(src, 7)
 eq("revision is carried", d:revision(), 7)
 eq("names are sorted",    table.concat(d:names(), ","), "Hard,Riverside,Westpoint,_default")
 
-d:setField("Riverside", "tier", 5)
+d:setField("Riverside", "risk", 5)
 d:addRect("Riverside", { 1, 2, 3, 4 })
-eq("source fields untouched", src.Riverside.fields.tier, nil)
+eq("source fields untouched", src.Riverside.fields.risk, nil)
 eq("source rects untouched",  #src.Riverside.rects, 1)
 
 local clean = LMEdit.new(fixture(), 7)
@@ -113,11 +120,30 @@ eq("...and is not dirty",   clean:isDirty(), false)
 -- ---------------------------------------------------------------------------
 
 d = LMEdit.new(fixture(), 7)
-d:setField("Riverside", "tier", 5)
+d:setField("Riverside", "risk", 5)
 changed, removed, n = d:changeSet()
 eq("one edit, one record on the wire", count(changed), 1)
 eq("...and it is the one edited",      changed.Riverside ~= nil, true)
 eq("...total change count",            n, 1)
+
+-- landedIn: "are my changes already in that store?" - the editor's own-save
+-- test. When a save's delta broadcast comes back, the draft is still dirty
+-- against its BASE but identical to the LIVE store; that must read as landed
+-- (rebase), while any divergence - a different value, a record someone else
+-- added back - must not.
+d = LMEdit.new(fixture(), 7)
+d:setField("Riverside", "risk", 5)
+d:remove("Westpoint")
+local live = fixture()
+live.Riverside.fields.risk = 5
+live.Westpoint = nil
+eq("a saved draft reads as landed", d:landedIn(live), true)
+live.Riverside.fields.risk = 6
+eq("a diverged value is not landed", d:landedIn(live), false)
+live.Riverside.fields.risk = 5
+live.Westpoint = { rects = {} }
+eq("a removal someone restored is not landed", d:landedIn(live), false)
+eq("a clean draft is trivially landed", LMEdit.new(fixture(), 7):landedIn(fixture()), true)
 
 -- Setting a field to the value it already carries is not an edit.
 d = LMEdit.new(fixture(), 7)
@@ -243,11 +269,15 @@ eq("create refuses a name that cannot round-trip",
 eq("rename refuses one too",
     select(1, LMEdit.new(fixture(), 7):rename("Hard", "Really Hard")), false)
 
-isTrue("a plain field key is fine",   LMEdit.keyProblem("tier") == nil)
+isTrue("a plain field key is fine",   LMEdit.keyProblem("risk") == nil)
 isTrue("a hyphen in a key is not",    LMEdit.keyProblem("max-risk") ~= nil)
 isTrue("'rects' is reserved",         LMEdit.keyProblem("rects") ~= nil)
 isTrue("'inherits' is reserved",      LMEdit.keyProblem("inherits") ~= nil)
 isTrue("'name' is reserved",          LMEdit.keyProblem("name") ~= nil)
+isTrue("'kind' is reserved",          LMEdit.keyProblem("kind") ~= nil)
+isTrue("'tier' is reserved",          LMEdit.keyProblem("tier") ~= nil)
+isTrue("'moon' is reserved",          LMEdit.keyProblem("moon") ~= nil)
+isTrue("the moon_ prefix is reserved", LMEdit.keyProblem("moon_speed") ~= nil)
 eq("setField refuses a reserved key", select(1, LMEdit.new(fixture(), 7):setField("Hard", "rects", 1)), false)
 
 -- ---------------------------------------------------------------------------
@@ -272,23 +302,24 @@ isTrue("...and blocks save", d:errorCount() > 0)
 eq("self-inheritance is refused up front",
     select(1, LMEdit.new(fixture(), 7):setInherits("Hard", "Hard")), false)
 
--- tier is registered 0-10 and LMCore CLAMPS out-of-range values rather than
--- dropping them, so out-of-range is a warning that says what it will become.
+-- risk is registered 0-10 (mirroring the old tier registration) and LMCore
+-- CLAMPS out-of-range values rather than dropping them, so out-of-range is a
+-- warning that says what it will become.
 d = LMEdit.new(fixture(), 7)
-d:setField("Riverside", "tier", 99)
+d:setField("Riverside", "risk", 99)
 isTrue("above max warns with the resolved value",
     findProblem(d:validate(), "Riverside", "warning", "resolves as 10"))
 eq("...and does not block save", d:errorCount(), 0)
 
 d = LMEdit.new(fixture(), 7)
-d:setField("Riverside", "tier", -4)
+d:setField("Riverside", "risk", -4)
 isTrue("below min warns", findProblem(d:validate(), "Riverside", "warning", "resolves as 0"))
 
 -- A value that will not coerce is a different matter: LMCore drops it and the
 -- zone silently inherits instead, which is exactly the outcome an admin editing
 -- a field does not expect.
 d = LMEdit.new(fixture(), 7)
-d:setField("Riverside", "tier", "quite hard")
+d:setField("Riverside", "risk", "quite hard")
 isTrue("an uncoercible number is an error",
     findProblem(d:validate(), "Riverside", "error", "is not a number"))
 isTrue("...and blocks save", d:errorCount() > 0)
@@ -329,8 +360,8 @@ eq("...and does not block save", d:errorCount(), 0)
 
 -- Problems come back in a stable order so the panel does not reshuffle.
 d = LMEdit.new(fixture(), 7)
-d:setField("Westpoint", "tier", 99)
-d:setField("Riverside", "tier", 99)
+d:setField("Westpoint", "risk", 99)
+d:setField("Riverside", "risk", 99)
 probs = d:validate()
 isTrue("problems are sorted by zone", probs[1].zone <= probs[#probs].zone)
 
@@ -339,7 +370,7 @@ isTrue("problems are sorted by zone", probs[1].zone <= probs[#probs].zone)
 -- ---------------------------------------------------------------------------
 
 d = LMEdit.new(fixture(), 7)
-d:setField("Riverside", "tier", 5)
+d:setField("Riverside", "risk", 5)
 d:remove("Westpoint")
 d:create("Rosewood")
 d:setRects("Rosewood", { { 8000, 11000, 8400, 11400 } })
@@ -359,14 +390,14 @@ for name, rec in pairs(snap) do
     end
 end
 eq("the removed zone is gone from the fold", folded.Westpoint, nil)
-eq("the edited value landed",                folded.Riverside.fields.tier, 5)
+eq("the edited value landed",                folded.Riverside.fields.risk, 5)
 eq("the created zone landed",                folded.Rosewood.rects[1][3], 8400)
 
 -- applyChangeSet must not alias the store it was given.
 local before = fixture()
 LMEdit.applyChangeSet(before, changed, removed)
 eq("the source store is not mutated", before.Westpoint ~= nil, true)
-eq("...nor its fields",               before.Riverside.fields.tier, nil)
+eq("...nor its fields",               before.Riverside.fields.risk, nil)
 
 -- ---------------------------------------------------------------------------
 -- 8b. names() is memoised, so its invalidation has to be right
@@ -391,7 +422,7 @@ eq("rename invalidates", table.concat(d:names(), ","), "Aardvark,Westpoint,Zulu,
 -- edit is the normal case in the render loop.
 d = LMEdit.new(fixture(), 7)
 local held = d:names()
-d:setField("Riverside", "tier", 5)
+d:setField("Riverside", "risk", 5)
 d:setRects("Riverside", { { 1, 2, 300, 400 } })
 d:setInherits("Riverside", "_default")
 isTrue("a field/rect/inherits edit keeps the cached list", d:names() == held)
@@ -423,7 +454,7 @@ local function nested()
         Rosewood  = { rects = { { 8000, 11000, 8900, 11900 } } },
         Town      = { rects = { { 1000, 1000, 3000, 3000 } } },
         Block     = { rects = { { 1200, 1200, 1400, 1400 } } },
-        Hard      = { fields = { tier = 4 } },
+        Hard      = { fields = { risk = 4 } },
     }
 end
 
@@ -514,7 +545,7 @@ eq("...every zone still appears", #t, 5)
 
 -- ...and the FIELD chain is untouched: only the list SHAPE changed. Rosewood
 -- still takes Hard's tier, it just does not file itself underneath it.
-eq("a template parent still supplies fields", (d:effective("Rosewood", "tier")), 4)
+eq("a template parent still supplies fields", (d:effective("Rosewood", "risk")), 4)
 
 -- Alphabetical at every level, digits included.
 d = LMEdit.new({
@@ -558,27 +589,27 @@ eq("a cycle still yields every zone", #t, 5)
 -- ---------------------------------------------------------------------------
 
 d = LMEdit.new(fixture(), 7)     -- _default tier 2, Hard tier 4, Riverside under Hard
-local v, src = d:effective("Riverside", "tier")
+local v, src = d:effective("Riverside", "risk")
 eq("an unset field resolves from the nearest ancestor", v, 4)
 eq("...and says where it came from",                    src, "Hard")
-eq("Riverside does not override it",  d:isOverride("Riverside", "tier"), false)
+eq("Riverside does not override it",  d:isOverride("Riverside", "risk"), false)
 
-d:setField("Riverside", "tier", 5)
-v, src = d:effective("Riverside", "tier")
+d:setField("Riverside", "risk", 5)
+v, src = d:effective("Riverside", "risk")
 eq("an override wins",            v, 5)
 eq("...sourced to the zone",      src, "Riverside")
-eq("...and reads as an override", d:isOverride("Riverside", "tier"), true)
+eq("...and reads as an override", d:isOverride("Riverside", "risk"), true)
 
 -- Editing the PARENT moves the child, before either is saved.
 d = LMEdit.new(fixture(), 7)
-d:setField("Hard", "tier", 9)
-eq("a parent edit reaches the child", (d:effective("Riverside", "tier")), 9)
+d:setField("Hard", "risk", 9)
+eq("a parent edit reaches the child", (d:effective("Riverside", "risk")), 9)
 
 -- Clearing an override falls back rather than reading as zero.
 d = LMEdit.new(fixture(), 7)
-d:setField("Riverside", "tier", 5)
-d:setField("Riverside", "tier", nil)
-v, src = d:effective("Riverside", "tier")
+d:setField("Riverside", "risk", 5)
+d:setField("Riverside", "risk", nil)
+v, src = d:effective("Riverside", "risk")
 eq("a cleared override falls back to the parent", v, 4)
 eq("...sourced to the parent",                    src, "Hard")
 
@@ -586,7 +617,7 @@ eq("...sourced to the parent",                    src, "Hard")
 -- inherits at all.
 d = LMEdit.new(fixture(), 7)
 d:create("Loner")
-v, src = d:effective("Loner", "tier")
+v, src = d:effective("Loner", "risk")
 eq("a parentless zone still sees _default", v, 2)
 eq("...sourced to _default",                src, "_default")
 
@@ -651,11 +682,21 @@ end
 local realRequire = require
 require = function() end
 dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDJson.lua")
+-- The literal parser (promoted from LMImport 2026-08-26).
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDLuaLiteral.lua")
 dofile(LM .. "shared/LMIni.lua")
 dofile(LM .. "shared/LMImport.lua")
 require = realRequire
 
 local roundTrip = fixture()
+-- fixture()'s template is named "Hard", which the S2 ladder migration in the
+-- ini lane rightly treats as the old archetype and converts on the way back
+-- in. Correct for real stores; wrong for this LOSSLESS pin - so the template
+-- steps out of the ladder vocabulary first.
+roundTrip.Bastion = roundTrip.Hard
+roundTrip.Hard = nil
+roundTrip.Riverside.inherits = "Bastion"
+roundTrip.Westpoint.inherits = "Bastion"
 roundTrip.Westpoint.fields.nobuilding = true      -- a boolean
 roundTrip.Riverside.fields.title = "Riverside"    -- a string
 local text = LMIni.serialize(roundTrip)
@@ -671,9 +712,9 @@ isTrue("parseAny accepts our own export", okRt, tostring(res))
 if okRt then
     eq("...and reports the dialect", res.format, "ini")
     eq("...with every zone",         res.count, 4)
-    eq("...inherits survives",       res.zones.Riverside.inherits, "Hard")
+    eq("...inherits survives",       res.zones.Riverside.inherits, "Bastion")
     eq("...rects survive",           res.zones.Westpoint.rects[2][3], 12000)
-    eq("...numbers stay numbers",    res.zones.Hard.fields.tier, 4)
+    eq("...numbers stay numbers",    res.zones.Bastion.fields.risk, 4)
     eq("...booleans stay booleans",  res.zones.Westpoint.fields.nobuilding, true)
     eq("...strings stay strings",    res.zones.Riverside.fields.title, "Riverside")
 
@@ -759,7 +800,7 @@ isTrue("reordering alone is a change", (select(1, od:changeSet())).Riverside ~= 
 
 -- THE ERASURE PIN: editing an unrelated dial must not touch the list.
 local ed = LMEdit.new(profFixture(), 3)
-ed:setField("Riverside", "tier", 5)
+ed:setField("Riverside", "risk", 5)
 local echanged = select(1, ed:changeSet())
 eq("an unrelated edit still carries the profiles list",
    echanged.Riverside.profiles and echanged.Riverside.profiles[2], "Sprinty")
@@ -769,10 +810,10 @@ eq("applyChangeSet preserves membership", folded.Riverside.profiles[1], "Spooky"
 
 -- Prune canonicalisation: junk drops, duplicates collapse to first.
 local jd = LMEdit.new({ Z = { rects = { { 0, 0, 9, 9 } },
-    profiles = { "A", "", "A", 7, "B" }, fields = { tier = 1 } } }, 1)
+    profiles = { "A", "", "A", 7, "B" }, fields = { risk = 1 } } }, 1)
 local jchanged = select(1, LMEdit.new({}, 1) and jd:changeSet())
 -- base was the same store, so force a change to see the pruned shape
-jd:setField("Z", "tier", 2)
+jd:setField("Z", "risk", 2)
 jchanged = select(1, jd:changeSet())
 eq("prune drops junk and duplicates", #jchanged.Z.profiles, 2)
 eq("...first occurrence wins", jchanged.Z.profiles[1], "A")
@@ -859,18 +900,18 @@ eq("...and does not become a field either", emptyZones.Z.fields.profiles, nil)
 -- ---------------------------------------------------------------------------
 
 local parityStore = {
-    _default = { profiles = { "Ambient" }, fields = { tier = 2, futureA = "root" } },
+    _default = { profiles = { "Ambient" }, fields = { risk = 2, futureA = "root" } },
     Ambient  = { fields = { futureB = "ambient", futureA = "amb-a" } },
     Spooky   = { fields = { futureLoot = "rare", title = "spooky" } },
     Sprinty  = { fields = { title = "fast" } },
-    Hard     = { inherits = "_default", fields = { tier = 4 } },
+    Hard     = { inherits = "_default", fields = { risk = 4 } },
     Town     = { inherits = "Hard", rects = { { 0, 0, 99, 99 } },
                  profiles = { "Spooky", "Sprinty" },
                  fields = { priority = 1 } },
 }
 Limes.apply(parityStore, 40)
 local parityDraft = LMEdit.new(parityStore, 40)
-local KEYS = { "tier", "priority", "futureA", "futureB", "futureLoot", "title" }
+local KEYS = { "risk", "priority", "futureA", "futureB", "futureLoot", "title" }
 for _, k in ipairs(KEYS) do
     local resolved = Limes.getZone("Town").fields[k]
     local eff      = parityDraft:effective("Town", k)
@@ -889,8 +930,8 @@ require = realRequire
 local moonSky = 4
 LMMoon.setProvider(function() return moonSky end)
 local moonStore = {
-    _default  = { fields = { tier = 1, title = "calm" } },
-    BloodMoon = { fields = { tier = 8, title = "blood", phases = "full" } },
+    _default  = { fields = { risk = 1, title = "calm" } },
+    BloodMoon = { fields = { risk = 8, title = "blood", phases = "full" } },
     Waxer     = { fields = { title = "waxing", phases = "waxing" } },
     Town      = { inherits = "_default", rects = { { 0, 0, 99, 99 } },
                   profiles = { "BloodMoon", "Waxer" }, fields = {} },
@@ -904,7 +945,7 @@ for _, sky in ipairs({ 4, 2, 0 }) do
     -- store-side read with the same contract. Raw .fields holds only what is
     -- SET - that asymmetry is by design (the blank-inherits contract), not a
     -- parity break.
-    for _, k in ipairs({ "tier", "title", "phases" }) do
+    for _, k in ipairs({ "risk", "title", "phases" }) do
         eq("moon parity, sky " .. sky .. ", '" .. k .. "'",
            tostring(d2:effective("Town", k)),
            tostring(Limes.fields.get(Limes.getZone("Town"), k)))
@@ -937,6 +978,197 @@ local dv = LMEdit.new(moonStore, 62)
 dv:setField("BloodMoon", "disabled", true)
 isTrue("phased disabled warns that the zone will follow the moon",
     findProblem(dv:validate(), "Town", "warning", "follow the moon"))
+
+-- ---------------------------------------------------------------------------
+-- The record-kind model (S1, 2026-08-26): the draft half. The slot, the
+-- terminal guards, the moon setters, kind-aware validation, the erasure pins
+-- for the three new structural keys, and resolver parity across the tier bag.
+-- ---------------------------------------------------------------------------
+
+local function kindFixture()
+    return {
+        _default = { tier = "Newcomer", fields = { futureA = "root" } },
+        Newcomer = { kind = "tier", fields = { rank = 1, risk = 1 } },
+        Spicy    = { kind = "tier", fields = { rank = 4, risk = 4 },
+                     moon = { phases = "full", fields = { risk = 9 } } },
+        Calm     = { kind = "profile", fields = { title = "calm profile" } },
+        Town     = { tier = "Spicy", rects = { { 0, 0, 99, 99 } }, fields = {} },
+        Block    = { inherits = "Town", rects = { { 10, 10, 19, 19 } },
+                     fields = { title = "The Block" } },
+    }
+end
+
+-- The slot resolves against the draft through the SAME exported walk.
+local kd = LMEdit.new(kindFixture(), 9)
+local tv, tsrc2 = kd:effectiveTier("Block")
+eq("effectiveTier walks the chain", tv, "Spicy")
+eq("...and names the source", tsrc2, "Town")
+eq("a slotless root falls to _default", (kd:effectiveTier("_default")), "Newcomer")
+
+-- setTier: set, clear, and the refusals.
+isTrue("setTier sets", kd:setTier("Block", "Newcomer"))
+eq("...and the slot is the zone's own now", (kd:effectiveTier("Block")), "Newcomer")
+isTrue("setTier clears on nil", kd:setTier("Block", nil))
+eq("...back to the ancestor's", (kd:effectiveTier("Block")), "Spicy")
+eq("a record cannot be its own tier", select(1, kd:setTier("Town", "Town")), false)
+
+-- Terminal guards, every structural mutator.
+eq("a tier cannot inherit",       select(1, kd:setInherits("Spicy", "Town")), false)
+eq("a tier cannot take a tier",   select(1, kd:setTier("Spicy", "Newcomer")), false)
+eq("a tier has no ground",        select(1, kd:addRect("Spicy", { 0, 0, 9, 9 })), false)
+eq("a tier applies no profiles",  select(1, kd:addProfile("Spicy", "Calm")), false)
+eq("a profile cannot inherit",    select(1, kd:setInherits("Calm", "Town")), false)
+eq("a profile has no ground",     select(1, kd:setRects("Calm", { { 0, 0, 9, 9 } })), false)
+
+-- Moon setters: tier-only, clearing rules.
+isTrue("setMoonPhases on a tier", kd:setMoonPhases("Newcomer", "full"))
+isTrue("setMoonField on a tier",  kd:setMoonField("Newcomer", "risk", 7))
+eq("moon setters refuse a zone",    select(1, kd:setMoonPhases("Town", "full")), false)
+eq("moon setters refuse a profile", select(1, kd:setMoonField("Calm", "risk", 1)), false)
+eq("a moon field key is still a key",
+   select(1, kd:setMoonField("Newcomer", "rects", 1)), false)
+
+-- The picker: profiles in, tiers out, legacy templates still in.
+kd = LMEdit.new(kindFixture(), 9)
+kd.work.LegacyTmpl = { fields = { futureB = "x" } }
+local cands = table.concat(kd:profileCandidates("Town"), ",")
+eq("profile records and legacy templates are candidates", cands, "Calm,LegacyTmpl")
+
+-- The tree lists PLACES: tier and profile records are not rows (they get
+-- their own panels), legacy templates and unknown-kind anomalies stay
+-- visible, and zone nesting is untouched.
+kd.work.Weird = { kind = "faction", fields = {} }
+local treeNames = {}
+for _, row in ipairs(kd:tree()) do treeNames[#treeNames + 1] = row.name end
+eq("tiers and profiles are not tree rows",
+   table.concat(treeNames, ","), "LegacyTmpl,Town,Block,Weird,_default")
+
+-- Validation.
+local vk = LMEdit.new(kindFixture(), 9)
+vk.work.Weird = { kind = "faction", fields = {} }
+isTrue("an unknown kind is an error",
+    findProblem(vk:validate(), "Weird", "error", "not a record kind"))
+vk = LMEdit.new(kindFixture(), 9)
+vk.work.Spicy.rects = { { 0, 0, 9, 9 } }
+vk.work.Spicy.inherits = "Town"
+vk.work.Spicy.tier = "Newcomer"
+vk.work.Calm.profiles = { "Newcomer" }
+local vprobs = vk:validate()
+isTrue("a tier with ground is an error",    findProblem(vprobs, "Spicy", "error", "rectangles"))
+isTrue("a tier with inherits is an error",  findProblem(vprobs, "Spicy", "error", "cannot inherit"))
+isTrue("a tier with a tier is an error",    findProblem(vprobs, "Spicy", "error", "tier of its own"))
+isTrue("a profile applying profiles is an error",
+    findProblem(vprobs, "Calm", "error", "cannot apply profiles"))
+vk = LMEdit.new(kindFixture(), 9)
+vk.work.Town.moon = { phases = "full", fields = {} }
+isTrue("a moon overlay on a zone is an error",
+    findProblem(vk:validate(), "Town", "error", "only a tier record"))
+vk = LMEdit.new(kindFixture(), 9)
+vk:setTier("Town", "Ghost")
+isTrue("a dangling tier slot warns",
+    findProblem(vk:validate(), "Town", "warning", "not in the store"))
+vk:setTier("Town", "Calm")
+isTrue("a mis-kinded tier slot warns",
+    findProblem(vk:validate(), "Town", "warning", "not a tier record"))
+vk = LMEdit.new(kindFixture(), 9)
+vk.work.Town.profiles = { "Spicy" }
+isTrue("applying a tier as a profile is an error",
+    findProblem(vk:validate(), "Town", "error", "is a tier"))
+vk = LMEdit.new(kindFixture(), 9)
+vk:remove("Spicy")
+isTrue("deleting a tier warns the zones standing on it",
+    findProblem(vk:validate(), "Town", "warning", "loses its tier dials"))
+vk = LMEdit.new(kindFixture(), 9)
+vk:setMoonPhases("Newcomer", "bloodmoon")
+isTrue("all-junk moon phases is a never-active error",
+    findProblem(vk:validate(), "Newcomer", "error", "NEVER"))
+vk = LMEdit.new(kindFixture(), 9)
+vk:setMoonField("Newcomer", "risk", "very")
+isTrue("moon dials get the same spec checks as fields",
+    findProblem(vk:validate(), "Newcomer", "error", "is not a number"))
+
+-- lootReduce grammar in validate.
+vk = LMEdit.new(kindFixture(), 9)
+vk:setField("Calm", "lootReduce", "Base.Axe=25; cat:Ammo=50")
+eq("a clean lootReduce raises nothing",
+   findProblem(vk:validate(), "Calm", "error", "lootReduce"), nil)
+vk:setField("Calm", "lootReduce", "Base.Axe=25; garbage")
+isTrue("a bad rule among good ones warns",
+    findProblem(vk:validate(), "Calm", "warning", "garbage"))
+vk:setField("Calm", "lootReduce", "nothing here")
+isTrue("an all-junk rule list is an error",
+    findProblem(vk:validate(), "Calm", "error", "no rule that parses"))
+
+-- THE ERASURE PINS for kind/tier/moon: a clean draft is silent, an unrelated
+-- edit carries all three, and the fold keeps them.
+local ck = LMEdit.new(kindFixture(), 9)
+eq("a clean kinded draft has no changes", select(3, ck:changeSet()), 0)
+ck:setField("Town", "risk", 5)
+local kchanged = select(1, ck:changeSet())
+eq("an unrelated edit still carries the slot", kchanged.Town.tier, "Spicy")
+ck = LMEdit.new(kindFixture(), 9)
+ck:setMoonField("Spicy", "risk", 8)
+kchanged = select(1, ck:changeSet())
+eq("a moon edit is a change", kchanged.Spicy ~= nil, true)
+eq("...that carries kind", kchanged.Spicy.kind, "tier")
+eq("...and the whole overlay", kchanged.Spicy.moon.phases, "full")
+local kfolded = LMEdit.applyChangeSet(kindFixture(), kchanged, {})
+eq("applyChangeSet keeps the overlay", kfolded.Spicy.moon.fields.risk, 8)
+-- kind = "zone" normalises to absent so it cannot masquerade as an edit.
+ck = LMEdit.new(kindFixture(), 9)
+ck.work.Town.kind = "zone"
+eq("an explicit kind=zone is not a change", select(3, ck:changeSet()), 0)
+-- A slot change alone is a change.
+ck = LMEdit.new(kindFixture(), 9)
+ck:setTier("Town", "Newcomer")
+eq("a slot change alone is a change", select(1, ck:changeSet()).Town.tier, "Newcomer")
+
+-- Rename carries the slot (the third reference kind).
+local rk = LMEdit.new(kindFixture(), 9)
+local okRk, nRk = rk:rename("Spicy", "Blazing")
+isTrue("renaming a tier succeeds", okRk)
+eq("...and the zones standing on it repoint", rk.work.Town.tier, "Blazing")
+
+-- Ini round trip: kind, the slot, and the flat moon encoding.
+local kText = LMIni.serialize(kindFixture())
+isTrue("serialize writes kind",        kText:find("kind = tier", 1, true) ~= nil)
+isTrue("serialize writes the slot",    kText:find("tier = Spicy", 1, true) ~= nil)
+isTrue("serialize writes moon_phases", kText:find("moon_phases = full", 1, true) ~= nil)
+isTrue("serialize writes moon dials",  kText:find("moon_risk = 9", 1, true) ~= nil)
+local kBack = LMIni.parse(kText)
+eq("kind reads back",       kBack.Spicy.kind, "tier")
+eq("the slot reads back",   kBack.Town.tier, "Spicy")
+eq("moon reads back nested", kBack.Spicy.moon.fields.risk, 9)
+eq("...with its gate",      kBack.Spicy.moon.phases, "full")
+-- A pre-slot store's numeric tier survives as a STRING for the migration.
+local oldBack = LMIni.parse("[Z]\ntier = 5\n")
+eq("a legacy numeric tier stays a string", oldBack.Z.tier, "5")
+-- The full loop: nothing changes across serialize+parse.
+local kDiff = LMEdit.new(LMIni.parse(kText), 1)
+kDiff.base = LMEdit.new(kindFixture(), 1):snapshot()
+eq("a kinded round trip changes nothing", select(3, kDiff:changeSet()), 0)
+
+-- RESOLVER PARITY across the tier bag and its moon overlay: the same store
+-- through both resolvers under three skies, every key compared.
+for _, sky in ipairs({ 4, 0 }) do
+    moonSky = sky
+    Limes.apply(kindFixture(), 70 + sky)
+    local pd3 = LMEdit.new(kindFixture(), 70 + sky)
+    for _, zone in ipairs({ "Town", "Block", "_default", "Spicy", "Calm" }) do
+        for _, k in ipairs({ "risk", "rank", "futureA", "title" }) do
+            eq("kind parity, sky " .. sky .. ", " .. zone .. ".'" .. k .. "'",
+               tostring(pd3:effective(zone, k)),
+               tostring(Limes.fields.get(Limes.getZone(zone), k)))
+        end
+    end
+end
+-- Spot the actual values so the parity cannot be vacuously equal.
+moonSky = 4
+Limes.apply(kindFixture(), 80)
+eq("full moon: the overlay wins", Limes.getZone("Town").fields.risk, 9)
+moonSky = 0
+Limes.apply(kindFixture(), 81)
+eq("new moon: the base dial wins", Limes.getZone("Town").fields.risk, 4)
 
 print(string.format("LMEdit: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

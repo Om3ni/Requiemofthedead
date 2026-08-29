@@ -15,6 +15,12 @@ rem this even work", both are cheap, and the Kahlua one exists because NO other
 rem gate can see its subject - check-lua is syntax only and run-tests runs real
 rem Lua 5.1, where the missing globals exist. See check-kahlua.py's header.
 rem
+rem check-deadlocals sits third (2026-08-27) for the same reason and with the
+rem same shape of blind spot: it is the SAME luacheck binary as check-lua, but
+rem check-lua asks whether the tree parses and dead code parses. Eighteen unused
+rem or write-only locals had accumulated across nine mods with every gate green.
+rem It ratchets rather than demanding zero - see check-deadlocals.py's header.
+rem
 rem COST ORDER, fast first, so a syntax error costs you a second rather than the
 rem two minutes run-tests takes to spawn its hundred-odd fixtures. Every gate
 rem still runs even after one fails - you want the whole picture in one pass,
@@ -37,6 +43,9 @@ set FAILED=
 
 call :run "lua      " "%G%\check-lua.bat"
 call :run "kahlua   " "%G%\check-kahlua.bat"
+call :run "deadlocal" "%G%\check-deadlocals.bat"
+call :run "versions " "%G%\check-versions.bat"
+call :run "translate" "%G%\check-translations.bat"
 call :run "pcall    " "%G%\check-pcall.bat"
 call :run "helpers  " "%G%\check-helpers.bat"
 call :run "network  " "%G%\check-network.bat"
@@ -48,7 +57,7 @@ call "%G%\check-citations.bat"
 
 echo.
 if !FAIL!==0 (
-    echo GATE PASS - all six gates clean.
+    echo GATE PASS - all nine gates clean.
     echo Not a runtime test. Boot Mosaic for anything on an event hook or a per-tick path.
 ) else (
     echo GATE FAIL -!FAILED!

@@ -128,7 +128,7 @@ local KITS = {
       claim = { cooldownHours = 2160 }, grants = { { kind = "trait", id = "M:Delver" } } },
 }
 
-local sorted = DMKitsTab.sorted(KITS)
+local sorted = DMKitDefs.displayOrder(KITS)
 check(#sorted == 3, "the catalogue lost a kit")
 check(sorted[1].label == "Anomaly Loot" and sorted[2].label == "Anomaly Loot",
     "the list was not sorted by the text it draws")
@@ -151,7 +151,7 @@ local reference
 for _, perm in ipairs(PERMS) do
     local input = {}
     for _, idx in ipairs(perm) do input[#input + 1] = KITS[idx] end
-    local got = DMKitsTab.sorted(input)
+    local got = DMKitDefs.displayOrder(input)
     local ids = {}
     for _, k in ipairs(got) do ids[#ids + 1] = tostring(k.id) end
     ids = table.concat(ids, ",")
@@ -162,7 +162,7 @@ for _, perm in ipairs(PERMS) do
         .. "rearrange itself under a selection aimed at one of its rows: got "
         .. ids .. ", expected " .. reference)
 end
-check(#DMKitsTab.sorted(nil) == 0, "sorted faulted on nothing")
+check(#DMKitDefs.displayOrder(nil) == 0, "sorted faulted on nothing")
 
 -- ---- the row tag ---------------------------------------------------------
 -- "Which of these can be taken twice" is the question behind every farm, so it

@@ -83,10 +83,35 @@ local function onClientCommand(module, command, player, args)
         return
     end
 
-    if handler.capability and not DFCore.roleHas(player, handler.capability) then
-        DFCore.audit(command, player, "(refused: missing capability)")
-        reply(player, false, command, "Missing capability for " .. tostring(command))
-        return
+    -- THE GATE, in the dispatcher, always - so every refusal lands in the
+    -- audit log AS a refusal. Three declared shapes (extended 2026-08-25;
+    -- before that only the string existed, and five handlers gated themselves
+    -- in their own bodies, which meant their refusals were either audited as
+    -- ordinary ACCEPTED commands or self-audited to compensate):
+    --   a capability NAME    - DFCore.roleHas, as always
+    --   the string "any"     - any capability at all (staff-only reads:
+    --                          varsList, varHolders and friends)
+    --   a FUNCTION(player, args) -> ok[, reason] - payload-dependent gates
+    --                          (layoutSet: __server needs server rights, a
+    --                          sandbox page needs SandboxOptions)
+    if handler.capability then
+        local allowed, why
+        if handler.capability == "any" then
+            allowed = DFCore.hasAnyCapability(player)
+            why = "no capability at all"
+        elseif type(handler.capability) == "function" then
+            allowed, why = handler.capability(player, args or {})
+            why = why or "payload gate refused"
+        else
+            allowed = DFCore.roleHas(player, handler.capability)
+            why = "missing capability"
+        end
+        if not allowed then
+            DFCore.audit(command, player, "(refused: " .. tostring(why) .. ")")
+            reply(player, false, command, "Refused: " .. tostring(why)
+                .. " for " .. tostring(command))
+            return
+        end
     end
 
     DFCore.audit(command, player)

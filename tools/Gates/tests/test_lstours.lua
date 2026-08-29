@@ -57,6 +57,11 @@ local function release() print = realPrint end
 require = function() return true end
 DFFile, LSTours = nil, nil
 capture()
+-- The REAL RDFile (write mechanism since 2026-08-25) and the REAL
+-- RDLuaLiteral (read mechanism since 2026-08-26, when 42.20.4 removed
+-- loadstring and the parser was promoted from LMImport).
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDLuaLiteral.lua")
 local okf = pcall(dofile, BASE .. "shared/DFFile.lua")
 local ok, err = pcall(dofile, BASE .. "client/Longstrider/LSTours.lua")
 release()
@@ -75,8 +80,9 @@ reload(nil)
 check(#LSTours.list == 0, "an absent tour file leaves an empty list")
 
 -- Integrity for this file comes from the CONTENT, not the read layer: the tour
--- file carries a whole Lua chunk and loadstring rejects a partial one. That is
--- the documented reason LSTours survives an undetectable truncation.
+-- file carries a whole Lua literal and RDLuaLiteral.parse rejects a partial
+-- one. That is the documented reason LSTours survives an undetectable
+-- truncation.
 readerMode = "truncate"
 reload("return {\n  tours={\n    {id=1, name=\"A\", color={1,1,1}, region={0,0,4,4}},\n  },\n}")
 check(#LSTours.list == 0, "a truncated file is rejected outright, not half-parsed")
@@ -117,18 +123,29 @@ check(#logged == 1 and logged[1]:find("skipped 3 malformed tour(s)", 1, true)
       and logged[1]:find("kept 2", 1, true),
       "one bounded diagnostic names how many were dropped and how many kept")
 
--- ---- untrusted chunk ----------------------------------------------------
+-- ---- untrusted text -----------------------------------------------------
+-- Since 42.20.4 / the RDLuaLiteral promotion, the file is never EXECUTED at
+-- all: code in it is not a run failure to contain, it is simply outside the
+-- data grammar. Every rejection reaches the operator as a parse report with a
+-- line number.
 reload("return error('hand edited badly')")
-check(#LSTours.list == 0, "a chunk that throws yields no tours")
-check(#logged == 1 and logged[1]:find("failed to run", 1, true),
-      "the operator is told their file failed to run, instead of it being swallowed")
-
-reload("return ][ not lua")   -- has the return sentinel, but will not compile
+check(#LSTours.list == 0, "code in the file yields no tours - it is not data")
 check(#logged == 1 and logged[1]:find("does not parse", 1, true),
-      "a syntax error is reported as a parse failure, not a run failure")
+      "code is rejected as a parse failure; nothing was executed")
 
-reload("local x = 1")   -- valid Lua, but no return
-check(#LSTours.list == 0 and #logged == 0, "a file with no return is quietly ignored")
+reload("return ][ not lua")   -- has the return sentinel, but not the grammar
+check(#logged == 1 and logged[1]:find("does not parse", 1, true),
+      "a syntax error is reported as a parse failure")
+check(logged[1] and logged[1]:find("line ", 1, true) ~= nil,
+      "the parse report carries a line number for the operator")
+
+reload("local x = 1")   -- valid Lua, but not a literal
+check(#LSTours.list == 0 and #logged == 1
+      and logged[1]:find("does not parse", 1, true),
+      "a non-literal file is reported, not silently ignored")
+
+reload("   \n\n  ")   -- blank is a non-event, not corruption
+check(#LSTours.list == 0 and #logged == 0, "a blank file stays quiet")
 
 -- ---- save ---------------------------------------------------------------
 reload([[return {
@@ -138,6 +155,20 @@ written, writerMode = {}, "ok"
 check(LSTours.save() == true, "save reports success")
 local out = table.concat(written)
 check(out:find("Alpha", 1, true) and out:find("tours=", 1, true), "the serialized set reaches the writer")
+
+-- ---- the round trip -----------------------------------------------------
+-- serialize() and RDLuaLiteral.parse are two halves of one format contract;
+-- this is the pass that holds them together, %q-escaped name included.
+LSTours.rename(1, 'Alpha "quoted" \\ renamed')
+LSTours.setCellSize(75)
+written = {}
+LSTours.save()
+local roundTrip = table.concat(written)
+reload(roundTrip)
+check(#logged == 0, "the round trip parses without complaint")
+check(#LSTours.list == 1 and LSTours.list[1].name == 'Alpha "quoted" \\ renamed',
+      "an escaped name survives serialize -> parse intact")
+check(LSTours.cellSize == 75, "scalar preferences survive the round trip")
 
 writerMode = "nil"
 check(LSTours.save() == false, "a denied path is the engine's nil, reported as a failed save")

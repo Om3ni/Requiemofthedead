@@ -146,6 +146,13 @@ eq("inherited weight",          zoned.gluttonWeight, 40)
 eq("unset reads through cfg",   zoned.gluttonSpacing, 30)    -- __index -> CFG
 isTrue("cfg itself untouched",  CFG.screamerWeight == 1, "overlay must not write through")
 
+-- The S8 sprinter dial rides the same overlay under its cfg-side name. The
+-- base cfg deliberately has no such key, so an unset zone must read nil -
+-- Dirge's `nil -> 0` is the whole off switch.
+eq("sprinter dial registered 0-100", Limes.fields.spec("dirgeSprinterShare").max, 100)
+eq("sprinter dial reaches the client", Limes.fields.spec("dirgeSprinterShare").side, "both")
+eq("unset sprinter share reads nil", zoned.sprinterShare, nil)
+
 -- A zone that sets none of Dirge's fields costs no allocation: the caller gets
 -- its own table back, which is the fast path the spawn loop depends on.
 local plain = RQPhunZones.getEffectiveRules(250, 250, CFG)
@@ -160,8 +167,20 @@ local fakeZombie = { getX = function() return 50 end, getY = function() return 5
 local viaZombie = RQPhunZones.getEffectiveRules(fakeZombie, nil, CFG)
 eq("zombie form resolves the same", viaZombie.spawnChance, 15)
 
+-- A zone that sets ONLY the sprinter dial still earns an overlay (the any-set
+-- fast scan covers all three vocabularies, not just the original two), and
+-- the string persists-as-"60" shape crosses as a number like every dial.
+Limes.apply({
+    Risky = { rects = { { 400, 400, 449, 449 } },
+              fields = { dirgeSprinterShare = "60" } },
+}, 3)
+local risky = RQPhunZones.getEffectiveRules(420, 420, CFG)
+isTrue("sprinter-only zone earns an overlay", risky ~= CFG,
+    "the any-set scan must see SHARE_FIELDS")
+eq("sprinter share crosses as a number", risky.sprinterShare, 60)
+
 -- Deleting every zone hands authority back rather than stranding it.
-Limes.apply({}, 3)
+Limes.apply({}, 4)
 delegated = 0
 RQPhunZones.getEffectiveRules(50, 50, CFG)
 eq("emptied store delegates again", delegated, 1)
@@ -184,7 +203,7 @@ Limes.apply({
     Killbox = { rects = { { 0, 0, 99, 99 } }, fields = { weaponDebuffMult = "0.6" } },
     Neutral = { rects = { { 200, 200, 299, 299 } }, fields = { weaponDebuffMult = 1 } },
     Bare    = { rects = { { 400, 400, 499, 499 } }, fields = { title = "Bare" } },
-}, 4)
+}, 5)
 
 local function playerAt(x, y)
     return { getX = function() return x end, getY = function() return y end }

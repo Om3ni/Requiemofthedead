@@ -18,6 +18,8 @@
 -- local time, so a client line and a server line from different machines
 -- (and Discord timestamps, converted once) compare directly.
 
+require "RDFile"
+
 RQReflectLog = RQReflectLog or {}
 
 local FILE = "Dirge_Reflect_" .. (isServer() and "SV" or "CL") .. ".txt"
@@ -35,19 +37,18 @@ end
 
 function RQReflectLog.writeAll(lines)
     if not lines or #lines == 0 then return end
-    -- getFileWriter logs open failures and returns nil. LuaFileWriter delegates
-    -- write/close to PrintWriter, which records I/O failure internally rather
-    -- than throwing it back through Lua; an exception guard here could only
-    -- hide a programming error. LuaManager.java:5523-5556, 9850-9868.
-    local writer = getFileWriter(FILE, true, true)
-    if not writer then return end
-    if not sessionMarked then
-        sessionMarked = true
-        writer:write("=== Dirge reflect session start " .. stamp() .. "===\n")
-    end
+    -- Mechanism in RDFile (2026-08-25): one open per batch, which is what
+    -- appendMany is for. The session marker rides the first batch so it can
+    -- never appear without a line after it.
     local ts = stamp()
-    for i = 1, #lines do writer:write(ts .. lines[i] .. "\n") end
-    writer:close()
+    local out = {}
+    if not sessionMarked then
+        out[#out + 1] = "=== Dirge reflect session start " .. stamp() .. "==="
+    end
+    for i = 1, #lines do out[#out + 1] = ts .. lines[i] end
+    -- Marked only on a landed write, as before - a refused open must leave
+    -- the marker for the batch that actually reaches the file.
+    if RDFile.appendMany(FILE, out) then sessionMarked = true end
 end
 
 function RQReflectLog.write(line)

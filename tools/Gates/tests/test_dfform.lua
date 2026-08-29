@@ -312,6 +312,74 @@ ok("wheel off the controls scrolls", f.scroll.offset > before, "scroll " .. f.sc
 eq("wheel off the controls changes no value", values.int1, 100)
 
 -- ---------------------------------------------------------------------------
+-- 5b. TYPING INTO THE NUMBER BOX.
+--
+-- WHY: the box was a readout, so the stepper was the only way to reach a value.
+-- The kit cooldown dial runs to 36525 days at step 1 - thirty-six thousand
+-- clicks, or a very long wheel - and the owner asked for a number to be typed
+-- (2026-08-24). What is at risk is not that the popout opens; it is that a
+-- typed value bypasses the clamp the stepper enforced, so a schema's min/max
+-- would hold for one input route and not the other.
+-- ---------------------------------------------------------------------------
+
+f.scroll.offset = 0
+f:draw(EL)
+
+local nrow = rectFor(f, "int1")
+values.int1 = 250
+
+-- The steppers keep their halves of the row. If the box swallowed them, the
+-- coarse control this replaced would be gone.
+entryShown = nil
+f:click(nrow.minusX + 2, nrow.y + 2)
+eq("minus still steps", values.int1, 245)
+eq("and opens no popout", entryShown, nil)
+f:click(nrow.plusX + 2, nrow.y + 2)
+eq("plus still steps", values.int1, 250)
+eq("and opens no popout either", entryShown, nil)
+
+f:click(nrow.boxX + 2, nrow.y + 2)
+ok("clicking the number opens the popout", entryShown ~= nil)
+eq("seeded with the current value", entryShown.value, "250")
+eq("titled with the label", entryShown.title, "Int 1")
+eq("the rule states the range", entryShown.rule, "Whole number, 0 to 1000.")
+eq("the cap fits the longest bound plus a sign", entryShown.maxLen, 5)
+eq("A NUMBER FIELD DECLARES NO REGISTRY - the type-ahead band belongs to rows "
+   .. "whose values are looked up, not counted", entryShown.suggest, nil)
+
+local v = entryShown.validate
+eq("an in-range whole number passes", v("640"), true)
+eq("the bounds themselves pass", v("0") and v("1000"), true)
+ok("a decimal is refused", not v("2.5"))
+ok("text is refused", not v("lots"))
+ok("empty is refused", not v(""))
+ok("over the maximum is refused", not v("1001"))
+ok("under the minimum is refused", not v("-1"))
+
+entryShown.onCommit("640")
+eq("commit writes the typed number", values.int1, 640)
+
+-- THE CLAMP RUNS ON THE WRITE, not only in validate(). Two different callers
+-- reach these, and only this one is on the path that stores.
+entryShown.onCommit("999999")
+eq("a value past the maximum is clamped, not stored", values.int1, 1000)
+entryShown.onCommit("nonsense")
+eq("an unparseable commit falls back to the minimum", values.int1, 0)
+
+-- Read-only: the popout would take a value it has nowhere to put.
+local roN = DFForm.new{
+    schema = long, title = "RO ints",
+    get = function(k) return values[k] end,
+    enabled = function() return true end,
+}
+roN:layout(RX, RY, RW, 400)
+roN:draw(EL)
+entryShown = nil
+local rorow = rectFor(roN, "int1")
+roN:click(rorow.boxX + 2, rorow.y + 2)
+eq("a form with no set() opens no number popout", entryShown, nil)
+
+-- ---------------------------------------------------------------------------
 -- 6. Thumb drag.
 -- ---------------------------------------------------------------------------
 

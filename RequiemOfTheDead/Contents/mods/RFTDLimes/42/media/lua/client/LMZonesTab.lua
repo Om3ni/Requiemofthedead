@@ -1,11 +1,17 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- LMZonesTab - the Dragonfly "Zones" tab: two views behind one strip.
+-- LMZonesTab - the Dragonfly "Zones" tab: the redesign's strip.
 --
---   Zone Selector   the map, the zone tree, and the policies that are true for
---                   a zone absent any other mod (LMEditView).
---   Details         per-mod overrides for the selected zone, driven entirely by
---                   the field registry, so a mod that registers gets a control
---                   with no edit here (LMDetailsView).
+--   Zone Selector    the map and the tree of PLACES (LMEditView).
+--   Difficulty Tiers the ladder and each rung's dials + moon (LMTiersView, S5).
+--   Profiles         named rulesets and their loot rules (LMProfilesView, S6).
+--
+-- Details is NOT a strip view since S7: it floats (LMDetailsWindow, hosting
+-- LMDetailsView), opened from a zone's right-click menu, so the dials and
+-- the map share the screen.
+--
+-- ALL FOUR EDIT ONE DRAFT, owned by LMEditView - two drafts would mean panels
+-- editing zones the map is not showing, and two Saves that each lose the
+-- other's work. Each panel carries its own Save/Revert calling into it.
 --
 -- IMPORT IS NOT A VIEW. It is a once-per-migration operation and it had equal
 -- billing with the editor; it is a button on the Zone Selector's toolbar now,
@@ -60,11 +66,17 @@ local function build(spec, panel, x, y, w, h)
     views = DFViews.new({
         views = {
             { id = "zones", label = "Zone Selector", w = 108, view = LMEditView,
-              tip = "The map, the zone tree, and each zone's own policies. Draw a zone"
-                 .. " inside another and it becomes that zone's child." },
-            { id = "details", label = "Details", w = 72, view = LMDetailsView,
-              tip = "Per-mod overrides for the selected zone. Every mod that registers"
-                 .. " fields with Limes appears here." },
+              tip = "The map and the tree of places. Right-click a zone for its"
+                 .. " actions; drag one onto another to reparent it." },
+            { id = "tiers", label = "Difficulty Tiers", w = 112, view = LMTiersView,
+              tip = "The ladder: named rungs whose dials every zone standing on"
+                 .. " them takes, with a moon overlay per rung." },
+            { id = "profiles", label = "Profiles", w = 76, view = LMProfilesView,
+              tip = "Named rulesets - no spawns, no safehouse, reduced loot -"
+                 .. " stamped onto zones from the Zone Selector." },
+            -- Details left the strip at S7: it is a floating window now
+            -- (LMDetailsWindow), opened from a zone's right-click menu, so
+            -- the dials and the map can be on screen at once.
         },
         relayout = relayout,
     })
@@ -83,6 +95,13 @@ local function build(spec, panel, x, y, w, h)
     -- can only work from what layout last recorded.
     layout(panel, x, y, w, h)
     views:set("zones")      -- also performs the first visibility pass
+end
+
+-- Switch the strip from outside. A nil `views` (Dragonfly absent, tab never
+-- built) is a silent no-op by design: callers are gestures that only exist
+-- inside the built tab.
+function LMZonesTab.show(id)
+    if views then views:set(id) end
 end
 
 Events.OnGameStart.Add(function()
@@ -107,7 +126,8 @@ Events.OnGameStart.Add(function()
             resize = function(_, panel, w, h) layout(panel, 0, 0, w, h) end,
         }
     end)
-    if ok then print("[Limes] Zones tab registered into Dragonfly (Zone Selector | Details)")
+    if ok then print("[Limes] Zones tab registered into Dragonfly"
+        .. " (Zone Selector | Difficulty Tiers | Profiles | Details)")
     else print("[Limes] Zones tab registration failed: " .. tostring(err)) end
 end)
 

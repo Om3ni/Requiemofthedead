@@ -1,18 +1,30 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- =============================================
--- RQZombieCache.lua - onlineID -> IsoZombie, for this client.
+-- RQZombieCache.lua - onlineID -> IsoZombie, for this machine.
+--
+-- SHARED TIER SINCE 2026-08-25: both sides needed the same map and the file
+-- never touched a client-only surface. The client half is the original story
+-- (below). The server half exists because svFindZombieByOnlineID was the same
+-- mistake at admin-command cadence - a 31x31 box sweep from whatever
+-- coordinates arrived, so a zombie that wandered past the box was a MISS and
+-- an id was only as good as the position sent with it. The engine keeps
+-- exactly this map server-side (ServerMap.instance.zombieMap,
+-- ZombieID.java:32) but it is an instance field on an unexposed class, so
+-- Lua cannot reach it and we maintain our own. Every event and global this
+-- file uses fires on both sides; getCell() on the server is the one
+-- world-wide cell, so the fallback pass covers every loaded zombie.
 --
 -- WHAT THIS REPLACES, and why it was worth replacing.
 --
--- RQCore.findZombieByID resolves a zombie by walking a 31x31 block of grid
--- squares - 961 getGridSquare calls, each then iterating that square's moving
--- objects - centred on a CACHED position. RQHighlight calls it once per
--- special per render tick. At 60fps with three specials that is roughly
+-- RQCore.findZombieByID USED TO resolve a zombie by walking a 31x31 block of
+-- grid squares - 961 getGridSquare calls, each then iterating that square's
+-- moving objects - centred on a CACHED position. RQHighlight calls it once per
+-- special per render tick. At 60fps with three specials that was roughly
 -- 173,000 grid-square lookups a second.
 --
--- And it does not even work. The cached position only refreshes on
--- RQReconcile's periodic baseline pull, so a moving special outruns its own
--- cache and falls outside the +/-15 window. RQReflect logged 718 of those
+-- And it did not even work. The cached position only refreshed on
+-- RQReconcile's periodic baseline pull, so a moving special outran its own
+-- cache and fell outside the +/-15 window. RQReflect logged 718 of those
 -- (DRIFT) in one archive - Glutton 271, Scavenger 149, Screamer 102,
 -- Juggernaut 95, EMP 89. Every one is a special that silently lost its
 -- outline. We were paying six figures a second to fail.
@@ -130,8 +142,9 @@ end
 -- The lookup. Cache first; on a miss, at most one rate-limited cell-list pass.
 --
 -- A miss is not necessarily an error - a special outside this client's loaded
--- chunks legitimately has no object here, which is exactly what RQReflect
--- reports as TRACKED-NOT-IN-WORLD. Callers treat nil as "not here right now".
+-- chunks legitimately has no object here. RQReflect independently checks the
+-- complete cell list before classifying that as ABSENT-FROM-CELL; callers here
+-- simply treat nil as "not here right now".
 function RQZombieCache.get(onlineID)
     if onlineID == nil or onlineID == NO_ID then return nil end
     local zombie = cache.get(onlineID)

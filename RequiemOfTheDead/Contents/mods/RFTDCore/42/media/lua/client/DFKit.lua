@@ -618,6 +618,26 @@ function DFKit.drawEmpty(el, x, y, w, h, text)
 end
 
 -- Severity chip: the one place a verdict earns colour.
+-- One line of text from the operator, then a callback - the family's "name
+-- it" modal. Promoted 2026-08-25 from byte-identical copies in DFVarEditor
+-- (Dragonfly) and DMKitsTab (DungeonMaster); a cross-mod copy is the exact
+-- shape CLAUDE.md sect. 5 promotes on sight. Cancel and an empty entry both
+-- simply do nothing - every existing caller treated "no text" as "no action",
+-- so that is the contract. ISTextBox is vanilla client Lua
+-- (client/ISUI/ISTextBox.lua); the callback receives (target, button) and the
+-- entry survives on the modal, which is why `modal` is captured, not passed.
+function DFKit.askText(prompt, then_)
+    local modal
+    modal = ISTextBox:new(getCore():getScreenWidth() / 2 - 150,
+        getCore():getScreenHeight() / 2 - 60, 300, 120, prompt, "", nil,
+        function(_, btn)
+            if btn.internal ~= "OK" or not (modal and modal.entry) then return end
+            local text = modal.entry:getText()
+            if text and text ~= "" then then_(text) end
+        end, getPlayer() and getPlayer():getPlayerNum() or 0)
+    modal:initialise(); modal:addToUIManager()
+end
+
 function DFKit.drawChip(el, x, y, text, severity)
     local c = DFKit.col[severity or "textDim"] or DFKit.col.textDim
     local f = DFKit.font.small

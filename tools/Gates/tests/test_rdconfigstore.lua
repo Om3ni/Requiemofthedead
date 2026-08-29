@@ -118,7 +118,13 @@ Events = { EveryTenMinutes = { Add = function(fn) sweep = fn end } }
 
 -- The clock.
 local clock = 1000
-RDShared = { nowMs = function() return clock end, EXT_DOC = ".json.txt" }
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+require = function() return true end
+dofile(CORE .. "/shared/RDShared.lua")
+dofile(CORE .. "/shared/RDFile.lua")
+RDShared.nowMs = function() return clock end
 
 -- Real RDJson.
 require = function() return true end

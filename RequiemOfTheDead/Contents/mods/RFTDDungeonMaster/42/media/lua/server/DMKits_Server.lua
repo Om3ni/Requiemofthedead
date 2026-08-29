@@ -35,13 +35,12 @@
 -- exactly that. Sent to a player it is a readout of the requirement list of
 -- every kit they have not earned - so `kitMine` sends only what they CAN claim,
 -- and `kitClaim` answers a failed entitlement with a flat refusal. The detailed
--- reason goes to the forensic stream, where staff can read it.
+-- reason goes to DMAudit's forensic stream, where staff can read it.
 
 if not isServer() then return end
 
 require "RDShared"
 require "RDNet"
-require "RDLog"
 require "RDVars"
 require "DMKitDefs"
 require "DMKits"
@@ -57,9 +56,20 @@ local TOKEN = "RFTDDungeonMaster"
 -- Same value and same reasoning as DFVars_Server.
 local USER_MAX = 64
 
--- Core's. Server-only file, so no presence guard is needed here - RDLog is
--- required above and the channel carries its own anyway.
-local forensic = RDLog.channel("kits", TOKEN)
+-- ONE GUARD, NOT SEVEN. DMAudit is REMOVABLE - delete server/Kits/ and kit
+-- auditing is off with no other edit, the contract its header states and the
+-- one Memoir's audit established. Every call site therefore has to tolerate its
+-- absence, and putting that in a single place stops the absence being
+-- re-decided (and eventually forgotten) at each one.
+--
+-- `subject` is WHO THE RECORD IS ABOUT, not who caused it: the claimant on a
+-- staff grant, the cleared player on a claim reset. The actor goes in kv.by.
+-- Pass the player OBJECT whenever one is in hand - a username string silently
+-- costs the record its life id and can mint a SteamID-less season directory
+-- (DMAudit's header; learned live in Reclaimation).
+local function audit(action, subject, kv)
+    if DMAudit then DMAudit.log(action, subject, kv) end
+end
 
 local function reply(player, command, args)
     RDNet.reply(player, TOKEN, command, args or {})
@@ -178,8 +188,12 @@ Events.OnServerStarted.Add(function()
             -- call on a boolean.
             local done, had = DMKits.forgetClaim(who, id)
             if not done then return refuse(player, "kitForgetOne", tostring(had)) end
-            forensic("DM.KIT_CLAIM_CLEARED", player,
-                     { id = id, user = who, had = had and true or false })
+            -- Subject is `who`, the player whose claim was cleared. It is a
+            -- string because they need not be online for an admin to fix a
+            -- lost delivery - which is the whole reason this command exists.
+            audit("KIT_CLAIM_CLEARED", who,
+                  { kit = id, by = RDShared.username(player),
+                    had = had and true or false })
             -- "Nothing to clear" is reported as what it is. Calling it a
             -- success hides a mistyped name behind a reassuring message.
             if not had then
@@ -227,10 +241,10 @@ Events.OnServerStarted.Add(function()
         end
         local def, why = DMKits.define(raw, RDShared.username(player))
         if not def then
-            forensic("DM.KIT_DEFINE_REFUSED", player, { reason = why })
+            audit("KIT_DEFINE_REFUSED", player, { reason = why })
             return refuse(player, "kitDefine", why)
         end
-        forensic("DM.KIT_DEFINED", player, { id = def.id, kind = def.kind,
+        audit("KIT_DEFINED", player, { kit = def.id, kind = def.kind,
             rev = def.rev })
         ok(player, "kitDefine", "Saved '" .. def.label .. "'.", { id = def.id })
         RDNet.sendStaff(TOKEN, "KitsStale", {})
@@ -242,7 +256,7 @@ Events.OnServerStarted.Add(function()
         if not id then return refuse(player, "kitDelete", why) end
         local done, reason = DMKits.undefine(id)
         if not done then return refuse(player, "kitDelete", reason) end
-        forensic("DM.KIT_DELETED", player, { id = id })
+        audit("KIT_DELETED", player, { kit = id })
         -- Says what it did NOT do, because "deleting a kit clears its claims"
         -- is the reasonable assumption and it is wrong - claims survive so a
         -- one-time reward cannot be re-opened by deleting and retyping it.
@@ -261,7 +275,10 @@ Events.OnServerStarted.Add(function()
         if not id then return refuse(player, "kitForget", why) end
         local cleared, reason = DMKits.forgetClaims(id)
         if not cleared then return refuse(player, "kitForget", reason) end
-        forensic("DM.KIT_REOPENED", player, { id = id, cleared = cleared })
+        -- World-scope in the chronicle: re-opening clears every claim on the
+        -- kit at once, so there is no single player it is about.
+        audit("KIT_REOPENED", player, { kit = id, cleared = cleared,
+            by = RDShared.username(player) })
         ok(player, "kitForget",
             "Re-opened '" .. id .. "' for " .. cleared .. " player(s).",
             { id = id, cleared = cleared })
@@ -385,8 +402,8 @@ Events.OnServerStarted.Add(function()
             -- catalogue leaking one guess at a time.
             local allowed, detail, cooling = DMKits.entitlement(user, id)
             if not def or not allowed then
-                forensic("DM.KIT_CLAIM_REFUSED", player,
-                    { id = id, reason = detail or "no such kit" })
+                audit("KIT_CLAIM_REFUSED", player,
+                    { kit = id, reason = detail or "no such kit" })
                 -- A COOLDOWN IS THE ONE REFUSAL WORTH EXPLAINING. The flat
                 -- answer above exists so a player cannot map the catalogue by
                 -- guessing ids - but a cooling kit is already ON their list,
@@ -441,7 +458,7 @@ function DMKits_Server.deliver(target, def, by, tell)
 
     local report, why = DMGrant.apply(target, def.grants, by)
     if not report then
-        forensic("DM.KIT_GRANT_FAILED", tell, { id = def.id, user = user,
+        audit("KIT_GRANT_FAILED", target, { kit = def.id, by = by,
             reason = why })
         return refuse(tell, command, why)
     end
@@ -469,10 +486,14 @@ function DMKits_Server.deliver(target, def, by, tell)
     -- still leave the claim on the books, and it does.
     DMKits.attachDelivery(user, def.id, RDShared.textSafe(DMGrant.summary(report)))
 
-    forensic("DM.KIT_CLAIMED", tell, {
-        id      = def.id,
+    -- SUBJECT IS `target`, NOT `tell`. They are the same person on a self-claim
+    -- and different people on a staff grant, where `tell` is the admin waiting
+    -- for the confirmation - so filing on `tell` would have written half of
+    -- every grant into the wrong player's permanent record. `target` is also the
+    -- one that is an OBJECT, which is what carries the life id.
+    audit("KIT_CLAIMED", target, {
+        kit     = def.id,
         kind    = def.kind,
-        user    = user,
         by      = by,
         landed  = #report.landed,
         failed  = #report.failed,

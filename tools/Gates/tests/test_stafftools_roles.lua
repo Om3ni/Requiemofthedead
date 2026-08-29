@@ -21,7 +21,10 @@ end
 
 isServer = function() return true end
 require = function() end
-RDShared = { registerMod = function() end }
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
 
 local userRole = { getName = function() return "user" end }
 local adminRole = { getName = function() return "admin" end }

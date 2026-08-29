@@ -74,6 +74,28 @@ end
 -- ========================
 -- Identity ownership gate (steamID/username) - kept; matters more now (read rebuilds you)
 -- ========================
+-- WHAT THE STEAMID HALF CAN AND CANNOT DO - read before "tidying" it.
+--
+-- getSteamID() is a Java long (IsoPlayer.java:5954) flattened through a Lua
+-- double, and a 17-digit SteamID64 (~2^56) sits past double precision (2^53),
+-- so values within the same 16-wide bucket compare EQUAL here. That is a
+-- one-sided loss, not a decorative check:
+--
+--   * It can never refuse the true owner. Both sides of the compare - the
+--     record written at :139 and the read below - are the SAME long through
+--     the SAME deterministic conversion, so a legitimate restore always
+--     passes this line.
+--   * It almost always refuses a different account presenting under a reused
+--     username - the one case the username line above cannot see. Failing
+--     open needs the two accounts' ids inside one 16-wide bucket, i.e.
+--     near-simultaneous account creation, and an attacker cannot choose
+--     their own steamID to engineer that.
+--
+-- It cannot be made exact: no server-side surface yields the id as a string
+-- (getSteamIDFromUsername is GameClient.client-gated, LuaManager.java:7619-
+-- 7625; RDIdentity's header records the same dead end). So this is honest
+-- defence-in-depth behind the username gate, at its real strength - never
+-- treat it as a ban key or an identity proof on its own.
 local function ownerMatches(player, snap)
     if not snap.owner then return true end
     local uname = player:getUsername()

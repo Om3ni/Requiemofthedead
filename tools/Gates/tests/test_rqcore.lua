@@ -43,7 +43,6 @@ RQCastBar = { cancel = function() end, create = function() return 1 end }
 local clearedRings = {}
 RQRing = {
     clear = function(ringId) clearedRings[#clearedRings + 1] = ringId end,
-    stopFlash = function() end,
     show = function() end,
 }
 RQHighlight = { remove = function() end }

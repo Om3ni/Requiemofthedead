@@ -16,28 +16,18 @@
 
 require "DFFile"
 
+require "RDFile"
+
 DFDeckLayout = DFDeckLayout or {}
 
 -- ---------------------------------------------------------------------------
--- Save. No guard.
---
--- getFileWriter (LuaManager.java:5523-5555) returns nil for a relative path or
--- an extension outside ALLOWED_FILE_EXTENSIONS, and nil again when the stream
--- open fails; both of its IOException sites are caught and logged inside the
--- engine. nil IS the failure signal here, not an exception.
---
--- LuaFileWriter.write/close (LuaManager.java:9850-9868) declare
--- "throws IOException" but delegate straight to PrintWriter, which records I/O
--- errors on an internal flag rather than raising them through Lua. The old
--- guard could only have hidden a programming error.
+-- Save. Mechanism in RDFile (2026-08-25); its header carries the engine
+-- facts the block here used to derive.
 --
 -- Returns written-row count, or nil when the file could not be opened.
 -- ---------------------------------------------------------------------------
 function DFDeckLayout.save(filename, sizes)
-    local f = getFileWriter(filename, true, false)
-    if not f then return nil end
-
-    local written = 0
+    local lines = {}
     for k, r in pairs(sizes or {}) do
         -- Validated before formatting, not guarded after: math.floor on a nil
         -- or non-numeric field throws, and under the old blanket that single
@@ -46,12 +36,12 @@ function DFDeckLayout.save(filename, sizes)
         local w = tonumber(r and r.w)
         local h = tonumber(r and r.h)
         if w and h then
-            f:write(string.format("%s w=%d h=%d\n", tostring(k), math.floor(w), math.floor(h)))
-            written = written + 1
+            lines[#lines + 1] = string.format("%s w=%d h=%d", tostring(k),
+                math.floor(w), math.floor(h))
         end
     end
-    f:close()
-    return written
+    if not RDFile.rewriteLines(filename, lines) then return nil end
+    return #lines
 end
 
 -- ---------------------------------------------------------------------------

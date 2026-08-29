@@ -54,9 +54,9 @@
 -- already holds, and the resulting death replicates through the engine's own
 -- zombie sync. Limes' wire contract is untouched.
 --
--- DELETE THIS FILE and `zeds` goes back to being stored and inert, with no other
--- edit anywhere - the DFPatch removable-file idiom that LMDirge and LMShadow
--- already follow.
+-- DELETE THIS FILE and `zeds` goes back to being stored and inert, with no
+-- other edit anywhere - the DFPatch removable-file idiom LMDirge already
+-- follows.
 
 if not isServer() then return end
 
@@ -411,7 +411,10 @@ function LMZeds.report()
             local row = {
                 name       = name,
                 zeds       = (z.fields and z.fields.zeds) or "",
-                tier       = (z.fields and z.fields.tier) or 0,
+                -- The resolved tier SLOT - a ladder name since the 2026-08-26
+                -- record-kind model. "-" is a zone with no tier anywhere in
+                -- its chain, which is worth seeing in a census.
+                tier       = z.tier or "-",
                 removed    = removedByZone[name] or 0,
                 template   = isTemplate,
                 rects      = z.rects,
@@ -483,7 +486,7 @@ function LMZeds.census(verbose)
     local rep = LMZeds.report()
     print(string.format("[Limes] ===== ZONE CENSUS - revision %d, %d zones, %d real zombies in cell =====",
         rep.revision, #rep.rows, rep.total))
-    print(string.format("[Limes] %-24s %-7s %5s %8s %9s %16s  %s",
+    print(string.format("[Limes] %-24s %-7s %-9s %8s %9s %16s  %s",
         "ZONE", "ZEDS", "TIER", "ZOMBIES", "REMOVED", "SPECIALS obs/set", "GROUND"))
 
     local quiet = 0
@@ -521,7 +524,7 @@ function LMZeds.census(verbose)
                 obs = "-/" .. tostring(r.chance) .. "%"
             end
 
-            print(string.format("[Limes] %-24s %-7s %5s %8s %9s %16s  %s",
+            print(string.format("[Limes] %-24s %-7s %-9s %8s %9s %16s  %s",
                 r.name:sub(1, 24),
                 r.zeds ~= "" and r.zeds or "-",
                 tostring(r.tier),
@@ -583,7 +586,7 @@ end
 --
 -- Off by default and runtime-only: this is a diagnostic, and a diagnostic that
 -- survives a restart is one somebody forgot to turn off. When on, the census
--- prints every ten GAME minutes - the same cadence LMShadow uses, for the same
+-- prints every ten GAME minutes - the shadow-probe cadence, kept for the same
 -- reason (it is a soak, not a heartbeat).
 -- ---------------------------------------------------------------------------
 

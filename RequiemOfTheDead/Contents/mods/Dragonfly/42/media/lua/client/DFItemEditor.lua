@@ -41,7 +41,6 @@ local TITLE_H   = 28
 local ACTION_H  = 30
 local FOOTER_H  = 36
 local WIN_W     = COL_W * 2 + PAD * 3
-local DIRTY_TINT = { 0.55, 0.80, 0.55 }
 local CLEAN_TINT = { 0.85, 0.85, 0.85 }
 
 function Editor:initialise()

@@ -46,10 +46,16 @@
 --                       show you the state before you change it is worse than
 --                       one that shows it to a moderator.
 --
--- The alternative - an operator-set access TIER in sandbox, which is what Dirge
--- does for the same shape of problem (RDNet.lua:33-38) - is deliberately not
--- taken here: a new sandbox option is a compatibility decision and this slice
--- did not have approval for one. Filed in TODO.md so the choice stays open.
+-- The alternative - an operator-set access TIER in sandbox, Dirge's shape for
+-- the same problem (RDNet.lua:33-38) - was CONSIDERED AND DECLINED, owner
+-- decision 2026-08-25. The deciding facts: every staff member on the live
+-- server holds both capabilities today, so the tier would gate nothing; the
+-- engine capabilities are real, enforced surfaces rather than a new
+-- compatibility knob; and the schema half genuinely deserves the strictest
+-- gate available (undefine purges every holder). REVISIT when a moderator
+-- role that should manage vars without server rights actually exists - that
+-- is the one population the tier serves better, and the migration is cheap
+-- until there is data behind these gates.
 --
 -- WHERE THE GATE IS CHECKED, which is a separate question and was got wrong
 -- first time round. Every verb below has ONE fixed capability, so every one of
@@ -61,9 +67,9 @@
 -- capability)" audit line, and - worst - a refused attempt being logged by
 -- DFServer.lua:92 as an ordinary ACCEPTED command.
 --
--- The three READS are the exception and still gate inside, because their gate is
--- "any capability at all" and `handler.capability` takes one name. They audit
--- their own refusals for the reason just given.
+-- The three READS declare capability = "any" (dispatcher support 2026-08-25),
+-- so the exception this paragraph used to describe is gone: every verb's gate
+-- lives in the dispatcher and every refusal is audited as one.
 --
 -- ---------------------------------------------------------------------------
 -- TARGETS ARE USERNAMES, AND A USERNAME OFF THE WIRE IS A TABLE KEY.
@@ -278,20 +284,14 @@ Events.OnServerStarted.Add(function()
         return
     end
 
-    -- The reads. "Any capability at all" is not a capability NAME, so these
-    -- cannot declare one and are the only handlers here that decide their own
-    -- answer. They audit the refusal themselves because the dispatcher records a
-    -- command with no declared capability as accepted (DFServer.lua:92), so a
-    -- refusal reached this way would read in the log as a success.
-    local function staffOnly(action, run)
-        return function(player, args)
-            if not DFCore.hasAnyCapability(player) then
-                DFCore.audit(action, player, "REFUSED: not staff")
-                return { ok = false, reason = "not permitted" }
-            end
-            return run(player, args or {})
-        end
-    end
+    -- The reads declare capability = "any" (dispatcher support added
+    -- 2026-08-25). The staffOnly self-gate that sat here existed because
+    -- "any capability at all" was not a capability NAME the dispatcher could
+    -- take - so these three handlers decided their own answer and audited
+    -- their own refusals to compensate for the dispatcher recording an
+    -- ungated command as accepted. The dispatcher owns the whole decision
+    -- now, and a refusal lands in the audit log AS a refusal, same as every
+    -- other verb.
 
     -- A per-player verb, minus the three lines every one of them repeats: the
     -- username bound, the audit line, and the refreshed record that goes back so
@@ -326,21 +326,24 @@ Events.OnServerStarted.Add(function()
     end
 
     DFServer.registerHandler{
-        action = "varsList",
-        run = staffOnly("varsList", function(player)
+        action     = "varsList",
+        capability = "any",
+        run = function(player)
             pushSummary(player)
             return { ok = true }
-        end),
+        end,
     }
 
     DFServer.registerHandler{
-        action = "varHolders",
-        run = staffOnly("varHolders", function(player, args)
+        action     = "varHolders",
+        capability = "any",
+        run = function(player, args)
+            args = args or {}
             local payload, why = DFVars_Server.holdersOf(args.name)
             if not payload then return { ok = false, reason = tostring(why) } end
             sendServerCommand(player, DFCore.MODULE, "AdminVarHolders", payload)
             return { ok = true }
-        end),
+        end,
     }
 
     -- THE WORLD COUNTER VERBS. Separate commands rather than a scope branch
@@ -401,14 +404,16 @@ Events.OnServerStarted.Add(function()
     end)
 
     DFServer.registerHandler{
-        action = "varsOfPlayer",
-        run = staffOnly("varsOfPlayer", function(player, args)
+        action     = "varsOfPlayer",
+        capability = "any",
+        run = function(player, args)
+            args = args or {}
             if not DFVars_Server.validUser(args.user) then
                 return { ok = false, reason = "bad username" }
             end
             pushPlayer(player, args.user)
             return { ok = true }
-        end),
+        end,
     }
 
     DFServer.registerHandler{

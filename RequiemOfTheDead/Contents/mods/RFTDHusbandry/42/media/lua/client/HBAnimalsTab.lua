@@ -179,7 +179,6 @@ local function drawBar(el, x, y, w, frac, invert)
 end
 
 local function drawCard(el, row, x, y, w, h)
-    local m  = DFKit.metrics
     local tm = getTextManager()
     local fh = tm:getFontHeight(FONT)
     local lh = tm:getFontHeight(LABEL_FONT)
@@ -395,14 +394,11 @@ function AnimalsList:prerender()
     end
 end
 
--- Wrap render with explicit stencil clipping. B42's ISScrollingListBox
--- doesn't always restrict drawing to its visible box, so rows can paint
--- past the list's bounds and overdraw sibling widgets above.
-function AnimalsList:render()
-    self:setStencilRect(0, 0, self.width, self.height)
-    ISScrollingListBox.render(self)
-    self:clearStencilRect()
-end
+-- No render override here. ISScrollingListBox:prerender draws every row
+-- ITSELF inside a stencil it sets and clears (ISScrollingListBox.lua:505,
+-- :541, scrollbar clamp :494-496), and :render draws no rows at all - it is
+-- a joypad focus border (:642-647). The setStencil/render/clearStencil
+-- wrapper that sat here clipped nothing; rows never could escape.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Chrome

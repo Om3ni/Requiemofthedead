@@ -153,7 +153,10 @@ local hooked = {}
 local function evt() return { Add = function(f) hooked[#hooked + 1] = f end } end
 Events = { OnGameBoot = evt(), OnServerStarted = evt() }
 
-RDShared = { registerMod = function() end, EXT_DOC = ".json.txt", EXT_DOC_LEGACY = ".json" }
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
 local realRequire = require
 require = function(name)
     if name == "RDShared" then return RDShared end

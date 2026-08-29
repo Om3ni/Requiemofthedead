@@ -20,6 +20,7 @@ require "ISUI/ISComboBox"
 require "ISUI/ISTextEntryBox"
 require "ISUI/ISButton"
 require "ISUI/ISLabel"
+require "RPLocality"
 
 -- Core's shared selection model. Explicit rather than riding the alphabetical
 -- walk, per the family rule since the 42.19 boot-log crashes; Reaper
@@ -214,51 +215,12 @@ end)
 -- it. Two combos compose; a merged list would have made every locality choice
 -- cost the verdict.
 --
--- Sizes come from the engine rather than from the constants they currently
--- return - 8 and 256 (LuaManager.java:4786-4789, :4781-4784). B41 chunks were
--- 10 squares and B41 cells were 300, so hardcoding is exactly how this file
--- would quietly start lying after a build bump.
+-- The PREDICATE lives in RPLocality now (moved 2026-08-25) so a fixture can
+-- pin it without stubbing this whole UI module - it shipped wrong once (the
+-- grid-bucket bug, found in play 2026-08-20) precisely because nothing could
+-- load it. That file carries the full design record: player-centred
+-- half-extent box, no Z compare, engine-read sizes.
 -- ─────────────────────────────────────────────────────────────────────────
-
--- CENTRED ON THE PLAYER, NOT SNAPPED TO THE WORLD GRID. This started as a
--- bucket comparison - floor(x/size) == floor(px/size) - which asks whether two
--- points fall in the same cell of the grid the WORLD draws, and that is not the
--- question the filter is for.
---
--- The failure is not marginal. At chunk size 8, a zombie two tiles east shares
--- your bucket only when your x mod 8 is 0-5, six cases in eight; across both
--- axes that is 0.75 * 0.75, so roughly FOUR TIMES IN TEN a zombie two tiles
--- away was correctly excluded from "My chunk" while standing in plain sight.
--- Reported from play 2026-08-20. A boundary the operator cannot see, cutting
--- through the area they are standing in, is indistinguishable from a bug.
---
--- A half-extent box centred on the player covers the same AREA - (size+1)^2
--- against size^2 - and has no interior boundary at all, so the answer changes
--- smoothly as they walk instead of jumping when they cross an invisible line.
---
--- Sizes still come from the engine rather than the constants they currently
--- return; see the note above on why hardcoding 8 and 256 would quietly lie
--- after a build bump.
-local function nearPlayer(row, size)
-    local p = getPlayer()
-    if not p or not row or not row.x or not row.y then return false end
-    local half = size / 2
-    -- Z is deliberately NOT compared. A zombie one floor up is still inside the
-    -- area the operator is standing in and still on their screen; the question
-    -- this filter answers is "can I get to it", not "am I level with it".
-    return math.abs(math.floor(p:getX()) - row.x) <= half
-       and math.abs(math.floor(p:getY()) - row.y) <= half
-end
-
-local function applyLocality(rows, locality)
-    if not locality or locality == "any" then return rows end
-    local size = (locality == "chunk") and getChunkSizeInSquares() or getCellSizeInSquares()
-    local out = {}
-    for _, e in ipairs(rows) do
-        if nearPlayer(e, size) then out[#out + 1] = e end
-    end
-    return out
-end
 
 local function applyFilter(rows, filter)
     -- "suspects" and "all" are both already-scoped server-side, so neither
@@ -295,7 +257,7 @@ local function rebuildList()
     -- addItem stacks onto it, which eventually scrolls the list off its own
     -- rows. See that function's header.
     DFKit.refillList(NecroTab.listBox, function(box)
-        local shown = applyLocality(
+        local shown = RPLocality.apply(
             applyFilter(NecroTab.rows, currentFilter()), currentLocality())
         for _, row in ipairs(shown) do
             box:addItem("", row)
@@ -448,30 +410,15 @@ function NecroList:onMouseDown(x, y)
     end
 end
 
+-- The consuming rule lives in Core now (DFRegistry.addRowActions, promoted
+-- 2026-08-25 when a second copy of this body appeared in DFPlayersTab). The
+-- pcall this carried went with the promotion, and rightly: its "one failed
+-- action must not prevent the menu's independent options" reason was wrong -
+-- exactly one handler runs per click, so there were never peers to protect,
+-- and the engine logs the stack trace at throw time regardless
+-- (KahluaThread.java:865, :1100). RCVehicleCheats read that first.
 function NecroList:onRightMouseUp(x, y)
-    local idx = self:rowAt(x, y)
-    if idx <= 0 then return end
-    local item = self.items[idx]
-    if not item or not item.item then return end
-    local row = item.item
-
-    local actions = DFRegistry.getRowActions("necro")
-    if not actions or #actions == 0 then return end
-
-    local context = ISContextMenu.get(0, getMouseX() + 8, getMouseY() + 8)
-    for _, spec in ipairs(actions) do
-        local enabled = true
-        if spec.capability then enabled = DFCore.roleHas(getPlayer(), spec.capability) end
-        -- The registered handler belongs to another mod. One failed action
-        -- must not prevent the menu's independent options from running.
-        local opt = context:addOption(spec.label, row, function(rowData)
-            local ok, err = pcall(spec.handler, rowData)
-            if not ok then
-                print("[Reaper] row action '" .. tostring(spec.label) .. "' failed: " .. tostring(err))
-            end
-        end)
-        if not enabled then opt.notAvailable = true end
-    end
+    DFRegistry.showRowMenu(self, x, y, "necro")   -- the tab id is the policy
 end
 
 function NecroList:prerender()
@@ -485,16 +432,11 @@ function NecroList:prerender()
     if id then RDZombieFocus.set(id) end
 end
 
--- Wrap render with explicit stencil clipping. B42's ISScrollingListBox
--- doesn't always restrict drawing to its visible box, so rows can paint
--- past the list's bounds and overdraw sibling widgets (most visibly: the
--- filter dropdown above, when it's open). Stencil rect forces all drawing
--- inside render to be clipped to the list's local 0,0,width,height.
-function NecroList:render()
-    self:setStencilRect(0, 0, self.width, self.height)
-    ISScrollingListBox.render(self)
-    self:clearStencilRect()
-end
+-- No render override here. ISScrollingListBox:prerender draws every row
+-- ITSELF inside a stencil it sets and clears (ISScrollingListBox.lua:505,
+-- :541, scrollbar clamp :494-496), and :render draws no rows at all - it is
+-- a joypad focus border (:642-647). The setStencil/render/clearStencil
+-- wrapper that sat here clipped nothing; rows never could escape.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Header row above the list (manual prerender on the content panel)

@@ -21,6 +21,9 @@
   "Sandbox_OE_TriageHeader_tooltip": "Separador de seccion cosmetico. La casilla no hace nada.",
 
 
+  "Sandbox_OE_WorkshopEnable": "Activar Workshop",
+  "Sandbox_OE_WorkshopEnable_tooltip": "El hogar de fabricacion del panel del jugador: el panel de fabricacion manual vanilla con filtrado por objetivo (Craft), un tablero de mantenimiento del equipo que llevas y que se puede reparar o reemplazar (Gear), y una guia de recetas con buscador - las recetas que conoces en blanco, las que no en gris con todas las formas de aprenderlas (Journal). Otros paneles lo abren ya filtrado: pulsar una pieza en My Vehicles lleva a las recetas de esa pieza. Desactivado, la pestana nunca aparece y esas puertas no hacen nada. Surte efecto al cargar el mundo de nuevo.",
+
   "Sandbox_OE_NoiseOrdinanceEnable": "Activar Noise Ordinance",
   "Sandbox_OE_NoiseOrdinanceEnable_tooltip": "Evita que las bocinas y las sirenas de los vehiculos atraigan a los zombies, sin cambiar su sonido normal ni las luces de los vehiculos de emergencia. El motor, la alarma del vehiculo, el pitido de marcha atras y la radio no cambian. Al desactivarlo se restauran la bocina vanilla y el valor de Siren Effects Zombies que estaba activo antes de que Noise Ordinance tomara el control. Surte efecto de inmediato y sin reiniciar.",
 

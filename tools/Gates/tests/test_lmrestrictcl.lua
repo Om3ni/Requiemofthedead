@@ -29,6 +29,11 @@ LMRestrictShared = {
     denied = function()
         return deniedNow, deniedNow and "Closed" or nil
     end,
+    -- The bounce asks the per-player variant since noplayersPass (2026-08-27);
+    -- this fixture's stub has no pass list, so it defers to the flag answer.
+    deniedFor = function(_, x, y, flag)
+        return LMRestrictShared.denied(x, y, flag)
+    end,
 }
 package.preload.LMRestrictShared = function() return LMRestrictShared end
 

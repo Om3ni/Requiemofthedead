@@ -35,6 +35,10 @@ function getFileWriter(filename, createIfNull, append)
 end
 
 RQReflectLog = nil
+-- The REAL RDFile (the write mechanism since 2026-08-25); require stubbed so
+-- the module under test resolves it against this fixture's FS stubs.
+require = function() return true end
+dofile((arg[1] or ".") .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
 local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
 check(#gameStartCallbacks == 1, "module registers one session-reset handler")

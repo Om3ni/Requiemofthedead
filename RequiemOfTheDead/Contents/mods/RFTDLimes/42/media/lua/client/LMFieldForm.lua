@@ -25,7 +25,7 @@
 -- in Core, where every form in the family gets them, rather than being bolted
 -- onto this panel:
 --   choice - a pill cycling a closed set, storing the STRING (`zeds`)
---   text   - a box that opens DFEntry to type in (`title`, `subtitle`, `lewtkey`)
+--   text   - a box that opens DFEntry to type in (`title`, `subtitle`, `lootReduce`)
 -- The distinction is whether anybody validates the value, not what its type is;
 -- `zeds` is a string whose only two honoured words are "none" and "remove", so a
 -- free text box there would let an admin type "Remove" and get silence.
@@ -68,7 +68,13 @@ end
 
 -- opts:
 --   owner      restrict to one registrant (nil = every field)
---   title      heading prefix for the ? popout
+--   title      heading prefix for the ? popout. Inline help supersedes the
+--              popout on every row that has help (DFForm drops the ? glyph as
+--              redundant), so this shows only if a row ever opts back out.
+--              NOTE the consequence: help past the three-line clamp is elided
+--              with "...", not reachable elsewhere - same posture as
+--              DFSandboxView. A help string that does not fit three lines
+--              gets trimmed at the registration site, not a fourth line here.
 --   groups     true to emit a group header per owner (only useful when owner is nil)
 --   zone()     current zone name, or nil
 --   draft()    current LMEdit draft, or nil
@@ -128,6 +134,11 @@ function LMFieldForm.new(opts)
     local form = DFForm.new{
         schema = schema,
         title  = opts.title or "Zone",
+        -- Help renders UNDER each dial, the DFSandboxView posture: the reader
+        -- here is an admin scanning fields other mods registered, and "what
+        -- does this one do" is the only question. Hover-only help made the
+        -- registry's own help strings invisible in the one place they matter.
+        inlineHelp = true,
         -- The RESOLVED value, from the draft rather than the live store: editing
         -- a parent has to move its children before anything is saved.
         get = function(key)

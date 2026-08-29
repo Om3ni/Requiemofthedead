@@ -8,10 +8,11 @@
 -- in DORMANT_PERSISTENCE_PLAN.md), so the record lives here and is re-bound
 -- to a fresh object by position + outfitID when the special realizes again.
 --
--- PHASE 1: this module is INERT bookkeeping. Nothing reads findMatch to
--- change gameplay yet; svCheckZombie only calls the probe (log-only) so we
--- can calibrate ADOPT_RADIUS and confirm outfitID stability on the dedi
--- before adoption ships.
+-- Records are ACTIVE while their current IsoZombie object is loaded and become
+-- DORMANT only when RQServer demotes a stale/virtualized object. A realizing
+-- zombie may claim only a dormant record. This distinction is deliberately
+-- session-local: after a server restart every persisted record is dormant until
+-- a realizing zombie claims it.
 --
 -- "RQDormant" is its own ModData table on purpose: RQZombieState is
 -- transmitted to every connecting client, this table must NEVER ride a
@@ -33,11 +34,12 @@
 
 if not isServer() then return end
 
+require "RDShared"   -- badNum is read at file scope below; declare it (CLAUDE.md sect. 4)
 require "RQSvShared"
 
 RQSvDormant = RQSvDormant or {}
 
--- Phase 1 instrumentation switch. Remove (or flip false) in Phase 3.
+-- Bounded lifecycle diagnostics: one line per demotion/adoption, plus sweeps.
 RQSvDormant.DEBUG = true
 
 -- ========================
@@ -48,19 +50,15 @@ local SCHEMA_VERSION = 1
 local ADOPT_RADIUS   = 8            -- tiles; walkers drift while virtual
 local EXPIRY_MS      = 120 * 60 * 1000  -- 120 real minutes
 local HARD_CAP       = 500          -- evict lowest lastSeen beyond this
-local PROBE_LOG_GAP  = 60000        -- per-record throttle for probe spam (ms)
-
 local ADOPT_RADIUS_SQ = ADOPT_RADIUS * ADOPT_RADIUS
-
--- Non-persistent probe-log throttle (pidStr -> last log ms). Deliberately a
--- plain local so it never touches the .bin.
-local probeLogTimes = {}
 
 -- ========================
 -- Backing store
 -- ========================
 
 local store = nil
+local livePids = {}       -- pidStr -> true while bound to a loaded IsoZombie
+local dormantCount = 0
 
 local function dbg(msg)
     if RQSvDormant.DEBUG then print("[RQDormant] " .. msg) end
@@ -68,16 +66,20 @@ end
 
 -- A number that is nil, NaN (v ~= v) or infinite corrupts distance math
 -- forever; treat the whole row as garbage.
-local function badNum(v)
-    return type(v) ~= "number" or v ~= v or v == math.huge or v == -math.huge
-end
+-- badNum lives in RDShared (promoted 2026-08-25).
+local badNum = RDShared.badNum
 
 local function rowValid(rec)
     if type(rec) ~= "table" then return false end
     if type(rec.zType) ~= "string" then return false end
+    if not RQSvShared.HEALTH_MULTIPLIER[rec.zType] then return false end
     if badNum(rec.x) or badNum(rec.y) or badNum(rec.z) then return false end
     if badNum(rec.lastSeen) then return false end
     return true
+end
+
+local function sanitizeOptionalNumber(rec, key)
+    if rec[key] ~= nil and badNum(rec[key]) then rec[key] = nil end
 end
 
 -- Load-time sanitation: schema mismatch or malformed rows rebuild/clear the
@@ -98,6 +100,11 @@ local function sanitize(t)
         if not rowValid(rec) then
             t.records[pidStr] = nil
             dropped = dropped + 1
+        else
+            -- Additive schema fields: old records legitimately omit them.
+            sanitizeOptionalNumber(rec, "baseHP")
+            sanitizeOptionalNumber(rec, "juggMaxHP")
+            sanitizeOptionalNumber(rec, "gluttonBaseHealth")
         end
     end
     -- A reset/lost nextPid alongside surviving records would hand out a pid
@@ -113,9 +120,18 @@ local function sanitize(t)
     return t
 end
 
+
+local function adoptLoadedStore(t)
+    store = sanitize(t)
+    livePids = {}
+    dormantCount = 0
+    for _ in pairs(store.records) do dormantCount = dormantCount + 1 end
+    return store
+end
+
 local function getStore()
     if not store then
-        store = sanitize(ModData.getOrCreate("RQDormant"))
+        adoptLoadedStore(ModData.getOrCreate("RQDormant"))
     end
     return store
 end
@@ -123,10 +139,8 @@ end
 Events.OnInitGlobalModData.Add(function()
     -- Re-fetch on every init: after a server restart the engine has loaded a
     -- fresh table from disk and any cached reference would be stale.
-    store = sanitize(ModData.getOrCreate("RQDormant"))
-    local n = 0
-    for _ in pairs(store.records) do n = n + 1 end
-    dbg("initialized, " .. n .. " dormant record(s) loaded")
+    adoptLoadedStore(ModData.getOrCreate("RQDormant"))
+    dbg("initialized, " .. dormantCount .. " dormant record(s) loaded")
 end)
 
 -- ========================
@@ -140,18 +154,27 @@ function RQSvDormant.mint()
     return tostring(pid)
 end
 
-function RQSvDormant.record(pid, zType, x, y, z, outfitID, hp)
+function RQSvDormant.record(pid, zType, x, y, z, outfitID, hp,
+                            baseHP, juggMaxHP, gluttonBaseHealth)
     if not pid or not zType then return end
     if badNum(x) or badNum(y) or badNum(z) then return end
-    getStore().records[pid] = {
+    local t = getStore()
+    if t.records[pid] and not livePids[pid] then
+        dormantCount = math.max(0, dormantCount - 1)
+    end
+    t.records[pid] = {
         zType    = zType,
         x        = x,
         y        = y,
         z        = z,
         outfitID = (not badNum(outfitID)) and outfitID or nil,
         hp       = (not badNum(hp)) and math.min(hp, RQSvShared.MAX_NETWORK_HP) or nil,
+        baseHP   = (not badNum(baseHP)) and baseHP or nil,
+        juggMaxHP = (not badNum(juggMaxHP)) and juggMaxHP or nil,
+        gluttonBaseHealth = (not badNum(gluttonBaseHealth)) and gluttonBaseHealth or nil,
         lastSeen = getTimestampMs(),
     }
+    livePids[pid] = true
 end
 
 -- Per-tick refresh while the special is live. outfitID rides along only to
@@ -159,13 +182,21 @@ end
 -- a change is loud because the whole re-bind strategy leans on it.
 -- Returns false when no record exists so the caller can re-record instead of
 -- silently losing the identity.
-function RQSvDormant.touch(pid, x, y, z, hp, outfitID)
+function RQSvDormant.touch(pid, x, y, z, hp, outfitID,
+                           baseHP, juggMaxHP, gluttonBaseHealth)
     local rec = getStore().records[pid]
     if not rec then return false end
+    if not livePids[pid] then
+        livePids[pid] = true
+        dormantCount = math.max(0, dormantCount - 1)
+    end
     if not (badNum(x) or badNum(y) or badNum(z)) then
         rec.x, rec.y, rec.z = x, y, z
     end
     if not badNum(hp) then rec.hp = math.min(hp, RQSvShared.MAX_NETWORK_HP) end
+    if not badNum(baseHP) then rec.baseHP = baseHP end
+    if not badNum(juggMaxHP) then rec.juggMaxHP = juggMaxHP end
+    if not badNum(gluttonBaseHealth) then rec.gluttonBaseHealth = gluttonBaseHealth end
     rec.lastSeen = getTimestampMs()
     if outfitID ~= nil then
         if rec.outfitID == nil then
@@ -189,6 +220,10 @@ end
 function RQSvDormant.demote(pid)
     local rec = getStore().records[pid]
     if not rec then return end
+    if livePids[pid] then
+        livePids[pid] = nil
+        dormantCount = dormantCount + 1
+    end
     rec.lastSeen = getTimestampMs()
     dbg("demote pid=" .. pid .. " type=" .. rec.zType
         .. string.format(" at (%.1f,%.1f,%d)", rec.x, rec.y, math.floor(rec.z))
@@ -199,8 +234,9 @@ function RQSvDormant.remove(pid)
     if not pid then return end
     local t = getStore()
     if t.records[pid] then
+        if not livePids[pid] then dormantCount = math.max(0, dormantCount - 1) end
         t.records[pid] = nil
-        probeLogTimes[pid] = nil
+        livePids[pid] = nil
     end
 end
 
@@ -210,46 +246,48 @@ function RQSvDormant.isEmpty()
     return true
 end
 
--- Nearest record within ADOPT_RADIUS on the same floor; an exact outfitID
--- match beats a nearer non-match (outfitID is not unique, position does most
--- of the work -- the outfit only breaks ties between overlapping records).
+function RQSvDormant.hasDormant()
+    return dormantCount > 0
+end
+
+-- THE OUTFIT DISCRIMINATOR is the complete persistent outfit id.
+--
+-- ZombiePopulationManager.removeChunkFromWorld passes the complete integer to
+-- n_addZombie (ZombiePopulationManager.java:350-388), and realization passes
+-- that integer straight to setPersistentOutfitID
+-- (VirtualZombieManager.java:197-230). PersistentOutfits.pickOutfit's low bits
+-- are a seed chosen only when the outfit is first picked; virtualization does
+-- not pick again (PersistentOutfits.java:142-167). Matching only the high half
+-- would discard identity evidence and let two nearby zombies in the same outfit
+-- steal one another's subtype.
+--
+-- Only dormant records participate. A record belonging to a still-loaded
+-- special is never a candidate, even if an ordinary zombie stands on top of it.
 function RQSvDormant.findMatch(x, y, z, outfitID)
     if badNum(x) or badNum(y) or badNum(z) then return nil end
+    if badNum(outfitID) or outfitID == 0 then return nil end
     local zi = math.floor(z)
     local bestPid, bestRec, bestD = nil, nil, math.huge
-    local bestOutfitPid, bestOutfitRec, bestOutfitD = nil, nil, math.huge
     for pidStr, rec in pairs(getStore().records) do
-        if math.floor(rec.z) == zi then
+        if not livePids[pidStr] and rec.outfitID == outfitID
+            and math.floor(rec.z) == zi then
             local dx, dy = rec.x - x, rec.y - y
             local d = dx * dx + dy * dy
-            if d <= ADOPT_RADIUS_SQ then
-                if d < bestD then
-                    bestPid, bestRec, bestD = pidStr, rec, d
-                end
-                if outfitID and rec.outfitID == outfitID and d < bestOutfitD then
-                    bestOutfitPid, bestOutfitRec, bestOutfitD = pidStr, rec, d
-                end
+            if d <= ADOPT_RADIUS_SQ and d < bestD then
+                bestPid, bestRec, bestD = pidStr, rec, d
             end
         end
     end
-    if bestOutfitPid then return bestOutfitPid, bestOutfitRec, bestOutfitD end
     return bestPid, bestRec, bestD
 end
 
--- Phase 1 probe: log what adoption WOULD have done, change nothing. The
--- per-record throttle keeps a lingering record near a horde from spamming
--- every conversion-scan pass.
-function RQSvDormant.probeMatch(x, y, z, outfitID)
+-- Claim and remove in one module operation so no second zombie can observe the
+-- same dormant identity between lookup and consumption.
+function RQSvDormant.claimMatch(x, y, z, outfitID)
     local pid, rec, dSq = RQSvDormant.findMatch(x, y, z, outfitID)
-    if not pid then return end
-    local now = getTimestampMs()
-    if probeLogTimes[pid] and (now - probeLogTimes[pid]) < PROBE_LOG_GAP then return end
-    probeLogTimes[pid] = now
-    dbg(string.format(
-        "probe WOULD-ADOPT pid=%s type=%s drift=%.1f outfit=%s (rec=%s zed=%s)",
-        pid, rec.zType, math.sqrt(dSq or 0),
-        (outfitID and rec.outfitID == outfitID) and "MATCH" or "miss",
-        tostring(rec.outfitID), tostring(outfitID)))
+    if not pid then return nil end
+    RQSvDormant.remove(pid)
+    return pid, rec, dSq
 end
 
 -- Expiry + hard-cap eviction; piggybacks the caller's existing cleanup timer.
@@ -259,25 +297,29 @@ function RQSvDormant.sweep()
     local expired, kept = 0, 0
     for pidStr, rec in pairs(t.records) do
         if not rowValid(rec) or (now - rec.lastSeen) > EXPIRY_MS then
+            if not livePids[pidStr] then dormantCount = math.max(0, dormantCount - 1) end
             t.records[pidStr] = nil
-            probeLogTimes[pidStr] = nil
+            livePids[pidStr] = nil
             expired = expired + 1
         else
             kept = kept + 1
         end
     end
     -- Cap eviction is O(n^2) worst case but only runs while over 500 records,
-    -- which the expiry above should make unreachable in practice.
+    -- which the expiry above should make unreachable in practice. Never evict
+    -- an ACTIVE identity merely to satisfy the persistence cap; active rows will
+    -- become eligible after demotion and a later sweep can trim them then.
     while kept > HARD_CAP do
         local oldestPid, oldestSeen = nil, math.huge
         for pidStr, rec in pairs(t.records) do
-            if rec.lastSeen < oldestSeen then
+            if not livePids[pidStr] and rec.lastSeen < oldestSeen then
                 oldestPid, oldestSeen = pidStr, rec.lastSeen
             end
         end
         if not oldestPid then break end
         t.records[oldestPid] = nil
-        probeLogTimes[oldestPid] = nil
+        if not livePids[oldestPid] then dormantCount = math.max(0, dormantCount - 1) end
+        livePids[oldestPid] = nil
         expired = expired + 1
         kept = kept - 1
     end
@@ -287,7 +329,7 @@ function RQSvDormant.sweep()
 end
 
 if getDebug() then
-    print("[RQSvDormant] dormant special registry loaded (Phase 1: inert)")
+    print("[RQSvDormant] dormant special registry loaded (adoption enabled)")
 end
 
 -- ---------------------------------------------------------------------------

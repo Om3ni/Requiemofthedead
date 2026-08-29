@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RQFlinch - the left shoulder knockdown, compressed. One of six nodes covering the
+  KNOCKDOWN LANE; the lane itself, and why it is reachable at all, is explained
+  in hitreaction/RQFlinch.xml. Only this state's own facts are here.
+
+  ENTRY. actiongroups/zombie/hitreaction/to_knockeddown-shotShoulderL.xml is the only
+  doorway into this state - a repo-wide sweep of media/actiongroups found no
+  second one - and it requires all of:
+      bKnockedDown true, bOnFloor false, bStaggerBack false, bDead false,
+      hitreaction == "ShotShoulderL", usePhysicHitReaction false
+  A firearm critical hit from the LEFT or RIGHT supplies both halves at once:
+  CombatManager.resolveHitReaction:2330 takes the headshot early-return only on
+  Rand.Next(4) == 0, so three crits in four fall through to the ordinary table
+  and can yield "ShotShoulderL" (:2350-2376), while
+  IsoZombie.hitConsequences:3459 sets bKnockedDown from
+  wielder.isCriticalHit() - the same flag, no second roll.
+
+  WHAT IT COSTS UNCOVERED. Vanilla's node here carries no m_SpeedScale, so it
+  runs at 1.0 and its only exit is
+  <eventOccurred>ActiveAnimFinishing</eventOccurred> -> onground. A full
+  animation, then the floor, then a getup. That is a Bulwark knocked down by a
+  sidelong crit - the outcome this whole feature exists to prevent - and it
+  survived the crit-compression slice because that slice covered the shothead
+  chain, which a sidelong crit does not use.
+
+  Copied from vanilla ShotShoulderStaggerL.xml, changed only by: our condition, an
+  explicit priority (vanilla's node has none), speed 20, zeroed blends, and
+  CancelKnockDown forced to true. Vanilla already cancels here, so that is a copy, not a change.
+  FallOnFront is vanilla's value for this family and is load-bearing - it
+  routes onground into the matching getup, and both getups carry RQFlinch nodes
+  of their own.
+
+  NO SetOnFloor EVENT, because vanilla's shoulder nodes have none - this
+  family never marks the zombie on-floor from the animation. onground sets
+  it on entry regardless (ZombieOnGroundState.java:41-43), so the state is
+  reached correctly either way; the absence is vanilla's shape, not a gap.
+
+  VANILLA SPLITS THIS STATE INTO TWO NODES on a FromBehind condition and we do
+  not: the split only chooses between two clips of the same fall, and at 20x
+  the choice is two frames long. Our single node wins both on priority.
+-->
+<animNode>
+	<m_Name>RQFlinchKnockedDownShoulderL</m_Name>
+	<m_AnimName>Zombie_ShotShoulderFall_L</m_AnimName>
+	<m_DeferredBoneName>Bip01</m_DeferredBoneName>
+	<m_deferredBoneAxis>Z</m_deferredBoneAxis>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.0</m_BlendTime>
+	<m_BlendOutTime>0.0</m_BlendOutTime>
+	<m_SpeedScale>20.00</m_SpeedScale>
+	<m_ConditionPriority>100</m_ConditionPriority>
+	<m_Conditions x_name="rqf1a2b3-74011-4000-8000-rftddirge74011">
+		<m_Name>RQNoFlinch</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Events x_name="rqf1a2b3-74012-4000-8000-rftddirge74012">
+		<m_EventName>FallOnFront</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>false</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-74013-4000-8000-rftddirge74013">
+		<m_EventName>CancelKnockDown</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-74014-4000-8000-rftddirge74014">
+		<m_EventName>SetState</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+</animNode>

@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RQFlinch - shot while already down, compressed. Back half of the pair; see
+  RQFlinchFront.xml beside it, and hitreaction/RQFlinch.xml for the design.
+
+  WHY THIS STATE MATTERS, and why the TODO entry that asked for it had the
+  reason wrong. It said "shot while down, reaction Floor". HitReaction.FLOOR is
+  never produced by gunfire - resolveHitReaction cannot return it
+  (CombatManager.java:2313-2377), and the only writers are a vehicle impact on
+  a prone or getting-up character (IsoGameCharacter.java:11643) and bent fences
+  (BentFences.java:362,370). The reaction-string route
+  (actiongroups/zombie/onground/to_hitreaction-onfloor.xml, which compares
+  hitreaction == "Floor") is therefore the VEHICLE lane.
+
+  The gunfire lane is the other doorway, and it needs no particular string:
+  getup/, getup-fromSitting/ and getup-fromOnBack/to_hitreaction-onfloor.xml
+  each carry a transition whose whole condition is <isTrue>hashitreaction</isTrue>
+  plus <isTrue>bOnFloor</isTrue>. Our own compressed crit chain routes through
+  getup-fromOnBack with bOnFloor still true until SetOnFloor(false) fires at
+  the halfway mark, so a second shot inside that window lands here.
+
+  WHAT IT COSTS UNCOVERED: vanilla's FloorBack runs at m_SpeedScale 0.96 and
+  emits KnockDown, which is setOnFloor(true) AND setKnockedDown(true)
+  (ZombieHitReactionState.java:106-109) - so an uncovered hit here both extends
+  the floor trip by a full animation and re-arms the knockdown flag on a
+  zombie the feature had just picked up.
+
+  Exit is <eventOccurred>ActiveAnimFinishing</eventOccurred> -> onground
+  (actiongroups/zombie/hitreaction-onfloor/to_onground.xml), so speed scaling
+  genuinely shortens it, same as every other node in this family.
+
+  Copied from vanilla FloorBack.xml. Changed only by: our condition added
+  alongside vanilla's FallOnFront one, an explicit priority, speed 20, zeroed
+  blend, and KnockDown swapped for CancelKnockDown. Collide and SetState are
+  vanilla's, kept verbatim.
+
+  DROPPING KnockDown DOES NOT LEAVE bOnFloor UNSET. KnockDown's other half is
+  setOnFloor(true), but bOnFloor was already true - it is a condition of every
+  transition that reaches this state - and nothing clears it here; the exit
+  into onground sets it again anyway (ZombieOnGroundState.java:41-43). So there
+  is no SetOnFloor event to add back.
+
+  TWO NODES, NOT ONE, because vanilla splits on FallOnFront and that flag is
+  what routes onground into the matching getup. A single node winning both
+  orientations would play one clip for both, which is invisible at 20x - but it
+  would also mean inferring that the flag survives from the original fall
+  rather than letting vanilla assert it. The split costs one file and removes
+  the inference.
+-->
+<animNode>
+	<m_Name>RQFlinchFloorBack</m_Name>
+	<m_AnimName>Zombie_HitReact_FloorOnBack</m_AnimName>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.0</m_BlendTime>
+	<m_BlendOutTime>0.0</m_BlendOutTime>
+	<m_SpeedScale>20.00</m_SpeedScale>
+	<m_ConditionPriority>100</m_ConditionPriority>
+	<m_Conditions x_name="rqf1a2b3-6001-4000-8000-rftddirge6001">
+		<m_Name>RQNoFlinch</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Conditions x_name="rqf1a2b3-6002-4000-8000-rftddirge6002">
+		<m_Name>FallOnFront</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>false</m_Value>
+	</m_Conditions>
+	<m_Events x_name="rqf1a2b3-6003-4000-8000-rftddirge6003">
+		<m_EventName>CancelKnockDown</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-6004-4000-8000-rftddirge6004">
+		<m_EventName>Collide</m_EventName>
+		<m_TimePc>0.1</m_TimePc>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-6005-4000-8000-rftddirge6005">
+		<m_EventName>SetState</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+</animNode>

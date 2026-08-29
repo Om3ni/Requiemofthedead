@@ -1,6 +1,15 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- DFConfirm - overrideable confirmation popup for MP-disruptive actions.
 --
+-- CORE SINCE 2026-08-25 (owner-approved promotion out of Dragonfly). It was
+-- the suite's first satellite->satellite edge: DungeonMaster hard-required a
+-- Dragonfly file, which CLAUDE.md sect. 12 forbids in that direction, and
+-- four DM call sites plus Dirge's RQAdmin were consuming it through guards
+-- and soft-checks. The file itself never had any Dragonfly knowledge - a
+-- singleton popout over vanilla ISModalDialog, the same species as DFEntry
+-- and DFHelp, which already lived here. The DF prefix is a frozen identifier
+-- (DFBanBox precedent), not a statement about ownership.
+--
 -- Per the refined MP-disruption rule: incidental disruption refuses, but
 -- deliberate admin actions (mass cull, drop a horde, force reload) show a
 -- single overrideable popup naming the affected players. Never refuse,

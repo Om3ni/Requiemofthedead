@@ -27,14 +27,14 @@
 --   hook_remove  ISRemoveAnimalFromHook:complete (:62-76) - unhooking stands
 --                a corpse back onto the ground at the hook
 --                (ButcheringUtil.onRemoveCorpseFromHook, :585-610)
---   item_drop    client-asserted, sent by HBPartDropClient through HBCommands'
---                single dispatcher into onClientReport below
+--   item_drop    client-asserted, sent by HBPartDropClient and registered on
+--                RDNet by HBCommands, which gates and rate-limits it before
+--                onClientReport below ever runs
 
 if not isServer() then return end
 
 require "HBParts"
 require "RDLog"
-require "RDRate"
 require "TimedActions/Animals/ISDropAnimalCorpseAndThen"
 require "TimedActions/ISDropWorldItemAction"
 require "TimedActions/Animals/ISPutAnimalOnHook"
@@ -154,10 +154,16 @@ end
 -- above are the server-observed ones, and Guardian holds the raw command if a
 -- record is ever doubted. Refusals print (bounded by the rate window) rather
 -- than vanish.
+--
+-- THE RATE LIMIT IS NOT HERE ANY MORE (2026-08-25). It was written inline
+-- because this command entered through Husbandry's legacy OnClientCommand
+-- dispatcher, which had no per-command limiter of its own. The token now goes
+-- through RDNet, whose bucket is already scoped to (token, command) and
+-- carries the same 4/sec on the registration (HBCommands.lua). Keeping both
+-- would have been two limiters draining on the same traffic - the exact shape
+-- RDRate.allow's own header warns about - so the surviving one is the
+-- declared, greppable one next to the capability decision.
 function HBPartWatch.onClientReport(player, args)
-    if not RDRate.allow(player, 4, 1000, "RFTDHusbandry.hbPartPlaced") then
-        return
-    end
     if type(args) ~= "table" or type(args.items) ~= "table" then
         print("[HB] PART_PLACED: refused malformed report from "
             .. tostring(player and player:getUsername()))

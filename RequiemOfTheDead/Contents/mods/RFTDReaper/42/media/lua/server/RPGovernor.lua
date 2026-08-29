@@ -26,8 +26,6 @@ if not isServer() then return end
 
 require "RDShared"
 
-local MODULE = "RFTDReaper"
-
 -- -------------------------------------------------------------------------
 -- Config (re-read each window; sandbox edits land without restart)
 -- -------------------------------------------------------------------------

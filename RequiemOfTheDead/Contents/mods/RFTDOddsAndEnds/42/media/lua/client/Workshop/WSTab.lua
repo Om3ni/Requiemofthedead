@@ -320,7 +320,9 @@ function T.build(spec, panel, x, y, w, h)
     -- breaks createChildren mid-build (ISHandCraftPanel.lua:14-15, :71) -
     -- foreign code in the chain we cannot preflight. Recovery is honest:
     -- T.craft stays nil and every consumer already tests it.
-    local ok, err = pcall(function()
+    -- The success flag is `T.craft`, set inside the body and tested by every
+    -- consumer, so the boolean is discarded here rather than shadowing it.
+    local _, err = pcall(function()
         local p = ISXuiSkin.build(nil, nil, ISHandCraftPanel, 0, HEADER_H, w, h - SUB_H - HEADER_H,
             getPlayer(), nil, nil)
         p.recipeQuery = CATALOGUE_QUERY

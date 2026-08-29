@@ -71,8 +71,8 @@
 -- runs CleanUI on their own is still covered.
 --
 -- Preferences live in player modData, not a written file: since 42.20 getFileWriter
--- refuses anything outside ini/cfg/txt/log (see RDShared.EXT_*), and a UI toggle is
--- not worth the compound-extension dance.
+-- refuses anything outside ini/cfg/txt/log/json (see RDShared.EXT_*), and a UI
+-- toggle is not worth the compound-extension dance.
 
 if isServer() then return end
 

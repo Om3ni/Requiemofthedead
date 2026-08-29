@@ -30,6 +30,9 @@ end
 -- ---- engine stubs -------------------------------------------------------
 function isServer() return true end
 require = function() return true end
+-- The REAL RDShared: badNum was promoted into it 2026-08-25 and this module
+-- reads it at file scope.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
 
 -- getOnlinePlayers returns an ArrayList on a server and an EMPTY list on every
 -- other branch - never null (LuaManager.java:3823-3832). The stub models that,
@@ -93,9 +96,24 @@ HBBedding = {
 local refilled = {}
 HBKeepAlive = { refillHutch = function(h) refilled[#refilled + 1] = key(h.x, h.y, h.z) end }
 
+-- The GMD backing (2026-08-25): one shared table object, exactly like the
+-- engine's - getOrCreate returns the SAME table across rebinds, which is what
+-- makes the restart pin below meaningful.
+local gmd = {}
+ModData = {
+    getOrCreate = function(name)
+        gmd[name] = gmd[name] or {}
+        return gmd[name]
+    end,
+}
+local initGMD
+Events = { OnInitGlobalModData = { Add = function(fn) initGMD = fn end } }
+
 HBFarmHand = nil
 local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
+check(initGMD ~= nil, "no OnInitGlobalModData handler was registered")
+initGMD()   -- bind the store, as the engine does at boot
 
 -- ---- registration --------------------------------------------------------
 local a = mkHutch(10, 20, 0)
@@ -181,8 +199,32 @@ getCell = realGetCell
 local cov = HBFarmHand.coverage()
 check(type(cov) == "table" and cov.registered == HBFarmHand.stats.registered,
     "coverage disagrees with the registry")
-check(type(cov.note) == "string" and cov.note:find("restart"),
-    "coverage does not state the in-memory restart limitation")
+check(type(cov.note) == "string" and cov.note:find("save"),
+    "coverage does not state the honest limitation - since the GMD backing "
+    .. "(2026-08-25) that is save-cadence durability, not the restart wipe")
+
+-- ---------------------------------------------------------------------------
+-- THE RESTART, which is the whole point of the GMD backing. Rebinding through
+-- OnInitGlobalModData against the engine's persisted table must bring every
+-- coop back; before 2026-08-25 the registry started empty and each coop went
+-- unserviced until something happened to see it again.
+-- ---------------------------------------------------------------------------
+local beforeRestart = HBFarmHand.stats.registered
+check(beforeRestart > 0, "nothing registered before the simulated restart")
+initGMD()   -- the engine re-fires this on boot; the gmd table survived
+check(HBFarmHand.stats.registered == beforeRestart,
+    "the registry did not survive a restart: " .. HBFarmHand.stats.registered
+    .. " of " .. beforeRestart .. " coops came back")
+local sv2, sk2 = HBFarmHand.pass()
+check(sv2 + sk2 >= beforeRestart,
+    "a restored registry was not walked by the next pass")
+
+-- A malformed persisted row (corrupt save) is dropped at bind, not carried
+-- into distance math forever.
+gmd.HBFarmHand.records["poison"] = { x = 0/0, y = 1, z = 0 }
+initGMD()
+check(HBFarmHand.stats.registered == beforeRestart,
+    "a NaN row survived sanitation: " .. HBFarmHand.stats.registered)
 
 -- ---- the report is bounded, and it speaks at all -------------------------
 -- Both directions are failures. A line every pass is ~144 an hour at the

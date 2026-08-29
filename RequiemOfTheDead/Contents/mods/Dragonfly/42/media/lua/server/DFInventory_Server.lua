@@ -67,16 +67,16 @@ local function listAddressableItems(target)
         out[#out + 1] = { item = it, source = source, prefix = prefix, loc = loc }
     end
 
-    -- 1) Main inventory
-    local inv = target:getInventory()
-    if inv then
-        local items = inv:getItems()
-        if items then
-            for i = 0, items:size() - 1 do add(items:get(i), "main", nil) end
-        end
-    end
-
-    -- 2) Worn clothing
+    -- 1) Worn clothing - and worn MUST come before the main inventory. A worn
+    -- garment lives in BOTH: its container is the character's own inventory
+    -- (Clothing.isWorn reads container.parent == the character AND membership
+    -- in getWornItems() - Clothing.java:1096-1100). With main enumerated
+    -- first, `seen[it]` made this pass skip every garment, so a fully dressed
+    -- player snapshotted as worn=0, every garment showed "Main" with no body
+    -- location, and the audit line understated the worn count - found by
+    -- reading the server log during the 2026-08-18 holes slice, paid
+    -- 2026-08-25. Enumerating worn first keeps the dedupe and lets the richer
+    -- row (source + body location) win it.
     local worn = target:getWornItems()
     if worn then
         for i = 0, worn:size() - 1 do
@@ -89,6 +89,15 @@ local function listAddressableItems(target)
                 loc  = entry:getLocation()
             end
             add(item, "worn", "[Worn] ", loc)
+        end
+    end
+
+    -- 2) Main inventory
+    local inv = target:getInventory()
+    if inv then
+        local items = inv:getItems()
+        if items then
+            for i = 0, items:size() - 1 do add(items:get(i), "main", nil) end
         end
     end
 

@@ -161,12 +161,12 @@ started()
 -- declaration would still pass every behaviour test below, because `run` applies
 -- whatever is declared - so the declaration is pinned on its own.
 --
--- The three reads declare nothing on purpose: their gate is "any capability at
--- all", which is not a capability name. They are the handlers that must audit
--- their own refusals, because the dispatcher logs an undeclared command as
--- accepted (DFServer.lua:92).
+-- The three reads declare capability = "any" (dispatcher support 2026-08-25):
+-- their gate is "any capability at all", which the dispatcher can now express,
+-- so the self-gate-and-self-audit compensation is gone and a refused read is
+-- audited AS a refusal like every other verb.
 local EXPECTED_GATE = {
-    varsList     = false, varsOfPlayer = false, varHolders = false,
+    varsList     = "any", varsOfPlayer = "any", varHolders = "any",
     varDefine    = "ChangeAndReloadServerOptions",
     varUndefine  = "ChangeAndReloadServerOptions",
     varGrant     = "CanModifyPlayerStatsInThePlayerStatsUI",
@@ -176,11 +176,7 @@ local EXPECTED_GATE = {
 }
 for action, want in pairs(EXPECTED_GATE) do
     check(handlers[action] ~= nil, action .. " did not register")
-    if want == false then
-        check(handlers[action] and handlers[action].capability == nil,
-            action .. " declared a capability; its gate is 'any capability at "
-            .. "all', which no single name expresses")
-    else
+    do
         check(handlers[action] and handlers[action].capability == want,
             action .. " declares '" .. tostring(handlers[action]
                 and handlers[action].capability) .. "', expected '" .. want
@@ -204,8 +200,21 @@ local nobody      = player("Nobody", {})
 -- so this is standing in for tested behaviour rather than for an assumption.
 local function run(action, who, args)
     local h = handlers[action]
-    if h.capability and not RDAccess.roleHas(who, h.capability) then
-        return { ok = false, reason = "Missing capability for " .. action }
+    if h.capability then
+        local allowed
+        if h.capability == "any" then
+            allowed = DFCore.hasAnyCapability(who)
+        elseif type(h.capability) == "function" then
+            allowed = h.capability(who, args or {})
+        else
+            allowed = RDAccess.roleHas(who, h.capability)
+        end
+        if not allowed then
+            -- The real dispatcher audits every refusal; mirror that so the
+            -- audit assertions test the same observable the log carries.
+            DFCore.audit(action, who, "(refused)")
+            return { ok = false, reason = "Refused for " .. action }
+        end
     end
     return h.run(who, args or {})
 end
@@ -355,11 +364,10 @@ check(run("varsList", moderator).ok == true,
     .. "the state before you change it is worse than one a moderator can see")
 audits = {}
 check(run("varsList", nobody).ok == false, "a non-staff caller read the var list")
-check(#audits == 1 and audits[1]:find("REFUSED", 1, true) ~= nil,
-    "a read refused INSIDE the handler was not audited. These three declare no "
-    .. "capability, so the dispatcher logs the attempt as an ordinary accepted "
-    .. "command - if the handler stays quiet the refusal is invisible: "
-    .. table.concat(audits, " | "))
+check(#audits == 1 and audits[1]:find("refused", 1, true) ~= nil,
+    "a refused read did not reach the audit log as a REFUSAL - the dispatcher "
+    .. "owns the gate now, and a refusal logged as anything else is the bug "
+    .. "the 'any' shape was built to end: " .. table.concat(audits, " | "))
 check(#directSends == 1 and directSends[1].command == "AdminVars", "the list reply is wrong")
 
 local defs = directSends[1].args.defs

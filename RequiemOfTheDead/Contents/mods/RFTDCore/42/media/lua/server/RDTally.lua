@@ -240,16 +240,8 @@ function RDTally.write()
     for name in pairs(RDTally.streams) do
         local doc = RDTally.summary(name)
         if doc then
-            -- No guard - same reading as RDSeasonServer and RDLog's own
-            -- appendLine: getFileWriter returns nil rather than throwing
-            -- (LuaManager.java:5523-5555) and the `if w` is the error path,
-            -- while write/close record I/O errors internally through
-            -- PrintWriter (:9850-9868). RDJson.encode is total.
-            local w = getFileWriter(summaryPath(name), true, false)  -- truncate
-            if w then
-                w:write(RDJson.encode(doc) .. "\n")
-                w:close()
-            end
+            -- Mechanism in RDFile (2026-08-25). RDJson.encode is total.
+            RDFile.rewrite(summaryPath(name), RDJson.encode(doc) .. "\n")
         end
     end
 end

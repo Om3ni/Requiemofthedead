@@ -1,19 +1,26 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- LMImportTab.lua - the paste target: Dragonfly "Zones" tab (client).
+-- LMImportTab.lua - the sharing surface: Dragonfly "Zones" tab (client).
 --
--- THE ADMIN STORY, three clicks, no server filesystem ceremony: copy the
--- PhunZones export text (phunzones.txt, or any {version=2,data={...}} layer)
--- to the OS clipboard, open Dragonfly -> Zones, [Read clipboard] to preview -
--- the SHARED LMImport parser runs locally, so "75 zones, 9 warnings" appears
--- before anything touches the wire - then [Import to server] ships the raw
--- TEXT in one RDNet command when it fits under CHUNK_BYTES, and in as many
--- commands as it takes when it does not - the engine caps a single command
--- string at 32767 bytes, which a live ~38KB PhunZones layer exceeds. The
--- packet limiter counts packets rather than bytes, so few-and-large stays the
--- cheap shape either way. The SERVER re-parses authoritatively - the client preview
--- is UX, never trust - writes RFTDLimes.ini, applies, and broadcasts the new
--- baseline to everyone including us; the status line mirrors the server's
--- notice so the admin sees the authoritative outcome, not the preview.
+-- THE ADMIN STORY, three clicks, no server filesystem ceremony: copy a zone
+-- setup - schema-1 JSON from the offline converter or another server's
+-- export, or an RFTDLimes .ini backup - to the OS clipboard, open Dragonfly
+-- -> Zones, [Read clipboard] to preview - the SHARED LMImport parser runs
+-- locally, so "75 zones, 9 warnings" appears before anything touches the
+-- wire - then [Import to server] ships the raw TEXT in one RDNet command
+-- when it fits under CHUNK_BYTES, and in as many commands as it takes when
+-- it does not - the engine caps a single command string at 32767 bytes,
+-- which a full setup can exceed. The packet limiter counts packets rather
+-- than bytes, so few-and-large stays the cheap shape either way. The SERVER
+-- re-parses authoritatively - the client preview is UX, never trust - writes
+-- RFTDLimes.ini, applies, and broadcasts the new baseline to everyone
+-- including us; the status line mirrors the server's notice so the admin
+-- sees the authoritative outcome, not the preview.
+--
+-- [Copy export] is the other half of sharing: the WHOLE store - zones,
+-- tiers, profiles, loot, moon overlays - as schema-1 JSON onto the
+-- clipboard, ready to paste into another server's Zones tab or a file.
+-- PhunZones data no longer imports here: it converts OFFLINE
+-- (tools/limes-zone-converter.html) and the JSON is what gets pasted.
 --
 -- Clipboard.getClipboard() is the engine's own exposed surface
 -- (LuaManager setExposed(Clipboard.class); zombie/core/Clipboard.java:36) -
@@ -106,21 +113,21 @@ local function readClipboard()
             .. math.floor(MAX_TEXT / 1024) .. "KB assembly cap. Put the file in the "
             .. "server's Zomboid/Lua/ and use the filename route instead.")
         log("paste refused: " .. #text .. " bytes exceeds the "
-            .. MAX_TEXT .. "-byte assembly cap. Copy the export to "
-            .. "<server>/Lua/phunzones.txt, then either restart the server "
-            .. "(first-boot import) or run LMSync.requestImport(\"phunzones.txt\") "
-            .. "from the client console. Hand-editing RFTDLimes.ini also works.", "warn")
+            .. MAX_TEXT .. "-byte assembly cap. Copy the file to "
+            .. "<server>/Lua/limes-zones.json, then run "
+            .. "LMSync.requestImport(\"limes-zones.json\") from the client "
+            .. "console. Hand-editing RFTDLimes.ini also works.", "warn")
         return
     end
 
-    -- parseAny, not parsePhunZones: an RFTDLimes .ini is a legitimate thing to
-    -- paste back, and until 2026-08-05 it died on line 1.
+    -- parseAny: schema-1 JSON is the sharing dialect, and an RFTDLimes .ini
+    -- is a legitimate thing to paste back (until 2026-08-05 it died on line 1).
     local ok, res = LMImport.parseAny(text)
     if not ok then
-        setStatus("Not a PhunZones export or an RFTDLimes .ini: " .. tostring(res))
+        setStatus(tostring(res))
         return
     end
-    local dialect = (res.format == "ini") and "RFTDLimes .ini" or "PhunZones layer"
+    local dialect = (res.format == "ini") and "RFTDLimes .ini" or "zones JSON"
 
     LMImportTab.pending = text
     if ui and ui.importBtn then ui.importBtn.enable = true end
@@ -129,6 +136,33 @@ local function readClipboard()
     showWarnings(res.warnings)
     log(string.format("preview: %s, %d zones, %d warnings", dialect, res.count, #res.warnings))
     for i = 1, #res.warnings do log("preview: " .. res.warnings[i], "warn") end
+end
+
+-- The door out: the whole replica as schema-1 JSON, onto the clipboard.
+-- Local and instant - no wire, no capability, because the client is reading
+-- what it was already sent. Clipboard.setClipboard is the write half of the
+-- surface the read button already uses (zombie/core/Clipboard.java:55-62;
+-- on the main thread it writes through GLFW, off it the value parks in
+-- delaySetMainThread and lands on the next updateMainThread pass).
+local function copyExport()
+    local raw = Limes.raw()
+    local n = 0
+    for _ in pairs(raw) do n = n + 1 end
+    if n == 0 then
+        setStatus("Nothing to export - the store is empty.")
+        return
+    end
+    if not (Clipboard and Clipboard.setClipboard) then
+        setStatus("Clipboard is not available - export not copied.")
+        return
+    end
+    local text = LMImport.exportSchema1(raw, Limes.revision)
+    Clipboard.setClipboard(text)
+    setStatus("Copied " .. n .. " record(s) as zones JSON ("
+        .. math.floor(#text / 1024 + 0.5) .. "KB), revision "
+        .. tostring(Limes.revision) .. ".", true)
+    log("export: " .. n .. " records, " .. #text .. " bytes, revision "
+        .. tostring(Limes.revision))
 end
 
 -- One command when it fits, N when it does not. The single-shot path is kept
@@ -241,12 +275,18 @@ function LMImportTab.layout(panel, x, y, w, h)
 
     -- the import buttons share one row, so take the row once and place across it
     local bx, by = s:row(m.btnH + m.pad)
-    ui.readBtn:setX(bx);         ui.readBtn:setY(by)
-    ui.importBtn:setX(bx + 150); ui.importBtn:setY(by)
+    ui.readBtn:setX(bx);          ui.readBtn:setY(by)
+    ui.importBtn:setX(bx + 150);  ui.importBtn:setY(by)
+    ui.exportBtn:setX(bx + 310);  ui.exportBtn:setY(by)
     -- Clear sits at the far right of the same row, deliberately away from
     -- Import: the two are one careless click apart and mean opposite things.
     ui.clearBtn:setX(bx + w - 130 - m.pad * 2)
     ui.clearBtn:setY(by)
+
+    -- the diagnostics pair takes its own row under the operations
+    local cx, cy = s:row(m.btnH + m.pad)
+    ui.censusBtn:setX(cx);            ui.censusBtn:setY(cy)
+    ui.censusAutoBtn:setX(cx + 100);  ui.censusAutoBtn:setY(cy)
 
     place(ui.status, 22)
     for i = 1, #ui.warns do place(ui.warns[i], 16) end
@@ -271,15 +311,49 @@ function LMImportTab.attach(panel)
     local bag = {}
 
     local title = DFKit.label(panel, 0, 0,
-        "Zone import - paste a PhunZones custom layer (the text of phunzones.txt).")
+        "Zone sharing - paste a zones JSON (or an RFTDLimes .ini backup).")
     local sub1 = DFKit.label(panel, 0, 0,
-        "Copy the export to the clipboard, preview it here, then import. The server", C.textDim)
+        "Copy the setup to the clipboard, preview it here, then import. The server", C.textDim)
     local sub2 = DFKit.label(panel, 0, 0,
         "rewrites RFTDLimes.ini and every client re-syncs. Admin only.", C.textDim)
 
     local readBtn   = DFKit.button(panel, 0, 0, 140, "Read clipboard",   panel, readClipboard)
     local importBtn = DFKit.button(panel, 0, 0, 150, "Import to server", panel, sendImport, "primary")
     importBtn.enable = false
+    local exportBtn = DFKit.button(panel, 0, 0, 130, "Copy export", panel, copyExport, "action",
+        { tooltip = "Copy the WHOLE current store - zones, tiers, profiles, loot rules,"
+                 .. " moon overlays - to the clipboard as zones JSON, ready to paste into"
+                 .. " another server's Zones tab or save as a file." })
+
+    -- THE CENSUS PAIR, moved here from the Zone Selector toolbar with the S3
+    -- declutter: global diagnostics belong in the operations window, beside
+    -- import/export/clear, not among per-zone gestures. They exist because
+    -- zeds enforcement is SILENT by design (a corpse in a walled safe zone is
+    -- worse than the spawn it replaces) - the census is the only way to watch
+    -- it work, and it reports to the SERVER log, beside the .ini it explains.
+    local censusBtn = DFKit.button(panel, 0, 0, 90, "Zed census", panel, function()
+            if LMSync and LMSync.printCensus then
+                LMSync.printCensus(false)
+                setStatus("Census requested - the report is in the server log.", true)
+            end
+        end, "action",
+        { tooltip = "Count the zombies actually standing in every zone right now and"
+                 .. " print them to the SERVER log beside each zone's settings. Zones"
+                 .. " on unloaded ground report 'unloaded' rather than a zero they"
+                 .. " have not earned." })
+    local censusAutoBtn = DFKit.button(panel, 0, 0, 110, "Census auto: off", panel, function()
+            LMImportTab.censusAuto = not LMImportTab.censusAuto
+            if LMSync and LMSync.setCensus then LMSync.setCensus(LMImportTab.censusAuto) end
+            -- This closure can outlive the panel; the completed server toggle
+            -- does not require a label to remain, so teardown is explicit.
+            if ui and ui.censusAutoBtn then
+                ui.censusAutoBtn:setTitle("Census auto: "
+                    .. (LMImportTab.censusAuto and "on" or "off"))
+            end
+        end, "action",
+        { tooltip = "Repeat the census every ten GAME minutes. Off by default and"
+                 .. " never persisted: a diagnostic that survives a restart is one"
+                 .. " somebody forgot to turn off." })
     local clearBtn  = DFKit.button(panel, 0, 0, 130, "Clear all zones", panel, clearAll, "danger",
         { tooltip = "Wipe every zone on the server, so a dial can be tested against an empty"
                  .. " map instead of 76 zones answering lookups.\n\nThe current store is"
@@ -314,7 +388,9 @@ function LMImportTab.attach(panel)
 
     ui = {
         title = title, sub1 = sub1, sub2 = sub2,
-        readBtn = readBtn, importBtn = importBtn, clearBtn = clearBtn,
+        readBtn = readBtn, importBtn = importBtn, exportBtn = exportBtn,
+        censusBtn = censusBtn, censusAutoBtn = censusAutoBtn,
+        clearBtn = clearBtn,
         status = status, store = store, warns = warns,
         zoneList = zoneList, gotoBtn = gotoBtn,
     }
@@ -322,8 +398,9 @@ function LMImportTab.attach(panel)
     LMImportTab.pending = nil
     setStoreLine()
 
-    for _, el in ipairs({ title, sub1, sub2, readBtn, importBtn, clearBtn,
-                          status, store, zoneList, gotoBtn }) do
+    for _, el in ipairs({ title, sub1, sub2, readBtn, importBtn, exportBtn,
+                          censusBtn, censusAutoBtn,
+                          clearBtn, status, store, zoneList, gotoBtn }) do
         bag[#bag + 1] = el
     end
     for i = 1, #warns do bag[#bag + 1] = warns[i] end

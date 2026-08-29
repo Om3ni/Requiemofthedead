@@ -70,14 +70,12 @@ local TOKEN = "RFTDLimes"
 -- Shared with LMRestrictCl - see shared/LMRestrictShared.lua.
 local denied = LMRestrictShared.denied
 
--- Where a character is standing, when the action carries no coordinates of its
--- own. Second best and always noted as such: a player can stand outside a zone
--- and act on a square inside it, so a flag enforced this way is enforced at the
--- ACTOR rather than at the TARGET.
-local function at(character)
-    if not character then return nil, nil end
-    return character:getX(), character:getY()
-end
+-- Every veto below reads coordinates off the TARGET square, never off the
+-- acting character. That is deliberate: a player can stand outside a zone and
+-- act on a square inside it, so an actor-position test enforces the flag in the
+-- wrong place. An actor-position helper sat here unused until 2026-08-27; if a
+-- future veto genuinely has no target coordinates, the choice has to be made
+-- and stated at that call site rather than reached for silently.
 
 -- ---------------------------------------------------------------------------
 -- Refusal

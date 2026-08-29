@@ -20,7 +20,6 @@ HBDebugPanel._instance = nil
 local PAD        = 8
 local ROW_H      = 18
 local HEADER_H   = 22
-local STATUS_H   = 22
 local LOG_H      = 140
 local BTN_H      = 24
 local LOG_ROW_H  = 14

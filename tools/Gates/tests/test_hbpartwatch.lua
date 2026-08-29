@@ -49,12 +49,17 @@ RDLog = {
     end,
 }
 
-local rateCalls, rateAnswer = {}, true
+-- Kept although the module no longer calls it: a tripwire, not a dependency.
+-- If a rate check reappears in onClientReport this records it and the
+-- assertion below fails, which is the point - the limiter belongs on the RDNet
+-- registration now (test_hbcommands.lua). Answers true so a returning call
+-- would proceed and be caught by the count rather than by a refusal.
+local rateCalls = {}
 RDRate = {
     allow = function(player, max, windowMs, scope)
         rateCalls[#rateCalls + 1] =
             { player = player, max = max, windowMs = windowMs, scope = scope }
-        return rateAnswer
+        return true
     end,
 }
 
@@ -260,19 +265,22 @@ local function report(args)
     return records
 end
 
--- rate limit consulted first, with the command-scoped bucket
+-- THE RATE LIMIT IS NOT THIS FILE'S ANY MORE (2026-08-25). It used to be the
+-- first thing onClientReport did, because the command arrived through
+-- Husbandry's own OnClientCommand chain, which had no per-command limiter.
+-- The token now goes through RDNet, whose bucket is already scoped to
+-- (token, command); the 4/sec lives on the registration and is pinned by
+-- test_hbcommands.lua.
+--
+-- What is pinned HERE is the negative: this handler must not consult RDRate
+-- again. Two limiters draining on one stream is the shape RDRate.allow's own
+-- header warns about - the second one sees a bucket the first already spent
+-- and refuses traffic nobody sent twice.
 rateCalls = {}
 report{ x = 10, y = 10, z = 0, items = { { fullType = "Base.Deer_Doe_Head" } } }
-check(#rateCalls == 1 and rateCalls[1].scope == "RFTDHusbandry.hbPartPlaced",
-    "the rate bucket is not command-scoped - sect. 13 cross-contamination")
-check(rateCalls[1].max == 4 and rateCalls[1].windowMs == 1000,
-    "rate parameters drifted")
-
-rateAnswer = false
-check(#report{ x = 10, y = 10, z = 0,
-    items = { { fullType = "Base.Deer_Doe_Head" } } } == 0,
-    "an over-rate report was recorded")
-rateAnswer = true
+check(#rateCalls == 0,
+    "onClientReport is rate-limiting again - RDNet already did, and two "
+    .. "limiters on one command drain the same bucket twice")
 
 -- shape refusals
 check(#report(nil) == 0, "nil args accepted")

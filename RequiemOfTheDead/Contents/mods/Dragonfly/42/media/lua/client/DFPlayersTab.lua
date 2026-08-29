@@ -13,9 +13,13 @@
 -- assignments in Dragonfly_PlayerRoles.txt still re-apply on connect via
 -- DFPlayerRoles_Server, which stays until those are migrated to vanilla.
 --
--- v1 ships without a right-click context menu - actions are explicit buttons
--- in the detail pane. v2 will add the row context menu via
--- DFRegistry.getRowActions("players") for consumer-mod extension.
+-- Row context menu: consumer mods extend via
+-- DFRegistry.registerRowAction{ tabId = "players", ... }, consumed in
+-- PlayerList:onRightMouseUp below (wired 2026-08-25 - it was a documented
+-- promise with no reader for its first two days as a "v2" note, and anything
+-- registered was silently filed and forgotten). Dragonfly's OWN actions stay
+-- explicit buttons in the detail pane on purpose - the menu is the extension
+-- point, not the primary surface.
 --
 -- MULTI-SELECT (ctrl-toggle / shift-range) is on the list, but only SOME actions
 -- are bulk-capable, so the pane has to say which. Two rules hold it together:
@@ -346,10 +350,22 @@ function PlayerList:onMouseDown(x, y)
     refreshDetail()
 end
 
-function PlayerList:render()
-    self:setStencilRect(0, 0, self.width, self.height)
-    ISScrollingListBox.render(self)
-    self:clearStencilRect()
+-- No render override here. ISScrollingListBox:prerender draws every row
+-- ITSELF inside a stencil it sets and clears (ISScrollingListBox.lua:505,
+-- :541, scrollbar clamp :494-496), and :render draws no rows at all - it is
+-- a joypad focus border (:642-647). The setStencil/render/clearStencil
+-- wrapper that sat here clipped nothing; rows never could escape.
+
+-- THE ROW CONTEXT MENU, wired 2026-08-25. registerRowAction("players") had
+-- accepted and stored specs since the tab shipped while nothing ever read
+-- them back - a consumer mod registered into a drawer that never opened, with
+-- no error to say so. The consuming rule itself lives in Core
+-- (DFRegistry.addRowActions - one body for the three tabs that honour it,
+-- with the guard doctrine written there). Dragonfly's own actions stay
+-- explicit buttons in the detail pane; this menu is the extension point for
+-- everyone else.
+function PlayerList:onRightMouseUp(x, y)
+    DFRegistry.showRowMenu(self, x, y, "players")   -- the tab id is the policy
 end
 
 local function attachHeader(panel, listX, headerY)
@@ -766,7 +782,7 @@ local function build(spec, panel, x, y, w, h)
         refreshDetail()
     end
 
-    local refreshBtn = DFKit.button(panel, PAD + 170, cursorY, 90, "Refresh",
+    DFKit.button(panel, PAD + 170, cursorY, 90, "Refresh",
         panel, requestSnapshot)
 
     -- Stats label, right-justified on the same row

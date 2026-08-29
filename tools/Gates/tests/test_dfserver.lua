@@ -15,10 +15,12 @@
 --    an accepted command and a refused one otherwise produce the same log line,
 --    so a server owner reading the audit trail cannot tell an admin who did
 --    something from one who tried and was stopped.
--- 3. A handler with NO declared capability is let straight through. That is the
---    correct behaviour - some handlers genuinely cannot declare one - and it is
---    exactly why those handlers have to audit their own refusals. Pinned here
---    so the reason stays visible from this side too.
+-- 3. The three declared shapes (a name; "any" = any capability at all; a
+--    FUNCTION of (player, args) for payload-dependent gates - added
+--    2026-08-25) must each refuse before the body, answer the caller, and
+--    land in the audit log AS refusals. A handler with NO declared
+--    capability is still let straight through - correct for a genuinely open
+--    handler, though nothing in the suite needs that for gate reasons now.
 --
 -- The rate limiter and the audit relay are not covered; RDRate has its own
 -- fixture and the relay is a send.
@@ -140,18 +142,64 @@ check(#audits == 1 and audits[1].extra == nil,
     "an accepted command carried a refusal marker")
 
 -- ---- no declared capability is let straight through ---------------------
--- Correct, and the reason the handlers that cannot declare one - the reads
--- gated on "any capability at all", and layoutSet whose gate depends on its
--- payload - audit their own refusals.
+-- Still correct for a genuinely open handler; since 2026-08-25 nothing in the
+-- suite NEEDS to be open for gate reasons ("any" and function gates below).
 
 fire(nobody, "openThing")
-check(#ran == 1,
-    "a handler with no declared capability was refused; some genuinely cannot "
-    .. "declare one and decide for themselves")
+check(#ran == 1, "a handler with no declared capability was refused")
 check(#audits == 1 and audits[1].extra == nil,
-    "a handler that decides for itself had its command logged as anything other "
-    .. "than accepted - which is exactly why those handlers must audit their own "
-    .. "refusals: the log cannot do it for them")
+    "an ungated command was logged as anything other than accepted")
+
+-- ---- capability = "any": any capability at all --------------------------
+-- The shape the staff-only reads (varsList, varHolders, layoutGet) declare.
+-- Before 2026-08-25 it did not exist and those handlers self-gated, which
+-- meant their refusals were either invisible or self-audited to compensate.
+
+DFServer.registerHandler{
+    action     = "anyThing",
+    capability = "any",
+    run = function(p) ran[#ran + 1] = p.name; return { ok = true } end,
+}
+fire(admin, "anyThing")
+check(#ran == 1, "a staff caller (any capability) was refused the 'any' gate")
+
+fire(nobody, "anyThing")
+check(#ran == 0, "A CALLER WITH NO CAPABILITY AT ALL PASSED THE 'any' GATE")
+check(#replies == 1 and replies[1].args.ok == false, "the 'any' refusal sent no answer")
+check(#audits == 1 and audits[1].extra ~= nil
+      and audits[1].extra:find("refused", 1, true) ~= nil,
+    "an 'any' refusal was not audited as a refusal - the whole point of the "
+    .. "shape is that the dispatcher's log carries it: "
+    .. tostring(audits[1] and audits[1].extra))
+
+-- ---- capability = function(player, args): payload-dependent gates --------
+-- layoutSet's shape: __server needs one capability, a sandbox page another.
+-- The function must receive the ARGS (that is what makes it payload-aware),
+-- and its returned reason must reach both the audit line and the reply.
+
+local gateSaw = nil
+DFServer.registerHandler{
+    action     = "pagedThing",
+    capability = function(p, args)
+        gateSaw = args
+        if args.page == "open" then return true end
+        return false, "missing TheRightCap for " .. tostring(args.page)
+    end,
+    run = function(p) ran[#ran + 1] = p.name; return { ok = true } end,
+}
+fire(admin, "pagedThing", { page = "open" })
+check(#ran == 1, "the function gate refused a payload it approves")
+check(gateSaw ~= nil and gateSaw.page == "open",
+    "the function gate never received the args - it cannot be payload-aware blind")
+
+fire(admin, "pagedThing", { page = "locked" })
+check(#ran == 0, "the function gate's refusal did not stop the body")
+check(#replies == 1 and tostring(replies[1].args.reason):find("TheRightCap", 1, true) ~= nil,
+    "the gate's stated reason did not reach the caller: "
+    .. tostring(replies[1].args.reason))
+check(#audits == 1 and tostring(audits[1].extra):find("TheRightCap", 1, true) ~= nil,
+    "the gate's stated reason did not reach the audit log: "
+    .. tostring(audits[1] and audits[1].extra))
 
 -- ---- unknown actions and foreign modules --------------------------------
 

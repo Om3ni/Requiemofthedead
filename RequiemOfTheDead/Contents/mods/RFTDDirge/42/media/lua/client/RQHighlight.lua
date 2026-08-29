@@ -1,10 +1,15 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQHighlight - outline glow on special zombies
--- PZ doesn't persist outline highlights between frames so we
--- reapply them every render tick. Registry is now keyed by
--- onlineID; the zombie object is resolved at render time from
--- lastKnownPos coordinates so a dead/missing ref is just a miss,
--- not a stale table entry that poisons the loop.
+--
+-- PZ does not persist outline highlights between frames, so we reapply them
+-- every render tick. That is not a workaround, it is the engine's design:
+-- IsoMovingObject.renderlast() draws the outline and then clears the bit in
+-- the same call (IsoMovingObject.java:1019-1030). Repainting is the only way
+-- an outline stays on, and NOT repainting is the only way one comes off.
+--
+-- The registry is keyed by onlineID and the object is resolved at render time
+-- through RQZombieCache, so a dead or unloaded special is simply a miss - not
+-- a stale table entry that poisons the loop.
 
 -- Core's world-focus claim. Explicit rather than riding the alphabetical client
 -- walk: this file only reads it inside a render callback, but the dependency is
@@ -29,18 +34,13 @@ local function paintSpecial(onlineID, zType, playerNum)
     -- anything; the type colour returns on the first tick after it is released.
     if RDZombieFocus.isFocused(onlineID) then return end
 
-    -- resolve object at render time; nil = not in loaded chunks, skip
-    local pos = RQReconcile.lastKnownPos[onlineID]
-    local px = pos and pos.x or 0
-    local py = pos and pos.y or 0
-    local pz = pos and pos.z or 0
-    local zombie = RQCore.findZombieByID(onlineID, px, py, pz)
+    -- resolve object at render time; nil = not in loaded chunks, skip.
+    -- No isDead() branch here any more: RQZombieCache's liveness rule refuses
+    -- to return a dead zombie at all, so the branch that used to un-paint one
+    -- could not be reached - and had nothing to do if it were, since
+    -- renderlast() clears the bit itself (see the note above remove's grave).
+    local zombie = RQCore.findZombieByID(onlineID)
     if not zombie then return end
-
-    if zombie:isDead() then
-        zombie:setOutlineHighlight(playerNum, false)
-        return
-    end
 
     local col
     -- Boss aura override: if this zombie is currently being painted by a Boss
@@ -75,18 +75,23 @@ end
 
 Events.OnRenderTick.Add(onRenderTick)
 
--- called by RQCore when a zombie dies, after loot is handled
-function RQHighlight.remove(onlineID)
-    if not onlineID then return end
-    local pos = RQReconcile and RQReconcile.lastKnownPos[onlineID]
-    if not pos then return end
-    local zombie = RQCore.findZombieByID(onlineID, pos.x, pos.y, pos.z)
-    if not zombie then return end
-    local player = getPlayer()
-    if not player then return end
-    zombie:setOutlineHighlight(player:getPlayerNum(), false)
-end
-
+-- RQHighlight.remove IS GONE, deleted 2026-08-25, and the reason is the same
+-- fact this whole file is built on - stated here because the function looked
+-- load-bearing and was not.
+--
+-- IsoMovingObject.renderlast() reads the outline bit for the rendering player
+-- and, having drawn it, immediately calls setOutlineHighlight(playerIndex,
+-- false) (IsoMovingObject.java:1019-1030). The two-argument setter's false
+-- branch clears that player's bit and, once the byte reaches zero, calls
+-- FBORenderObjectOutline.unregisterObject (IsoObject.java:5171-5182). So the
+-- engine both un-paints and un-registers on its own, every frame, and there is
+-- nothing left over at death for a Lua caller to tidy up. That is precisely
+-- WHY this file repaints every render tick.
+--
+-- It had also become unreachable: RQCore's death handler ran it after
+-- RQZombieCache had already evicted the row, and the cache refuses to hand
+-- back a dead zombie, so the lookup could only miss. Two independent reasons
+-- for the same call to do nothing is a good sign it should not exist.
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.
 --

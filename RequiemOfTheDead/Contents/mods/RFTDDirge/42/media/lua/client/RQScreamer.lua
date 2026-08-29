@@ -196,9 +196,6 @@ function RQScreamer.onCastStart(player, screamer, blastX, blastY)
     applyPanicBump(player)
 end
 
-function RQScreamer.onCastDone(player, screamer)
-end
-
 function RQScreamer.onDead(zombie)
     local oid = zombie and zombie:getOnlineID()
     if oid and oid ~= 0 then

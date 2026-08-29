@@ -33,7 +33,10 @@ require = function() end
 dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDJson.lua")
 Events = { OnServerStarted = { Add = function() end } }
 Capability = { CanModifyPlayerStatsInThePlayerStatsUI = "cap" }
-RDShared = { EXT_DOC = ".json.txt", EXT_DOC_LEGACY = ".json" }
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
 MMShared = { MODULE = "RFTDMemoir", CMD = { RESULT = "result" } }
 
 local files, readFaults, warnings = {}, {}, {}

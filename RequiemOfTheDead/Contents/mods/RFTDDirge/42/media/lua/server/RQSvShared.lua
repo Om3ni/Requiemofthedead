@@ -3,6 +3,7 @@ if not isServer() then return end
 
 require "RDZombieId"
 require "RQChargeLevy"
+require "RQZombieCache"
 
 RQSvShared = RQSvShared or {}
 
@@ -51,11 +52,7 @@ local BOSS_SKILL_LABELS     = {
     Buff     = "Buffing...",
 }
 
-local DEV_PLAYER_TRIGGER  = 20
-
-local SCAV_FOLLOW_RANGE   = 15
 local SCAV_CORPSE_RADIUS  = 8
-local EATER_SEEK_TIMEOUT  = 90000   -- owner-client has 90s to path to corpse
 
 -- expose constants for other modules
 RQSvShared.HEALTH_MULTIPLIER          = HEALTH_MULTIPLIER
@@ -65,10 +62,7 @@ RQSvShared.SCREAMER_SPAWN_RADIUS      = SCREAMER_SPAWN_RADIUS
 RQSvShared.BOSS_TRIGGER_RANGE         = BOSS_TRIGGER_RANGE
 RQSvShared.BOSS_SKILLS                = BOSS_SKILLS
 RQSvShared.BOSS_SKILL_LABELS          = BOSS_SKILL_LABELS
-RQSvShared.DEV_PLAYER_TRIGGER         = DEV_PLAYER_TRIGGER
-RQSvShared.SCAV_FOLLOW_RANGE          = SCAV_FOLLOW_RANGE
 RQSvShared.SCAV_CORPSE_RADIUS         = SCAV_CORPSE_RADIUS
-RQSvShared.EATER_SEEK_TIMEOUT         = EATER_SEEK_TIMEOUT
 
 -- ========================
 -- Pending queues (RQServer.lua resets these on game start)
@@ -93,7 +87,6 @@ local SE_SCREAMER_SPAWN_MIN = E.SCREAMER_SPAWN_MIN
 local SE_SCREAMER_SPAWN_MAX = E.SCREAMER_SPAWN_MAX
 local SE_SCREAMER_THRESHOLD = E.SCREAMER_THRESHOLD
 local SE_JUGG_RADIUS        = E.JUGG_RADIUS
-local SE_JUGG_BUFF          = E.JUGG_BUFF
 local SE_EMP_RANGE          = E.EMP_RANGE
 local SE_EMP_CAST           = E.EMP_CAST
 local SE_EMP_RADIUS         = E.EMP_RADIUS
@@ -150,9 +143,6 @@ local function getSvConfig()
         juggernautHealthMultiplier = math.max(1, math.min(50,
             tonumber(sv and sv.JuggernautHealthMultiplier) or HEALTH_MULTIPLIER.Juggernaut)),
         juggernautBuffRadius  = sev(SE_JUGG_RADIUS, sv and sv.JuggernautBuffRadius,  3),
-        juggernautBuffPercent = sev(SE_JUGG_BUFF,   sv and sv.JuggernautBuffPercent, 2),
-        juggernautMitigation  = math.max(0, math.min(100,
-            tonumber(sv and sv.JuggernautMitigation) or 0)),
 
         -- EMP
         empTriggerRange  = sev(SE_EMP_RANGE,   sv and sv.EMPTriggerRange,  3),
@@ -231,13 +221,19 @@ local MAX_NETWORK_HP = 30.0
 -- Only the owner's setHealth survives anyway -- every other client's write is
 -- overwritten by the owner's next NetworkZombieManager sync -- so broadcasting
 -- to N clients spends N-1 packets on writes that are immediately clobbered.
--- That is affordable once at conversion; it is not affordable from the buff
--- auras, which call this ONCE PER ZOMBIE IN RADIUS every 2s.
+-- That was affordable once at conversion; it was NOT affordable from the buff
+-- auras, which called this once per zombie in radius every 2s. Those auras are
+-- gone (RQBulwark answers per hit instead), which is why that cost argument
+-- reads in the past tense now - the remaining callers are conversion and
+-- McCoy's per-injured-special cadence.
 --
 -- Returns true when the value reached an authority (the owning client, or the
--- server itself when it owns the zombie), false when we could not place it.
--- Callers that latch a one-shot result must check this -- see the buffed[]
--- guards in RQSvJuggernaut / RQSvScavenger / RQSvBoss.
+-- server itself when it owns the zombie), false when we could not place it. A
+-- caller that latches a one-shot result must check it. This used to point at
+-- "the buffed[] guards in RQSvJuggernaut / RQSvScavenger / RQSvBoss" as the
+-- example; all three latches were deleted on 2026-08-24 and all three files
+-- carry tombstones, so the pointer was sending readers after code that is not
+-- there. There is no latching caller left today.
 local function svSetZombieHP(zombie, targetHP, ownerOnly)
     if not zombie or targetHP == nil then return false end
     if targetHP > MAX_NETWORK_HP then
@@ -253,12 +249,12 @@ local function svSetZombieHP(zombie, targetHP, ownerOnly)
     local oid = RDZombieId.of(zombie)
     if not oid then return false end
 
+    -- x/y/z came off this payload 2026-08-25 (owner-approved wire change):
+    -- the client resolves by id through RQZombieCache and never read them.
+    -- Both mod halves ship atomically, so no live client still expects them.
     local payload = {
         onlineID = oid,
         targetHP = targetHP,
-        x = math.floor(zombie:getX()),
-        y = math.floor(zombie:getY()),
-        z = math.floor(zombie:getZ()),
     }
 
     if ownerOnly then
@@ -301,8 +297,8 @@ local function svApplyTypeHealth(zombie, cfg, zType, sourceHealth)
     zombie:getModData()["RQBaseHP"] = baseHealth
     -- Deliberately NOT ownerOnly. This fires once, when a zombie becomes a
     -- special, and nothing recomputes it afterwards -- so it gets the belt-and-
-    -- braces broadcast. The hot repeating callers (buff auras, regen, decay)
-    -- are the ones that pass ownerOnly.
+    -- braces broadcast. The hot repeating callers (McCoy's heal cadence, the
+    -- Scavenger's rage decay) are the ones that pass ownerOnly.
     svSetZombieHP(zombie, baseHealth * mult)
 end
 
@@ -393,14 +389,12 @@ local function svDeliverMovement(zombie, walkType, speedMod, turnDelta)
     -- further down this file, so a reference here would compile to a GLOBAL
     -- lookup and be nil at call time. svSetZombieHP above calls the global
     -- directly for the same reason.
+    -- x/y/z came off this payload 2026-08-25, same reason as svSetZombieHP's.
     sendServerCommand(owner, RQCommon.MODULE, "applyZombieMovement", {
         onlineID  = oid,
         walkType  = walkType,
         speedMod  = speedMod,
         turnDelta = turnDelta,
-        x = math.floor(zombie:getX()),
-        y = math.floor(zombie:getY()),
-        z = math.floor(zombie:getZ()),
     })
     return true
 end
@@ -455,6 +449,67 @@ local function applyBossSprinter(zombie)
     applySprintProfile(zombie)
 end
 RQSvShared.applyBossSprinter = applyBossSprinter
+
+-- ---------------------------------------------------------------------------
+-- Zone-risk sprinters (S8 of the Limes redesign)
+-- ---------------------------------------------------------------------------
+-- The zone dial: `sprinterShare` arrives on the per-zone cfg overlay - the
+-- same getEffectiveRules flip that already carries the weights and spacings -
+-- so Dirge stays free of any Limes dependency. The base config deliberately
+-- has NO such key: without a zone layer the share reads nil, coerces to 0,
+-- and the mechanic is inert. The global dial, when someone wants one, is the
+-- zone layer's own _default record, not a sandbox option.
+--
+-- THE CONTRACT, chosen for predictability over cleverness:
+--   * A zombie rolls ONCE, the first time it is scanned standing on ground
+--     whose share is above zero. Win -> a permanent sprinter (for its loaded
+--     lifetime); lose -> a walker for the same span.
+--   * Ground with no share burns nothing, so a walker that wanders INTO a
+--     risk zone still rolls there. A loser never re-rolls, even if the share
+--     is raised - population churn is what turns a dial change into streets
+--     that feel different (verdicts live in modData, which dies at
+--     virtualization - see the RQRolled commentary in RQServer - so churn is
+--     measured in chunk reloads, not server restarts).
+--   * Specials are excluded on both sides: a converted zombie never rolls
+--     (Juggernauts do not sprint), and the roll waits until the special
+--     lottery has settled as a LOSS (RQRolled burned, nothing parked) so one
+--     zombie can never win both in the same visit and leave a sprint profile
+--     on a type that owns its own movement.
+--
+-- The re-apply branch is the same self-heal svDeliverMovement's commentary
+-- demands: the owning client's zombie packets re-stamp movement continuously,
+-- and an ownership handoff can put a walk back on a committed sprinter. Read
+-- the live walk type and re-deliver only when it has reverted - sprint1-5 are
+-- the engine's own sprint vocabulary (IsoZombie.java:4807-4814), so a
+-- "sprint" prefix is the exact test, not a heuristic.
+local function svCheckZoneSprinter(zombie, md)
+    if md["RQConverted"] then return end
+    if md["RQSprinter"] then
+        local wt = zombie:getWalkType()
+        if not wt or wt:sub(1, 6) ~= "sprint" then
+            applySprintProfile(zombie)
+        end
+        return
+    end
+    if md["RQSprintRolled"] then return end
+    if not md["RQRolled"] or md["RQPendingType"] then return end
+    local cfg = getSvConfig()
+    if not cfg.enabled then return end
+    cfg = RQPhunZones.getEffectiveRules(zombie, nil, cfg)
+    local share = tonumber(cfg.sprinterShare) or 0
+    if share <= 0 then return end
+    md["RQSprintRolled"] = true
+    if ZombRand(100) >= share then return end
+    md["RQSprinter"] = true
+    applySprintProfile(zombie)
+    if cfg.debugMode then
+        RQDirgeLog.write("Sprint", string.format(
+            "[INFO] zone sprinter minted at %d,%d share=%d",
+            math.floor(zombie:getX()), math.floor(zombie:getY()),
+            math.floor(share)))
+    end
+end
+RQSvShared.svCheckZoneSprinter = svCheckZoneSprinter
 
 -- ========================
 -- Common utility functions
@@ -530,35 +585,6 @@ local function isAnyPlayerInRange(zombie, range)
     return false
 end
 
--- get all players within range of a world position
-local function getPlayersInRange(x, y, range)
-    local result = {}
-    local rangeSq = range * range
-    local players = getOnlinePlayers()
-    if players and players:size() > 0 then
-        for i = 0, players:size() - 1 do
-            local p = players:get(i)
-            if p then
-                local dx = p:getX() - x
-                local dy = p:getY() - y
-                if dx * dx + dy * dy <= rangeSq then
-                    result[#result + 1] = p
-                end
-            end
-        end
-    else
-        local p = getPlayer()
-        if p then
-            local dx = p:getX() - x
-            local dy = p:getY() - y
-            if dx * dx + dy * dy <= rangeSq then
-                result[1] = p
-            end
-        end
-    end
-    return result
-end
-
 -- build castStart parameter package
 local function makeCastArgs(ringId, x, y, z, duration, col, label, ringRadius, onlineID)
     return {
@@ -605,14 +631,52 @@ local function svCountNearbyAliveZombies(x, y, z, radius, ignoreZombie)
     return nearbyCount
 end
 
+-- TWO LANES, split 2026-08-25, because they were never one question.
+--
+-- AN ID NAMES A ZOMBIE; COORDINATES SELECT ONE. The old body answered both
+-- with a box sweep from whatever coordinates arrived, which made the id lane
+-- only as good as the position sent beside it: a zombie that had wandered
+-- past the box was a MISS, and - worse - an id of -1 (multiple unassigned
+-- zombies can carry it at once) would have returned whichever -1 body the
+-- walk met first. The id lane now goes through RQZombieCache, the same
+-- id-keyed map the client adopted, promoted to shared for exactly this
+-- caller; x/y/z and radius are IGNORED there, and RDZombieId owns validity
+-- so -1 is a miss, never a wrong body.
+--
+-- The coordinate lane (onlineID nil, 0, or -1) is inherently spatial and
+-- keeps its sweep: it is the context-menu convert's "the thing I am pointing
+-- at" affordance, whose reach hAdminConvert anchors to 48 tiles of the
+-- caller. onlineID == 0 stays meaningful for that path (a zombie the engine
+-- has not networked yet reports 0 client-side).
+-- WHICH LANE AN ID TAKES, exported so a CALLER'S GATE CANNOT DRIFT FROM THE
+-- RESOLVER'S CHOICE. That drift was a real authority bug, found in review the
+-- same day the lanes were split (2026-08-25): hAdminConvert anchored its
+-- 48-tile proximity check on `onlineID == 0`, the only coordinate-selected
+-- value the OLD resolver had - while this rewrite widened the coordinate lane
+-- to nil, 0 and -1. A staff-tier caller could send onlineID = -1 with any
+-- loaded coordinates and convert the nearest ordinary zombie there, entirely
+-- outside the anchor. The lesson is not "add -1 to the gate": it is that a
+-- second copy of this test is what allowed the two to disagree at all.
+function RQSvShared.usesCoordinateLane(onlineID)
+    return not (RDZombieId.isValid(onlineID) and onlineID ~= 0)
+end
+
 local function svFindZombieByOnlineID(onlineID, x, y, z, radius)
+    if not RQSvShared.usesCoordinateLane(onlineID) then
+        local zombie = RQZombieCache.get(onlineID)
+        -- No positional fallback on an id miss: the id names a zombie, and
+        -- "some other zombie near the point" is the wrong-body hazard the
+        -- 2026-08-19 certainty work exists to prevent. A miss means it is
+        -- not loaded (or just dead), and every caller already handles nil.
+        return zombie
+    end
+
     local cell = getCell()
     if not cell then return nil end
 
     local searchRadius = radius or 5
     local bestObj   = nil
     local bestDistSq = searchRadius * searchRadius + 1
-    local useID = onlineID and onlineID ~= 0
 
     for dx = -searchRadius, searchRadius do
         for dy = -searchRadius, searchRadius do
@@ -623,17 +687,13 @@ local function svFindZombieByOnlineID(onlineID, x, y, z, radius)
                     for i = 0, movs:size() - 1 do
                         local obj = movs:get(i)
                         if obj and instanceof(obj, "IsoZombie") and not obj:isDead() then
-                            if useID then
-                                if obj:getOnlineID() == onlineID then return obj end
-                            else
-                                -- position fallback: return nearest zombie at this spot
-                                local ddx = obj:getX() - x
-                                local ddy = obj:getY() - y
-                                local dSq = ddx*ddx + ddy*ddy
-                                if dSq < bestDistSq then
-                                    bestDistSq = dSq
-                                    bestObj = obj
-                                end
+                            -- nearest zombie to the named point
+                            local ddx = obj:getX() - x
+                            local ddy = obj:getY() - y
+                            local dSq = ddx*ddx + ddy*ddy
+                            if dSq < bestDistSq then
+                                bestDistSq = dSq
+                                bestObj = obj
                             end
                         end
                     end
@@ -642,7 +702,7 @@ local function svFindZombieByOnlineID(onlineID, x, y, z, radius)
         end
     end
 
-    return bestObj  -- nil when useID=true and not found; nearest when useID=false
+    return bestObj
 end
 
 -- _activeZombies gets injected by RQServer.lua after it creates the table
@@ -822,17 +882,44 @@ local function svDamageWorldElectronics(x, y, z, radius, drainPercent)
                                 if cond and cond > 0 then
                                     obj:setCondition(math.max(0, cond - math.floor(cond * drainPercent / 100)))
                                 end
-                            elseif obj and (instanceof(obj, "IsoTelevision") or instanceof(obj, "IsoRadio")) then
-                                local dd = obj:getDeviceData()
-                                -- DeviceData.canBePoweredHere dereferences its
-                                -- parent before checking it and shutdown ends at
-                                -- parent.getSquare(). Objects detached during the
-                                -- scan are stale work, not exceptional work.
-                                -- DeviceData.java:455-472, 491-514.
-                                if dd and dd:getParent() == obj and obj:getSquare() == sq
-                                   and dd:getIsTurnedOn() then
-                                    dd:setIsTurnedOn(false)
-                                end
+                            -- NO TV/RADIO BRANCH, and it is not an oversight -
+                            -- one stood here until 2026-08-27 and did nothing a
+                            -- player could ever perceive.
+                            --
+                            -- It called dd:setIsTurnedOn(false), which is the
+                            -- CORRECT api (IsoWaveSignal.getDeviceData:142 ->
+                            -- DeviceData.setIsTurnedOn:455; the turnOff() the
+                            -- old client copy called exists on IsoBarbecue:244
+                            -- and nowhere else). The api is right and the
+                            -- REPLICATION is not: setIsTurnedOn ends in
+                            -- transmitDeviceDataState, whose entire body is
+                            -- `if (GameClient.client)` (DeviceData.java:932-942).
+                            -- This file is `if not isServer() then return end`,
+                            -- so that branch is never taken here. The device
+                            -- switched off in the server's model and every
+                            -- client kept playing it.
+                            --
+                            -- There is no server-side substitute to reach for.
+                            -- Only packet type 0 carries isTurnedOn (:1011-1015),
+                            -- transmitDeviceDataStateServer is private (:944),
+                            -- and the one server path that emits type 0 is inside
+                            -- DeviceData.update at :773-780 - the branch that
+                            -- fires when a device can no longer be powered.
+                            -- transmitBatteryChangeServer is public but sends
+                            -- type 2, which carries hasBattery and powerDelta
+                            -- only. setPower does not transmit at all (:572-580),
+                            -- so battery devices have no lever either.
+                            --
+                            -- So the engine hands us exactly one honest way to
+                            -- darken a mains device, and we take it: CUT THE
+                            -- POWER. A generator damaged to 0 above calls
+                            -- setActivated(false) (IsoGenerator.java:205-207),
+                            -- its squares stop reporting hasGridPower, and each
+                            -- device turns ITSELF off on its next update and
+                            -- transmits that server-side. Free, authoritative,
+                            -- and no new wire traffic. The blackout trails the
+                            -- blast instead of landing with it, which is also
+                            -- what a generator dying actually looks like.
                             elseif obj and instanceof(obj, "IsoWindow") then
                                 -- The window implementation requires its square
                                 -- throughout sound, attachment, path, and polygon
@@ -851,9 +938,20 @@ local function svDamageWorldElectronics(x, y, z, radius, drainPercent)
     end
 end
 
--- inner half of blast radius hits harder than outer ring
-local EMP_INNER_DMG = 0.15
-local EMP_OUTER_DMG = 0.10
+-- THE SERVER DOES NOT DAMAGE PLAYERS IN THE BLAST, and it used to - wrongly,
+-- twice over (deleted 2026-08-25, owner call). This block cut 10-15% via
+-- p:setHealth(), which on a PLAYER writes IsoGameCharacter's protected 0-1
+-- field (IsoGameCharacter.java:547, setter :2892-2897) - the zombie/animal
+-- scale the health panel NEVER reads. Not harmless: isDead() ORs that field
+-- (:4630) and applyDamage() subtracts from it with a floor of 0
+-- (:14410-14415, the vehicle-hit path), so an EMP-eroded player could be
+-- tipped into a server-side death by an unrelated engine hit later - with an
+-- empty wounds panel, the exact "phantom wounds" shape the 2026-08-20 hunt
+-- chased. The damage players actually FEEL is the client's inner-zone
+-- BodyDamage hit (RQEMP.lua ReduceGeneralHealth(10)), which the panel reads;
+-- that lane is the design and is untouched. Residual exposure from the old
+-- writes is a session at most: the field constructs at 1.0f (:547) and
+-- nothing persists our erosion across a relog.
 
 -- casterID: the onlineID of the zombie that produced this blast, or nil for a
 -- sourceless one (the admin command). THE CASTER IS IMMUNE, nothing else is.
@@ -875,11 +973,12 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent, casterID)
                 local dy = p:getY() - y
                 local dSq = dx * dx + dy * dy
                 if dSq <= outerSq then
-                    local dmgPct = dSq <= innerSq and EMP_INNER_DMG or EMP_OUTER_DMG
-                    local zone   = dSq <= innerSq and "inner" or "outer"
-                    local hp     = p:getHealth()
-                    local newHP  = math.max(0.01, hp - hp * dmgPct)
-                    p:setHealth(newHP)
+                    local zone = dSq <= innerSq and "inner" or "outer"
+                    -- The server's real effects: endurance drain and battery
+                    -- levy. HEALTH damage is the client's, inner zone only,
+                    -- through BodyDamage - see the block comment above. The
+                    -- log no longer claims hp for outer-zone players who
+                    -- never took any; that line lied for the whole hunt.
                     svApplyEMPEnduranceDrain(p)
                     local itemsHit = RQChargeLevy.drain(p, drainPercent)
                     sendToPlayer(p, "empDebuff", {
@@ -890,7 +989,7 @@ local function svApplyEMPBlast(x, y, z, radius, drainPercent, casterID)
                     })
                     playersHit = playersHit + 1
                     RQDirgeLog.write("EMP", "[INFO] blast hit player zone=" .. zone
-                        .. " hp=" .. string.format("%.2f", hp) .. "->" .. string.format("%.2f", newHP)
+                        .. " (hp damage is client-side, inner zone only)"
                         .. " drain=" .. tostring(drainPercent) .. "%"
                         .. " itemsHit=" .. itemsHit)
                 end
@@ -1002,7 +1101,6 @@ RQSvShared.due                          = due
 RQSvShared.scheduleAction               = scheduleAction
 RQSvShared.isPlayerVisible              = isPlayerVisible
 RQSvShared.isAnyPlayerInRange           = isAnyPlayerInRange
-RQSvShared.getPlayersInRange            = getPlayersInRange
 RQSvShared.makeCastArgs                 = makeCastArgs
 RQSvShared.svFindZombieByOnlineID       = svFindZombieByOnlineID
 RQSvShared.svFindActiveZombieByOnlineID = svFindActiveZombieByOnlineID

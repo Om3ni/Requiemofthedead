@@ -1,12 +1,15 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQSvJuggernaut.lua
--- handles the alive behavior tick for Juggernaut type zombies
--- jugg has one job here: apply a HP buff to nearby non-special zombies.
--- Its old self-regen moved to RQMcCoy, which does it for every special type.
+-- Juggernaut conversion and type state. NO alive behaviour tick - see the note
+-- below, which this header used to contradict outright: it claimed "handles the
+-- alive behavior tick" and "jugg has one job here: apply a HP buff to nearby
+-- non-special zombies", twenty lines above the paragraph explaining that both
+-- of those jobs left in the 2026-08-24 slice. The buff aura became a hit-time
+-- lookup in RQBulwark; the self-regen became RQMcCoy, which does it for every
+-- special type.
 if not isServer() then return end
 
 RQSvJuggernaut = RQSvJuggernaut or {}
-RQSvJuggernaut.buffTick = 0
 
 -- The `buffed` weak table is GONE (2026-08-24). It latched every zombie this
 -- aura had ever touched so the one-time HP grant could not stack - and that
@@ -14,12 +17,6 @@ RQSvJuggernaut.buffTick = 0
 -- Juggernaut left its escort permanently tough; walking out of the radius did
 -- nothing; and it cost one owner-directed HP command per zombie per sweep.
 -- RQBulwark now answers the same question when a hit actually lands.
-
--- RQServer injects the active zombie table here so jugg can skip buffing special zombies
-local _activeZombies = {}
-function RQSvJuggernaut.setActiveZombies(tbl)
-    _activeZombies = tbl
-end
 
 -- NO ALIVE BEHAVIOUR TICK, deliberately. Both of this type's jobs left in the
 -- same slice: the buff aura became a hit-time lookup in RQBulwark, and the

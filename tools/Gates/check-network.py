@@ -30,9 +30,17 @@
 #      gets exactly one dispatcher. Two files answering one token means no
 #      single place states the trust boundary.
 #
-#   3. NO DUPLICATE REGISTRATION. RDNet.register overwrites silently
-#      (RDNet.lua:76-92), so load order would pick the winner. Any (token,
-#      command) registered twice in source is a configuration error.
+#   3. NO DUPLICATE REGISTRATION. Any (token, command) registered twice in
+#      source is a configuration error. RDNet itself now keeps the FIRST
+#      registration and shouts about the second (RDNet.lua:143-149) rather than
+#      overwriting silently as it did when this rule was written - but that
+#      shout only happens on a server that boots, and the winner is still
+#      whichever file the loader reached first. This catches it in source.
+#
+#      A command name the gate cannot READ is not a duplicate. Both the token
+#      and the command resolve through constants (see build_command_map);
+#      anything still unreadable is reported as unresolved, which fails the
+#      build honestly instead of asserting a sameness nobody established.
 #
 #   4. LEGACY RATCHET. tools/network-baseline.json holds the number of
 #      unadopted executable dispatchers. Fewer is always accepted and locks in
@@ -91,6 +99,18 @@ LOCAL_CONST = re.compile(r"\blocal\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\"([^\"]+)\"
 # largest legacy surface in the family.
 LOCAL_ALIAS = re.compile(r"\blocal\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*\.MODULE)\b")
 
+# Any qualified constant, not just .MODULE:  HBCmd.ADD_SEEN = "hbAddSeen".
+#
+# COMMAND names, unlike tokens, are routinely held in a shared vocabulary table
+# so that the sender and the registration cannot drift apart - Husbandry's
+# HBCmd is the case that forced this. Before 2026-08-25 the command argument
+# had no path to a constant at all, so every such registration resolved to "?",
+# and rule 3 then compared those "?"s to each other and called five distinct
+# commands a duplicate of one another. The gate could not have seen a REAL
+# duplicate on that token either; this is the blind spot, not a convenience.
+QUALIFIED_ANY = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\"([^\"]+)\"")
+
 # How a listener says which token it serves. All four shapes appear in the tree.
 FILTER_LITERAL = re.compile(r"\bmodule\s*(?:~=|==)\s*\"([^\"]+)\"")
 FILTER_IDENT = re.compile(r"\bmodule\s*(?:~=|==)\s*([A-Za-z_][A-Za-z0-9_.]*)")
@@ -123,6 +143,33 @@ def build_constant_map():
     for key in ambiguous:
         qualified.pop(key, None)
     return qualified
+
+
+def build_command_map():
+    """OWNER.FIELD -> literal, for command names held in a vocabulary table.
+
+    Deliberately SEPARATE from build_constant_map, and never consulted when
+    resolving a token. The token resolver ends with a "same owner, any field ->
+    that owner's .MODULE" fallback, which is right for a token and wrong for a
+    command: it would answer `RDNet.register(TOKEN, Foo.SOMETHING, ...)` with
+    Foo's MODULE string and record a command name that is not the command. Two
+    maps means that fallback cannot reach a command argument.
+
+    A name bound to two different literals anywhere in the tree is dropped, so
+    an unprovable binding stays unresolved and is REPORTED as unresolved rather
+    than guessed - the same rule build_constant_map applies to tokens.
+    """
+    seen, ambiguous = {}, set()
+    for path in lua_files():
+        text = blank_comments_and_strings(read(path), keep_strings=True)
+        for owner, field, value in QUALIFIED_ANY.findall(text):
+            key = owner + "." + field
+            if key in seen and seen[key] != value:
+                ambiguous.add(key)
+            seen[key] = value
+    for key in ambiguous:
+        seen.pop(key, None)
+    return seen
 
 
 def file_local_consts(text, consts):
@@ -179,8 +226,9 @@ def tokens_in_file(text, consts):
 
 def scan():
     consts = build_constant_map()
+    commands = build_command_map()
     intakes = []        # (relpath, mod, line, tokens)
-    registrations = []  # (relpath, line, token, command)
+    registrations = []  # (relpath, line, token, command)  command None = unresolved
     adopted = {}        # token -> [relpath]
 
     for path in lua_files():
@@ -190,7 +238,7 @@ def scan():
         rp, mod = relpath(path), mod_of(path)
         local = file_local_consts(text, consts)
 
-        def resolve(expr):
+        def resolve_token(expr):
             lit = literal_or_none(expr)
             if lit:
                 return lit
@@ -199,20 +247,31 @@ def scan():
                 return local[e]
             if e in consts:
                 return consts[e]
+            # Same owner, any field -> that owner's MODULE. Only ever right for
+            # a token; resolve_command must not inherit it.
             if "." in e and e.split(".")[0] + ".MODULE" in consts:
                 return consts[e.split(".")[0] + ".MODULE"]
             return None
 
+        def resolve_command(expr):
+            lit = literal_or_none(expr)
+            if lit:
+                return lit
+            e = expr.strip()
+            if e in local:
+                return local[e]
+            return commands.get(e)
+
         for m in ADOPT.finditer(text):
-            token = resolve(m.group(1))
+            token = resolve_token(m.group(1))
             if token:
                 adopted.setdefault(token, []).append(rp)
         for m in REGISTER.finditer(text):
-            token, command = resolve(m.group(1)), resolve(m.group(2))
+            token, command = resolve_token(m.group(1)), resolve_command(m.group(2))
             if token:
                 adopted.setdefault(token, []).append(rp)
                 line = text.count("\n", 0, m.start()) + 1
-                registrations.append((rp, line, token, command or "?"))
+                registrations.append((rp, line, token, command))
 
         for m in INTAKE.finditer(text):
             line = text.count("\n", 0, m.start()) + 1
@@ -260,8 +319,8 @@ def main():
         for rp, why in sorted(observers.items()):
             print(f"{rp}  {why}")
         print("\n-- RDNet registrations --")
-        for rp, line, token, command in sorted(registrations):
-            print(f"{rp}:{line}  {token}.{command}")
+        for rp, line, token, command in sorted(registrations, key=lambda r: (r[0], r[1])):
+            print(f"{rp}:{line}  {token}.{command or '(command unresolved)'}")
         print(f"\n{len(executable)} executable intake(s), {len(observers)} observer(s), "
               f"{len(registrations)} registration(s), {len(adopted)} adopted token(s)")
         return 0
@@ -287,8 +346,21 @@ def main():
                 f"({'; '.join(sites)}) - one token, one dispatcher")
 
     # Rule 3 - a (token, command) pair may be registered once.
+    #
+    # An UNRESOLVED command name is not comparable. It used to be recorded as
+    # the literal "?" and compared like any other name, so N registrations the
+    # gate could not read were reported as N-1 duplicates of each other - a
+    # violation asserting two commands are the same name on the strength of not
+    # knowing either. Unresolved is a blind spot, and it is reported as one
+    # below; it still fails the build, but it says the true thing.
     seen = {}
     for rp, line, token, command in registrations:
+        if command is None:
+            notes.append(
+                f"{rp}:{line}  registration on '{token}' with an unreadable command "
+                f"name - rule 3 could not be applied. Use a string literal, or a "
+                f"constant assigned one literal in the tree (OWNER.FIELD = \"name\")")
+            continue
         key = (token, command)
         if key in seen:
             violations.append(

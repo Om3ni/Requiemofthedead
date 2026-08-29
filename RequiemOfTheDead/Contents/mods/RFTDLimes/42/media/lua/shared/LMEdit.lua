@@ -45,7 +45,7 @@ local function copyRect(r)
 end
 
 local function copyRecord(rec)
-    local out = { inherits = rec.inherits }
+    local out = { kind = rec.kind, inherits = rec.inherits, tier = rec.tier }
     if rec.rects then
         local rects = {}
         for i = 1, #rec.rects do rects[i] = copyRect(rec.rects[i]) end
@@ -55,11 +55,17 @@ local function copyRecord(rec)
     -- becomes a draft, and any key it does not name is silently gone from every
     -- draft, every save, and (via applyChangeSet) eventually the store itself.
     -- `profiles` earned its line here the same day it earned one in
-    -- stripServerOnly.
+    -- stripServerOnly; `kind`, `tier` and `moon` on the day they joined the
+    -- record (2026-08-26).
     if rec.profiles then
         local profiles = {}
         for i = 1, #rec.profiles do profiles[i] = rec.profiles[i] end
         out.profiles = profiles
+    end
+    if rec.moon then
+        local moon = { phases = rec.moon.phases, fields = {} }
+        for k, v in pairs(rec.moon.fields or {}) do moon.fields[k] = v end
+        out.moon = moon
     end
     if rec.fields then
         local fields = {}
@@ -90,8 +96,33 @@ local function pruneRecord(rec)
     if not rec then return nil end
     local out = {}
 
+    -- "zone" normalises to absent - absent IS the zone kind, and a record that
+    -- says so explicitly must diff, serialize and compare identically to one
+    -- that does not. An unknown kind is kept: validate() names it, pruning
+    -- must not silently repair it into a zone.
+    local kind = rec.kind
+    if type(kind) == "string" and kind ~= "" and kind ~= "zone" then out.kind = kind end
+
     local inh = rec.inherits
     if type(inh) == "string" and inh ~= "" then out.inherits = inh end
+
+    local tier = rec.tier
+    if type(tier) == "string" and tier ~= "" then out.tier = tier end
+
+    -- The moon overlay prunes like fields do (rule 5: cleared means absent):
+    -- empty dials drop, and an overlay with no gate and no dials left is
+    -- absent, not present-empty.
+    if rec.moon then
+        local moon, anyM = {}, false
+        local ph = rec.moon.phases
+        if type(ph) == "string" and ph ~= "" then moon.phases = ph; anyM = true end
+        local mf = {}
+        for k, v in pairs(rec.moon.fields or {}) do
+            if v ~= nil and v ~= "" then mf[k] = v; anyM = true end
+        end
+        for _ in pairs(mf) do moon.fields = mf break end
+        if anyM then out.moon = moon end
+    end
 
     if rec.rects and #rec.rects > 0 then
         local rects = {}
@@ -173,12 +204,21 @@ local function sameProfiles(a, b)
     return true
 end
 
+local function sameMoon(a, b)
+    if not a and not b then return true end
+    if not a or not b then return false end
+    return a.phases == b.phases and sameFields(a.fields, b.fields)
+end
+
 local function sameRecord(a, b)
     if not a and not b then return true end
     if not a or not b then return false end
-    return a.inherits == b.inherits
+    return a.kind == b.kind
+       and a.inherits == b.inherits
+       and a.tier == b.tier
        and sameRects(a.rects, b.rects)
        and sameProfiles(a.profiles, b.profiles)
+       and sameMoon(a.moon, b.moon)
        and sameFields(a.fields, b.fields)
 end
 
@@ -274,7 +314,10 @@ function LMEdit:rename(old, new)
         -- Profile references are the SECOND place a name lives, and they get
         -- the same same-step guarantee: a rename that rewrote inherits but left
         -- profiles lists pointing at the old name would silently strip those
-        -- zones of the profile at the next resolve.
+        -- zones of the profile at the next resolve. The tier SLOT is the third
+        -- - renaming a rung must carry every zone standing on it, or the whole
+        -- ladder detaches in one keystroke.
+        if rec.tier == old then rec.tier = new; n = n + 1 end
         for i = 1, #(rec.profiles or {}) do
             if rec.profiles[i] == old then rec.profiles[i] = new; n = n + 1 end
         end
@@ -282,13 +325,71 @@ function LMEdit:rename(old, new)
     return true, n
 end
 
+-- Tier and profile records are TERMINAL - bags other records consume, never
+-- places. Every mutator that would hand one structure refuses here with the
+-- message the panel shows, so the invariant cannot be broken by a UI slip and
+-- validate() only ever reports it on data that arrived from outside this
+-- editor (a hand-edited .ini, a wire payload).
+local function terminalWhy(rec)
+    if rec and rec.kind == "tier" then return "A tier is a rung, not a place - it " end
+    if rec and rec.kind == "profile" then return "A profile is a ruleset, not a place - it " end
+    return nil
+end
+
 function LMEdit:setInherits(name, parent)
     local rec = self.work[name]
     if not rec then return false, "No such zone." end
+    local t = terminalWhy(rec)
+    if t then return false, t .. "cannot inherit." end
     if parent == nil or parent == "" then rec.inherits = nil; return true end
     parent = tostring(parent)
     if parent == name then return false, "A zone cannot inherit from itself." end
     rec.inherits = parent
+    return true
+end
+
+-- The tier SLOT. nil or "" clears it - the zone then takes the nearest
+-- ancestor's slot, or _default's. No existence check here: validate() reports
+-- a dangling reference, the same policy as inherits, because refusing to
+-- POINT at a rung that is about to be created in the same draft would make
+-- the two edits order-dependent for no gain.
+function LMEdit:setTier(name, tier)
+    local rec = self.work[name]
+    if not rec then return false, "No such zone." end
+    local t = terminalWhy(rec)
+    if t then return false, t .. "cannot have a tier of its own." end
+    if tier == nil or tier == "" then rec.tier = nil; return true end
+    tier = tostring(tier)
+    if tier == name then return false, "A zone cannot be its own tier." end
+    rec.tier = tier
+    return true
+end
+
+-- The moon overlay, tier records only: `phases` is the gate (the ONE phase
+-- mechanism - Limes.phasesActive - profiles use), the fields are the dials
+-- that beat the tier's base ones while the moon is in phase. Same clearing
+-- rule as setField: nil or "" removes; pruning drops an emptied overlay.
+function LMEdit:setMoonPhases(name, phases)
+    local rec = self.work[name]
+    if not rec then return false, "No such zone." end
+    if rec.kind ~= "tier" then return false, "Only a tier carries a moon overlay." end
+    rec.moon = rec.moon or { fields = {} }
+    if phases == nil or phases == "" then rec.moon.phases = nil
+    else rec.moon.phases = tostring(phases) end
+    return true
+end
+
+function LMEdit:setMoonField(name, key, value)
+    local rec = self.work[name]
+    if not rec then return false, "No such zone." end
+    if rec.kind ~= "tier" then return false, "Only a tier carries a moon overlay." end
+    key = tostring(key or "")
+    local why = LMEdit.keyProblem(key)
+    if why then return false, why end
+    rec.moon = rec.moon or { fields = {} }
+    rec.moon.fields = rec.moon.fields or {}
+    if value == nil or value == "" then rec.moon.fields[key] = nil
+    else rec.moon.fields[key] = value end
     return true
 end
 
@@ -310,6 +411,8 @@ end
 function LMEdit:addProfile(name, profile)
     local rec = self.work[name]
     if not rec then return false, "No such zone." end
+    local t = terminalWhy(rec)
+    if t then return false, t .. "cannot apply profiles." end
     profile = tostring(profile or "")
     if profile == "" then return false, "A profile needs a name." end
     if profile == name then return false, "A zone cannot apply itself as a profile." end
@@ -354,10 +457,12 @@ function LMEdit:moveProfile(name, profile, delta)
 end
 
 -- The Add picker's contents, computed here so it is testable without a UI:
--- template zones (no geometry) that are not the zone itself and not already
--- applied, sorted. A placed zone is deliberately excluded - its fields would
--- merge fine, but "apply Louisville to the gun store" is a category mistake
--- the picker should not invite.
+-- profile records first-class, plus legacy kind-less templates (no geometry)
+-- from stores that predate the kind marker - not the zone itself, not already
+-- applied, sorted. A placed zone is deliberately excluded ("apply Louisville
+-- to the gun store" is a category mistake the picker should not invite), and
+-- so is a TIER record - Set Tier is that gesture, and offering a rung here
+-- would give the ladder a second, order-sensitive way onto a zone.
 function LMEdit:profileCandidates(name)
     local rec = self.work[name]
     local have = {}
@@ -366,9 +471,11 @@ function LMEdit:profileCandidates(name)
     end
     local out = {}
     for zname, z in pairs(self.work) do
-        if zname ~= name and zname ~= "_default" and not have[zname]
-            and (not z.rects or #z.rects == 0) then
-            out[#out + 1] = zname
+        if zname ~= name and zname ~= "_default" and not have[zname] then
+            if z.kind == "profile"
+                or (z.kind == nil and (not z.rects or #z.rects == 0)) then
+                out[#out + 1] = zname
+            end
         end
     end
     table.sort(out)
@@ -394,6 +501,8 @@ end
 function LMEdit:setRects(name, rects)
     local rec = self.work[name]
     if not rec then return false, "No such zone." end
+    local t = terminalWhy(rec)
+    if t then return false, t .. "has no ground to draw." end
     local out = {}
     for i = 1, #(rects or {}) do out[i] = copyRect(rects[i]) end
     rec.rects = out
@@ -403,6 +512,8 @@ end
 function LMEdit:addRect(name, r)
     local rec = self.work[name]
     if not rec then return false, "No such zone." end
+    local t = terminalWhy(rec)
+    if t then return false, t .. "has no ground to draw." end
     rec.rects = rec.rects or {}
     rec.rects[#rec.rects + 1] = copyRect(r)
     return true, #rec.rects
@@ -420,11 +531,11 @@ end
 --
 -- A zone drawn inside another is that zone's CHILD: it takes the parent's
 -- policies as defaults and overrides what it wants to. There is one parent slot
--- in the record and this is what it means - `inherits`. Tier is a field you set,
--- not a template you point at, so nothing is lost by spending the slot here, and
--- an imported layer whose zones inherit from geometry-less templates keeps
--- resolving exactly as before (a template is a zone with no rects, which is why
--- it shows up in the tree as a folder that happens to have nowhere to stand).
+-- in the record and this is what it means - `inherits`. Tier has its OWN slot
+-- (a name pointing at a tier record, resolved nearest-ancestor-wins), so the
+-- parent slot is spent purely on geography and the ladder never occupies the
+-- tree - which is the 2026-08-05 failure, fixed at the model this time. Legacy
+-- kind-less templates (a zone with no rects) keep resolving exactly as before.
 --
 -- Only the FIELDS follow the geometry. The spatial lookup has resolved nesting
 -- correctly since M0 without any of this: Limes.getLocation takes the smallest
@@ -556,17 +667,29 @@ local function hasGeometry(rec)
     return rec and rec.rects and #rec.rects > 0
 end
 
+-- TIER AND PROFILE RECORDS ARE NOT ROWS HERE (2026-08-26). The Zone Selector
+-- lists PLACES; the ladder gets the Tiers panel and rulesets get the Profiles
+-- panel (S5/S6). A record with an UNKNOWN kind stays visible - it is a
+-- validate error, and hiding an anomaly is how it survives. Legacy kind-less
+-- templates also stay until the store is kinded (import/S2), because hiding
+-- them would make them uneditable with nothing to edit them from.
+local function inTree(rec)
+    return rec.kind ~= "tier" and rec.kind ~= "profile"
+end
+
 function LMEdit:tree()
     local kids, roots = {}, {}
     local names = self:names()
     for i = 1, #names do
         local name = names[i]
-        local p = self.work[name].inherits
-        if p and self.work[p] and hasGeometry(self.work[p]) then
-            kids[p] = kids[p] or {}
-            table.insert(kids[p], name)
-        else
-            roots[#roots + 1] = name
+        if inTree(self.work[name]) then
+            local p = self.work[name].inherits
+            if p and self.work[p] and hasGeometry(self.work[p]) then
+                kids[p] = kids[p] or {}
+                table.insert(kids[p], name)
+            else
+                roots[#roots + 1] = name
+            end
         end
     end
 
@@ -581,7 +704,7 @@ function LMEdit:tree()
     end
     for i = 1, #roots do emit(roots[i], 0) end
     for i = 1, #names do
-        if not seen[names[i]] then
+        if not seen[names[i]] and inTree(self.work[names[i]]) then
             out[#out + 1] = { name = names[i], depth = 0,
                               parent = self.work[names[i]].inherits, leaf = true }
             seen[names[i]] = true
@@ -640,9 +763,33 @@ local function recordValue(self, cur, rec, key)
     return nil, nil
 end
 
--- Returns value, source - where source is the zone or profile name the value
--- came from, "_default", or nil when only the registry default is left.
+-- The tier SLOT this record resolves to, against the DRAFT - the same walk
+-- LMCore's resolver does against the live store, through the same exported
+-- function, so the ghosted "from Louisville" the Details window shows cannot
+-- drift from what the game will do. Returns tierName, sourceRecordName.
+function LMEdit:effectiveTier(zone)
+    return Limes.resolveTier(zone, self.work)
+end
+
+-- Returns value, source - where source is the zone, profile or tier name the
+-- value came from, "_default", or nil when only the registry default is left.
+-- Search order is flattenChain's bag order read nearest-first: own chain, then
+-- _default, then the resolved TIER's bag (moon overlay while in phase beats
+-- the base dials), then the registry default.
 function LMEdit:effective(zone, key)
+    -- Terminal records mirror flattenChain's terminal branch EXACTLY: own
+    -- fields, then the registry default - never the chain, never profiles,
+    -- never a tier bag. Even on illegal data (a hand-edited profile carrying
+    -- inherits), the two resolvers must agree; validate() is what complains.
+    local recT = self.work[zone]
+    if recT and (recT.kind == "tier" or recT.kind == "profile") then
+        local v = recT.fields and recT.fields[key]
+        if v ~= nil and v ~= "" then return v, zone end
+        local spec = Limes.fields and Limes.fields.spec and Limes.fields.spec(key)
+        if spec then return spec.default, nil end
+        return nil, nil
+    end
+
     local seen, cur = {}, zone
     while cur do
         if seen[cur] then break end            -- a cycle; validate() reports it
@@ -659,6 +806,25 @@ function LMEdit:effective(zone, key)
         if root then
             local v, src = recordValue(self, "_default", root, key)
             if v ~= nil then return v, src end
+        end
+    end
+
+    -- The tier bag, weakest of the real sources. Terminal records never reach
+    -- this line (the short-circuit above returned), so everything here is a
+    -- zone as far as the resolver is concerned - matching flattenChain, which
+    -- gives the tier bag to every non-terminal record, unknown kinds included.
+    local rec0 = self.work[zone]
+    if rec0 and key ~= "phases" then
+        local tname = Limes.resolveTier(zone, self.work)
+        local trec = tname and self.work[tname]
+        if trec and trec.kind == "tier" then
+            local m = trec.moon
+            if m and Limes.phasesActive and Limes.phasesActive(m.phases) then
+                local mv = m.fields and m.fields[key]
+                if mv ~= nil and mv ~= "" then return mv, tname end
+            end
+            local tv = trec.fields and trec.fields[key]
+            if tv ~= nil and tv ~= "" then return tv, tname end
         end
     end
 
@@ -690,8 +856,16 @@ end
 function LMEdit.keyProblem(key)
     key = tostring(key or "")
     if key == "" then return "A field needs a name." end
-    if key == "rects" or key == "inherits" or key == "name" or key == "profiles" then
+    if key == "rects" or key == "inherits" or key == "name" or key == "profiles"
+        or key == "kind" or key == "tier" or key == "moon" then
         return "'" .. key .. "' is part of the record structure and cannot be a field."
+    end
+    -- The .ini encodes a tier's moon overlay as moon_-prefixed keys, so a
+    -- FIELD spelt that way would silently migrate into the overlay on the
+    -- next file round trip. Refused at the keyboard, where it is cheap.
+    if key:match("^moon_") then
+        return "'" .. key .. "' cannot be a field: the moon_ prefix is how the "
+            .. "file stores a tier's moon overlay."
     end
     if not key:match(LMEdit.KEY_PATTERN) then
         return "'" .. key .. "' cannot be saved: field names take letters, digits and _ only."
@@ -711,6 +885,81 @@ end
 
 local function problem(list, level, zone, msg)
     list[#list + 1] = { level = level, zone = zone, msg = msg }
+end
+
+-- One value against its registered spec - shared by the fields loop and the
+-- moon-overlay loop, so a dial misbehaves identically wherever it lives.
+-- `where` names the container in the message ("field" / "moon field").
+local function checkFieldValue(out, name, k, v, where)
+    local spec = Limes.fields and Limes.fields.spec and Limes.fields.spec(k)
+    if not spec then
+        -- Not an error and not even really a defect: unregistered keys are
+        -- how a field from a milestone we have not built yet survives a
+        -- round trip through the editor intact.
+        problem(out, "warning", name, where .. " '" .. k
+            .. "' has no consumer installed - it is stored and passed through untouched.")
+    elseif spec.type == "number" then
+        local n = tonumber(v)
+        if n == nil then
+            problem(out, "error", name, where .. " '" .. k .. "' = '" .. tostring(v)
+                .. "' is not a number; it would be dropped and the value inherited instead.")
+        elseif spec.min and n < spec.min then
+            problem(out, "warning", name, where .. " '" .. k .. "' = " .. tostring(n)
+                .. " is below the minimum and resolves as " .. tostring(spec.min) .. ".")
+        elseif spec.max and n > spec.max then
+            problem(out, "warning", name, where .. " '" .. k .. "' = " .. tostring(n)
+                .. " is above the maximum and resolves as " .. tostring(spec.max) .. ".")
+        end
+    elseif spec.type == "boolean" then
+        local okv = (v == true or v == false or v == "true" or v == "false"
+                 or v == 1 or v == 0 or v == "1" or v == "0")
+        if not okv then
+            problem(out, "error", name, where .. " '" .. k .. "' = '" .. tostring(v)
+                .. "' is not true or false; it would be dropped and the value inherited instead.")
+        end
+    end
+    -- lootReduce has a grammar on top of being a string. Resolution passes the
+    -- string through untouched and the consumer skips what does not parse, so
+    -- validate is where junk gets NAMED - and a value that is ALL junk is a
+    -- rule list that looks configured and removes nothing.
+    if k == "lootReduce" and v ~= "" and Limes.parseLootReduce then
+        local entries, bad = Limes.parseLootReduce(v)
+        if #bad > 0 then
+            if #entries == 0 then
+                problem(out, "error", name, where .. " 'lootReduce' = '" .. tostring(v)
+                    .. "' contains no rule that parses - nothing would be reduced."
+                    .. " The grammar is Base.Axe=25; cat:Ammo=50 (percent removed, 0-100).")
+            else
+                problem(out, "warning", name, where .. " 'lootReduce' rule(s) '"
+                    .. table.concat(bad, "', '") .. "' do not parse - they are ignored.")
+            end
+        end
+    end
+end
+
+-- The phases grammar, shared by a profile's `phases` field and a tier's
+-- moon_phases gate. The parser skips junk tokens silently (resolution must
+-- not die on admin-typed data), so validate is where junk gets NAMED - and a
+-- value that is ALL junk parses to the empty set, which is never-active:
+-- something that looks configured and can never merge. "" means always;
+-- garbage does not.
+local function checkPhases(out, name, v, label, what)
+    if not (LMMoon and LMMoon.unknownTokens) or v == nil or v == "" then return end
+    local bad = LMMoon.unknownTokens(v)
+    if #bad == 0 then return end
+    local set = LMMoon.parsePhases(v)
+    local empty = true
+    if set then for _ in pairs(set) do empty = false break end end
+    if empty then
+        problem(out, "error", name, label .. " = '" .. tostring(v)
+            .. "' names no real phase - " .. what .. " would NEVER be active."
+            .. " The vocabulary is new, waxing_crescent, first_quarter,"
+            .. " waxing_gibbous, full, waning_gibbous, last_quarter,"
+            .. " waning_crescent, waxing, waning, or 0-7.")
+    else
+        problem(out, "warning", name, label .. " contains unknown token(s) '"
+            .. table.concat(bad, "', '") .. "' - they are ignored.")
+    end
 end
 
 -- Walks `inherits` from `name` upwards, returning the name it loops on, or nil.
@@ -738,6 +987,56 @@ function LMEdit:validate()
 
         local why = LMEdit.nameProblem(name)
         if why then problem(out, "error", name, why) end
+
+        -- Kind, and the terminality it demands. Errors, not warnings: a tier
+        -- with ground or a profile with ancestry does not resolve wrongly so
+        -- much as it resolves as something else entirely (the structure is
+        -- silently ignored), and no shipped store contains one - the
+        -- kind marker and the terminal rule were born together.
+        local kind = rec.kind
+        if kind ~= nil and kind ~= "tier" and kind ~= "profile" then
+            problem(out, "error", name, "kind '" .. tostring(kind)
+                .. "' is not a record kind - zones carry no kind; the others are"
+                .. " 'tier' and 'profile'.")
+        elseif kind ~= nil then
+            local what = kind == "tier" and "A tier is a rung, not a place - it"
+                                        or "A profile is a ruleset, not a place - it"
+            if rec.rects and #rec.rects > 0 then
+                problem(out, "error", name, what .. " cannot have rectangles; they are ignored.")
+            end
+            if rec.inherits then
+                problem(out, "error", name, what .. " cannot inherit; the chain is ignored.")
+            end
+            if rec.profiles and #rec.profiles > 0 then
+                problem(out, "error", name, what .. " cannot apply profiles; they are ignored.")
+            end
+            if rec.tier then
+                problem(out, "error", name, what .. " cannot have a tier of its own; it is ignored.")
+            end
+        end
+        if rec.moon and kind ~= "tier" then
+            problem(out, "error", name,
+                "carries a moon overlay, but only a tier record has one - it is ignored.")
+        end
+        if kind == "tier" and rec.fields and rec.fields.phases ~= nil then
+            problem(out, "warning", name, "a 'phases' field on a tier is cargo handed"
+                .. " to zones and gates nothing - the tier's moon overlay is its gate.")
+        end
+
+        -- The tier slot: a dangling or mis-kinded reference resolves (without
+        -- the tier's dials) rather than losing data, so these stay warnings -
+        -- the same policy as a dangling inherits, and what keeps a store
+        -- written before the S2 migration saveable.
+        if rec.tier and kind == nil then
+            local t = self.work[rec.tier]
+            if not t then
+                problem(out, "warning", name, "tier '" .. tostring(rec.tier)
+                    .. "' is not in the store - the zone resolves without tier dials.")
+            elseif t.kind ~= "tier" then
+                problem(out, "warning", name, "tier '" .. tostring(rec.tier)
+                    .. "' is not a tier record - its fields do not apply.")
+            end
+        end
 
         -- Inheritance
         if rec.inherits then
@@ -786,23 +1085,36 @@ function LMEdit:validate()
                 if not prec then
                     problem(out, "warning", name, "applies '" .. tostring(p)
                         .. "', which is not in the store - it contributes nothing.")
+                elseif prec.kind == "tier" then
+                    -- Its bag would merge like any other, but at the WRONG
+                    -- strength: a tier applied as a profile beats _default and
+                    -- the ancestors instead of sitting under them, so the same
+                    -- rung means two different things on two zones. The slot
+                    -- is the one way onto the ladder.
+                    problem(out, "error", name, "applies '" .. p
+                        .. "', which is a tier - set it as the zone's tier instead;"
+                        .. " profiles are rulesets.")
                 else
                     -- Flat bags: only the profile's own fields ever merge. A
-                    -- profile that carries structure of its own still works,
-                    -- but the parts that look like they should do something
-                    -- silently do not - say so.
-                    if prec.rects and #prec.rects > 0 then
-                        problem(out, "warning", name, "profile '" .. p
-                            .. "' is a placed zone; only its own fields apply, its ground does not follow.")
-                    end
-                    if prec.inherits then
-                        problem(out, "warning", name, "profile '" .. p
-                            .. "' inherits '" .. prec.inherits
-                            .. "', which is not followed - profiles contribute their own fields only.")
-                    end
-                    if prec.profiles and #prec.profiles > 0 then
-                        problem(out, "warning", name, "profile '" .. p
-                            .. "' applies profiles of its own, which are not followed.")
+                    -- LEGACY template (kind-less) that carries structure of its
+                    -- own still works, but the parts that look like they should
+                    -- do something silently do not - say so. A kind = profile
+                    -- record already gets terminality ERRORS on the record
+                    -- itself, so repeating them per applying zone is noise.
+                    if prec.kind == nil then
+                        if prec.rects and #prec.rects > 0 then
+                            problem(out, "warning", name, "profile '" .. p
+                                .. "' is a placed zone; only its own fields apply, its ground does not follow.")
+                        end
+                        if prec.inherits then
+                            problem(out, "warning", name, "profile '" .. p
+                                .. "' inherits '" .. prec.inherits
+                                .. "', which is not followed - profiles contribute their own fields only.")
+                        end
+                        if prec.profiles and #prec.profiles > 0 then
+                            problem(out, "warning", name, "profile '" .. p
+                                .. "' applies profiles of its own, which are not followed.")
+                        end
                     end
                     -- A zone that vanishes with the moon is probably a mistake:
                     -- disabled/priority through a PHASED profile is legal (both
@@ -825,56 +1137,28 @@ function LMEdit:validate()
             if kwhy then
                 problem(out, "error", name, kwhy)
             else
-                local spec = Limes.fields and Limes.fields.spec and Limes.fields.spec(k)
-                if not spec then
-                    -- Not an error and not even really a defect: unregistered
-                    -- keys are how a field from a milestone we have not built
-                    -- yet survives a round trip through the editor intact.
-                    problem(out, "warning", name, "field '" .. k
-                        .. "' has no consumer installed - it is stored and passed through untouched.")
-                elseif spec.type == "number" then
-                    local n = tonumber(v)
-                    if n == nil then
-                        problem(out, "error", name, "field '" .. k .. "' = '" .. tostring(v)
-                            .. "' is not a number; it would be dropped and the value inherited instead.")
-                    elseif spec.min and n < spec.min then
-                        problem(out, "warning", name, "field '" .. k .. "' = " .. tostring(n)
-                            .. " is below the minimum and resolves as " .. tostring(spec.min) .. ".")
-                    elseif spec.max and n > spec.max then
-                        problem(out, "warning", name, "field '" .. k .. "' = " .. tostring(n)
-                            .. " is above the maximum and resolves as " .. tostring(spec.max) .. ".")
-                    end
-                elseif spec.type == "boolean" then
-                    local okv = (v == true or v == false or v == "true" or v == "false"
-                             or v == 1 or v == 0 or v == "1" or v == "0")
-                    if not okv then
-                        problem(out, "error", name, "field '" .. k .. "' = '" .. tostring(v)
-                            .. "' is not true or false; it would be dropped and the value inherited instead.")
-                    end
+                checkFieldValue(out, name, k, v, "field")
+                if k == "phases" then
+                    checkPhases(out, name, v, "phases", "this profile")
                 end
-                -- phases has its own grammar on top of being a string. The
-                -- parser skips junk tokens silently (resolution must not die
-                -- on admin-typed data), so validate is where junk gets NAMED -
-                -- and a value that is ALL junk parses to the empty set, which
-                -- is never-active: a profile that looks configured and can
-                -- never merge. "" means always; garbage does not.
-                if k == "phases" and LMMoon and LMMoon.unknownTokens and v ~= "" then
-                    local bad = LMMoon.unknownTokens(v)
-                    if #bad > 0 then
-                        local set = LMMoon.parsePhases(v)
-                        local empty = true
-                        if set then for _ in pairs(set) do empty = false break end end
-                        if empty then
-                            problem(out, "error", name, "phases = '" .. tostring(v)
-                                .. "' names no real phase - this profile would NEVER be active."
-                                .. " The vocabulary is new, waxing_crescent, first_quarter,"
-                                .. " waxing_gibbous, full, waning_gibbous, last_quarter,"
-                                .. " waning_crescent, waxing, waning, or 0-7.")
-                        else
-                            problem(out, "warning", name, "phases contains unknown token(s) '"
-                                .. table.concat(bad, "', '") .. "' - they are ignored.")
-                        end
-                    end
+            end
+        end
+
+        -- The moon overlay's own gate and dials, held to the same standard as
+        -- fields (a stray overlay on a non-tier record was already reported
+        -- above and is skipped here - its dials merge nowhere).
+        if rec.moon and kind == "tier" then
+            checkPhases(out, name, rec.moon.phases, "moon_phases", "the moon overlay")
+            for k, v in pairs(rec.moon.fields or {}) do
+                local kwhy = LMEdit.keyProblem(k)
+                if kwhy then
+                    problem(out, "error", name, kwhy)
+                elseif k == "phases" then
+                    problem(out, "warning", name, "moon field 'phases' gates nothing -"
+                        .. " the overlay's gate is moon_phases, and external bags never"
+                        .. " hand 'phases' down.")
+                else
+                    checkFieldValue(out, name, k, v, "moon field")
                 end
             end
         end
@@ -888,6 +1172,10 @@ function LMEdit:validate()
         if rec.inherits and not self.work[rec.inherits] and self.base[rec.inherits] then
             problem(out, "warning", names[i], "'" .. rec.inherits
                 .. "' is being deleted in this edit; this zone loses its inherited fields.")
+        end
+        if rec.tier and not self.work[rec.tier] and self.base[rec.tier] then
+            problem(out, "warning", names[i], "tier '" .. rec.tier
+                .. "' is being deleted in this edit; this zone loses its tier dials.")
         end
         for j = 1, #(rec.profiles or {}) do
             local p = rec.profiles[j]
@@ -949,6 +1237,27 @@ end
 function LMEdit:isDirty()
     local _, _, n = self:changeSet()
     return n > 0
+end
+
+-- "Are my changes already IN that store?" - the question the editor has to
+-- ask when the store moves under a dirty draft, because the common way that
+-- happens is the draft's OWN save coming back as the delta broadcast. A dirty
+-- draft whose every change matches the live store is not a conflict, it is a
+-- success whose bookkeeping has not caught up: the caller rebases instead of
+-- accusing a second admin (the pre-fix behaviour told the admin to reopen the
+-- tab, which rebuilt nothing and stranded every save after the first).
+-- Compares on pruned shape, same as changeSet - and both stores here are
+-- client-side stores, so server-only stripping affects the two sides equally.
+function LMEdit:landedIn(raw)
+    raw = raw or {}
+    local changed, removed = self:changeSet()
+    for name, rec in pairs(changed) do
+        if not sameRecord(rec, pruneRecord(raw[name])) then return false end
+    end
+    for i = 1, #removed do
+        if raw[removed[i]] ~= nil then return false end
+    end
+    return true
 end
 
 -- The whole draft as a raw store, pruned - for callers that need the result

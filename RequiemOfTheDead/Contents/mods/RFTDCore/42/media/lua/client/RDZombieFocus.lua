@@ -108,14 +108,19 @@ end
 
 -- Resolve an onlineID against the local cell's zombie list.
 --
--- Deliberately NOT the bounded-box walk in RQCore.findZombieByID: that one
--- takes a position and reads 961 grid squares to find something near a known
--- point, which is the right shape when you have coordinates and want the
--- nearest match. Here there are no coordinates to trust - the whole point of a
--- focus is that the panel row may be stale - so the id is the only key, and the
--- cell's own list is the authoritative set of zombies this client has loaded.
--- Its cost is one pass over the loaded population per frame WHILE A FOCUS IS
--- HELD, which is a panel-open, one-row-selected state, not a background one.
+-- Here there are no coordinates to trust - the whole point of a focus is that
+-- the panel row may be stale - so the id is the only key, and the cell's own
+-- list is the authoritative set of zombies this client has loaded. Its cost is
+-- one pass over the loaded population per frame WHILE A FOCUS IS HELD, which
+-- is a panel-open, one-row-selected state, not a background one.
+--
+-- This used to say "deliberately NOT the bounded-box walk in
+-- RQCore.findZombieByID", and that contrast is dead: as of 2026-08-25 that
+-- function is an id-keyed map lookup with no box and no coordinates, which is
+-- the same shape as this. Core must not depend back on Dirge (CLAUDE.md sect.
+-- 12), so this stays its own pass rather than borrowing Dirge's cache - but if
+-- a second Core consumer ever appears, promoting RQZombieCache is the answer,
+-- not a third copy of this loop.
 local function resolve(onlineID)
     local p = getPlayer()
     if not p then return nil end

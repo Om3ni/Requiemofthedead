@@ -19,10 +19,20 @@ local LEDGER = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/sh
 local ANIMSETS = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/AnimSets/zombie/"
 
 -- Every node in the family, with the per-node expectations that must not
--- drift. `fallOnFront` mirrors vanilla exactly - it is what routes onground
--- into the matching getup - and `cancelKnockDown` states which value the node
--- carries (bwd's false is vanilla's own, and a no-op by
--- ZombieHitReactionState.java:103).
+-- drift. `fallOnFront` is what routes onground into the matching getup, so it
+-- mirrors vanilla in every case. `cancelKnockDown` states the value OUR node
+-- carries, which is usually vanilla's and deliberately is not in two places:
+-- shothead-bwd keeps vanilla's false (a no-op by
+-- ZombieHitReactionState.java:103), while the two leg knockdowns pass true
+-- where vanilla passes false - leaving the flag set is what lets the next hit
+-- chain another knockdown, which is the thing being prevented.
+--
+-- GREW FROM SIX TO FIFTEEN on 2026-08-25 (floor-state enumeration): the three
+-- floor states a shot can land in while the zombie is already down or getting
+-- up, and the six knockdown states a SIDELONG crit can reach without ever
+-- touching the shothead chain. The completeness check at the bottom of this
+-- file exists because of that growth - a node not listed here is a node no
+-- assertion in this file ever reads.
 local NODES = {
     { path = "hitreaction/RQFlinch.xml",
       cancelKnockDown = "true" },
@@ -34,6 +44,29 @@ local NODES = {
       cancelKnockDown = "false", fallOnFront = "false" },
     { path = "getup-fromOnBack/RQFlinch.xml",  setOnFloor = true },
     { path = "getup-fromOnFront/RQFlinch.xml", setOnFloor = true },
+
+    -- shot while already down / mid-getup. Vanilla's nodes here emit KnockDown
+    -- and run unscaled, so these two states were the live re-arm path.
+    { path = "hitreaction-onfloor/RQFlinchBack.xml",
+      cancelKnockDown = "true" },
+    { path = "hitreaction-onfloor/RQFlinchFront.xml",
+      cancelKnockDown = "true",  fallOnFront = "true" },
+    { path = "hitreaction-gettingUp/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "true" },
+
+    -- the sidelong-crit knockdown lane
+    { path = "knockeddown-shotChestL/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "false", setOnFloor = true },
+    { path = "knockeddown-shotChestR/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "false", setOnFloor = true },
+    { path = "knockeddown-shotLegL/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "true",  setOnFloor = true },
+    { path = "knockeddown-shotLegR/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "true",  setOnFloor = true },
+    { path = "knockeddown-shotShoulderL/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "false" },
+    { path = "knockeddown-shotShoulderR/RQFlinch.xml",
+      cancelKnockDown = "true",  fallOnFront = "false" },
 }
 
 local passed, failed = 0, 0
@@ -190,6 +223,66 @@ check(slow.ms == 1200, "a full-speed reaction is measured too")
 check(RQFlinch.stats.longest == 1200, "and becomes the new worst case")
 
 -- ---------------------------------------------------------------------------
+-- observe - the ROUTE
+-- ---------------------------------------------------------------------------
+-- A duration alone says the suppression lost; it does not say where. The route
+-- names the action-context states the zombie actually passed through, which is
+-- the only evidence that can settle whether a suppressed hit reaction leaves
+-- `hitreaction` for the knockdown lane - a question the animation graph cannot
+-- answer, because vanilla's own node cancels the knockdown while vanilla still
+-- ships six populated knockdown states. See hitreaction/RQFlinch.xml.
+RQFlinch.reset()
+local rt = makeZombie()
+rt.reaction = "ShotChestStepL"
+
+rt.state = "hitreaction"          ; RQFlinch.observe(rt, 0)
+rt.state = "hitreaction"          ; RQFlinch.observe(rt, 16)   -- unchanged, not re-recorded
+rt.state = "knockeddown-shotChestL"; RQFlinch.observe(rt, 32)
+rt.state = "onground"             ; RQFlinch.observe(rt, 48)
+rt.reaction = ""
+local routed = RQFlinch.observe(rt, 64)
+
+check(routed ~= nil, "a routed span still completes")
+check(#routed.route == 3,
+    "one entry per state CHANGE, not per frame: " .. tostring(routed and #routed.route))
+check(RQFlinch.routeText(routed) == "hitreaction, knockeddown-shotChestL, onground",
+    "the route reads as the lane it took: " .. tostring(RQFlinch.routeText(routed)))
+
+-- The whole reason this instrumentation exists: a knockdown inside a
+-- suppressed reaction is NAMED, not merely long.
+check(RQFlinch.routeText(routed):find("knockeddown", 1, true) ~= nil,
+    "a knockdown in the route is visible in the text")
+
+-- BOUNDED. A reaction that somehow never ends must not accumulate one entry
+-- per frame - the row is per-zombie and lives until the span closes.
+RQFlinch.reset()
+local runaway = makeZombie()
+runaway.reaction = "ShotChestStepL"
+for i = 1, 40 do
+    runaway.state = "state" .. i
+    RQFlinch.observe(runaway, i * 16)
+end
+runaway.reaction = ""
+local capped = RQFlinch.observe(runaway, 1000)
+check(#capped.route == 8,
+    "the route is capped rather than unbounded: " .. tostring(capped and #capped.route))
+
+-- A zombie whose state machine has no current state yet must not poison the
+-- route with a nil, and must not stop the span being measured.
+RQFlinch.reset()
+local quiet = makeZombie()
+quiet.getCurrentActionContextStateName = function() return nil end
+quiet.reaction = "ShotChestStepL"
+RQFlinch.observe(quiet, 0)
+quiet.reaction = ""
+local noRoute = RQFlinch.observe(quiet, 32)
+check(noRoute ~= nil and noRoute.ms == 32, "a span with no readable state still measures")
+check(#noRoute.route == 0, "and records no route entries")
+check(RQFlinch.routeText(noRoute) == nil,
+    "routeText answers nil for an empty route so the caller can omit the clause")
+check(RQFlinch.routeText(nil) == nil, "and nil for no span at all")
+
+-- ---------------------------------------------------------------------------
 -- Nil safety
 -- ---------------------------------------------------------------------------
 -- Called from a per-frame path over a weak table; a collected zombie must not
@@ -279,6 +372,53 @@ for _, node in ipairs(NODES) do
             check(xml:find("<m_EventName>SetOnFloor</m_EventName>", 1, true) ~= nil,
                 label .. " keeps the SetOnFloor event that clears bOnFloor")
         end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- COMPLETENESS - every shipped node is listed above
+-- ---------------------------------------------------------------------------
+-- The loop above is driven by NODES, so a node added to the artifact without a
+-- row here is a node that NOTHING checks: it could emit KnockDown, ship a 1.0
+-- speed scale, or key on a misspelled variable, and this file would stay green
+-- while the feature quietly stopped working for that state. That was a
+-- tolerable hole at six nodes and is not at fifteen.
+--
+-- io.popen because Lua 5.1 has no directory listing, and it is GUARDED rather
+-- than assumed: if the shell is unavailable the check reports itself skipped
+-- instead of passing. A skipped check that says so is honest; one that returns
+-- true because it could not look is the exact failure this file exists to
+-- prevent elsewhere.
+do
+    local listed = {}
+    for _, node in ipairs(NODES) do listed[node.path] = true end
+
+    -- dir wants the whole pattern inside ONE pair of quotes, and backslashes:
+    -- a forward-slash path with the quote closed before the filename is the
+    -- shape that silently matched nothing on the first attempt.
+    local winPath = ANIMSETS:gsub("/", "\\")
+    local ok, pipe = pcall(io.popen,
+        'dir /b /s "' .. winPath .. 'RQFlinch*.xml" 2>nul')
+    if not ok or not pipe then
+        print("SKIP RQFlinch: no shell - node completeness unverified")
+    else
+        local found, unlisted = 0, {}
+        for line in pipe:lines() do
+            -- Keep the last two path segments: "<state>/RQFlinch*.xml"
+            local rel = line:match("([^\\]+\\[^\\]+)$")
+            if rel then
+                rel = rel:gsub("\\", "/")
+                found = found + 1
+                if not listed[rel] then unlisted[#unlisted + 1] = rel end
+            end
+        end
+        pipe:close()
+        check(found > 0, "the node sweep found nothing - the glob or path is wrong")
+        check(#unlisted == 0,
+            "shipped node(s) missing from NODES, so no assertion reads them: "
+            .. table.concat(unlisted, ", "))
+        check(found == #NODES,
+            "node count drift: " .. found .. " on disk, " .. #NODES .. " listed")
     end
 end
 

@@ -24,12 +24,27 @@ text = prepared.decode("utf-8")
 
 checks = {
     "old publication id returned": old_id == "3772176444",
-    "publication id removed": "\nid=" not in "\n" + text,
+    "production id removed": "id=3772176444" not in text,
+    "minted testing id installed": "id=" + testing.TEST_ITEM_ID + "\r\n" in text,
     "testing title installed": "title=RoTD:Testing\r\n" in text,
     "testing item is unlisted": "visibility=unlisted\r\n" in text,
     "description preserved": "description=unchanged\r\n" in text,
     "line endings preserved": "\n" not in text.replace("\r\n", ""),
+    # The id takes the production id's POSITION, not the end of the file -
+    # workshop.txt is read line-wise by both the game and our own reader.
+    "testing id keeps the id line position":
+        text.index("id=" + testing.TEST_ITEM_ID) < text.index("title="),
 }
+
+# A production manifest that somehow carries the TESTING id is an identity
+# swap, not a deploy: refuse rather than "rewrite" it into itself.
+try:
+    testing.test_manifest(source.replace(b"3772176444",
+                                         testing.TEST_ITEM_ID.encode()))
+except ValueError:
+    checks["swapped identity refused"] = True
+else:
+    checks["swapped identity refused"] = False
 
 for bad in (
     source.replace(b"id=3772176444\r\n", b""),
@@ -48,30 +63,15 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# Publication-id RETENTION.
+# The deployed-folder probe.
 #
-# Steam mints an id on the first upload and writes it back into the DEPLOYED
-# workshop.txt. Before 2026-08-18 every later run rebuilt from the production
-# manifest with the id stripped, overwrote the destination, and took the
-# testing id with it - so the next upload silently created ANOTHER Workshop
-# item instead of updating the one already published.
+# With the minted id baked in (2026-08-28) this is a SAFETY check rather than
+# a source of truth: main() refuses a folder wearing any other digit id, so a
+# production copy sitting at the testing path is never silently replaced -
+# and, more to the point, never pushed to Steam under the testing identity.
 # ---------------------------------------------------------------------------
 import tempfile
 
-kept, kept_old = testing.test_manifest(source, "9988776655")
-kept_text = kept.decode("utf-8")
-checks["testing id is re-emitted"] = "id=9988776655\r\n" in kept_text
-checks["production id is still removed"] = "id=3772176444" not in kept_text
-checks["production id still reported"] = kept_old == "3772176444"
-checks["retained id keeps its line position"] = (
-    kept_text.index("id=9988776655") < kept_text.index("title=")
-)
-checks["retention does not disturb the rest"] = (
-    "description=unchanged\r\n" in kept_text
-    and "visibility=unlisted\r\n" in kept_text
-)
-
-# Reading the id back off a deployed folder.
 tmp = tempfile.mkdtemp()
 try:
     dest = os.path.join(tmp, "RoTD-Testing")
@@ -81,10 +81,11 @@ try:
         os.path.join(tmp, "nope")) is None
     open(manifest, "w", encoding="utf-8").write(
         "version=1\r\ntitle=RoTD:Testing\r\nvisibility=unlisted\r\n")
-    checks["first publish yields no id"] = testing.deployed_test_id(dest) is None
+    checks["id-less folder yields no id"] = testing.deployed_test_id(dest) is None
     open(manifest, "w", encoding="utf-8").write(
-        "version=1\r\nid=9988776655\r\ntitle=RoTD:Testing\r\n")
-    checks["published id is read back"] = testing.deployed_test_id(dest) == "9988776655"
+        "version=1\r\nid=" + testing.TEST_ITEM_ID + "\r\ntitle=RoTD:Testing\r\n")
+    checks["deployed id is read back"] = (
+        testing.deployed_test_id(dest) == testing.TEST_ITEM_ID)
     # A BOM must not hide the id - the manifest is written with one.
     open(manifest, "w", encoding="utf-8-sig").write(
         "version=1\r\nid=1234567890\r\ntitle=RoTD:Testing\r\n")
@@ -101,6 +102,56 @@ try:
 finally:
     import shutil as _sh
     _sh.rmtree(tmp, ignore_errors=True)
+
+# ---------------------------------------------------------------------------
+# The push targets the right item, and only ever that one.
+# ---------------------------------------------------------------------------
+canonical = testing.CANONICAL
+checks["testing id is not the production id"] = (
+    testing.TEST_ITEM_ID != "3772176444")
+
+push_tmp = tempfile.mkdtemp()
+try:
+    staged = os.path.join(push_tmp, testing.CANONICAL.TESTING_ITEM)
+    os.makedirs(staged)
+    open(os.path.join(staged, "workshop.txt"), "w", encoding="utf-8").write(
+        "version=1\r\nid=" + testing.TEST_ITEM_ID + "\r\n"
+        "title=RoTD:Testing\r\ndescription=one\r\ndescription=two\r\n"
+        "visibility=unlisted\r\n")
+    read = canonical.read_manifest(staged)
+    checks["push reads the testing id"] = read["id"] == testing.TEST_ITEM_ID
+    checks["push reads the unlisted flag"] = read["visibility"] == "unlisted"
+    checks["push joins the description lines"] = read["description"] == "one\ntwo"
+
+    vdf = canonical.build_vdf(read, staged, "note")
+    checks["vdf carries the app id"] = '"appid" "108600"' in vdf
+    checks["vdf targets the testing item"] = (
+        '"publishedfileid" "' + testing.TEST_ITEM_ID + '"' in vdf)
+    # unlisted is 3 - a wrong number here would silently PUBLISH the test item.
+    checks["vdf keeps the item unlisted"] = '"visibility" "3"' in vdf
+    checks["vdf points at the staged tree"] = '"contentfolder" "' + staged + '"' in vdf
+    checks["vdf carries the multi-line description"] = '"description" "one\ntwo"' in vdf
+finally:
+    import shutil as _sh2
+    _sh2.rmtree(push_tmp, ignore_errors=True)
+
+# A quote in a value cannot be escaped in steamcmd's VDF dialect; the builder
+# must refuse rather than emit a document that means something else.
+class _Exit(Exception):
+    pass
+
+_real_exit = canonical.sys.exit
+canonical.sys.exit = lambda *a: (_ for _ in ()).throw(_Exit(a))
+try:
+    canonical.build_vdf(
+        {"id": "1", "title": 'a "quoted" title', "visibility": "unlisted",
+         "description": "d"}, "C:\\x", "note")
+except _Exit:
+    checks["a quote in the manifest is refused"] = True
+else:
+    checks["a quote in the manifest is refused"] = False
+finally:
+    canonical.sys.exit = _real_exit
 
 failed = [name for name, passed in checks.items() if not passed]
 if failed:

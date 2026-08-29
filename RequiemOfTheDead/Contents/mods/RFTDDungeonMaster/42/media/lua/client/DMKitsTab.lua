@@ -67,23 +67,7 @@ V.totals    = {}    -- id -> how many times it has been claimed, over everyone
 -- Pure
 -- ---------------------------------------------------------------------------
 
--- Sorted by LABEL, which is what the row draws. The wire delivers whatever
--- order the store's pairs() produced, and a catalogue that reshuffles between
--- two reads of an unchanged server is a list an admin cannot scan.
---
--- Ties break on id so the order is total: two kits may legitimately share a
--- label ("Anomaly Loot" for two seasons), and without the tiebreak those two
--- swap places on every refresh.
-function DMKitsTab.sorted(kits)
-    local out = {}
-    for _, k in ipairs(kits or {}) do out[#out + 1] = k end
-    table.sort(out, function(a, b)
-        local la, lb = tostring(a.label or a.id), tostring(b.label or b.id)
-        if la ~= lb then return la < lb end
-        return tostring(a.id) < tostring(b.id)
-    end)
-    return out
-end
+-- Display order lives in DMKitDefs.displayOrder (promoted 2026-08-25).
 
 -- The row's right-hand column: the kind, and whether it can be taken twice.
 -- Both are properties an admin scans for rather than opens a kit to learn -
@@ -359,6 +343,8 @@ function DMKitsTab.clearAll(k)
         V.status = "Nobody has claimed '" .. (k.label or k.id) .. "' yet."
         return
     end
+    -- DFConfirm is Core since 2026-08-25; the Dragonfly-absent guard that
+    -- briefly sat here went with the promotion.
     DFConfirm.ask("Clear ALL " .. n .. " claim(s) on '" .. (k.label or k.id)
         .. "'?\n\nEveryone who has taken it will be able to take it again, "
         .. "and their claim counts start from zero. To reset one player "
@@ -373,7 +359,7 @@ end
 function DMKitsTab.rebuild()
     if not V.listBox then return end
     DFKit.refillList(V.listBox, function(box)
-        for _, k in ipairs(DMKitsTab.sorted(V.kits)) do
+        for _, k in ipairs(DMKitDefs.displayOrder(V.kits)) do
             local i = box:addItem(k.label or k.id, k)
             i.height = DFKit.rowHeight()
         end
@@ -397,17 +383,8 @@ local function needSelection()
     return nil
 end
 
-local function askUser(prompt, then_)
-    local modal
-    modal = ISTextBox:new(getCore():getScreenWidth() / 2 - 150,
-        getCore():getScreenHeight() / 2 - 60, 300, 120, prompt, "", nil,
-        function(_, btn)
-            if btn.internal ~= "OK" or not (modal and modal.entry) then return end
-            local text = modal.entry:getText()
-            if text and text ~= "" then then_(text) end
-        end, getPlayer() and getPlayer():getPlayerNum() or 0)
-    modal:initialise(); modal:addToUIManager()
-end
+-- The one-line text prompt lives in Core now: DFKit.askText, promoted
+-- 2026-08-25 from the identical copy this file and its sibling both carried.
 
 -- Declared before build uses it. Lua resolves a LOCAL at compile time, so a
 -- `local function layout` further down is a different, nil upvalue here -
@@ -431,7 +408,7 @@ local function build(spec, panel, x, y, w, h)
 
     V.giveBtn = DFKit.button(panel, 0, 0, 90, "Give to...", panel, function()
         local k = needSelection(); if not k then return end
-        askUser("Give '" .. (k.label or k.id) .. "' to which player?",
+        DFKit.askText("Give '" .. (k.label or k.id) .. "' to which player?",
             function(user)
                 RDNet.send(TOKEN, "kitGrantTo", { id = k.id, username = user })
             end)

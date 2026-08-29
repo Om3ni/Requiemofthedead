@@ -168,6 +168,56 @@ if registered["playerInventorySnapshot"] then
     check(line:find("items=3", 1, true),
         "a nil getFullType costs no row either - it falls back to the ? placeholder")
 
+    -- ------------------------------------------------------------------
+    -- WORN CLOTHING IS IN BOTH LISTS, AND THE WORN ROW MUST WIN.
+    -- A worn garment's container IS the character's inventory
+    -- (Clothing.java:1096-1100), so it appears in the main walk AND in
+    -- getWornItems(). Until 2026-08-25 main enumerated first and the dedupe
+    -- swallowed the worn pass whole: a fully dressed player snapshotted as
+    -- worn=0 with every garment reading "Main". These pins model the real
+    -- engine shape - the SAME item object in both lists - because a fixture
+    -- that keeps them disjoint cannot see the bug.
+    -- ------------------------------------------------------------------
+    local shirt, jeans = mkItem("Shirt"), mkItem("Jeans")
+    local wornEntries = {
+        { getItem = function() return shirt end, getLocation = function() return "Torso" end },
+        { getItem = function() return jeans end, getLocation = function() return "Legs" end },
+    }
+    do
+        -- A dressed player: two garments worn AND in the main list, one loose item.
+        local list = { shirt, mkItem("Apple"), jeans }
+        local inv = {
+            getItems = function()
+                return { size = function() return #list end,
+                         get  = function(_, i) return list[i + 1] end }
+            end,
+        }
+        local player = {
+            getInventory      = function() return inv end,
+            getUsername       = function() return "Moth" end,
+            getPrimaryHandItem   = function() return nil end,
+            getSecondaryHandItem = function() return nil end,
+            getWornItems      = function()
+                return { size = function() return #wornEntries end,
+                         get  = function(_, i) return wornEntries[i + 1] end }
+            end,
+            transmitModData   = function() end,
+        }
+        local rows = DFInventory.listAddressableItems(player)
+        check(#rows == 3, "the dedupe holds: a worn garment gets ONE row, not two: " .. #rows)
+        local bySource, locs = {}, {}
+        for _, e in ipairs(rows) do
+            bySource[e.source] = (bySource[e.source] or 0) + 1
+            if e.loc then locs[tostring(e.loc)] = true end
+        end
+        check(bySource.worn == 2,
+            "both garments are WORN rows, not main - the regression this order exists for: "
+            .. tostring(bySource.worn))
+        check(bySource.main == 1, "the loose item stays a main row")
+        check(locs["Torso"] and locs["Legs"],
+            "and the worn rows carry their body locations for the Location column")
+    end
+
 -- ---------------------------------------------------------------------------
 -- REGRESSION PINS (live dedicated-server report, 2026-08-18).
 --

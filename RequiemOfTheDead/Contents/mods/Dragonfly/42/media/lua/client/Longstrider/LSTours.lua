@@ -12,6 +12,9 @@
 
 if isServer() then return end
 
+require "RDFile"
+require "RDLuaLiteral"
+
 LSTours = LSTours or {}
 
 LSTours.list       = LSTours.list or {}      -- array of tour tables (see add())
@@ -172,30 +175,22 @@ function LSTours.serialize()
 end
 
 -- ---------------------------------------------------------------------------
--- Save. No guard.
---
--- getFileWriter returns nil for a denied path or a failed open, and
--- LuaFileWriter.write/close delegate to PrintWriter, which records I/O errors
--- internally rather than raising them (LuaManager.java:5523-5555, 9850-9868).
--- serialize() walks LSTours' own list, whose records are validated on the way
--- in, so a format fault there is a programming error and must surface.
+-- Save. Mechanism in RDFile (2026-08-25); its header carries the engine
+-- facts the block here used to re-derive. serialize() walks LSTours' own
+-- validated list, so a format fault there is a programming error and must
+-- surface - which is why the call is bare around it.
 -- ---------------------------------------------------------------------------
 function LSTours.save()
-    local w = getFileWriter(FILE, true, false)
-    if not w then return false end
-    w:write(LSTours.serialize())
-    w:close()
-    return true
+    return RDFile.rewrite(FILE, LSTours.serialize())
 end
 
 -- ---------------------------------------------------------------------------
--- Load. One guard, on the one thing here that is genuinely foreign code.
---
--- The file is USER-EDITABLE, so its chunk is untrusted: it is sandboxed with
--- setfenv(fn, {}) and executed behind a boundary. Everything else that used to
--- share that boundary now stands on its own - the read is DFFile's, loadstring
--- returns nil rather than throwing on a syntax error, and each tour record is
--- validated before it is accepted.
+-- Load. The file is USER-EDITABLE, so its text is untrusted - and untrusted
+-- text is never executed: RDLuaLiteral.parse reads the literal back with no
+-- code path at all. (This was the suite's last loadstring caller; 42.20.4
+-- removed the global outright, so the old sandbox - setfenv + pcall around an
+-- executed chunk - is not just unnecessary now, it is impossible.) Each tour
+-- record is still validated below before it is accepted.
 -- ---------------------------------------------------------------------------
 function LSTours.load()
     if LSTours._loaded then return end
@@ -203,30 +198,25 @@ function LSTours.load()
 
     -- Truncation cannot be seen at the read layer - a BufferedReader fault
     -- presents as early EOF there (see DFFile.readLines) - so the integrity
-    -- gate is below: a partial Lua chunk does not parse, and loadstring
-    -- rejects it. The `complete` flag this used to honour was always true.
+    -- gate is below: a partial Lua literal does not parse. The `complete`
+    -- flag this used to honour was always true.
     local lines = DFFile.readLines(FILE)
     if not lines then return end
 
     local src = table.concat(lines, "\n")
-    if not src:find("return", 1, true) then return end
+    -- A blank file is a non-event (nothing saved yet), not corruption - stay
+    -- quiet rather than reporting a parse error on emptiness.
+    if src:match("^%s*$") then return end
 
-    local fn = loadstring(src)   -- returns nil + message on a syntax error
-    if not fn then
-        print("[Longstrider] tour file does not parse; keeping the empty list")
+    -- The operator who hand-edited the file is the one who needs to be told,
+    -- with the line number - the pre-parser boundary discarded the error
+    -- silently.
+    local data, perr = RDLuaLiteral.parse(src)
+    if not data then
+        print("[Longstrider] tour file does not parse ("
+              .. tostring(perr) .. "); keeping the empty list")
         return
     end
-    setfenv(fn, {})
-
-    -- RETAINED: executing a hand-edited file's chunk. Foreign code by
-    -- definition, and the operator who edited it is the one who needs to be
-    -- told - the old boundary discarded the error silently.
-    local ok, data = pcall(fn)
-    if not ok then
-        print("[Longstrider] tour file failed to run: " .. tostring(data))
-        return
-    end
-    if type(data) ~= "table" then return end
 
     LSTours.cellSize = tonumber(data.cellSize) or LSTours.cellSize
     LSTours.dwellMs  = tonumber(data.dwellMs)  or LSTours.dwellMs

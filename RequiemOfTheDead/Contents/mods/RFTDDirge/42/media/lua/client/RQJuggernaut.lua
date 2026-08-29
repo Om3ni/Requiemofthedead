@@ -1,17 +1,24 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- RQJuggernaut - client render only
--- All buff behavior runs server-side (svJuggernautTick).
--- Client keeps: ring follow and the proximity-based buff highlight.
+-- RQJuggernaut - client render only.
+-- Client keeps: ring follow and the proximity-based buff highlight. Nothing in
+-- this file touches items, and nothing in it decides damage.
 --
 -- The weapon debuff that used to live here moved to RQSuppress, and then out of
 -- Dirge altogether on 2026-08-24 - RQBulwark decides mitigation server-side now,
 -- against the zombie that was struck rather than against the player's weapon.
--- What is left in this file is presentation: the ground ring and the outline
--- kiting counter, linger, and restore. Nothing in this file touches items.
+--
+-- REPAIRED 2026-08-25. Three separate removal passes each left damage in this
+-- header, and the result described a file that does not exist:
+--   * "All buff behavior runs server-side (svJuggernautTick)" - there is no
+--     svJuggernautTick, in this build or any other. RQSvJuggernaut has no tick
+--     at all; it says so itself.
+--   * "the ground ring and the outline / kiting counter, linger, and restore" -
+--     one sentence ending mid-phrase with the tail of a deleted one grafted on.
+--   * "Local player in range of any Juggernaut's aura this frame. Read by" -
+--     a dangling remnant, contradicted by the correct note two lines below it.
 
 RQJuggernaut = RQJuggernaut or {}
 
--- Local player in range of any Juggernaut's aura this frame. Read by
 -- The playerInAura flag this file used to publish is gone: RQSuppress's aura
 -- term was Dirge's weapon debuff, and RQBulwark replaced it. What remains here
 -- is presentation - the ground ring and the outline highlight.
@@ -30,18 +37,10 @@ Events.OnRenderTick.Add(function()
     local cell = getCell()
     local radius = cfg.juggernautBuffRadius
     local rSq    = radius * radius
-    local px     = player:getX()
-    local py     = player:getY()
-
-    local inRange = false
 
     for onlineID, zType in pairs(RQRegistry.activeZombies) do
         if zType == "Juggernaut" then
-            local pos = RQReconcile.lastKnownPos[onlineID]
-            local lx = pos and pos.x or 0
-            local ly = pos and pos.y or 0
-            local lz = pos and pos.z or 0
-            local jugg = RQCore.findZombieByID(onlineID, lx, ly, lz)
+            local jugg = RQCore.findZombieByID(onlineID)
             if jugg then
                 if not jugg:isDead() then
                     local jx = math.floor(jugg:getX())
@@ -49,12 +48,12 @@ Events.OnRenderTick.Add(function()
                     local jz = math.floor(jugg:getZ())
                     RQRing.update("jugg_" .. onlineID, jx, jy, jz, radius, JUGG_RING_COLOR)
 
-                    -- Check if this player is inside this Jugg's aura
-                    local ddx = px - jx
-                    local ddy = py - jy
-                    if ddx*ddx + ddy*ddy <= rSq then
-                        inRange = true
-                    end
+                    -- The player-distance test that used to live here computed
+                    -- the aura flag RQSuppress read. Nothing has read it since
+                    -- 2026-08-24, so it was two subtractions, two multiplies and
+                    -- a compare per Juggernaut per RENDER TICK, feeding a local
+                    -- that was written and never examined. Removed 2026-08-25.
+                    -- rSq stays: the buff highlight below still uses it.
 
                     -- Proximity-based buff highlight: any normal zombie within
                     -- buffRadius of this jugg is considered buffed (cosmetic only).

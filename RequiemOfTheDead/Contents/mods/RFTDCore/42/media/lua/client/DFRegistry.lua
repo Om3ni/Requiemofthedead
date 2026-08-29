@@ -14,6 +14,10 @@
 
 if isServer() then return end
 
+-- Shared-tier Core, loads before any client file; required to state the
+-- contract - addRowActions gates on RDAccess.roleHas.
+require "RDAccess"
+
 DFRegistry = DFRegistry or {
     tabs         = {},  -- [id] = spec
     rowActions   = {},  -- [tabId] = { spec, spec, ... }
@@ -85,6 +89,52 @@ end
 
 function DFRegistry.getRowActions(tabId)
     return DFRegistry.rowActions[tabId] or {}
+end
+
+-- Add every registered row action for a tab onto a context menu. Promoted
+-- 2026-08-25 from copies growing in DFPlayersTab and RPNecroTab (with a third
+-- variant in RCVehicleCheats): the CONSUMING half of registerRowAction is one
+-- rule, and three renditions of it had already started disagreeing about the
+-- guard. Takes the CONTEXT rather than creating one, so a caller appending to
+-- vanilla's own menu (RCVehicleCheats) and a caller opening a fresh
+-- ISContextMenu use the same body.
+--
+-- Capability gate is RDAccess.roleHas - Core's own; DFCore.roleHas is a
+-- delegate to it (DFCore.lua:44-46), so the behaviour every existing caller
+-- had is unchanged and Core keeps not depending on Dragonfly.
+--
+-- NO pcall around the handler, and that is a decision with a body behind it,
+-- carried from RCVehicleCheats' read: exactly one handler runs per click, so
+-- there are no peers for a guard to protect, the result was never inspected,
+-- and the engine writes the full Lua stack trace at throw time anyway
+-- (KahluaThread.java:865, :1100). A guard here was a pure silencer.
+function DFRegistry.addRowActions(context, tabId, row)
+    if not context then return 0 end
+    local actions = DFRegistry.getRowActions(tabId)
+    for _, spec in ipairs(actions) do
+        local enabled = true
+        if spec.capability and RDAccess then
+            enabled = RDAccess.roleHas(getPlayer(), spec.capability)
+        end
+        local opt = context:addOption(spec.label, row, spec.handler)
+        if not enabled then opt.notAvailable = true end
+    end
+    return #actions
+end
+
+-- The whole right-click flow for an ISScrollingListBox row: resolve the row
+-- under the cursor, refuse when no actions are registered, open a fresh
+-- context menu at the mouse, add the actions. The two deck tabs' handlers
+-- reduce to one line of policy each (WHICH tab id) - the mechanism was
+-- identical and had already been written twice.
+function DFRegistry.showRowMenu(list, x, y, tabId)
+    local idx = list:rowAt(x, y)
+    if idx <= 0 then return end
+    local item = list.items[idx]
+    if not item or not item.item then return end
+    if #DFRegistry.getRowActions(tabId) == 0 then return end
+    local context = ISContextMenu.get(0, getMouseX() + 8, getMouseY() + 8)
+    DFRegistry.addRowActions(context, tabId, item.item)
 end
 
 function DFRegistry.getStatusBadges()

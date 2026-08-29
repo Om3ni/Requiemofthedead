@@ -13,64 +13,19 @@
 
 RQEMP = RQEMP or {}
 
--- Each moodle level sits in a bracket. We drop the player into the
--- midpoint of the next bracket down so it feels consistent.
-local MOODLE_DROP_TARGETS = { 0.65, 0.40, 0.18, 0.05 }
+-- The endurance drop is server-owned (RQSvShared.svApplyEMPEnduranceDrain,
+-- committed before the empDebuff packet is even sent). A client-side copy
+-- (applyDebuff) survived that move with zero callers and was cut 2026-08-25;
+-- reintroducing one would race the authoritative drain.
 
--- Knocks endurance down by one moodle tier.
-function RQEMP.applyDebuff(player)
-    if not player then return end
-    local stats = player:getStats()
-    local current = stats:get(CharacterStat.ENDURANCE)
-    local level = player:getMoodles():getMoodleLevel(MoodleType.ENDURANCE)
-
-    if level >= 4 then return end -- already bottomed out
-
-    local target = MOODLE_DROP_TARGETS[level + 1]
-    if target and target < current then
-        stats:set(CharacterStat.ENDURANCE, target)
-    end
-end
-
--- Scans tiles around the blast for generators, TVs, radios.
-local function damageWorldElectronics(x, y, z, radius, damagePercent)
-    local cell = getCell()
-    if not cell then return end
-    local rSq = radius * radius
-
-    for dx = -radius, radius do
-        for dy = -radius, radius do
-            if dx * dx + dy * dy <= rSq then
-                local sq = cell:getGridSquare(x + dx, y + dy, z)
-                if sq then
-                    local objects = sq:getObjects()
-                    if objects then
-                        for i = 0, objects:size() - 1 do
-                            local obj = objects:get(i)
-                            if obj then
-                                if instanceof(obj, "IsoGenerator") then
-                                    local cond = obj:getCondition()
-                                    if cond and cond > 0 then
-                                        local dmg = math.floor(cond * damagePercent / 100)
-                                        obj:setCondition(math.max(0, cond - dmg))
-                                    end
-                                elseif instanceof(obj, "IsoTelevision") or instanceof(obj, "IsoRadio") then
-                                    -- turnOff exists only on IsoBarbecue:244 in
-                                    -- 42.20.2, never on TVs or radios, so the
-                                    -- presence test is the whole guard: indexing an
-                                    -- absent method is nil, only calling it throws.
-                                    if obj.turnOff then
-                                        obj:turnOff()
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
+-- World damage is SERVER-OWNED, in RQSvShared.svDamageWorldElectronics. A
+-- client copy of that scan lived here with zero callers until 2026-08-27 and
+-- was wrong twice over: it damaged generator condition, which is authoritative
+-- state no client may write, and it reached for obj:turnOff() on televisions
+-- and radios - a method that exists on IsoBarbecue:244 and nowhere else in the
+-- engine, so that half had never once run. Nothing client-side belongs in this
+-- lane; what the blast does to devices' AUDIO is a separate concern and lives
+-- in RQEMPStatic.
 
 -- Expanding ring that grows outward from the blast point.
 local expandingRings = {}
@@ -141,8 +96,33 @@ function RQEMP.playDetonationVFX(x, y, z, radius)
     -- heard "explosions in their homes" from fights far away. The 0.7 base
     -- for PipeBombExplode now actually applies. Raw coords: playback no
     -- longer depends on the blast square being loaded on this client.
+    --
+    -- THREE LAYERS, in descending gain, and the order below is the order they
+    -- are meant to be heard: the crack, the concussion, then the electrical
+    -- wind-down that gives an EMP its signature. GeneratorStopping is the
+    -- shutdown whine an IsoGenerator plays when it is switched off
+    -- (IsoGenerator.java:473-475 -> playGeneratorSound("Stopping"), whose name
+    -- is getSoundPrefix() .. suffix at :700, and getSoundPrefix() is the
+    -- literal "Generator" unless the sprite carries a GeneratorSound property
+    -- at :667-676). The event is real and shipped, not merely named in Java:
+    -- media/scripts/generated/sounds/objects/sounds_object_generator.txt:23
+    -- defines it as FMOD event Object/Generator/Shutdown.
+    --
+    -- Verified rather than assumed BECAUSE a wrong name is silent, not loud:
+    -- FMODSoundEmitter.playSound returns 0 for an unknown event instead of
+    -- throwing (FMODSoundEmitter.java:484-496), so a typo here would ship as a
+    -- layer nobody ever hears and nothing would ever report it. The precedent
+    -- is GeneratorBackfire on the line above, which reaches FMOD through the
+    -- identical prefix+suffix concatenation and has always worked.
+    --
+    -- 0.65 puts it UNDER the concussion deliberately. It is a tail, not a hit:
+    -- at parity with PipeBombExplode it masked the crack that reads as the
+    -- detonation itself. Its clip allows distanceMax 100 while our hand-built
+    -- falloff silences everything at 70, so the electrical layer stops with
+    -- the rest of the blast instead of trailing past it.
     RQCore.playFalloffSound("GeneratorBackfire", x, y, z, 1.0)
     RQCore.playFalloffSound("PipeBombExplode",   x, y, z, 0.7)
+    RQCore.playFalloffSound("GeneratorStopping", x, y, z, 0.65)
     RQDirgeLog.write("EMP", "[INFO] falloff detonation sounds fired at (" .. x .. "," .. y .. "," .. z .. ")")
 
     -- Zombie-attraction world sound (inaudible to players) is gameplay, not
@@ -151,6 +131,13 @@ function RQEMP.playDetonationVFX(x, y, z, radius)
     -- the equivalent Screamer path for why retrying a partial sound is unsafe.
     -- LuaManager.java:9227-9229; WorldSoundManager.java:43, 73-82, 107-156.
     addSound(nil, x, y, z, 100, 100)
+
+    -- Radios and televisions in the blast drop to static until power-cycled.
+    -- Client-side by nature rather than by choice: device audio is presentation
+    -- the server cannot even see (DeviceData.updateEmitter:685-688 returns on
+    -- GameServer.server), so every client does this to its own copy off the
+    -- broadcast it is already handling. See RQEMPStatic's header.
+    RQEMPStatic.scramble(x, y, z, radius)
 end
 
 -- Shockwave knockback - called by RQCore from the empDebuff handler.

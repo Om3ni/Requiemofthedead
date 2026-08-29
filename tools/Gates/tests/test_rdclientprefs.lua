@@ -67,6 +67,10 @@ function getFileWriter(name, _create, append)
 end
 
 -- ---- load ---------------------------------------------------------------
+-- The REAL RDFile: the store's save routes through it since 2026-08-25, and
+-- the in-memory FS above is exactly what it opens against.
+require = function() return true end
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
 dofile(SOURCE)
 check(type(RDClientPrefs) == "table", "module did not define RDClientPrefs")
 

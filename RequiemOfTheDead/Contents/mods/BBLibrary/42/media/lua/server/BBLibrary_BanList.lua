@@ -17,6 +17,13 @@
 
 require "DFBanBox"
 
+-- Version registration (owner-approved 2026-08-25; this mod never called it
+-- and the HELLO handshake could not see it in either direction). Server tier
+-- is the RIGHT tier here: this mod ships server-only Lua, and HELLO
+-- chronicles the roster the SERVER loaded (RDLife.lua:219).
+require "RDShared"   -- explicit: file-scope RD* use must not ride on load order
+RDShared.registerMod("BBLibrary", "1.2.1")   -- keep in sync with mod.info
+
 DFBanBox.ban("Base.Yoyo")
 DFBanBox.ban("dcollectibles.DCDCMjolnir")
 DFBanBox.ban("dcollectibles.DCCrescentRose")

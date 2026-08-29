@@ -102,7 +102,10 @@ eq("list carries empty",     listed("LMCore", "title").empty, title.empty)
 eq("list carries maxLen",    listed("LMCore", "title").maxLen, 64)
 eq("list carries rule",      listed("LMCore", "title").rule, title.rule)
 
-eq("lewtkey is free text", Limes.fields.spec("lewtkey").ui, "text")
+-- lewtkey and the sprinter band retired with S2 (2026-08-27): unregistered,
+-- stripped by migration. Pinned ABSENT so a nostalgic re-registration shows up.
+eq("lewtkey is retired",         Limes.fields.spec("lewtkey"), nil)
+eq("the sprinter band is retired", Limes.fields.spec("minSprinterRisk"), nil)
 
 -- maxLen is coerced to a number, so a registrant passing "64" cannot hand the
 -- entry box a string where it will compare against one.
@@ -126,15 +129,20 @@ eq("choice value survives as a string",
 -- Apply + resolution
 -- ---------------------------------------------------------------------------
 
+-- `risk` stands where `tier` used to in these fixtures: tier stopped being a
+-- number field with the record-kind model (it is the SLOT now, pinned in its
+-- own section below), and these lines test coercion/clamping, not tiers.
+Limes.fields.register("T", "risk", { type = "number", default = 0, min = 0, max = 10 })
+
 local warnings = Limes.apply({
-    _default  = { rects = {}, fields = { tier = 1, title = "Somewhere" } },
-    Hard      = { rects = {}, fields = { tier = "4", hp = "8" } },            -- stringly, template
+    _default  = { rects = {}, fields = { risk = 1, title = "Somewhere" } },
+    Hard      = { rects = {}, fields = { risk = "4", hp = "8" } },            -- stringly, template
     City      = { inherits = "Hard",
                   rects = { { 0, 0, 99, 99 } },
                   fields = { title = "The City" } },
     GunStore  = { inherits = "City",
                   rects = { { 10, 10, 19, 19 } },
-                  fields = { tier = "99", mystery = "keep-me" } },            -- 99 clamps to 10
+                  fields = { risk = "99", mystery = "keep-me" } },            -- 99 clamps to 10
     Annex     = { rects = { { 200, 0, 249, 24 }, { 250, 0, 299, 24 } },       -- multi-rect
                   fields = { hp = "" } },                                     -- "" = inherit (unset)
     Loop1     = { inherits = "Loop2", rects = {}, fields = {} },
@@ -146,12 +154,12 @@ local warnings = Limes.apply({
 eq("revision stamped", Limes.revision, 1)
 
 local city = Limes.getZone("City")
-eq("child sees template field",        city.fields.tier, 4)
+eq("child sees template field",        city.fields.risk, 4)
 eq("stringly number coerced",          city.fields.hp, 8)
 eq("own field wins over chain",        city.fields.title, "The City")
 eq("_default reaches everyone",        Limes.getZone("Annex").fields.title, "Somewhere")
 eq("'' inherits instead of zeroing",   Limes.getZone("Annex").fields.hp, nil)
-eq("clamp applies on resolve",         Limes.getZone("GunStore").fields.tier, 10)
+eq("clamp applies on resolve",         Limes.getZone("GunStore").fields.risk, 10)
 eq("unknown key preserved verbatim",   Limes.getZone("GunStore").fields.mystery, "keep-me")
 eq("template flagged",                 Limes.getZone("Hard").template, true)
 eq("geometry zone not a template",     city.template, false)
@@ -284,7 +292,7 @@ Limes.fields.register("T", "loot",  { type = "string", default = "" })
 Limes.fields.register("T", "speed", { type = "number", default = 0, min = 0, max = 100 })
 
 Limes.apply({
-    _default = { profiles = { "Ambient" }, fields = { tier = 1, loot = "root" } },
+    _default = { profiles = { "Ambient" }, fields = { risk = 1, loot = "root" } },
     Ambient  = { fields = { loot = "ambient", speed = 10 } },
     Spooky   = { fields = { loot = "rare", speed = 20 } },
     Sprinty  = { fields = { speed = 30 } },
@@ -292,7 +300,7 @@ Limes.apply({
     Trap     = { inherits = "Spooky", profiles = { "Sprinty" },
                  rects = { { 900, 900, 909, 909 } }, fields = { hp = 9 } },
     Parent   = { inherits = "_default", rects = { { 0, 0, 199, 199 } },
-                 profiles = { "Spooky" }, fields = { tier = 2 } },
+                 profiles = { "Spooky" }, fields = { risk = 2 } },
     Child    = { inherits = "Parent", rects = { { 10, 10, 19, 19 } },
                  profiles = { "Sprinty" }, fields = {} },
     OwnWins  = { inherits = "Parent", rects = { { 50, 50, 59, 59 } },
@@ -336,12 +344,12 @@ eq("...and warns", sawWarn, true)
 -- the pre-existing zone contract, and prune strips "" before it ever
 -- persists, so it only matters for imported data.)
 Limes.apply({
-    Muffle = { fields = { tier = "" } },
+    Muffle = { fields = { risk = "" } },
     Z      = { rects = { { 0, 0, 9, 9 } }, profiles = { "Muffle" },
                fields = {} },
-    _default = { fields = { tier = 7 } },
+    _default = { fields = { risk = 7 } },
 }, 33)
-eq("'' in a profile inherits through", Limes.getZone("Z").fields.tier, 7)
+eq("'' in a profile inherits through", Limes.getZone("Z").fields.risk, 7)
 
 -- disabled via a profile takes the zone out of the lookup (RESOLVER_CRITICAL
 -- path through a bag).
@@ -352,15 +360,23 @@ Limes.apply({
 eq("disabled-via-profile leaves the lookup", Limes.getLocation(5, 5), nil)
 eq("...but the zone still resolves by name", Limes.getZone("Z").disabled, true)
 
--- THE WIRE PIN (silent-erasure site #1): stripServerOnly carries the list.
+-- THE WIRE PIN (silent-erasure site #1): stripServerOnly carries every
+-- structural key - profiles since M-A, kind/tier/moon since the record-kind
+-- model. A key missing from that whitelist is deleted by editing a number.
 Limes.fields.register("T", "secret", { type = "string", default = "", side = "server" })
 local stripped = Limes.fields.stripServerOnly({
-    Z = { inherits = "P", profiles = { "A", "B" },
+    Z = { inherits = "P", tier = "Spicy", profiles = { "A", "B" },
           rects = { { 0, 0, 9, 9 } }, fields = { secret = "x", hp = 1 } },
+    T1 = { kind = "tier", moon = { phases = "full", fields = { hp = 5 } },
+           fields = { rank = 4, secret = "y" } },
 })
 eq("stripServerOnly carries profiles", stripped.Z.profiles[2], "B")
 eq("...still strips server-only fields", stripped.Z.fields.secret, nil)
 eq("...and keeps the rest", stripped.Z.fields.hp, 1)
+eq("...carries the tier slot", stripped.Z.tier, "Spicy")
+eq("...carries kind", stripped.T1.kind, "tier")
+eq("...carries the moon overlay whole", stripped.T1.moon.fields.hp, 5)
+eq("...still strips server-only tier fields", stripped.T1.fields.secret, nil)
 
 -- Membership edits fire "edited" even when resolved fields happen to match.
 Limes.apply({
@@ -444,29 +460,159 @@ ENGINE_PHASE = 2
 LMMoon.setProvider(function() return SKY end)
 
 Limes.apply({
-    _default  = { fields = { tier = 1 } },
-    FullOnly  = { fields = { tier = 9, phases = "full" } },
+    _default  = { fields = { risk = 1 } },
+    FullOnly  = { fields = { risk = 9, phases = "full" } },
     Z         = { rects = { { 0, 0, 9, 9 } }, profiles = { "FullOnly" }, fields = {} },
 }, 60)
-eq("on-phase, the profile merges",  Limes.getZone("Z").fields.tier, 9)
+eq("on-phase, the profile merges",  Limes.getZone("Z").fields.risk, 9)
 eq("...but never its phases key",   Limes.getZone("Z").fields.phases, nil)
 eq("...while the profile's own record keeps it",
    Limes.getZone("FullOnly").fields.phases, "full")
 
 SKY = 0
 Limes.refresh()
-eq("off-phase, the profile is dormant", Limes.getZone("Z").fields.tier, 1)
+eq("off-phase, the profile is dormant", Limes.getZone("Z").fields.risk, 1)
 
 SKY = nil
 Limes.refresh()
-eq("an unknowable sky is dormant too", Limes.getZone("Z").fields.tier, 1)
+eq("an unknowable sky is dormant too", Limes.getZone("Z").fields.risk, 1)
 
 -- refresh() keeps the revision - the editor's save gate depends on it.
 SKY = 4
 local revWas = Limes.revision
 Limes.refresh()
 eq("refresh does not move the revision", Limes.revision, revWas)
-eq("...while re-resolving correctly", Limes.getZone("Z").fields.tier, 9)
+eq("...while re-resolving correctly", Limes.getZone("Z").fields.risk, 9)
+
+-- ---------------------------------------------------------------------------
+-- The record-kind model (S1, 2026-08-26): kinds, the tier slot, the tier bag,
+-- the moon overlay, terminal resolution, and the seed.
+-- ---------------------------------------------------------------------------
+
+-- The slot: nearest-ancestor-wins, _default as the fallback root.
+Limes.apply({
+    _default = { tier = "Newcomer" },
+    Newcomer = { kind = "tier", fields = { rank = 1, hp = 1 } },
+    Spicy    = { kind = "tier", fields = { rank = 4, hp = 4 } },
+    IDDQL    = { kind = "tier", fields = { rank = 5, hp = 5 } },
+    Town     = { tier = "Spicy", rects = { { 0, 0, 99, 99 } }, fields = {} },
+    Block    = { inherits = "Town", rects = { { 10, 10, 19, 19 } }, fields = {} },
+    Cellar   = { inherits = "Block", tier = "IDDQL",
+                 rects = { { 12, 12, 13, 13 } }, fields = {} },
+    Nowhere  = { rects = { { 500, 500, 509, 509 } }, fields = {} },
+}, 70)
+
+eq("own slot wins",                    Limes.getZone("Cellar").tier, "IDDQL")
+eq("a child takes the nearest ancestor's slot", Limes.getZone("Block").tier, "Spicy")
+eq("no slot anywhere falls to _default", Limes.getZone("Nowhere").tier, "Newcomer")
+eq("resolveTier names the source",
+   select(2, Limes.resolveTier("Block", Limes.raw())), "Town")
+eq("the tier bag merges its dials",    Limes.getZone("Town").fields.hp, 4)
+eq("rank flows through the bag",       Limes.getZone("Town").fields.rank, 4)
+eq("the bag follows the resolved slot", Limes.getZone("Cellar").fields.hp, 5)
+eq("resolved records carry kind",      Limes.getZone("IDDQL").kind, "tier")
+eq("zones carry no kind",              Limes.getZone("Town").kind, nil)
+
+-- Bag order: tier < _default < chain < profiles < own.
+Limes.apply({
+    _default = { fields = { hp = 2 } },
+    T1       = { kind = "tier", fields = { hp = 1, loot = "t" } },
+    Boost    = { kind = "profile", fields = { speed = 9 } },
+    A        = { tier = "T1", rects = { { 0, 0, 99, 99 } }, fields = {} },
+    B        = { inherits = "A", rects = { { 0, 0, 9, 9 } },
+                 profiles = { "Boost" }, fields = { loot = "own" } },
+}, 71)
+eq("_default beats the tier bag",      Limes.getZone("A").fields.hp, 2)
+eq("the tier bag fills what nothing else sets", Limes.getZone("A").fields.loot, "t")
+eq("own beats the tier bag",           Limes.getZone("B").fields.loot, "own")
+eq("a profile still merges above it all", Limes.getZone("B").fields.speed, 9)
+eq("kind=profile records resolve as profiles", Limes.getZone("Boost").kind, "profile")
+
+-- The moon overlay: one gate (Limes.phasesActive), overlay beats base, only
+-- while in phase - and the overlay never leaks a phases key.
+SKY = 4
+Limes.apply({
+    T1 = { kind = "tier", fields = { hp = 1 },
+           moon = { phases = "full", fields = { hp = 8 } } },
+    Z  = { tier = "T1", rects = { { 0, 0, 9, 9 } }, fields = {} },
+}, 72)
+eq("in phase, the overlay beats the base dial", Limes.getZone("Z").fields.hp, 8)
+SKY = 0
+Limes.refresh()
+eq("off phase, the base dial stands", Limes.getZone("Z").fields.hp, 1)
+SKY = 4
+
+-- Terminal resolution: a tier or profile resolves to its OWN fields only,
+-- even when illegal structure is present - validate() complains, the
+-- resolver ignores.
+Limes.apply({
+    _default = { fields = { hp = 2, loot = "root" } },
+    Rogue    = { kind = "profile", inherits = "_default", fields = { speed = 3 } },
+}, 73)
+eq("a terminal record ignores _default",  Limes.getZone("Rogue").fields.hp, nil)
+eq("...and its own illegal inherits",     Limes.getZone("Rogue").fields.loot, nil)
+eq("...keeping only its own fields",      Limes.getZone("Rogue").fields.speed, 3)
+
+-- A dangling or mis-kinded slot warns and resolves without the bag.
+local wDangle = Limes.apply({
+    Z = { tier = "Ghost", rects = { { 0, 0, 9, 9 } }, fields = { hp = 3 } },
+    NotATier = { fields = { hp = 9 } },
+    Y = { tier = "NotATier", rects = { { 50, 50, 59, 59 } }, fields = {} },
+}, 74)
+eq("dangling slot still resolves the zone", Limes.getZone("Z").fields.hp, 3)
+eq("a mis-kinded slot contributes nothing", Limes.getZone("Y").fields.hp, nil)
+local sawDangle, sawMisKind = false, false
+for _, w in ipairs(wDangle) do
+    if w:find("not in the store", 1, true) then sawDangle = true end
+    if w:find("not a tier record", 1, true) then sawMisKind = true end
+end
+eq("...and both warn", sawDangle and sawMisKind, true)
+
+-- A slot change fires "edited" - consumers must see the rules move.
+Limes.apply({
+    T1 = { kind = "tier", fields = { rank = 1 } },
+    T2 = { kind = "tier", fields = { rank = 2 } },
+    Z  = { tier = "T1", rects = { { 0, 0, 9, 9 } }, fields = {} },
+}, 75)
+local slotFired = {}
+Limes.onZoneEvent(function(event, name) slotFired[#slotFired + 1] = event .. ":" .. name end)
+Limes.applyDelta({ Z = { tier = "T2", rects = { { 0, 0, 9, 9 } }, fields = {} } }, {}, 76)
+local sawSlotEdit = false
+for _, e in ipairs(slotFired) do if e == "edited:Z" then sawSlotEdit = true end end
+eq("a tier-slot change fires edited", sawSlotEdit, true)
+
+-- The lootReduce grammar.
+local entries, bad = Limes.parseLootReduce("Base.Axe=25; cat:Ammo=50")
+eq("two rules parse",            #entries, 2)
+eq("item rule kind",             entries[1].kind, "item")
+eq("item rule name",             entries[1].name, "Base.Axe")
+eq("item rule pct",              entries[1].pct, 25)
+eq("category rule kind",         entries[2].kind, "category")
+eq("category rule name",         entries[2].name, "Ammo")
+eq("nothing bad in clean input", #bad, 0)
+entries, bad = Limes.parseLootReduce(" Base.Shotgun = 100 ;; cat: Guns =0 ")
+eq("whitespace and empty runs tolerated", #entries, 2)
+eq("0 and 100 are legal percents", entries[1].pct == 100 and entries[2].pct == 0, true)
+entries, bad = Limes.parseLootReduce("Base.Axe=101; nonsense; cat:=5; Base.Axe=25%")
+eq("junk parses nothing",        #entries, 0)
+eq("...and every bad rule is named", #bad, 4)
+eq("nil parses to empty",        #Limes.parseLootReduce(nil), 0)
+-- format is parse's inverse - the loot widget edits rows and writes the
+-- string back through it, so the round trip must be the identity.
+local rt = "Base.Shotgun=75; cat:Ammo=50; Base.Axe=0"
+eq("format(parse(s)) is the identity", Limes.formatLootReduce(Limes.parseLootReduce(rt)), rt)
+eq("format of empty is empty", Limes.formatLootReduce({}), "")
+
+-- The seed: the five-rung ladder, _default standing on Medium.
+Limes.apply({}, 90)
+eq("seed lands in an empty store", Limes.seedIfEmpty(), true)
+eq("the ladder has five rungs plus _default", #Limes.zoneNames(), 6)
+eq("IDDQL is a tier record",  Limes.getZone("IDDQL").kind, "tier")
+eq("IDDQL is the top rung",   Limes.getZone("IDDQL").fields.rank, 5)
+eq("Newcomer is the bottom",  Limes.getZone("Newcomer").fields.rank, 1)
+eq("_default stands on Medium", Limes.getZone("_default").tier, "Medium")
+eq("...so it resolves the ladder's middle rank", Limes.getZone("_default").fields.rank, 3)
+eq("a second seed refuses",   Limes.seedIfEmpty(), false)
 
 print(string.format("LMCore: %d passed, %d failed", pass, fail))
 os.exit(fail == 0 and 0 or 1)

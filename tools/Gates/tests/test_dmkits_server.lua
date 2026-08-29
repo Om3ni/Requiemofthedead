@@ -75,6 +75,15 @@ Events = {
 
 local clock = 1000000
 
+-- DMAudit stamps its records off the wall clock and the world age. Both are
+-- pinned to the fixture's own clock so a record's timestamp is a fact under
+-- test rather than whatever the machine says.
+function getTimestamp() return math.floor(clock / 1000) end
+function getTimestampMs() return clock end
+function getGameTime()
+    return { getWorldAgeHours = function() return 72.0 end }
+end
+
 -- Registries, as DMRegistry crosses them.
 local function javaList(items)
     return setmetatable({}, { __index = function(_, k)
@@ -177,19 +186,48 @@ RDLog.channel = function(stream, modId)
         RDLog.forensic(stream, evt, subj, payload, modId)
     end
 end
+local chronicles = {}
+RDLog.chronicle = function(evt, subj, payload)
+    chronicles[#chronicles + 1] = { evt = evt, subj = subj, payload = payload }
+    return true
+end
+
+-- Files are captured, not written. DMAudit needs a directory name per player;
+-- the SteamID suffix is what a real RDIdentity adds and what proves a record
+-- was filed under the person it is about.
+local audited = {}
+RDIdentity = { dirFor = function(subj)
+    return (RDShared and RDShared.username(subj)) or "unknown"
+end }
+function getFileWriter(path, _createIfNull, append)
+    return {
+        write = function(_, line)
+            audited[#audited + 1] = { path = path, line = line, append = append }
+        end,
+        close = function() end,
+    }
+end
 
 require = function() return true end
 dofile(CORE .. "/shared/RDShared.lua")
 RDShared.nowMs = function() return clock end
 dofile(CORE .. "/shared/RDJson.lua")
 dofile(CORE .. "/shared/RDVarDefs.lua")
+dofile(CORE .. "/shared/RDEvents.lua")
 dofile(DM .. "/shared/DMRoll.lua")
 dofile(DM .. "/shared/DMKitDefs.lua")
 dofile(DM .. "/shared/DMRegistry.lua")
+-- The REAL RDFile (write mechanism since 2026-08-25).
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
 dofile(CORE .. "/server/RDConfigStore.lua")
 dofile(CORE .. "/server/RDVars.lua")
 dofile(DM .. "/server/DMKits.lua")
 dofile(DM .. "/server/DMGrant.lua")
+-- LOADED FOR REAL, not stubbed. DMKits_Server calls it behind `if DMAudit then`
+-- and passes a subject and an action name; a stub would accept anything, which
+-- is precisely what a fixture must not do when the module under test is the one
+-- deciding WHO a permanent record is about.
+dofile(DM .. "/server/Kits/DMAudit.lua")
 
 DMKits_Server = nil
 local ok, err = pcall(dofile, DM .. "/server/DMKits_Server.lua")
@@ -253,6 +291,7 @@ end
 
 local function reset()
     fs, modDataMap, forensics, onlineRoster = {}, {}, {}, {}
+    chronicles, audited = {}, {}
     clock = 1000000
     DMRegistry.forget()
     dofile(CORE .. "/server/RDConfigStore.lua")
@@ -341,6 +380,38 @@ check(r and r.args.ok == true, "a grant to an online player failed: "
     .. tostring(r and r.args.reason))
 check(#pat._contents == 1, "the item never reached the player")
 check(DMKits.hasClaimed("pat", "reward") == true, "the grant was not recorded")
+
+-- THE RECORD IS ABOUT THE RECIPIENT, NOT THE ADMIN. This handler holds two
+-- people at once - `target` gets the kit, `tell` gets the confirmation - and
+-- filing on the wrong one writes half of every grant into the wrong player's
+-- permanent record and folder. It is silent: both writes succeed.
+local granted = nil
+for _, c in ipairs(chronicles) do
+    if c.evt == "DM.KIT_GRANTED" then granted = c end
+end
+check(granted ~= nil, "a staff grant left no permanent record")
+check(RDShared.username(granted.subj) == "pat",
+    "the grant was chronicled about '"
+    .. tostring(RDShared.username(granted.subj)) .. "', not the recipient")
+check(granted.subj == pat,
+    "the chronicle got a username string where the player object was in hand; "
+    .. "only an object carries the life id and a SteamID-bearing directory")
+check(granted.payload.by ~= nil, "the responsible admin is not in the record")
+
+local filed = false
+for _, w in ipairs(audited) do
+    if w.path:find("Kits/pat/", 1, true) then filed = true end
+end
+check(filed, "nothing was filed in the recipient's own Kits folder")
+for _, w in ipairs(audited) do
+    check(not w.path:find("Kits/giver/", 1, true),
+        "a grant put a record in the ADMIN's folder: " .. w.path)
+end
+
+-- A self-claim is the same action with nobody behind it, and must not be
+-- recorded as a grant.
+check(DMAudit.chronicleEvent("KIT_CLAIMED", {}) == "DM.KIT_CLAIMED",
+    "a self-claim would be recorded as a staff grant")
 
 -- once is honoured even for a staff grant: re-granting a one-time reward is
 -- almost always a mis-click, and Re-open exists for when it is not.

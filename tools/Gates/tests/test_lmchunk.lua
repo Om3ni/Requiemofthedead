@@ -40,6 +40,9 @@ Limes = Limes or {}
 
 local realRequire = require
 require = function() end
+-- The REAL RDShared: LMSync registers the mod version at file scope now
+-- (2026-08-25); same rule as the sixteen-stub sweep.
+dofile(CORE .. "shared/RDShared.lua")
 local okW, errW = pcall(dofile, CORE .. "shared/RDWire.lua")
 local okS, errS = pcall(dofile, LM .. "shared/LMSync.lua")
 require = realRequire

@@ -41,15 +41,73 @@
   nothing happening, which is the intent - a Bulwark should look like it
   noticed and did not care.
 
-  THE EVENTS ARE THE KNOCKDOWN HALF. ZombieHitReactionState.animEvent
-  (:103-109) is the only thing that knocks a zombie down during a hit
-  reaction: "KnockDown" calls setKnockedDown(true), "CancelKnockDown" calls
-  setKnockedDown(false). IsoZombie.knockDown() has no Java callers at all, so
-  for gunfire the animation event IS the mechanism. This node therefore emits
-  no KnockDown and cancels any that is pending - which is how a Bulwark
-  becomes immune to being put on the floor without us fighting a flag race.
-  SetState is carried over from vanilla ShotDefault.xml purely so the hit
+  THE EVENTS. ZombieHitReactionState.animEvent (:103-109) turns "KnockDown"
+  into setKnockedDown(true) plus setOnFloor(true), and "CancelKnockDown" into
+  setKnockedDown(false). This node emits no KnockDown and cancels a pending
+  one. SetState is carried over from vanilla ShotDefault.xml purely so the hit
   still sounds like a hit (:124-134).
+
+  CORRECTED 2026-08-25 (floor-state enumeration). This paragraph used to say
+  that "for gunfire the animation event IS the mechanism", and that the cancel
+  here "is how a Bulwark becomes immune to being put on the floor without us
+  fighting a flag race". Both were wrong, and the second was the one that
+  mattered.
+
+  The flag does not come from an animation event. IsoZombie.hitConsequences
+  :3459 sets it in Java, at hit time, with no event involved:
+
+      this.setKnockedDown(wielder.isCriticalHit() || this.isOnFloor()
+                          || this.isAlwaysKnockedDown());
+
+  (Client-side only - the surrounding gate needs GameClient.client and a local
+  wielder - which is consistent with this whole file living in client/.)
+
+  And the cancel does not demonstrably win the race. Vanilla's own concrete
+  node for the same reaction string, Shot/ShotChestStepL.xml, x_extends
+  ShotDefault.xml and so inherits exactly this CancelKnockDown(Start, true) -
+  while actiongroups/zombie/hitreaction/to_knockeddown-shotChestL.xml requires
+  <isTrue>bKnockedDown</isTrue> to leave this state. Vanilla ships six such
+  knockdown states with full AnimSets, so it plainly expects them to be
+  reached; that cannot be true if a Start-time cancel reliably beat the exit
+  evaluation. Which wins on the entry frame is NOT settled by reading the
+  graph, and this file will not claim it is. RQFlinch.observe records the
+  action-context states a suppressed zombie actually passes through, so the
+  next Mosaic session answers it with evidence instead.
+
+  THE KNOCKDOWN LANE, and why six more nodes exist. Because the ordering is
+  unresolved, the lane is covered rather than argued. A firearm crit from the
+  LEFT or RIGHT is the case: CombatManager.resolveHitReaction:2330 takes the
+  headshot early-return only on Rand.Next(4) == 0, so three crits in four fall
+  through to the ordinary reaction table (:2350-2376) and can produce
+  ShotChestStepL/R, ShotLegL/R or ShotShoulderL/R - the six strings the
+  knockdown transitions compare against - while the same isCriticalHit() has
+  already set bKnockedDown at :3459. Those six states now carry RQFlinch nodes
+  of their own. If the cancel here wins they are never selected and cost
+  nothing; if it loses they turn a full knockdown into the same two-frame
+  twitch as every other lane. Correct either way, which is the point of
+  covering rather than reasoning.
+
+  The other four knockdown states - headLeft, headRight, headTop, uppercut -
+  are NOT firearm-reachable: resolveHitReaction never returns HEAD_LEFT,
+  HEAD_RIGHT, HEAD_TOP or UPPERCUT on any path, crit or not. They are melee
+  shapes, and are deliberately left uncovered.
+
+  ALL TEN are additionally gated by <isFalse>usePhysicHitReaction</isFalse>,
+  which for a ranged weapon tracks RagdollSettingsManager.usePhysicHitReaction
+  (CombatManager.java:3170-3177, called at :2385). On a server with ragdoll hit
+  reactions enabled the whole knockdown lane is blocked by the engine and the
+  ragdoll path runs instead. So whether these six ever get selected is a
+  server-settings question as well as an ordering one - another reason to cover
+  the lane rather than wait to observe it.
+
+  NOT COVERED, ON PURPOSE: getup/ and getup-fromSitting/. The enumeration entry
+  listed both, but neither is in the knockdown chain - getup/ serves crawlers,
+  body-eaters and tripped sprinters, getup-fromSitting/ serves a seated zombie
+  standing up. Worse, getup/'s three vanilla nodes are each conditioned
+  (bGetUpFromCrawl, SprinterTripped, previousState == eatbody) and a node of
+  ours at priority 100 would displace all three, replacing a crawler's
+  stand-up with a generic one for every suppressed zombie. The floor chain uses
+  getup-fromOnBack/ and getup-fromOnFront/, which are covered.
 -->
 <animNode>
 	<m_Name>RQFlinchSuppressed</m_Name>

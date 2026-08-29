@@ -44,6 +44,8 @@
 
 if not isServer() then return end
 
+require "RDFile"
+
 RDIdentity = RDIdentity or {}
 
 -- Append-only ledger, so ".log" per the RDShared.EXT_* rule - the bare ".tsv" is
@@ -133,18 +135,11 @@ local function appendClaim(dir, user)
             .. "directory still works; it will be re-minted next boot.")
         return
     end
-    -- No guard. The old (KEEP) rested on "write/close can fail on a full or
-    -- locked disk" - which cannot reach Lua. getFileWriter returns nil for a
-    -- denied path or a failed open, catching both of its own IOException sites
-    -- (LuaManager.java:5523-5555), and LuaFileWriter.write/close delegate to
-    -- PrintWriter, which records exactly that full-or-locked-disk condition on
-    -- an internal flag rather than raising it (LuaManager.java:9850-9868).
-    -- A refused write is the nil below; a lost claim line is re-minted next boot.
-    local w = getFileWriter(FILE, true, true)
-    if w then
-        w:write(dir .. "\t" .. user .. "\n")
-        w:close()
-    end
+    -- Mechanism in RDFile (2026-08-25); its header carries the engine facts
+    -- the comment here used to re-derive. This caller's policy: a refused
+    -- claim line is tolerable - the session directory still works and the
+    -- claim is re-minted next boot - so the boolean is deliberately unread.
+    RDFile.appendLine(FILE, dir .. "\t" .. user)
 end
 
 local function usernameOf(subj)

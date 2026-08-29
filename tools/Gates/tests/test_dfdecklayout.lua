@@ -60,6 +60,8 @@ print = function(s) logged[#logged + 1] = tostring(s) end
 -- and these assertions are worth more exercising the composed pair.
 require = function() return true end
 DFFile, DFDeckLayout = nil, nil
+-- The REAL RDFile (write mechanism since 2026-08-25).
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
 local okf = pcall(dofile, ROOT .. "/RequiemOfTheDead/Contents/mods/Dragonfly/42/media/lua/shared/DFFile.lua")
 local ok, err = pcall(dofile, SOURCE)
 print = realPrint

@@ -21,8 +21,8 @@
 -- entries in either are indistinguishable at query time.
 --
 -- getFileWriter is the only working server-side write in B42 (RCAudit's header
--- has the detail) and its extension allowlist is ini|cfg|txt|log, CASE
--- SENSITIVE - hence .txt.
+-- has the detail) and its extension allowlist is ini|cfg|txt|log|json, CASE
+-- SENSITIVE (LuaManager.java:1045) - hence .txt.
 --
 -- MARKING IS BY ROOM, NOT BY BRUSH. An admin standing in the offending garage
 -- presses one button and the room's own bounding box is recorded. The chain is
@@ -32,6 +32,8 @@
 -- building actually is rather than a guessed square around the player.
 
 if not isServer() then return end
+
+require "RDFile"
 
 require "RCShared"
 
@@ -143,19 +145,14 @@ function RCNoPark.add(x, y, z, w, h, label)
     -- typed by nobody in particular, so it is sanitised rather than trusted.
     label = tostring(label or "marked"):gsub("[,\r\n]", " "):sub(1, 60)
 
-    -- No guards. The WRITE side is not the read side: getFileWriter returns nil
-    -- rather than throwing (LuaManager.java:5523-5555), and LuaFileWriter's
-    -- writeln/close delegate to PrintWriter, which records I/O errors in an
-    -- internal flag instead of raising them (:9850-9868). The nil check is the
-    -- whole error surface, and the coordinates are already floored numbers.
-    local writer = getFileWriter(FILE, true, true)
-    if not writer then
+    -- Mechanism in RDFile (2026-08-25); its header carries the engine facts
+    -- the comment here used to re-derive. This caller's policy: a refused
+    -- write is a REPLY to the admin who pressed the button, not a log line.
+    if not RDFile.appendLine(FILE, string.format("%d,%d,%d,%d,%d,%s",
+        math.floor(x), math.floor(y), math.floor(z or 0),
+        math.floor(w), math.floor(h), label)) then
         return nil, "cannot write " .. FILE
     end
-    writer:writeln(string.format("%d,%d,%d,%d,%d,%s",
-        math.floor(x), math.floor(y), math.floor(z or 0),
-        math.floor(w), math.floor(h), label))
-    writer:close()
 
     RCNoPark.reload()
     return true

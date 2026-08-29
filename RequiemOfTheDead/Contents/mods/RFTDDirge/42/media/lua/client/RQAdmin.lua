@@ -128,8 +128,10 @@ local function convertZombie(zombie, zType)
 
     -- Always route through the server so svMarkZombie runs and svActiveZombies
     -- gets the entry. The host-direct path bypassed svActiveZombies, breaking
-    -- all alive behaviors (buff aura, scream, regen, etc.) for admin-converted
-    -- zombies. sendClientCommand works on host too - routes to OnClientCommand.
+    -- everything keyed off it for admin-converted zombies: the behaviour-pass
+    -- dispatch (skills, eating, awareness) and RQSvShared.typeOf, which is how
+    -- the hit intake - and Bulwark and McCoy behind it - recognizes a special
+    -- at all. sendClientCommand works on host too - routes to OnClientCommand.
     sendClientCommand(RQCommon.MODULE, "adminConvert", {
         onlineID = oid or 0,   -- 0 = no valid ID; server falls back to nearest-at-position
         x        = math.floor(zombie:getX()),
@@ -273,12 +275,18 @@ local function onAdminServerCommand(module, command, args)
         local zType     = args and args.zType or "?"
         local converted = args and args.converted or 0
         local requested = args and args.requested or 0
+        local spawned   = args and args.spawned or 0
         if converted > 0 then
             local msg = "Dirge: Spawned " .. converted .. " " .. zType
-            if converted < requested then
+            if spawned < requested then
                 msg = msg .. " (of " .. requested .. " - no room for the rest)"
+            elseif converted < spawned then
+                msg = msg .. " (" .. (spawned - converted)
+                    .. " did not complete network admission)"
             end
             showIdentifyResult(msg, zType)
+        elseif spawned > 0 then
+            showIdentifyResult("Dirge: Zombie spawned, but never reached network-ready state")
         else
             showIdentifyResult("Dirge: Spawn failed - no valid ground near that spot")
         end
@@ -311,7 +319,9 @@ Events.OnServerCommand.Add(onAdminServerCommand)
 -- who are about to be affected. Dirge only soft-depends on Dragonfly, so fall
 -- through to firing directly when it isn't installed.
 local function confirmed(label, fn)
-    if DFConfirm and DFConfirm.askIfOthersOnline then
+    -- Core-owned since 2026-08-25; the existence check this used to hide
+    -- behind belonged to the Dragonfly-optional era.
+    if DFConfirm.askIfOthersOnline then
         DFConfirm.askIfOthersOnline(label, fn)
     else
         fn()

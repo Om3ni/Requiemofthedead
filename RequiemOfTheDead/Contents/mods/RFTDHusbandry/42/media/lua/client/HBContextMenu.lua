@@ -3,17 +3,14 @@
 -- Notifies the server of encountered animals (seen list) and will host
 -- Register/Unregister actions once the Ledger UI exists.
 
--- Mirrors Dirge's access-level check: getAccessLevel() is reliable in both
--- SP and MP. The global isAdmin() can return false for the host in some contexts.
-local function isHBAdmin()
-    local player = getPlayer()
-    if not player then return false end
-    local access = player:getAccessLevel()
-    if access and access ~= "" and access ~= "None" then return true end
-    if not isClient() then return true end
-    if isServer() then return true end
-    return false
-end
+-- When the Ledger UI lands and its Register/Unregister entries need a staff
+-- test, the answer is `RDAccess.isStaff` (RFTDCore/shared/RDAccess.lua) - the
+-- OR of access level "admin" and capability-granted roles, promoted to Core in
+-- 2026-08-20 precisely so surfaces stop writing their own. A local copy that
+-- read getAccessLevel() directly sat here unused until 2026-08-27; it also
+-- missed capability roles, so reviving it would have been the wrong answer as
+-- well as a fourth copy. Reaching it needs `require "RDShared"` at file scope
+-- (client load order is alphabetical across mods).
 
 local function onAnimalContext(playerNum, context, animals, test)
     if test then return end

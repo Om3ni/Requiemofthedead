@@ -39,9 +39,26 @@
 # copies of the same ids let the engine choose by enumeration order instead of
 # by intent - see remove_rival below.
 #
+# DIRECT PUSH (2026-08-28). After the swap the item goes to Steam through
+# steamcmd, so the game is no longer part of the loop - the dev server still
+# gets its copy the same way, by downloading the published item. The push
+# confirms first, is skipped cleanly when steamcmd or the Steam user is
+# missing, and takes its whole storefront identity from the staged
+# workshop.txt. The console stays open at the end of an interactive run.
+#
+# THE STEAM SESSION IS CACHED ONCE, IN ITS OWN CONSOLE. steamcmd asks for a
+# password by reading the console with echo off, which needs a real console
+# handle; inherited from a piped stdin (Git Bash, an IDE terminal) it reads
+# nothing typed and fails a minute and a half later blaming the password. So
+# the login runs in a console of its own and every later push uses the cached
+# session - see credentials_cached.
+#
 # Usage:
-#   python "tools\Deploy Tools\deploy-workshop.py"            format, prove, swap
-#   python "tools\Deploy Tools\deploy-workshop.py" --dry-run  everything except the swap
+#   python "tools\Deploy Tools\deploy-workshop.py"            format, prove, swap, push
+#   python "tools\Deploy Tools\deploy-workshop.py" --login    cache the Steam session, build nothing
+#   python "tools\Deploy Tools\deploy-workshop.py" --dry-run  everything except swap and push
+#   python "tools\Deploy Tools\deploy-workshop.py" --no-push  stage only
+#   python "tools\Deploy Tools\deploy-workshop.py" --yes      push without confirming
 #   python "tools\Deploy Tools\deploy-workshop.py" --dest D:\elsewhere\RequiemOfTheDead
 
 import argparse
@@ -333,6 +350,268 @@ def remove_rival(dest, dry_run):
     print("           the engine would have picked between them by enumeration order)")
 
 
+# ---------------------------------------------------------------------------
+# Direct Workshop push (2026-08-28, owner request): after a successful swap the
+# staged item goes to Steam through steamcmd's workshop_build_item, so the
+# in-game uploader leaves the loop entirely. The dev-server round-trip stays
+# the same - publish, let the server download the item - this only removes the
+# "boot the game to press upload" step.
+#
+# The manifest of record is the STAGED workshop.txt: id, title, description
+# and visibility all come from it, so the storefront can never drift from what
+# the repo says (the in-game edit dialog that once truncated the description
+# is exactly the drift this kills).
+# ---------------------------------------------------------------------------
+
+APP_ID = "108600"
+
+# workshop.txt speaks PZ visibility words; workshop_build_item takes ints.
+# friendsOnly/hidden map per Steam's RemoteStoragePublishedFileVisibility
+# (1 = friends, 2 = private); unlisted is 3.
+VISIBILITY = {"public": "0", "friendsOnly": "1", "hidden": "2",
+              "private": "2", "unlisted": "3"}
+
+
+def read_manifest(dest):
+    """The staged item's publication identity, from its workshop.txt."""
+    path = os.path.join(dest, "workshop.txt")
+    with open(path, encoding="utf-8-sig") as f:
+        lines = [line.rstrip("\r\n") for line in f]
+    ids = [l[3:] for l in lines if l.startswith("id=")]
+    titles = [l[6:] for l in lines if l.startswith("title=")]
+    desc = [l[12:] for l in lines if l.startswith("description=")]
+    vis = [l[11:] for l in lines if l.startswith("visibility=")]
+    if len(ids) != 1 or not ids[0].isdigit():
+        sys.exit(f"ABORT: {path} needs exactly one numeric id= line to push")
+    if len(titles) != 1 or len(vis) != 1:
+        sys.exit(f"ABORT: {path} needs exactly one title= and one visibility= line")
+    if vis[0] not in VISIBILITY:
+        sys.exit(f"ABORT: {path} visibility '{vis[0]}' is not one of {sorted(VISIBILITY)}")
+    return {"id": ids[0], "title": titles[0], "visibility": vis[0],
+            "description": "\n".join(desc)}
+
+
+def build_vdf(manifest, contentfolder, changenote):
+    """The workshop_build_item document, as steamcmd's KeyValues reads it.
+
+    steamcmd parses this with escape sequences OFF: a backslash is literal and
+    there is NO way to carry a double quote inside a quoted value. Newlines
+    inside a quoted value are legal and are how the multi-line description
+    ships. So quotes anywhere in the values are refused outright rather than
+    silently corrupting the document - reword the manifest instead.
+    """
+    preview = os.path.join(contentfolder, "preview.png")
+    fields = [
+        ("appid", APP_ID),
+        ("publishedfileid", manifest["id"]),
+        ("contentfolder", contentfolder),
+        ("previewfile", preview),
+        ("visibility", VISIBILITY[manifest["visibility"]]),
+        ("title", manifest["title"]),
+        ("description", manifest["description"]),
+        ("changenote", changenote),
+    ]
+    out = ['"workshopitem"', "{"]
+    for key, value in fields:
+        if '"' in value:
+            sys.exit(f"ABORT: workshop {key} contains a double quote, which the "
+                     "steamcmd VDF format cannot carry - reword it")
+        out.append(f'\t"{key}" "{value}"')
+    out.append("}")
+    return "\n".join(out) + "\n"
+
+
+def find_steamcmd(explicit):
+    for candidate in (explicit, os.environ.get("RFTD_STEAMCMD"),
+                      r"C:\Mosaic\steamcmd.exe", shutil.which("steamcmd")):
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def vdf_block(text, key):
+    """The brace-delimited body of "key" in a KeyValues document, or None.
+
+    Brace-counted rather than regexed: an Accounts block contains a nested
+    block per account, and a non-greedy match stops at the first inner close.
+    """
+    at = text.find('"%s"' % key)
+    if at < 0:
+        return None
+    open_at = text.find("{", at)
+    if open_at < 0:
+        return None
+    depth = 0
+    for i in range(open_at, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_at + 1:i]
+    return None
+
+
+def credentials_cached(steamcmd, user):
+    """Has this steamcmd install a remembered login for `user`?
+
+    True / False / None when it cannot be told (no config yet, unreadable).
+
+    THIS IS WHY IT EXISTS. steamcmd asks for a password by reading the console
+    with echo disabled, through the Win32 console API - which needs a REAL
+    console input handle. A child process inheriting a piped stdin (Git Bash's
+    MinTTY, an IDE terminal, a redirected run) receives NOTHING: the prompt
+    appears, typing does nothing, and ninety seconds later steamcmd reports
+    "ERROR (Invalid Password)" for a password nobody could enter. Owner hit
+    exactly that on 2026-08-28. So the push never gambles on that prompt - it
+    checks here first, and sends the login to a console of its own.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(steamcmd)),
+                        "config", "config.vdf")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return None
+    accounts = vdf_block(text, "Accounts")
+    if accounts is None:
+        return False
+    return ('"%s"' % user).lower() in accounts.lower()
+
+
+def steamcmd_last_error(steamcmd):
+    """steamcmd's own last complaint, for a failure the user could not see."""
+    path = os.path.join(os.path.dirname(os.path.abspath(steamcmd)),
+                        "logs", "console_log.txt")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines[-200:]):
+        if "ERROR" in line or "FAILED" in line.upper():
+            return line.strip()
+    return None
+
+
+def steam_login(steamcmd, user):
+    """Cache a Steam session, in a console steamcmd can actually read.
+
+    CREATE_NEW_CONSOLE is the whole point: the child gets a real console of
+    its own, so the hidden password prompt and the Steam Guard code work the
+    way they do when you run steamcmd by hand. We wait for it and report,
+    because that window closes with the process and takes the verdict with it.
+    """
+    print(f"login     steamcmd has no cached session for '{user}'")
+    print("          A separate Steam window is opening - type the password")
+    print("          there (it stays hidden as you type) and the Steam Guard")
+    print("          code if asked. This is once per machine; steamcmd")
+    print("          remembers the session afterwards.")
+    flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+    r = subprocess.run([steamcmd, "+login", user, "+quit"], creationflags=flags)
+    if r.returncode != 0:
+        why = steamcmd_last_error(steamcmd)
+        print(f"login     FAILED (steamcmd exited {r.returncode})")
+        if why:
+            print(f"          {why}")
+        return False
+    print("login     cached")
+    return True
+
+
+def push_workshop(dest, args):
+    """Upload the staged item at dest. Loud about every reason it does not."""
+    manifest = read_manifest(dest)
+    label = f"item {manifest['id']} \"{manifest['title']}\" ({manifest['visibility']})"
+
+    if args.dry_run:
+        print(f"would push {label} via steamcmd")
+        return
+
+    steamcmd = find_steamcmd(args.steamcmd)
+    if not steamcmd:
+        print(f"PUSH SKIPPED: no steamcmd found (looked at --steamcmd, "
+              f"RFTD_STEAMCMD, C:\\Mosaic\\steamcmd.exe, PATH)")
+        return
+    user = args.steam_user or os.environ.get("RFTD_STEAM_USER")
+    if not user and sys.stdin.isatty():
+        user = input("Steam username for the upload (blank skips the push): ").strip()
+    if not user:
+        print("PUSH SKIPPED: no Steam user (--steam-user or RFTD_STEAM_USER)")
+        return
+
+    # The push publishes to subscribers, so it confirms - unless --yes said
+    # not to, or there is no terminal to ask (scripts must opt in explicitly).
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print(f"PUSH SKIPPED: no terminal to confirm {label} (pass --yes to push unattended)")
+            return
+        answer = input(f"push {label} as {user}? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("PUSH SKIPPED: not confirmed")
+            return
+
+    # NEVER hand the push an unreadable password prompt (see credentials_cached).
+    # A session gets cached first, in its own console, or the push does not run.
+    if credentials_cached(steamcmd, user) is False:
+        if not sys.stdin.isatty():
+            print(f"PUSH SKIPPED: no cached Steam session for '{user}'. Run this"
+                  " once with a terminal, or by hand:")
+            print(f'  "{steamcmd}" +login {user} +quit')
+            return
+        if not steam_login(steamcmd, user):
+            print(f"PUSH SKIPPED: not logged in; the staged item is ready at {dest}")
+            return
+
+    vdf = tempfile.NamedTemporaryFile("w", suffix=".vdf", delete=False,
+                                      encoding="utf-8", newline="\n")
+    vdf.write(build_vdf(manifest, dest, args.changenote))
+    vdf.close()
+    print(f"pushing   {label} as {user}")
+    # stdio inherited: with the session cached this run needs no input, and its
+    # progress belongs in the window the deploy is already printing to.
+    r = subprocess.run([steamcmd, "+login", user, "+workshop_build_item",
+                        vdf.name, "+quit"])
+    if r.returncode != 0:
+        why = steamcmd_last_error(steamcmd)
+        sys.exit(f"ABORT: steamcmd exited {r.returncode}"
+                 + (f" - {why}" if why else " - read its output above")
+                 + f"\n       the VDF is kept at {vdf.name}")
+    os.unlink(vdf.name)
+    print(f"pushed    {label}")
+    print("          (the dev server picks it up on its next workshop check)")
+
+
+def hold_console(run):
+    """Run a deployer main() and keep an interactive window open at the end.
+
+    Success or failure, the console stays until Enter when there is a real
+    terminal - the owner runs these by double-click, where the window used to
+    vanish with the verdict still in it. Piped/test runs see no prompt.
+    """
+    code = 0
+    try:
+        run()
+    except SystemExit as e:
+        if isinstance(e.code, int):
+            code = e.code or 0
+        elif e.code is not None:
+            print(e.code, file=sys.stderr)
+            code = 1
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        code = 1
+    if "--no-pause" not in sys.argv and sys.stdin.isatty():
+        try:
+            input("\n(press Enter to close)")
+        except EOFError:
+            pass
+    sys.exit(code)
+
+
 # Compile the exact final files with the same Lua generation the game embeds.
 COMPILE_LUA = r"""
 local fails = 0
@@ -411,11 +690,52 @@ def validate_payload(staging):
     return failures
 
 
+def add_push_args(ap):
+    """The push/console flags, shared with deploy-workshop-testing.py."""
+    ap.add_argument("--no-push", action="store_true",
+                    help="stage only; skip the steamcmd Workshop upload")
+    ap.add_argument("--yes", action="store_true",
+                    help="push without the interactive confirmation")
+    ap.add_argument("--steam-user", default=None,
+                    help="Steam account for the upload (default: RFTD_STEAM_USER)")
+    ap.add_argument("--steamcmd", default=None,
+                    help="path to steamcmd.exe (default: RFTD_STEAMCMD, then C:\\Mosaic)")
+    ap.add_argument("--changenote", default="staged by deploy-workshop",
+                    help="Workshop change note for this push")
+    ap.add_argument("--no-pause", action="store_true",
+                    help="do not hold the console open at the end")
+    ap.add_argument("--login", action="store_true",
+                    help="cache a Steam session and exit; deploys nothing")
+
+
+def do_login_only(args):
+    """--login: cache the session, deploy nothing. Returns a process code."""
+    steamcmd = find_steamcmd(args.steamcmd)
+    if not steamcmd:
+        print("no steamcmd found (looked at --steamcmd, RFTD_STEAMCMD, "
+              "C:\\Mosaic\\steamcmd.exe, PATH)")
+        return 1
+    user = args.steam_user or os.environ.get("RFTD_STEAM_USER")
+    if not user and sys.stdin.isatty():
+        user = input("Steam username: ").strip()
+    if not user:
+        print("no Steam user (--steam-user or RFTD_STEAM_USER)")
+        return 1
+    if credentials_cached(steamcmd, user):
+        print(f"login     '{user}' is already cached - nothing to do")
+        return 0
+    return 0 if steam_login(steamcmd, user) else 1
+
+
 def main():
     ap = argparse.ArgumentParser(description="Deploy ship-formatted payload to Zomboid\\Workshop")
     ap.add_argument("--dest", default=DEFAULT_DEST)
     ap.add_argument("--dry-run", action="store_true", help="stage, format and validate, but do not swap in")
+    add_push_args(ap)
     args = ap.parse_args()
+
+    if args.login:
+        sys.exit(do_login_only(args))
 
     for p, what in ((PAYLOAD, "payload"), (LUACHECK, "luacheck.exe"), (LUA51, "lua5.1.exe")):
         if not os.path.exists(p):
@@ -475,10 +795,19 @@ def main():
         print("\n".join(failures))
         sys.exit(f"ABORT: final payload changed semantics or collateral files - staging kept at {staging}")
 
+    # The push only ever targets the PRODUCTION item from here. A custom
+    # --dest is a candidate build for something else - notably the testing
+    # wrapper's, which at this point still carries the production identity and
+    # must never reach Steam wearing it; the wrapper pushes for itself after
+    # the identity rewrite.
+    pushable = os.path.basename(dest) == PRODUCTION_ITEM and not args.no_push
+
     if args.dry_run:
         shutil.rmtree(staging)
         print(f"dry run   OK - would deploy to {dest}")
         remove_rival(dest, dry_run=True)
+        if pushable:
+            push_workshop(PAYLOAD, args)   # the repo manifest: same identity, no staged tree yet
         return
 
     if os.path.exists(dest):
@@ -486,9 +815,16 @@ def main():
         shutil.rmtree(dest)
     os.rename(staging, dest)
     print(f"deployed  {dest}")
-    print("          (repo untouched; upload from the in-game Workshop menu)")
+    print("          (repo untouched)")
     remove_rival(dest, dry_run=False)
+    if pushable:
+        push_workshop(dest, args)
+    elif args.no_push and os.path.basename(dest) == PRODUCTION_ITEM:
+        # Only worth saying for a real production stage the owner chose not to
+        # push. A candidate build (the testing wrapper's temp --dest) passes
+        # --no-push structurally and pushes for itself a moment later.
+        print("          (--no-push: upload from the in-game Workshop menu when ready)")
 
 
 if __name__ == "__main__":
-    main()
+    hold_console(main)

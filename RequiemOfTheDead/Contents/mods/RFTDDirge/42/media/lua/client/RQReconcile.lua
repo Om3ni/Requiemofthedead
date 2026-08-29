@@ -48,8 +48,15 @@ local RESYNC_FLOOR_MS = 15000   -- floor between pulls from THIS client
 local PULL_PERIOD_MS  = 60000   -- routine safety-net pull
 local PULL_JITTER_MS  = 30000   -- de-phases clients so they never pull in unison
 
--- Last known world position per onlineID. Populated from rows so findZombieByID
--- has real coords to search from (instead of 0,0,0 which only works at world origin).
+-- Last known world position per onlineID, from the server's rows.
+--
+-- IT IS NO LONGER A RESOLVER INPUT. It existed to give findZombieByID real
+-- coordinates to search from; that function is an id-keyed lookup as of
+-- 2026-08-25 and takes no position at all. What still reads this table is the
+-- narrower thing it is actually good for: telling a caller where the server
+-- last said a special was when this client CANNOT see the object - the miss
+-- path in RQReflect, and the operator-facing row coordinates RQNecroActions
+-- falls back to. Anything holding a live zombie should ask the zombie.
 RQReconcile.lastKnownPos = RQReconcile.lastKnownPos or {}
 
 -- Scavenger client-side rage state for the highlight gradient. Populated from rows

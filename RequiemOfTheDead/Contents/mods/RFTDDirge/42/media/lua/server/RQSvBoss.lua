@@ -9,16 +9,9 @@
 if not isServer() then return end
 
 RQSvBoss = RQSvBoss or {}
-RQSvBoss.state = {}   -- bossID -> { lastSkillTime, lastBuffTick, castDue, currentSkill, skillX/Y/Z, baseHealth }
+RQSvBoss.state = {}   -- bossID -> { lastSkillTime, castDue, currentSkill, skillX/Y/Z, baseHealth }
 -- The `buffed` weak table is GONE (2026-08-24) along with the aura sweep it
 -- guarded - see RQBulwark's header. Protection is decided at hit time now.
-
--- _activeZombies is kept for setActiveZombies compatibility but the boss buff aura
--- intentionally ignores it - the boss buff applies to specials too, unlike juggernaut.
-local _activeZombies = {}
-function RQSvBoss.setActiveZombies(tbl)
-    _activeZombies = tbl
-end
 
 local BOSS_SKILL_COOLDOWN = 40000   -- (ms) hardcoded 40s between Scream/EMPulse casts. Overrides cfg.bossSkillCooldown.
 
@@ -49,7 +42,6 @@ function RQSvBoss.tick(zombie)
             -- Backdated so the first skill is due after BOSS_FIRST_SKILL_DELAY
             -- rather than after a full cooldown - see the constant's note.
             lastSkillTime = getTimestampMs() - (BOSS_SKILL_COOLDOWN - BOSS_FIRST_SKILL_DELAY),
-            lastBuffTick  = 0,
             castDue       = nil,
             currentSkill  = nil,
             skillX = 0, skillY = 0, skillZ = 0,

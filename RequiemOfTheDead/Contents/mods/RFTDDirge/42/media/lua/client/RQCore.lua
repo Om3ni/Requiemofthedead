@@ -75,8 +75,9 @@ local function onZombieDead(zombie)
         RQScavenger.onDead(zombie)
     end
 
-    -- NOW safe to remove from tracking (loot already processed)
-    RQHighlight.remove(oid)
+    -- NOW safe to remove from tracking (loot already processed). Unregistering
+    -- is the whole of it: the outline stops because RQHighlight stops
+    -- repainting it, and the engine clears the bit each frame regardless.
     RQRegistry.unregister(oid)
 end
 
@@ -92,8 +93,8 @@ local CAST_PREFIXES = {
     "screamer_", "jugg_", "emp_", "glutton_", "boss_", "boss_emp_", "scav_",
 }
 
--- Tear down one ring id: cancel its bar, drop its tracker, clear the ring and
--- any flash, and clear the EMP inner ring (a no-op when there isn't one).
+-- Tear down one ring id: cancel its bar, drop its tracker, clear the ring,
+-- and clear the EMP inner ring (a no-op when there isn't one).
 -- Shared by castDone and castClearAll so the two can't drift.
 local function clearCastRing(ringId)
     local barData = mpCastBars[ringId]
@@ -103,7 +104,6 @@ local function clearCastRing(ringId)
     end
     mpCastTrackers[ringId] = nil
     RQRing.clear(ringId)
-    RQRing.stopFlash(ringId)
     RQRing.clear(ringId .. "_inner")
 end
 
@@ -122,10 +122,20 @@ end
 --   We were paying six figures a second to fail.
 --
 -- RQZombieCache is an onlineID -> object map, so there is no search window and
--- nothing to drift out of. The x/y/z parameters are now IGNORED and kept only
--- so the six existing call sites did not have to change in the same slice;
--- they are vestigial and should come off when the callers are next touched.
-local function findZombieByID(onlineID, x, y, z)
+-- nothing to drift out of.
+--
+-- THE POSITION ARGUMENTS ARE GONE as of 2026-08-25. They survived the rewrite
+-- by one slice, ignored, so the callers did not all have to change at once -
+-- and that was a mistake worth naming rather than repeating: every call site
+-- kept a lastKnownPos lookup and three `pos and pos.x or 0` fallbacks whose
+-- only purpose was to feed parameters nothing read. Dead arguments do not read
+-- as dead at the call site; they read as a contract, and the next person to
+-- touch one would have "fixed" the staleness they saw there. Removing the
+-- parameter is what makes the call sites honest.
+--
+-- Removing it also retired RQHighlight.remove, which existed only to clear an
+-- outline the engine already clears itself - see that file's note.
+local function findZombieByID(onlineID)
     return RQZombieCache.get(tonumber(onlineID))
 end
 
@@ -205,7 +215,7 @@ function RQCore.ensureCastFromSnapshot(row, serverTime)
 
     local zombieObj = nil
     if row.id then
-        zombieObj = findZombieByID(row.id, fx, fy, fz)
+        zombieObj = findZombieByID(row.id)
     end
 
     if ringId:sub(1, 9) ~= "screamer_" then
@@ -266,10 +276,9 @@ local function onServerCommand(module, command, args)
         local onlineID = tonumber(args.onlineID)
         local targetHP = tonumber(args.targetHP)
         if not onlineID or not targetHP then return end
-        local sx = tonumber(args.x) or 0
-        local sy = tonumber(args.y) or 0
-        local sz = tonumber(args.z) or 0
-        local zombie = findZombieByID(onlineID, sx, sy, sz)
+        -- Id-only payload since 2026-08-25: the x/y/z that used to ride along
+        -- were dropped server-side once this lookup went id-keyed.
+        local zombie = findZombieByID(onlineID)
         if not zombie or zombie:isDead() then return end
         zombie:setHealth(targetHP)
 
@@ -286,9 +295,7 @@ local function onServerCommand(module, command, args)
         -- reported sprint=true while the owner watched it walk (2026-08-24).
         local onlineID = tonumber(args.onlineID)
         if not onlineID or not args.walkType then return end
-        local zombie = findZombieByID(onlineID, tonumber(args.x) or 0,
-                                                tonumber(args.y) or 0,
-                                                tonumber(args.z) or 0)
+        local zombie = findZombieByID(onlineID)   -- id-only payload; see applyZombieHP
         if not zombie or zombie:isDead() then return end
         zombie:setWalkType(args.walkType)
         zombie:setSpeedTypeFromWalkType()
@@ -308,11 +315,7 @@ local function onServerCommand(module, command, args)
 
         local zombieObj = nil
         if args.onlineID then
-            local pos = RQReconcile and RQReconcile.lastKnownPos[tonumber(args.onlineID)]
-            local sx = pos and pos.x or fx
-            local sy = pos and pos.y or fy
-            local sz = pos and pos.z or fz
-            zombieObj = findZombieByID(args.onlineID, sx, sy, sz)
+            zombieObj = findZombieByID(args.onlineID)
         end
 
         -- Show range ring (initial position)
@@ -429,11 +432,7 @@ local function onServerCommand(module, command, args)
         local eating   = args.eating
         if not onlineID then return end
         RQDirgeLog.write("Glutton", "[RQEat:Cl] gluttonAnimate id=" .. onlineID .. " eating=" .. tostring(eating) .. " phase=" .. tostring(args.phase))
-        local pos = RQReconcile and RQReconcile.lastKnownPos[onlineID]
-        local sx = pos and pos.x or (args.x or 0)
-        local sy = pos and pos.y or (args.y or 0)
-        local sz = pos and pos.z or (args.z or 0)
-        local zombie = findZombieByID(onlineID, sx, sy, sz)
+        local zombie = findZombieByID(onlineID)
         if zombie then
             -- Pathing/AI control is only applied by the owning client. The
             -- durable source of truth is zombie modData; this command is just

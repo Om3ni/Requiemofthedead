@@ -55,12 +55,13 @@ end
 
 eq("store starts empty",          #Limes.zoneNames(), 0)
 eq("seedIfEmpty seeds",           Limes.seedIfEmpty(), true)
-eq("seeded the shipped set",      #Limes.zoneNames(), 7)
+eq("seeded the shipped set",      #Limes.zoneNames(), 6)
 eq("_default is a real record",   Limes.getZone("_default").name, "_default")
-eq("_default tier",               Limes.getZone("_default").fields.tier, 2)
-eq("ladder inherits _default",    Limes.getZone("Very_Hard").inherits, "_default")
-eq("top rung is tier 5",          Limes.getZone("Very_Hard").fields.tier, 5)
-eq("the missing rung ships",      Limes.getZone("Intermediate").fields.tier, 3)
+eq("_default stands on Medium",   Limes.getZone("_default").tier, "Medium")
+eq("the rungs are tier records",  Limes.getZone("IDDQL").kind, "tier")
+eq("top rung ranks 5",            Limes.getZone("IDDQL").fields.rank, 5)
+eq("bottom rung ranks 1",         Limes.getZone("Newcomer").fields.rank, 1)
+eq("rungs are terminal, not chained", Limes.getZone("IDDQL").inherits, nil)
 
 -- Templates only: no geometry anywhere in the seed, so nothing it ships can
 -- claim a tile out from under an admin who never referenced it.
@@ -72,12 +73,12 @@ eq("seed ships no geometry",      anyGeometry, false)
 eq("seed claims no tiles",        Limes.getLocation(1000, 1000), nil)
 
 eq("seedIfEmpty is a no-op when populated", Limes.seedIfEmpty(), false)
-eq("no-op did not duplicate",     #Limes.zoneNames(), 7)
+eq("no-op did not duplicate",     #Limes.zoneNames(), 6)
 
 -- The copy is the whole point: without it the module constant IS the live
 -- store, and the first admin edit rewrites the defaults every later server ships.
-Limes.raw()["_default"].fields.tier = 99
-eq("SEED constant untouched by store edits", Limes.SEED._default.fields.tier, 2)
+Limes.raw()["_default"].tier = "IDDQL"
+eq("SEED constant untouched by store edits", Limes.SEED._default.tier, "Medium")
 
 -- A deleted template stays deleted across a later seed attempt.
 Limes.applyDelta(nil, { "Medium" }, 2)

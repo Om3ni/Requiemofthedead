@@ -338,35 +338,6 @@ option RFTDDirge.JuggernautHeader
     translation = RQ_JuggernautHeader,
 }
 
-option RFTDDirge.JuggernautAuraMultiplier
-{
-    type = integer,
-    min = 0,
-    max = 100,
-    default = 40,
-    page = RFTDDirge,
-    translation = RQ_JuggernautAuraMultiplier,
-}
-
-option RFTDDirge.RangedProtectRadius
-{
-    type = integer,
-    min = 0,
-    max = 50,
-    default = 15,
-    page = RFTDDirge,
-    translation = RQ_RangedProtectRadius,
-}
-
-option RFTDDirge.JuggernautBuffPercent
-{
-    type = enum,
-    numValues = 5,
-    default = 2,
-    page = RFTDDirge,
-    translation = RQ_JuggernautBuffPercent,
-}
-
 option RFTDDirge.JuggernautBuffRadius
 {
     type = enum,
@@ -392,16 +363,6 @@ option RFTDDirge.JuggernautHealthMultiplier
     default = 10,
     page = RFTDDirge,
     translation = RQ_JuggernautHealthMultiplier,
-}
-
-option RFTDDirge.JuggernautMitigation
-{
-    type = integer,
-    min = 0,
-    max = 100,
-    default = 0,
-    page = RFTDDirge,
-    translation = RQ_JuggernautMitigation,
 }
 
 option RFTDDirge.JuggernautSpacing

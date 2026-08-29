@@ -67,16 +67,11 @@ local function fuelInt(vehicle)
     return math.floor((tank:getContainerContentAmount() or 0) + 0.5)
 end
 
-local function isOccupied(vehicle)
-    local script = vehicle:getScript()
-    local seats = script and script:getPassengerCount() or 0
-    for s = 0, seats - 1 do
-        if vehicle:isSeatOccupied(s) then return true end
-    end
-    return false
-end
-
 -- Driver first (the person USING it), any occupant as fallback.
+-- This is also the janitor's whole occupancy test: a nil return is "nobody
+-- who counts is aboard". A seat-scan predicate stood beside it until
+-- 2026-08-27 with no callers - occupancy only ever matters here as an
+-- attribution, never as a bare boolean.
 local function occupantName(vehicle)
     local d = vehicle:getDriver()
     if d and d.getUsername then

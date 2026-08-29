@@ -27,6 +27,10 @@ ScriptManager = { instance = {
 } }
 
 DFItemQuery = nil
+-- The REAL DFTypeAhead: the ranking moved there 2026-08-25 and this file is
+-- now the item source on top of it. A stub would be testing the stub.
+require = function() return true end
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/client/DFTypeAhead.lua")
 local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
 

@@ -1,28 +1,42 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQSuppress - the family's weapon suppression service (client-side).
 --
--- Owns EVERY write to a weapon's damage fields. Grew out of RQJuggernaut's
--- applyAura/releaseAura pair, which had two structural holes once suppression
--- stopped being a single on/off aura:
+-- Owns EVERY write to a weapon's damage fields.
 --
---   1. STACKING. applyAura was a no-op when the weapon was already tagged, so
---      a second suppression source arriving mid-suppression was silently
---      discarded -- the exact case the RFTDLimes zone term multiplies into.
---      Here the original damage is snapshotted ONCE and every write computes
---      original * effective, so the effective multiplier can deepen, shallow,
---      or change sources without ever re-snapshotting nerfed values as
---      "original".
+-- DIRGE NO LONGER USES THIS FILE. Read that first, because the history below
+-- is about a feature that is gone. Slice 6 of the Bulwark rework (2026-08-24)
+-- removed Dirge's four terms - the three per-type aura sources and the ranged
+-- engagement band - and RQBulwark now mitigates on the SERVER, against the
+-- zombie that was actually struck. What survives here is the registry and its
+-- composition model, kept for RFTDLimes, which is a real external consumer
+-- (LMSuppress.lua:67). The removal note further down states why both answers
+-- could not coexist.
 --
---   2. THE KITING EXPLOIT. The debuff was gated on the player standing inside
---      a ~3-tile aura while firearms operate from far outside it: aggro a
---      Juggernaut, step out of the ring, and shotguns fired at full damage.
---      Players were dropping Juggernauts in seconds on the live box. Sources
---      are now weapon-class aware: holding a firearm extends the engagement
---      band to cfg.rangedProtectRadius (sandbox RangedProtectRadius) against
---      Juggernauts, Bosses, and ENRAGED Scavengers, resolved from state the
---      client already has (RQRegistry + RQReconcile) -- zero new wire traffic.
+-- HOW IT GOT THIS SHAPE. It grew out of RQJuggernaut's applyAura/releaseAura
+-- pair, which had two structural holes once suppression stopped being a single
+-- on/off aura. Both are worth keeping written down: the first is a property of
+-- the registry and is still load-bearing for Limes, and the second is the
+-- exploit that eventually justified moving the whole mechanic server-side.
 --
--- COMPOSITION MODEL (locked in design review, ready for RFTDLimes):
+--   1. STACKING - still true, still the design. applyAura was a no-op when the
+--      weapon was already tagged, so a second suppression source arriving
+--      mid-suppression was silently discarded -- the exact case the RFTDLimes
+--      zone term multiplies into. Here the original damage is snapshotted ONCE
+--      and every write computes original * effective, so the effective
+--      multiplier can deepen, shallow, or change sources without ever
+--      re-snapshotting nerfed values as "original".
+--
+--   2. THE KITING EXPLOIT - fixed, but NOT here any more. The debuff was gated
+--      on the player standing inside a ~3-tile aura while firearms operate
+--      from far outside it: aggro a Juggernaut, step out of the ring, and
+--      shotguns fired at full damage. Players were dropping Juggernauts in
+--      seconds on the live box. This file's answer was a weapon-class-aware
+--      source that extended the band to cfg.rangedProtectRadius; that answer
+--      was removed with the rest of Dirge's terms. The hole stays closed
+--      because RQBulwark soaks on the server no matter where the shooter is
+--      standing, so there is no band left to step outside of.
+--
+-- COMPOSITION MODEL (locked in design review, live for RFTDLimes):
 --   * Sources register into TERM GROUPS. Within a group the deepest (minimum)
 --     multiplier among active sources wins -- the three aura specials share
 --     one config value today, so that min is currently a formality.
@@ -35,8 +49,10 @@
 --         end)
 --   * LINGER: a group stays active LINGER_MS after its last active frame, so
 --     duck-out-fire-duck-in rhythm never sees a full-damage window. This
---     deliberately softens the old "restores when you leave the aura"
---     tooltip promise by three seconds.
+--     deliberately softened the old "restores when you leave the aura" tooltip
+--     promise by three seconds. That tooltip was Dirge's and no longer
+--     describes anything this file does; the behaviour remains correct for a
+--     zone term, which is what is left.
 --
 -- The write path runs every render tick while suppressed and is deliberately
 -- unconditional: two float field writes on an inventory item, no network.

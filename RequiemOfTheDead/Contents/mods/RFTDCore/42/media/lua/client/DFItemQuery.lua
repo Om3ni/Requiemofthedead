@@ -29,7 +29,13 @@
 -- refuses them server-side (ItemContainer.java:514-516) - offering one would
 -- manufacture a guaranteed "AddItem refused".
 
+require "DFTypeAhead"
+
 DFItemQuery = DFItemQuery or {}
+
+-- Items are dot-namespaced ("Base.Axe"). Passed explicitly so the ranker
+-- never has to guess which registry it is looking at.
+local ITEM_SEPS = { "." }
 
 local cache = nil   -- array of { full, disp, lfull, ldisp, lbare }
 
@@ -45,19 +51,11 @@ local function ensure()
         if it and not (it.getObsolete and it:getObsolete()) then
             local full = it:getFullName()
             local disp = (it.getDisplayName and it:getDisplayName()) or full
-            if full then
-                local lfull = string.lower(full)
-                -- The bare type is what admins remember ("Axe", not "Base.Axe");
-                -- prefix matches against it rank highest.
-                local dot = string.find(lfull, ".", 1, true)
-                built[#built + 1] = {
-                    full  = full,
-                    disp  = disp,
-                    lfull = lfull,
-                    ldisp = string.lower(disp or ""),
-                    lbare = dot and string.sub(lfull, dot + 1) or lfull,
-                }
-            end
+            -- The bare type is what admins remember ("Axe", not "Base.Axe");
+            -- prefix matches against it rank highest. DFTypeAhead owns that
+            -- rule and skips an unusable row itself.
+            local e = DFTypeAhead.entry(full, disp, ITEM_SEPS)
+            if e then built[#built + 1] = e end
         end
     end
     if #built == 0 then return nil end   -- nothing usable; retry next call
@@ -65,38 +63,11 @@ local function ensure()
     return cache
 end
 
--- Pure ranking over an entries array - the fixture drives this directly.
--- Prefix on the bare type beats prefix on name/fullType beats substring;
--- within a rank, alphabetical by fullType so results are stable.
+-- Kept as a named surface because fixtures and the two UI consumers call it;
+-- the ranking ITSELF moved to DFTypeAhead 2026-08-25 (it was never
+-- item-shaped - see that file's header). This is the item source on top.
 function DFItemQuery.rank(entries, query, limit)
-    local q = string.lower(tostring(query or ""))
-    q = string.gsub(q, "^%s+", ""); q = string.gsub(q, "%s+$", "")
-    if q == "" then return {} end
-    limit = limit or 8
-
-    local hits = {}
-    for i = 1, #entries do
-        local e = entries[i]
-        local score
-        if string.sub(e.lbare, 1, #q) == q then
-            score = 1
-        elseif string.sub(e.lfull, 1, #q) == q or string.sub(e.ldisp, 1, #q) == q then
-            score = 2
-        elseif string.find(e.lfull, q, 1, true) or string.find(e.ldisp, q, 1, true) then
-            score = 3
-        end
-        if score then hits[#hits + 1] = { score = score, e = e } end
-    end
-    table.sort(hits, function(a, b)
-        if a.score ~= b.score then return a.score < b.score end
-        return a.e.lfull < b.e.lfull
-    end)
-
-    local out = {}
-    for i = 1, math.min(limit, #hits) do
-        out[i] = { full = hits[i].e.full, disp = hits[i].e.disp }
-    end
-    return out
+    return DFTypeAhead.rank(entries, query, limit)
 end
 
 -- The live entry point. An empty result set for a non-empty query is a real

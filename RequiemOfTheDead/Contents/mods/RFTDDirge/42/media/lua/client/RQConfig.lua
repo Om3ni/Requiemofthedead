@@ -7,20 +7,17 @@
 RQConfig = RQConfig or {}
 
 -- Single source in RQCommon (was a drifting duplicate of the server's copy).
-RQConfig.JUGGERNAUT_MIN_BASE_HEALTH = RQCommon.JUGGERNAUT_MIN_BASE_HEALTH
-RQConfig.HEALTH_MULTIPLIER          = RQCommon.HEALTH_MULTIPLIER
+RQConfig.HEALTH_MULTIPLIER = RQCommon.HEALTH_MULTIPLIER
 
 RQConfig.COLORS = {
     Screamer   = { r = 0.6, g = 0.0,  b = 1.0,  a = 0.6 },  -- Purple
-    Juggernaut = { r = 0.2, g = 0.6,  b = 1.0,  a = 0.3 },  -- Blue (matches JUGG_RING_COLOR so ring and buffed normals are identical)
+    Juggernaut = { r = 0.2, g = 0.6,  b = 1.0,  a = 0.3 },  -- Blue (matches JUGG_RING_COLOR so the ring and the cosmetic paint pass agree)
     EMP        = { r = 0.2, g = 0.95, b = 0.7,  a = 0.4 },  -- Electric teal (cast/detonation telegraph ring)
     EMPInner   = { r = 1.0, g = 0.4,  b = 0.0,  a = 0.6 },  -- Orange: EMP body highlight + inner knockdown ring share this (distinct from Juggernaut blue)
     Glutton    = { r = 0.1, g = 1.0,  b = 0.2,  a = 0.3 },  -- Green
     Scavenger  = { r = 0.1, g = 1.0,  b = 0.2,  a = 0.3 },  -- Green (passive); shifts to red->blue rage gradient via RQScavenger.getHighlightColor on rage
     Boss       = { r = 1.0, g = 0.84, b = 0.0,  a = 0.4 },  -- Gold
 }
-
-RQConfig.SCREAMER_SPAWN_RADIUS = 8  -- Radius for spawning new zombies
 
 -- sandbox-options.txt enum options store 1-based indices.
 -- Single source in RQCommon.ENUMS - aliases, not copies. The old client copy
@@ -38,7 +35,6 @@ local E_SCREAMER_SPAWN_MIN  = E.SCREAMER_SPAWN_MIN
 local E_SCREAMER_SPAWN_MAX  = E.SCREAMER_SPAWN_MAX
 local E_SCREAMER_THRESHOLD  = E.SCREAMER_THRESHOLD
 local E_JUGG_RADIUS         = E.JUGG_RADIUS
-local E_JUGG_BUFF           = E.JUGG_BUFF
 local E_EMP_RANGE           = E.EMP_RANGE
 local E_EMP_CAST            = E.EMP_CAST
 local E_EMP_RADIUS          = E.EMP_RADIUS
@@ -120,38 +116,23 @@ function RQConfig.get()
         juggernautHealthMultiplier = math.max(1, math.min(50,
             tonumber(sv and sv.JuggernautHealthMultiplier) or RQConfig.HEALTH_MULTIPLIER.Juggernaut)),
         juggernautBuffRadius   = ev(E_JUGG_RADIUS, sv and sv.JuggernautBuffRadius, 3),
-        juggernautBuffPercent  = ev(E_JUGG_BUFF, sv and sv.JuggernautBuffPercent, 2),
-        -- Sandbox value is "weapon damage REDUCTION %" (0 = no debuff, 100 = weapons disabled).
-        -- We invert it here so the rest of the code can keep treating the result as a plain
-        -- damage multiplier (1.0 = full damage, 0.5 = half, 0.0 = none). Flipping it at this
-        -- boundary means every consumer (jugg, boss, scav) keeps its math unchanged.
+        -- REMOVED 2026-08-25 (Bulwark slice 7). Two fields lived here:
+        -- `juggernautAuraMultiplier` and `rangedProtectRadius`, the client-side
+        -- weapon debuff and its firearm engagement band. RQBulwark replaced
+        -- both with server-side mitigation against the zombie actually struck,
+        -- slice 6 removed Dirge's terms from RQSuppress, and this pass removed
+        -- the sandbox options, their translation strings and these reads.
         --
-        -- ONE KNOB, THREE FEATURES: Boss and Scavenger auras reuse this exact value
-        -- (UNREAD since 2026-08-24: this fed the weapon debuff RQBulwark replaced.
-        -- group), so changing it moves all three specials' weapon debuffs together.
-        --
-        -- The shipped default is 40 (declared in media/sandbox-options.txt), i.e. weapons
-        -- deal 60% damage inside an aura. The `or 0` below is NOT a second copy of that
-        -- default and must NOT be "aligned" to 40 - it is a deliberate fail-SAFE for the
-        -- case where SandboxVars.RFTDDirge is unreadable (the duplicate-mod-id trap: a
-        -- client subscribed to both a legacy per-mod item and the bundle loads the legacy
-        -- copy, which may not declare this option at all). Silently nerfing a player's
-        -- weapon because we could not read the server's config is worse than leaving it
-        -- alone, so an unreadable sandbox means NO debuff. The asymmetry is the point.
-        juggernautAuraMultiplier = (100 - math.max(0, math.min(100,
-            tonumber(sv and sv.JuggernautAuraMultiplier) or 0))) / 100.0,
-
-        -- Reach (tiles) of the weapon debuff while holding a FIREARM near a
-        -- Juggernaut, Boss, or enraged Scavenger -- the kiting counter
-        -- (UNREAD since 2026-08-24, was the RQSuppress ranged band). Firearms out-range the 3-tile
-        -- melee aura by nature, so gating their debuff on that ring made it
-        -- free to step out and shoot; this radius is the honest engagement
-        -- band for ranged play. 0 disables the band (old behavior). If the
-        -- sandbox is unreadable the default still applies, but the aura
-        -- multiplier above fail-safes to 1.0 in that case, so the band
-        -- composes to a no-op -- same asymmetry, one gate.
-        rangedProtectRadius    = math.max(0, math.min(50,
-            tonumber(sv and sv.RangedProtectRadius) or 15)),
+        -- ONE THING WORTH KEEPING, because it outlives the fields: the `or 0`
+        -- fallback was deliberately NOT the shipped default (40). It was a
+        -- fail-SAFE for an unreadable SandboxVars.RFTDDirge - the
+        -- duplicate-mod-id trap, where a client subscribed to both a legacy
+        -- per-mod item and the bundle loads the legacy copy, which may not
+        -- declare the option at all. Nerfing a player's weapon because we could
+        -- not read the server's config is worse than leaving it alone, so an
+        -- unreadable sandbox meant NO debuff. Any future client-side read of a
+        -- server-set COMBAT value wants that same asymmetry: fail toward the
+        -- player, not toward the mod.
 
         -- EMP
         empTriggerRange        = ev(E_EMP_RANGE, sv and sv.EMPTriggerRange, 3),
@@ -216,13 +197,6 @@ end
 -- Clear config cache (called on game restart to load new sandbox options)
 function RQConfig.invalidateCache()
     cachedConfig = nil
-end
-
-function RQConfig.getHealthMultiplier(zType)
-    if zType == "Juggernaut" then
-        return RQConfig.get().juggernautHealthMultiplier or RQConfig.HEALTH_MULTIPLIER.Juggernaut
-    end
-    return RQConfig.HEALTH_MULTIPLIER[zType]
 end
 
 Events.OnGameStart.Add(RQConfig.invalidateCache)

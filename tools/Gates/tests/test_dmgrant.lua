@@ -154,6 +154,8 @@ dofile(CORE .. "/shared/RDVarDefs.lua")
 dofile(DM .. "/shared/DMRoll.lua")
 dofile(DM .. "/shared/DMKitDefs.lua")
 dofile(DM .. "/shared/DMRegistry.lua")
+-- The REAL RDFile (write mechanism since 2026-08-25).
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDFile.lua")
 dofile(CORE .. "/server/RDConfigStore.lua")
 dofile(CORE .. "/server/RDVars.lua")
 

@@ -1,19 +1,17 @@
 -- DFOverlay_Server fixture - who may rearrange what, and where it is kept.
 --
 -- WHAT IS AT RISK. This is a write endpoint on a live server, so the first
--- question is authority, and layoutSet has the only gate in the suite that
--- genuinely CANNOT be declared: it is per payload, not per command. The sandbox
--- pages are gated on Capability.SandboxOptions and the server page on
--- ChangeAndReloadServerOptions, a role can hold either without the other, and
--- DFServer's dispatcher takes one capability name per action. So layoutSet
--- decides for itself, THE DISPATCHER IS NOT CARRYING IT, and these tests are the
--- only thing standing between a sandbox-only moderator and the server page's
--- layout. Written as crossed pairs for that reason: each role is asserted to be
--- allowed its own page AND refused the other, because a gate that says yes to
--- everyone passes any test that only checks the yes.
+-- question is authority. layoutSet's gate is per PAYLOAD, not per command -
+-- sandbox pages on Capability.SandboxOptions, the server page on
+-- ChangeAndReloadServerOptions, and a role can hold either without the other.
+-- Since 2026-08-25 the dispatcher takes a FUNCTION gate, so layoutSet
+-- DECLARES it and the dispatcher enforces it; layoutGet declares "any"
+-- (staff-only read). These tests dispatch THROUGH the declared gates the way
+-- DFServer does, written as crossed pairs: each role is asserted allowed its
+-- own page AND refused the other, because a gate that says yes to everyone
+-- passes any test that only checks the yes.
 --
--- layoutRecover is the contrast and is checked below: one fixed capability, so
--- it declares it and the dispatcher enforces it.
+-- layoutRecover is the fixed-capability contrast and is checked below.
 --
 -- The second risk is the store. An empty layout must REMOVE the page rather
 -- than store an empty list - otherwise there are two ways to say "no layout",
@@ -40,7 +38,12 @@ local started
 Events = { OnServerStarted = { Add = function(fn) started = fn end } }
 
 local clock = 5000
-RDShared = { DIR = "RFTD/", EXT_DOC = ".json.txt", nowMs = function() return clock end }
+-- The REAL RDShared, not a hand-rolled stub: anything Core adds to it
+-- otherwise silently under-serves this fixture (proven 2026-08-23 when
+-- username() moved in and three stubs stopped covering the surface).
+-- Its only file-scope call is registerMod, a table write.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
+RDShared.nowMs = function() return clock end
 
 -- A stand-in for Core's store. RDConfigStore is ours and has its own fixture,
 -- so what matters here is the INTERACTION: that a write is followed by a
@@ -164,8 +167,9 @@ check(DFOverlay_Server.set("RFTDDirge", "not a list", "K") == false,
     "a non-list entries field was read as 'clear this page'")
 check(DFOverlay_Server.get("RFTDDirge") ~= nil,
     "the malformed payload wiped the stored layout anyway")
-check(handlers.layoutSet.run(sandboxOnly, { key = "RFTDDirge" }).ok == false,
-    "a layoutSet with no entries field was accepted at the wire")
+-- (the wire-level no-entries assertion moved below the role definitions -
+-- it used to run HERE with a nil player and pass because the in-body gate
+-- refused roleHas(nil), which tested authority, not the missing field)
 DFOverlay_Server.set("RFTDDirge", {}, "K")
 
 check(DFOverlay_Server.set("has space", { "A" }, "K") == false, "a bad key was stored")
@@ -177,8 +181,31 @@ local sandboxOnly = player("Sandy", { "SandboxOptions" })
 local serverOnly  = player("Sergei", { "ChangeAndReloadServerOptions" })
 local nobody      = player("Nobody", {})
 
+-- Dispatch the way DFServer does since 2026-08-25: the DECLARED gate first
+-- (name / "any" / function), audited on refusal, then the body. The
+-- dispatcher's own enforcement is pinned in test_dfserver.lua; this mirror
+-- stands in for tested behaviour, not for an assumption.
+local function run(action, who, args)
+    local h = handlers[action]
+    if h.capability then
+        local allowed
+        if h.capability == "any" then
+            allowed = DFCore.hasAnyCapability(who)
+        elseif type(h.capability) == "function" then
+            allowed = h.capability(who, args or {})
+        else
+            allowed = RDAccess.roleHas(who, h.capability)
+        end
+        if not allowed then
+            DFCore.audit(action, who, "(refused)")
+            return { ok = false, reason = "Refused for " .. action }
+        end
+    end
+    return h.run(who, args or {})
+end
+
 local function setAs(who, key)
-    return handlers.layoutSet.run(who, { key = key, entries = { "A", "B" } })
+    return run("layoutSet", who, { key = key, entries = { "A", "B" } })
 end
 
 check(setAs(sandboxOnly, "RFTDDirge").ok == true,
@@ -197,22 +224,31 @@ check(setAs(nobody, "__server").ok == false, "a role with no capability wrote th
 -- A refused write must not have reached the store at all.
 DFOverlay_Server.set("RFTDNecro", {}, "K")
 local beforeTouch = touched
-handlers.layoutSet.run(nobody, { key = "RFTDNecro", entries = { "A" } })
+run("layoutSet", nobody, { key = "RFTDNecro", entries = { "A" } })
 check(touched == beforeTouch, "a refused write still touched the store")
 check(DFOverlay_Server.get("RFTDNecro") == nil, "a refused write still stored a layout")
 
-check(handlers.layoutSet.run(sandboxOnly, { key = "bad key!", entries = {} }).ok == false,
+check(run("layoutSet", sandboxOnly, { key = "bad key!", entries = {} }).ok == false,
     "a bad page key was accepted by the handler")
-check(handlers.layoutSet.run(sandboxOnly, {}).ok == false, "a missing key was accepted")
+check(run("layoutSet", sandboxOnly, {}).ok == false, "a missing key was accepted")
+check(run("layoutSet", sandboxOnly, { key = "RFTDDirge" }).ok == false,
+    "a layoutSet with no entries field was accepted at the wire - and this one "
+    .. "now runs with a REAL role, so it tests the missing field, not authority")
 
--- The dispatcher is deliberately given NO capability for these actions, because
--- the right gate depends on the payload. Pinned so that a later change which
--- adds one - and thereby picks the wrong single answer for half the pages -
--- has to come past this line.
-check(handlers.layoutSet.capability == nil,
-    "layoutSet grew a dispatcher capability; one name cannot express a gate "
-    .. "that differs per page")
-check(handlers.layoutGet.capability == nil, "layoutGet grew a dispatcher capability")
+-- The declarations themselves, pinned: layoutSet's gate is a FUNCTION (one
+-- name cannot express a gate that differs per page - a later change to a
+-- single string picks the wrong answer for half the pages and has to come
+-- past this line), and layoutGet's is "any".
+check(type(handlers.layoutSet.capability) == "function",
+    "layoutSet's declared gate is not a function: "
+    .. tostring(handlers.layoutSet.capability))
+check(handlers.layoutGet.capability == "any",
+    "layoutGet does not declare the staff-only 'any' gate: "
+    .. tostring(handlers.layoutGet.capability))
+-- And the function gate REPORTS its reason, which is what the audit carries.
+local gOk, gWhy = handlers.layoutSet.capability(nobody, { key = "__server" })
+check(gOk == false and tostring(gWhy):find("ChangeAndReloadServerOptions", 1, true) ~= nil,
+    "the function gate does not name what is missing: " .. tostring(gWhy))
 -- ...but layoutRecover's gate does NOT depend on the payload, so it declares
 -- one. Checking inside the body instead would lose the dispatcher's refusal
 -- reply and get refused attempts logged as accepted commands.
@@ -223,21 +259,19 @@ check(handlers.layoutRecover.capability == "ChangeAndReloadServerOptions",
 -- ---- reads ---------------------------------------------------------------
 
 audits = {}
-check(handlers.layoutGet.run(nobody, { key = "RFTDDirge" }).ok == false,
+check(run("layoutGet", nobody, { key = "RFTDDirge" }).ok == false,
     "a non-staff caller could make the server do work")
-check(#audits == 1 and audits[1]:find("REFUSED", 1, true) ~= nil,
-    "layoutGet declares no capability, so the dispatcher logs its attempts as "
-    .. "accepted; a refusal it decides itself has to audit itself or it is "
-    .. "invisible: " .. table.concat(audits, " | "))
+check(#audits == 1 and audits[1]:find("refused", 1, true) ~= nil,
+    "a refused read did not reach the audit log as a refusal - the dispatcher "
+    .. "owns the 'any' gate now: " .. table.concat(audits, " | "))
 
 audits = {}
-handlers.layoutSet.run(sandboxOnly, { key = "__server", entries = { "A" } })
-check(#audits == 1 and audits[1]:find("REFUSED", 1, true) ~= nil,
-    "the same for layoutSet, whose gate genuinely cannot be declared: "
-    .. table.concat(audits, " | "))
+run("layoutSet", sandboxOnly, { key = "__server", entries = { "A" } })
+check(#audits == 1 and audits[1]:find("refused", 1, true) ~= nil,
+    "the same for layoutSet's function gate: " .. table.concat(audits, " | "))
 
 directSends = {}
-check(handlers.layoutGet.run(sandboxOnly, { key = "RFTDDirge" }).ok == true,
+check(run("layoutGet", sandboxOnly, { key = "RFTDDirge" }).ok == true,
     "a staff read was refused")
 check(#directSends == 1, "the read sent " .. #directSends .. " messages, expected 1")
 check(directSends[1].command == "AdminLayout", "the read replied with the wrong command")
@@ -256,7 +290,7 @@ check(directSends[1].args.pages == nil,
 
 staffSends = {}
 audits = {}
-local res = handlers.layoutSet.run(sandboxOnly,
+local res = run("layoutSet", sandboxOnly,
     { key = "RFTDDirge", entries = { "A", { h = "Tuning" }, "B", true } })
 check(res.ok == true, "the write was refused")
 check(#staffSends == 1, "the write broadcast " .. #staffSends .. " times, expected 1")
@@ -273,12 +307,12 @@ check(#audits == 1 and audits[1]:find("dropped=1", 1, true) ~= nil,
 -- to read it AND refuses to overwrite it. That state must reach the panel, and
 -- there must be a way out of it that is not a server console.
 
-check(handlers.layoutRecover.run(serverOnly, { take = true }).ok == false,
+check(run("layoutRecover", serverOnly, { take = true }).ok == false,
     "recover ran with nothing held")
 
 heldDefs = "foreign"
 directSends = {}
-handlers.layoutGet.run(sandboxOnly, { key = "RFTDDirge" })
+run("layoutGet", sandboxOnly, { key = "RFTDDirge" })
 check(directSends[1].args.held == "foreign",
     "a held store looks identical to a healthy one from the panel - the admin "
     .. "sees reflected order with a good layout sitting unread on disk")

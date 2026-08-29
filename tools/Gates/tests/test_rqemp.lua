@@ -37,6 +37,13 @@ RQRing = { TILE_SCALE = 1 }
 RQCore = { playFalloffSound = function(name, x, y, z, volume)
     falloff[#falloff + 1] = { name = name, x = x, y = y, z = z, volume = volume }
 end }
+-- Device static is RQEMPStatic's own subject and is covered by its own fixture;
+-- what this one owns is the HANDOFF - that detonation delegates at all, and
+-- passes the blast geometry rather than something of its own.
+local scrambles = {}
+RQEMPStatic = { scramble = function(x, y, z, radius)
+    scrambles[#scrambles + 1] = { x = x, y = y, z = z, radius = radius }
+end }
 CharacterTrait = { DEAF = "Deaf" }
 
 local marker = {
@@ -99,12 +106,24 @@ check(#thunder == 1 and thunder[1][1] == 10 and thunder[1][2] == 20 and thunder[
     "detonation triggers the established thunder effect")
 check(#flares == 1 and flares[1][1] == 60 and flares[1][2] == 10 and flares[1][3] == 20 and flares[1][4] == 12,
     "detonation launches the direct WorldFlares effect")
-check(#falloff == 2 and falloff[1].name == "GeneratorBackfire" and falloff[1].volume == 1.0
-    and falloff[2].name == "PipeBombExplode" and falloff[2].volume == 0.7,
-    "detonation emits both distance-scaled audio effects")
+-- Three layers, and the ORDER is pinned along with the names: crack,
+-- concussion, electrical wind-down, in descending gain. GeneratorStopping is
+-- the generator shutdown event (FMOD Object/Generator/Shutdown, defined in
+-- sounds_object_generator.txt:23) and sits under the concussion deliberately -
+-- at parity it masked the crack that reads as the detonation itself.
+-- A wrong event name is SILENT rather than loud (FMODSoundEmitter.playSound
+-- returns 0 for an unknown event), so the names are asserted here or nothing
+-- in the suite would ever notice a typo.
+check(#falloff == 3 and falloff[1].name == "GeneratorBackfire" and falloff[1].volume == 1.0
+    and falloff[2].name == "PipeBombExplode" and falloff[2].volume == 0.7
+    and falloff[3].name == "GeneratorStopping" and falloff[3].volume == 0.65,
+    "detonation emits all three distance-scaled audio layers in descending gain")
 check(#sounds == 1 and sounds[1][1] == nil and sounds[1][2] == 10 and sounds[1][3] == 20
     and sounds[1][4] == 1 and sounds[1][5] == 100 and sounds[1][6] == 100,
     "detonation emits one authoritative zombie-attraction world sound")
+check(#scrambles == 1 and scrambles[1].x == 10 and scrambles[1].y == 20
+    and scrambles[1].z == 1 and scrambles[1].radius == 12,
+    "detonation hands device static the blast's own geometry")
 
 local bumped = {}
 local knockbackPlayer = {

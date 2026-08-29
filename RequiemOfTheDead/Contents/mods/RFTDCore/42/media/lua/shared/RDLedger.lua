@@ -37,8 +37,9 @@
 --
 -- If a query surface is ever genuinely needed, the place to add it is a
 -- secondary index inside this file - NOT a scan at each call site, which is
--- the mistake `RQCore.findZombieByID` already makes (a 31x31 grid walk per
--- special per render tick).
+-- the mistake `RQCore.findZombieByID` USED to make (a 31x31 grid walk per
+-- special per render tick, ~173k grid lookups a second). It is an id-keyed
+-- lookup through this file now; the example is history, not a live offender.
 --
 -- =============================================
 -- WHY AN ARRAY, AND WHY BACKWARDS

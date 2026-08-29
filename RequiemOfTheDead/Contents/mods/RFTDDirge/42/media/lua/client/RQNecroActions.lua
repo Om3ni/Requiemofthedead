@@ -28,28 +28,37 @@ require "RQCore"
 -- file loads, breaking everything else in the mod.
 local TYPE_IDS = { "Screamer", "Juggernaut", "EMP", "Glutton", "Scavenger", "Boss" }
 
--- Where the server starts looking. Not a nicety: svFindZombieByOnlineID sweeps a
--- 31x31 box centred on whatever arrives (RQSvShared.lua:418), so the origin
--- decides whether a convert lands at all - and, when the id is 0, WHICH zombie
--- it lands on.
+-- Where the server starts looking - which matters much less than it used to.
+-- Since 2026-08-25 svFindZombieByOnlineID resolves a REAL id through the
+-- shared RQZombieCache and ignores the coordinates entirely; the box sweep
+-- survives only for the id-0 lane, where the point IS the selector and
+-- decides WHICH zombie a convert lands on. Panel rows always carry a real id,
+-- so for this caller the origin is now a courtesy, not a requirement.
 --
--- The row is snapshot data and the zombie has been walking since. So: confirm
--- the id is still near where the row said it was, and if it is, send where it
--- IS. RQCore.findZombieByID is the right tool precisely because it is
--- id-and-position - a match means the row is both current and locally loaded,
--- which is the same "we can see it" test the panel's locality filter applies.
+-- The row is snapshot data and the zombie has been walking since. So: if we can
+-- see that id locally, send where it IS rather than where the row said it was.
 --
--- Falling back to the row's own coordinates is correct when the confirm misses
--- (a zombie in another player's cell is real, just not ours to look at). What is
--- NOT correct, and was what this did, is `rowData.x or 0`: a row that somehow
--- arrived without coordinates became a 961-square sweep of the world ORIGIN,
--- silently, under a "Convert request sent" toast. A row with no position cannot
--- name a zombie, so it is refused where the operator can see the refusal.
+-- WHAT CHANGED 2026-08-25. This used to read as an id-AND-position confirm,
+-- and the comment here justified it on exactly that basis: a hit meant the row
+-- was still current. It no longer does. RQCore.findZombieByID is keyed on the
+-- id alone, so a hit now means only "locally loaded" - which is the same "we
+-- can see it" test the panel's locality filter applies, and is the part that
+-- actually mattered. The change is a strict improvement for this caller: a
+-- special that had walked out of the old +/-15 box used to miss the confirm
+-- and fall back to STALE row coordinates, which is the worst of the three
+-- outcomes. It cannot now.
+--
+-- Falling back to the row's own coordinates is still correct when the confirm
+-- misses (a zombie in another player's cell is real, just not ours to look
+-- at), and the refusal below still earns its place even though a real id no
+-- longer needs coordinates at all: a row with no position AND no usable id
+-- would put the id-0 lane's sweep at the world ORIGIN, silently, under a
+-- "Convert request sent" toast. A row that names nothing is refused where the
+-- operator can see the refusal.
 local function convertOrigin(rowData)
     -- Called directly, not behind an existence check: RQCore is required at the
     -- top of this file and a missing one is a load-order fault we want loud.
-    local live = RQCore.findZombieByID(rowData.id,
-        rowData.x or 0, rowData.y or 0, rowData.z or 0)
+    local live = RQCore.findZombieByID(rowData.id)
     if live then
         return math.floor(live:getX()), math.floor(live:getY()), math.floor(live:getZ())
     end

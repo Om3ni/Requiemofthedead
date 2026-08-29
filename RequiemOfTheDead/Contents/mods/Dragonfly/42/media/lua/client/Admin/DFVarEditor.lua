@@ -471,17 +471,8 @@ end
 
 local Editor = ISCollapsableWindow:derive("DFVarEditorWindow")
 
-local function askUser(prompt, then_)
-    local modal
-    modal = ISTextBox:new(getCore():getScreenWidth() / 2 - 150,
-        getCore():getScreenHeight() / 2 - 60, 300, 120, prompt, "", nil,
-        function(_, btn)
-            if btn.internal ~= "OK" or not (modal and modal.entry) then return end
-            local text = modal.entry:getText()
-            if text and text ~= "" then then_(text) end
-        end, getPlayer() and getPlayer():getPlayerNum() or 0)
-    modal:initialise(); modal:addToUIManager()
-end
+-- The one-line text prompt lives in Core now: DFKit.askText, promoted
+-- 2026-08-25 from the identical copy this file and its sibling both carried.
 
 function Editor:needUser()
     local user = DFVarEditor.targetUser()
@@ -534,20 +525,39 @@ function Editor:createChildren()
     }
     self.form:attach(self)
 
-    -- Everything that is NOT one of the two scrolling boxes is fixed: the
-    -- caption band, the verb row, and the gaps around them. What is left over
-    -- is split. Both boxes carry their own scrollbar, so the split decides how
-    -- much of each is visible at a glance and never whether it is reachable -
-    -- which is why the form, the taller content by far, takes the larger share.
+    -- SIZED FROM THE FORM'S OWN CONTENT, not from a tuned fraction - the
+    -- DMKitForm rule (its Geometry section has the full argument), applied
+    -- here 2026-08-25 before anyone hit it. The old split was
+    -- `listH = floor((avail - fixed) * 0.42)`, which handed the form whatever
+    -- the fraction left: at any font taller than the one it was tuned
+    -- against, the last rows slid below the fold, and a verb refusing over a
+    -- control that is not on screen is a dead end with a refusal attached.
+    -- The holder list gives first, down to a floor - it scrolls by nature and
+    -- carries a bar the whole time, so a short list is an inconvenience where
+    -- a short form is a trap. Only if the SCREEN cannot hold even that does
+    -- the form scroll after all.
+    --
     -- A world counter gets the definition form and a verb row but NO holder
     -- list - there is nobody to list. It keeps the band, because the value is
     -- the one thing that window exists to show, and it keeps the verb row, so
-    -- the fixed height is the same for both; only the list is missing, and its
-    -- space goes to the form.
+    -- the fixed height is the same for both; only the list is missing, and
+    -- its space goes to the form.
     local hasList = self.existing and not self.world
     local fixed = self.existing and (bandH + m.btnH + pad * 2 + m.gap) or pad
-    local listH = hasList and math.floor((avail - fixed) * 0.42) or 0
-    local formH = avail - fixed - listH
+    local body = avail - fixed
+    local formH, listH
+    if hasList then
+        -- Measured, and laid out once first: with inline help on, the wrap
+        -- width decides how tall every row is, and layout() is what records
+        -- that width (DFForm.lua:341-346); contentHeight() then answers for
+        -- the width the form is actually drawn at.
+        self.form:layout(pad, top, self.width - pad * 2, body)
+        local LIST_MIN = DFKit.rowHeight() * 2
+        formH = math.min(self.form:contentHeight(), math.max(0, body - LIST_MIN))
+        listH = body - formH
+    else
+        formH, listH = body, 0
+    end
     self.form:layout(pad, top, self.width - pad * 2, formH)
 
     if self.existing and not self.world then
@@ -582,7 +592,7 @@ function Editor:createChildren()
                     "Take this flag off the selected player." } }
             or  { { 84, "Set", function()
                         local u = win:needUser(); if not u then return end
-                        askUser("Set '" .. win.varName .. "' for " .. u .. " to:",
+                        DFKit.askText("Set '" .. win.varName .. "' for " .. u .. " to:",
                             function(text)
                                 local n = tonumber(text)
                                 if not n then win.status = "That is not a number."; return end
@@ -609,7 +619,7 @@ function Editor:createChildren()
         -- them taken away. Bringing them into the list makes every verb reach
         -- them, and reuses the varsOfPlayer read that already existed.
         specs[#specs + 1] = { 96, "By name", function()
-            askUser("Look up which username?", function(user)
+            DFKit.askText("Look up which username?", function(user)
                 E.pending  = user
                 win.status = "Looking up " .. user .. "..."
                 sendClientCommand(getPlayer(), DFCore.MODULE, "varsOfPlayer",
@@ -634,7 +644,7 @@ function Editor:createChildren()
         local bx2 = pad
         for _, spec in ipairs({
             { 84, "Set", function()
-                askUser("Set '" .. win.varName .. "' to:", function(text)
+                DFKit.askText("Set '" .. win.varName .. "' to:", function(text)
                     local n = tonumber(text)
                     if not n then win.status = "That is not a number."; return end
                     sendClientCommand(getPlayer(), DFCore.MODULE, "varWorldSet",

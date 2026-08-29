@@ -8,6 +8,8 @@
 
 if not isServer() then return end
 
+require "RDFile"
+
 RCAudit = RCAudit or {}
 
 local FILE = "RFTDReclamation_Dismantle.txt"
@@ -99,12 +101,6 @@ function RCAudit.log(action, player, kv)
     -- ours to duplicate from out here.
     coreWrite(action, player, kv)
 
-    -- No guard. getFileWriter returns nil for a refused extension or a failed
-    -- open and does not throw (LuaManager.java:5523-5555); the nil check IS the
-    -- error path.
-    local writer = getFileWriter(FILE, true, true) -- createIfNull, append (never truncate)
-    if not writer then return end
-
     -- EVERY field goes through RCShared.ledgerSafe, including the ones we
     -- derive ourselves. Most values here arrive from the wire (hDismantledReport
     -- passes args.vehicle, args.owner, args.claimId and friends through
@@ -128,15 +124,10 @@ function RCAudit.log(action, player, kv)
         parts[#parts + 1] = safe(kv)
     end
 
-    -- No guard, and the removed comment was the exact claim the decompile
-    -- disproves: LuaFileWriter.write/close declare throws IOException but
-    -- delegate to PrintWriter, which RECORDS an I/O error in an internal flag
-    -- instead of raising it (LuaManager.java:9850-9868). A full disk here has
-    -- never reached this caller, so the guard protected against nothing while
-    -- hiding the value. Every part is a string.format result, so the concat is
-    -- total too.
-    writer:write(table.concat(parts, " ") .. "\n")
-    writer:close()
+    -- Mechanism in RDFile (2026-08-25), which carries the engine facts the
+    -- two comments that sat here derived (nil-not-throw on open, PrintWriter
+    -- swallowing I/O errors). Append only - this ledger is never truncated.
+    RDFile.appendLine(FILE, table.concat(parts, " "))
 end
 
 -- ---------------------------------------------------------------------------

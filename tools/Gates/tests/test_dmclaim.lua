@@ -83,9 +83,18 @@ Dragonfly = { registerPlayerTab = function(spec) registered = spec end }
 
 -- DMIcons turns a contents row into a picture and words. Textures need the
 -- engine; only the WORDS matter to linesFor, which is what this fixture reads.
--- The real DMKitDefs would drag RDVarDefs and DMRoll in for two constants
--- linesFor branches on. Those two, and nothing else, is the whole dependency.
-DMKitDefs = { ITEM = "item", ROULETTE = "roulette" }
+-- The REAL DMKitDefs, not the two-constant stub this used to carry: the
+-- display order this fixture pins moved into it (displayOrder, promoted
+-- 2026-08-25), and a stub implementing the behaviour under test would be the
+-- fixture testing itself. Its two deps are cheap, the same loader shape
+-- test_dmkitstab already uses.
+RDVarDefs, DMRoll, DMKitDefs = nil, nil, nil
+for _, spec in ipairs({ { ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDVarDefs.lua", "RDVarDefs" },
+                        { DM .. "/shared/DMRoll.lua", "DMRoll" },
+                        { DM .. "/shared/DMKitDefs.lua", "DMKitDefs" } }) do
+    local okL, errL = pcall(dofile, spec[1])
+    check(okL, spec[2] .. " loads: " .. tostring(errL))
+end
 
 DMIcons = {
     label = function(r) return tostring(r and r.ref or "?")
@@ -115,7 +124,7 @@ local MINE = {
       taken = 0 },
 }
 
-local sorted = DMClaim.sorted(MINE)
+local sorted = DMKitDefs.displayOrder(MINE)
 check(#sorted == 3, "a kit was lost")
 check(sorted[1].id == "alpha" and sorted[2].id == "loot",
     "two kits sharing a label are not ordered, so they would trade places on "
@@ -134,7 +143,7 @@ local reference
 for _, perm in ipairs(PERMS) do
     local input = {}
     for _, idx in ipairs(perm) do input[#input + 1] = MINE[idx] end
-    local got = DMClaim.sorted(input)
+    local got = DMKitDefs.displayOrder(input)
     local ids = {}
     for _, k in ipairs(got) do ids[#ids + 1] = tostring(k.id) end
     ids = table.concat(ids, ",")
@@ -145,7 +154,7 @@ for _, perm in ipairs(PERMS) do
         .. "rearrange itself under a selection aimed at one of its rows: got "
         .. ids .. ", expected " .. reference)
 end
-check(#DMClaim.sorted(nil) == 0, "sorted faulted on nothing")
+check(#DMKitDefs.displayOrder(nil) == 0, "sorted faulted on nothing")
 
 -- ---- the row tag ---------------------------------------------------------
 -- A one-time kit says nothing, because being in this list AT ALL means the

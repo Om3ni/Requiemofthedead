@@ -21,23 +21,38 @@ RDShared.DIR     = "RFTD/"      -- everything Core writes lives under <cacheDir>
 -- WRITE EXTENSIONS - forced by the engine, not a naming preference.
 --
 -- Since 42.20, getFileWriter returns nil unless the extension is in
--- Set.of("ini","cfg","txt","log") (LuaManager.java:9884, gate at :5514). The set
--- does not exist in 42.19.1; it was added mid-season and silently killed every
--- .jsonl/.json/.tsv write in the family - silently because our writers all guard
--- `if w then`, so pcall never errored and RDLog.chronicle went on returning true.
+-- ALLOWED_FILE_EXTENSIONS = Set.of("ini","cfg","txt","log","json")
+-- (LuaManager.java:1045; the gate is the contains() inside getFileWriter at
+-- :5526). The set does not exist in 42.19.1; it was added mid-season and
+-- silently killed every .jsonl/.tsv write in the family - silently because our
+-- writers all guard `if w then`, so pcall never errored and RDLog.chronicle
+-- went on returning true.
 --
--- getFileExtension() reads the substring after the LAST dot, so a compound name
--- keeps the real format visible while presenting an allowed extension. Suffix by
--- WRITE SEMANTICS so the mode is legible on disk:
+-- CORRECTED 2026-08-25: this header used to name a four-entry set with no
+-- "json", citing :9884 (Steam Workshop query code) and :5514. All three were
+-- wrong, and the wrong one that mattered was the set - **`.json` IS writable**,
+-- in 42.20.2 and 42.20.3 alike (both decompiles carry the identical line 1045).
+-- The compound-name convention below survives the correction on its own
+-- merits, not because the engine forces it: it already outlived one mid-season
+-- change to the set, and it makes the write MODE legible on disk. Do not read
+-- it as "json is refused".
+--
+-- getFileExtension (ZomboidFileSystem.java:1375-1379) takes File.getName() -
+-- the last path segment only - and the substring after its LAST dot, so a
+-- compound name keeps the real format visible while presenting an allowed
+-- extension. Suffix by WRITE SEMANTICS so the mode is legible on disk:
 --   EXT_STREAM (.log)  append-only, one record per line
 --   EXT_DOC    (.txt)  rewritten whole, in place
 --
--- Traps: the check is case-sensitive and unlowercased (".LOG" fails);
--- extensionless names fail; only the last path segment is inspected, so dots in
--- a "<SafeName>.<SteamID>" directory are harmless. Reads are NOT gated, which is
--- what makes the *_LEGACY names below readable - see RDLog's header for why
--- nothing migrates them (Lua cannot rename or delete, and their extension is now
--- refused for writing, so truncate-as-delete is gone too).
+-- Traps, each pinned to the same body: the contains() is case-sensitive and
+-- nothing lowercases (".LOG" fails); an extensionless name yields "" and fails
+-- (:1378 returns "" when no dot); dots in a "<SafeName>.<SteamID>" DIRECTORY
+-- are harmless because only the last segment is inspected. Reads are NOT gated
+-- - getFileReader (:4894) checks hasRelativePath and nothing else - which is
+-- what makes the *_LEGACY names below readable. See RDLog's header for why
+-- nothing migrates them (Lua cannot rename or delete; truncate-as-delete
+-- WOULD now work for .json but stays unused - an empty file is not an absent
+-- one, and every legacy reader treats presence as meaning).
 -- ---------------------------------------------------------------------------
 
 RDShared.EXT_STREAM = ".jsonl.log"
@@ -143,6 +158,14 @@ end
 -- Promoted 2026-08-23 from identical copies in RDVars and DMKits. Two copies of
 -- "what counts as a player here" is two chances for one subsystem to start
 -- accepting something another refuses.
+-- A number that is nil, NaN (v ~= v) or infinite poisons any arithmetic or
+-- distance math it touches, forever. Promoted 2026-08-25 from identical
+-- copies in RQSvDormant and HBFarmHand - the GMD-sanitation pattern both use
+-- keys on exactly this test, and a third consumer was already forming.
+function RDShared.badNum(v)
+    return type(v) ~= "number" or v ~= v or v == math.huge or v == -math.huge
+end
+
 function RDShared.username(subject)
     if type(subject) == "string" then return subject end
     if type(subject) == "table" or type(subject) == "userdata" then

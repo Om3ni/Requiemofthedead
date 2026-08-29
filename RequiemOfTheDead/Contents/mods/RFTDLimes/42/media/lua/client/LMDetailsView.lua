@@ -15,12 +15,14 @@
 -- this file and no edit to Limes. The registry has carried `owner` since M0;
 -- what M4 added is the display half.
 --
--- WHY IT IS A SEPARATE VIEW rather than more rows on the Zone Selector. The
--- properties cell there holds the policies that are true for a zone absent any
--- other mod - tier, priority, disabled, announce. Everything here is a mod's
--- opinion ABOUT that zone, it grows with every mod installed, and it is edited
--- rarely. Mixing them puts a fourteen-field Dirge table between an admin and the
--- tier they came to change.
+-- HOSTED BY LMDetailsWindow SINCE S7 (2026-08-27), not by the strip: the
+-- owner's locked call is that Details floats beside the map, opened from a
+-- zone's right-click menu. This file stays the CONTENT - the window is a
+-- frame and a selection-follower - and everything below attaches into
+-- whichever panel hosts it, which is what made the move a re-host rather
+-- than a rewrite. It also carries the "tonight's effective values" strip:
+-- every resolved field with the SOURCE it came from, live through the same
+-- phase gate the game resolves with.
 --
 -- LMCore IS LISTED, first (revised 2026-08-05). Its fields used to be a
 -- properties cell under the Zone Selector's tree, and this view excluded them so
@@ -50,6 +52,29 @@ local rebuildMods, refresh, rebuildProfiles
 -- ---------------------------------------------------------------------------
 -- The mod list
 -- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- "Tonight's effective values" (S7, from the signed-off prototype): every
+-- field the selected zone actually resolves, each line naming its SOURCE -
+-- own, a parent, a profile, a tier, or _default. This is the one answer to
+-- "what do the layered tier/profile/moon effects come to RIGHT NOW": the
+-- rows go through the same effective() the game does, phase gate included,
+-- so a moon flip moves them live.
+-- ---------------------------------------------------------------------------
+
+local EffList = ISScrollingListBox:derive("LMEffectiveList")
+
+function EffList:doDrawItem(y, item, alt)
+    local e = item.item
+    if not e then return y + self.itemheight end
+    local h = self.itemheight
+    if alt then self:drawRect(0, y, self.width, h - 1, 0.18, 0.08, 0.08, 0.08) end
+    self:drawText(e.key .. " = " .. e.value, 6, y + 2, 0.92, 0.92, 0.92, 1, UIFont.Small)
+    local src = "from " .. e.src
+    local sw = getTextManager():MeasureStringX(UIFont.Small, src)
+    self:drawText(src, self.width - sw - 8, y + 2, 0.55, 0.62, 0.55, 1, UIFont.Small)
+    return y + h
+end
 
 local ModList = ISScrollingListBox:derive("LMModList")
 
@@ -319,8 +344,31 @@ rebuildMods = function()
     end
 end
 
+local function rebuildEffective()
+    if not (ui and ui.effList) then return end
+    local zone  = LMEditView.selected()
+    local d     = LMEditView.draft()
+    DFKit.refillList(ui.effList, function(box)
+        if not (zone and d) then return end
+        for _, s in ipairs(Limes.fields.list()) do
+            local v, src = d:effective(zone, s.name)
+            if src ~= nil then
+                if src == zone then src = "own" end
+                box:addItem(s.name, { key = s.name, value = tostring(v), src = src })
+            end
+        end
+    end)
+    if ui.effHead then
+        local phase = Limes.moonPhase and Limes.moonPhase() or nil
+        local pn = LMMoon and LMMoon.phaseName and LMMoon.phaseName(phase)
+        ui.effHead:setName("Tonight's effective values"
+            .. (pn and ("  -  " .. pn .. " moon") or ""))
+    end
+end
+
 refresh = function()
     if not ui then return end
+    rebuildEffective()
     local zone = LMEditView.selected()
 
     -- Only the active mod's form is visible, and visibility is what stops the
@@ -334,7 +382,8 @@ refresh = function()
     -- The profiles block exists only with a zone in hand; the picker never
     -- survives a refresh (a stale candidate list is worse than a second click).
     local showProf = zone ~= nil
-    for _, el in ipairs({ ui.profHead, ui.profMoon, ui.profList, ui.applyBtn, ui.newBtn }) do
+    for _, el in ipairs({ ui.profHead, ui.profMoon, ui.profList, ui.applyBtn, ui.newBtn,
+                          ui.effHead, ui.effList }) do
         if el then el:setVisible(showProf) end
     end
     if ui.picker then ui.picker:setVisible(false) end
@@ -443,9 +492,29 @@ function LMDetailsView.attach(panel)
     panel:addChild(picker)
     w[#w + 1] = picker
 
+    local effHead = DFKit.label(panel, 0, 0, "Tonight's effective values")
+    w[#w + 1] = effHead
+    local effList = EffList:new(0, 0, 10, 10)
+    effList:initialise(); effList:instantiate()
+    effList.itemheight = 18
+    effList.drawBorder = true
+    effList.selected   = 0
+    DFKit.well(effList)
+    local origEffRender = effList.render
+    effList.render = function(self_)
+        if origEffRender then origEffRender(self_) end
+        if self_:size() == 0 then
+            DFKit.drawEmpty(self_, 0, 0, self_.width, self_.height,
+                "Nothing resolves here beyond the registry defaults")
+        end
+    end
+    panel:addChild(effList)
+    w[#w + 1] = effList
+
     ui = { list = list, head = head, desc = desc, note = note,
            profHead = profHead, profMoon = profMoon, profList = profList,
            applyBtn = applyBtn, newBtn = newBtn, picker = picker,
+           effHead = effHead, effList = effList,
            formWidgets = {}, panel = panel }
 
     rebuildMods()
@@ -505,7 +574,18 @@ function LMDetailsView.layout(panel, x, y, w, h)
         fy = ly + listH + PAD
     end
 
-    local fh = math.max(60, (y + h) - fy - lh - 4)
+    -- The effective-values strip claims the bottom rows (above the note),
+    -- but only while a zone is selected; the forms scroll in what remains.
+    local effBottom = y + h - lh - 4
+    if zone and ui.effList then
+        local effH = 18 * 5 + 4
+        local ey = effBottom - effH - lh
+        ui.effHead:setX(rx); ui.effHead:setY(ey)
+        DFKit.sizeList(ui.effList, rx, ey + lh, rw, effH)
+        effBottom = ey - 4
+    end
+
+    local fh = math.max(60, effBottom - fy)
     for _, f in pairs(forms) do f:layout(rx, fy, rw, fh) end
 end
 

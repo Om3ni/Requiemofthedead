@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  RQFlinch - shot while already down, face-down variant. The reasoning lives in
+  RQFlinchBack.xml beside this file; only the differences are noted here.
+
+  Vanilla's FloorFront extends FloorBack and overrides by x_name slot, which
+  makes its event list read oddly: the slot that held KnockDown becomes
+  FallOnFront(Start, true) and the slot that held Collide becomes KnockDown.
+  Written out flat here rather than inherited, because our version has to
+  replace KnockDown with CancelKnockDown anyway and an x_extends chain across
+  a mod boundary would make which-slot-is-which even harder to read than it
+  already is.
+
+  Net difference from the back node: the FallOnFront condition is true, the
+  face-down clip plays, and FallOnFront(true) is re-asserted the way vanilla
+  asserts it - that flag is what routes onground into getup-fromOnFront rather
+  than getup-fromOnBack, and both of those carry RQFlinch nodes of their own.
+
+  vanilla FloorFront drops Collide entirely (the slot is reused), so this node
+  has no Collide either. That is vanilla's shape, not an omission.
+-->
+<animNode>
+	<m_Name>RQFlinchFloorFront</m_Name>
+	<m_AnimName>Zombie_HitReact_FloorOnFront</m_AnimName>
+	<m_Looped>false</m_Looped>
+	<m_BlendTime>0.0</m_BlendTime>
+	<m_BlendOutTime>0.0</m_BlendOutTime>
+	<m_SpeedScale>20.00</m_SpeedScale>
+	<m_ConditionPriority>100</m_ConditionPriority>
+	<m_Conditions x_name="rqf1a2b3-6101-4000-8000-rftddirge6101">
+		<m_Name>RQNoFlinch</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Conditions x_name="rqf1a2b3-6102-4000-8000-rftddirge6102">
+		<m_Name>FallOnFront</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Events x_name="rqf1a2b3-6103-4000-8000-rftddirge6103">
+		<m_EventName>FallOnFront</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-6104-4000-8000-rftddirge6104">
+		<m_EventName>CancelKnockDown</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>true</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="rqf1a2b3-6105-4000-8000-rftddirge6105">
+		<m_EventName>SetState</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue></m_ParameterValue>
+	</m_Events>
+</animNode>

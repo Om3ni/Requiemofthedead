@@ -11,7 +11,11 @@ local function check(ok, message)
 end
 
 function isServer() return true end
-RDShared = {}
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it). Its only file-scope call is registerMod.
+require = require or function() return true end
+dofile((arg[1] or ".") .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
 local records = {}
 RDLog = {
     forensic = function(stream, event, player, payload, owner)

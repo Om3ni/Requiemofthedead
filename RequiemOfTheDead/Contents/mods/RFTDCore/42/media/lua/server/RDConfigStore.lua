@@ -121,6 +121,8 @@
 
 if not isServer() then return end
 
+require "RDFile"
+
 require "RDShared"
 require "RDJson"
 
@@ -395,20 +397,17 @@ local function writeDoc(self, doc)
         data    = md[doc],
     }
 
-    -- The nil test IS the failure path; getFileWriter cannot throw. append is
-    -- false: a document is rewritten whole, which is what EXT_DOC's ".txt"
-    -- suffix announces on disk.
-    local w = getFileWriter(self.files[doc], true, false)
-    if not w then
+    -- Mechanism in RDFile (2026-08-25). A document is rewritten whole, which
+    -- is what EXT_DOC's ".txt" suffix announces on disk. This caller's policy
+    -- on refusal is its own counter plus the CRITICAL shout - a store that is
+    -- silently not mirroring is the worst state this file can be in.
+    if not RDFile.rewrite(self.files[doc], payload .. "\n") then
         self.stats.refusedWrites = self.stats.refusedWrites + 1
         say(self, "CRITICAL: getFileWriter refused '" .. self.files[doc]
             .. "'. " .. doc .. " is NOT mirrored - a hard restart will lose "
             .. "everything since the last world save.")
         return false, "refused"
     end
-    w:write(payload)
-    w:write("\n")
-    w:close()
 
     self.pending[doc]   = false
     self.lastWrite[doc] = RDShared.nowMs()

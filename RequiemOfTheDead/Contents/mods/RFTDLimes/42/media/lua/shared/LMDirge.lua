@@ -3,7 +3,7 @@
 --
 -- THE FLIP. Dirge already knows how to take per-zone overrides: RQPhunZones
 -- exposes getEffectiveRules(zombieOrX, yOrNil, cfg) and RQServer calls it at
--- three sites (RQServer.lua:319, :609, :637). This file does not touch any of
+-- three sites (RQServer.lua:336, :618, :646). This file does not touch any of
 -- them. It takes over the LOOKUP behind that function so the same three calls
 -- answer from the Limes store instead of PhunZones', with identical semantics:
 -- a zone value wins when set, a blank one inherits the RQConfig snapshot, and
@@ -63,6 +63,22 @@ local SPACING_FIELDS = {
     dirgeScavengerSpacing  = "scavengerSpacing",
 }
 
+-- The zone-risk sprinter dial (S8). Deliberately absent from Dirge's base
+-- config and its sandbox page: the share only EXISTS as zone ground, so the
+-- overlay is its sole delivery path and Dirge reads nil -> 0 everywhere the
+-- zone layer is silent. RQSvShared.svCheckZoneSprinter owns the semantics
+-- (one roll per zombie, standing on ground with a share above zero).
+local SHARE_FIELDS = {
+    dirgeSprinterShare = "sprinterShare",
+}
+
+-- The three vocabularies as one map, for the two walks that do not care which
+-- table a dial came from (the any-set fast scan and the overlay copy).
+local ALL_FIELDS = {}
+for _, t in pairs({ WEIGHT_FIELDS, SPACING_FIELDS, SHARE_FIELDS }) do
+    for name, key in pairs(t) do ALL_FIELDS[name] = key end
+end
+
 -- Presentation for the Details panel (§11.3). A registrant is the only thing
 -- that knows what its own dial means, so the label and the help travel WITH the
 -- registration rather than being restated in the panel - the panel would then be
@@ -89,7 +105,7 @@ end
 -- Details panel whose entire job is tuning them per zone: a field the client is
 -- never sent renders as its default, so the admin would be editing blanks and
 -- writing over values they cannot see. The wire cost is a one-time join baseline
--- of eleven numbers per zone that sets them - a few KB across the whole layer -
+-- of a dozen numbers per zone that sets them - a few KB across the whole layer -
 -- against a panel that otherwise cannot work. PhunZones' 62.8% was never
 -- baseline size; it was re-broadcasting the whole table per player per change.
 --
@@ -107,6 +123,18 @@ for name in pairs(SPACING_FIELDS) do
           order = 3, unit = "tiles", label = prettify(name),
           help = "Minimum tiles between two of this kind in this zone." })
 end
+-- The mockup's A4 board shipped this dial's slot labeled "reserved - pending
+-- Dirge sprinter mechanic". The mechanic is RQSvShared.svCheckZoneSprinter
+-- now, so the label below is the live one. The help states the roll contract
+-- because it is the part an admin can misread: the dial is a share of the
+-- POPULATION, decided one zombie at a time, not a switch on the ground.
+Limes.fields.register("LMDirge", "dirgeSprinterShare",
+    { type = "number", min = 0, max = 100, side = "both",
+      order = 4, label = "Sprinter share",
+      help = "Percent of ordinary zombies on this ground that become sprinters."
+          .. " Each zombie rolls once, the first time it is checked standing"
+          .. " where this is above zero; raising the share later only affects"
+          .. " zombies that have not rolled yet. Specials never sprint." })
 
 -- ---------------------------------------------------------------------------
 -- Authority
@@ -160,13 +188,8 @@ local function getEffectiveRules(zombieOrX, yOrNil, cfg)
     -- table and no overlay is allocated. Worth the scan - most zones set some
     -- Dirge fields and none of the rest, but plenty set nothing at all.
     local any = false
-    for name in pairs(WEIGHT_FIELDS) do
+    for name in pairs(ALL_FIELDS) do
         if f[name] ~= nil then any = true break end
-    end
-    if not any then
-        for name in pairs(SPACING_FIELDS) do
-            if f[name] ~= nil then any = true break end
-        end
     end
     if not any then return cfg end
 
@@ -178,11 +201,7 @@ local function getEffectiveRules(zombieOrX, yOrNil, cfg)
     -- No clamping here. The registry already coerced and clamped these at
     -- resolve time (LMCore, per the min/max above), so a second clamp on the
     -- spawn path would be dead code pretending to be a safety net.
-    for name, key in pairs(WEIGHT_FIELDS) do
-        local v = f[name]
-        if v ~= nil then overlay[key] = v end
-    end
-    for name, key in pairs(SPACING_FIELDS) do
+    for name, key in pairs(ALL_FIELDS) do
         local v = f[name]
         if v ~= nil then overlay[key] = v end
     end

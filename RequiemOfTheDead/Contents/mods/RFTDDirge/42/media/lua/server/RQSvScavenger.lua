@@ -1,8 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQSvScavenger - server tick for the sleeper threat
 -- Looks like a Glutton at first - green, eats corpses, gets fatter. Hit it
--- once and it hulks out with peakHP*5 and a juggernaut-style aura that buffs
--- specials only (not regular zombies, story reason). HP decays linearly back
+-- once and it hulks out with peakHP*5, and while it rages RQBulwark counts it
+-- as a protector of nearby SPECIALS only (not regular zombies, story reason) -
+-- decided per hit, never granted by a sweep. HP decays linearly back
 -- to base over 10 minutes but it stays hostile forever. Eats while raging,
 -- and rage-eating actively heals toward the frozen peakHP (never above).
 --
@@ -19,6 +20,7 @@ if not isServer() then return end
 -- first on 2026-08-24 - the injection threw against nil and eating was dead all
 -- session. Full mechanics of that failure: RQSvGlutton.lua's matching note.
 require "RQSvEating"
+require "RDZombieId"
 
 RQSvScavenger = RQSvScavenger or {}
 
@@ -36,14 +38,6 @@ local CORPSE_SCAN_INTERVAL = 500
 RQSvScavenger.state = {}
 
 -- The `buffed` weak table is GONE (2026-08-24) with the sweep that needed it.
-
--- Injected by RQServer after svActiveZombies exists. Still read by the rage
--- aura's successor question - "is this zombie one of ours" - which RQBulwark
--- now asks through RQSvShared instead.
-local _activeZombies = {}
-function RQSvScavenger.setActiveZombies(tbl)
-    _activeZombies = tbl
-end
 
 local SEEK_TIMEOUT        = 45000   -- (ms) corpse-seek timeout before we give up and pick another
 local RAGE_HP_MULTIPLIER  = 5       -- rage HP = peakHP * 5. No cap, intentionally terrifying when well-fed.
@@ -79,12 +73,15 @@ local function tickRageDecay(zombie, state, now)
     end
 end
 
--- Juggernaut-style aura buff, but only paints specials. Regular zombies are
--- intentionally left alone (lore: scavs don't share with shamblers). Dedup
--- via the weak-keyed `buffed` table so each target gets the +N% exactly once
--- per scav. Boss and Jugg buffs take precedence - if either has already
--- claimed a target, scav skips it.
--- tickRageAura is GONE (2026-08-24). An enraged Scavenger still protects the
+-- tickRageAura is GONE (2026-08-24).
+--
+-- Five lines describing it in the PRESENT TENSE survived directly above this
+-- tombstone until 2026-08-25 - "Dedup via the weak-keyed `buffed` table so each
+-- target gets the +N% exactly once per scav", a table deleted in the same slice
+-- that deleted the function. Kept only as a note of what the rule USED to be:
+-- the rage aura painted specials only, never regular zombies, and yielded to
+-- Boss and Juggernaut claims. RQBulwark's per-hit lookup is where that
+-- precedence lives now. An enraged Scavenger still protects the
 -- specials around it; RQBulwark decides that when a hit lands rather than
 -- pre-granting health that outlived the rage that earned it.
 --
@@ -117,8 +114,13 @@ end
 -- was a parameter for years and never read by a single line of this body.
 function RQSvScavenger.onPlayerHit(zombie)
     if not zombie then return end
-    local scavID = zombie:getOnlineID()
-    if not scavID or scavID < 0 then return end
+    -- `scavID < 0` here until 2026-08-25 - the same short-wrap bug RDZombieId
+    -- exists for, missed by the first sweep because its comparison scan read
+    -- this file as equality-only. Past the wrap it made HALF the Scavenger
+    -- population unable to rage: hit after hit returned here, and the symptom
+    -- ("some scavs just never turn") reads as flakiness, never as an id bug.
+    local scavID = RDZombieId.of(zombie)
+    if not scavID then return end
     local state = RQSvScavenger.state[scavID]
     if not state then return end          -- not yet ticked; client will retry on next hit
     if state.hostile then return end      -- already raging, ignore duplicate hits
@@ -171,8 +173,9 @@ end
 -- main tick, called each alive behavior pass for scavenger zombies
 function RQSvScavenger.tick(zombie)
     local cfg    = RQSvShared.getSvConfig()
-    local scavID = zombie:getOnlineID()
-    if not scavID or scavID < 0 then return end
+    -- Same correction as onPlayerHit above: -1 is the only invalid id.
+    local scavID = RDZombieId.of(zombie)
+    if not scavID then return end
     local state  = RQSvScavenger.state[scavID]
     if not state then
         -- if this zombie was already raging when we loaded it (server restart
@@ -194,7 +197,6 @@ function RQSvScavenger.tick(zombie)
             targetSq      = nil,
             seekDue       = nil,
             castDue       = nil,
-            lastBuffTick  = nil,
         }
         RQSvScavenger.state[scavID] = state
     end

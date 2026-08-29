@@ -60,6 +60,19 @@
 --     2026-08-25: twelve suppressed hits at 2-6 frames, then one crit took
 --     the boss down for the full two seconds.
 --
+--   THE FLOOR STATES AROUND IT - enumerated 2026-08-25 rather than waited for.
+--     A shot landing while the zombie is already down, or mid-getup, enters
+--     hitreaction-onfloor or hitreaction-gettingUp through a transition whose
+--     only conditions are `hashitreaction` and `bOnFloor` - no reaction string
+--     involved, so the whole lane was reachable from our own compressed chain.
+--     Vanilla's nodes there run unscaled AND emit KnockDown, which re-arms the
+--     flag on a zombie the feature had just picked up. Both now carry nodes.
+--     A SIDELONG CRIT is the other one: it is not a headshot three times in
+--     four, so it never touches the shothead chain, and it can end in the
+--     knockeddown-shot{Chest,Leg,Shoulder}{L,R} states instead. Those six are
+--     covered too. The full argument, including what is deliberately NOT
+--     covered and why, lives in media/AnimSets/zombie/hitreaction/RQFlinch.xml.
+--
 -- The two halves of the animation graph load DIFFERENTLY, and that asymmetry
 -- is the entire reason the gunfire lane is possible at all:
 --
@@ -209,6 +222,39 @@ local spans = RDLedger.new({
     live = function(zombie) return zombie and not zombie:isDead() end,
 })
 
+-- The ROUTE, not just the duration. Added 2026-08-25 with the floor-state
+-- enumeration, and it exists to answer one question static reading could not.
+--
+-- A suppressed zombie's hit reaction can leave `hitreaction` for the knockdown
+-- lane, and whether it does depends on whether this node's Start-time
+-- CancelKnockDown lands before the graph evaluates the exit that requires
+-- bKnockedDown. Vanilla's own node for the same reaction string cancels
+-- identically while vanilla still ships six populated knockdown states, so the
+-- graph cannot answer it and neither can we. What CAN answer it is the state
+-- the zombie is standing in, which the engine will say out loud.
+--
+-- So a span now carries the distinct action-context states it passed through.
+-- "2083ms" becomes "2083ms via hitreaction, knockeddown-shotChestL, onground,
+-- getup-fromOnBack" - which names the lane, and would have named this one on
+-- the night the crit was first measured.
+--
+-- BOUNDED: at most MAX_ROUTE distinct names, appended only on CHANGE, and the
+-- whole row dies with the span. A reaction that somehow never ends stops
+-- growing at MAX_ROUTE rather than accumulating one entry per frame.
+--
+-- getCurrentActionContextStateName is the same read releaseStagger already
+-- makes; it can answer nil before the state machine has a current state, which
+-- is recorded as a skipped frame rather than a route entry.
+local MAX_ROUTE = 8
+
+local function noteState(span, zombie)
+    if #span.route >= MAX_ROUTE then return end
+    local state = zombie:getCurrentActionContextStateName()
+    if not state or state == span.lastState then return end
+    span.lastState = state
+    span.route[#span.route + 1] = state
+end
+
 function RQFlinch.observe(zombie, now)
     if not zombie then return nil end
     local reacting = RQFlinch.isReacting(zombie)
@@ -218,20 +264,30 @@ function RQFlinch.observe(zombie, now)
         if span then
             span.frames = span.frames + 1
         else
-            spans.set(zombie, { startedAt = now, frames = 1 })
+            span = { startedAt = now, frames = 1, route = {} }
+            spans.set(zombie, span)
         end
+        noteState(span, zombie)
         return nil
     end
 
     if not span then return nil end
     spans.remove(zombie)
 
-    local finished = { ms = now - span.startedAt, frames = span.frames }
+    local finished = { ms = now - span.startedAt, frames = span.frames,
+                       route = span.route }
     RQFlinch.stats.spans = RQFlinch.stats.spans + 1
     if finished.ms > RQFlinch.stats.longest then
         RQFlinch.stats.longest = finished.ms
     end
     return finished
+end
+
+-- The route as one printable field. Returns nil when nothing was recorded, so
+-- a caller can leave the clause off entirely rather than print "via ".
+function RQFlinch.routeText(span)
+    if not span or not span.route or #span.route == 0 then return nil end
+    return table.concat(span.route, ", ")
 end
 
 function RQFlinch.reset()

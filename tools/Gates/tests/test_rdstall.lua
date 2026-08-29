@@ -17,17 +17,13 @@ Events = {
     OnTick = { Add = function(fn) tick = fn end },
 }
 SandboxVars = { RFTDCore = { StallWatchEnabled = true, StallWatchMs = 50 } }
-RDShared = { nowMs = function() return _G.now end }
--- The real RDShared.sbNum, verbatim: the module captures it at file scope, so
--- the stub must model the promoted surface exactly - a divergent clamp here
--- would test a rule production does not have.
-RDShared.sbNum = function(key, default, lo, hi)
-    local v = SandboxVars and SandboxVars.RFTDCore and SandboxVars.RFTDCore[key]
-    if type(v) ~= "number" then return default end
-    if lo and v < lo then return lo end
-    if hi and v > hi then return hi end
-    return v
-end
+-- The REAL RDShared, not a hand-rolled stub - anything Core adds to it
+-- otherwise silently under-serves this fixture (the 2026-08-23 username()
+-- promotion proved it), and the "verbatim sbNum copy" that sat here was
+-- itself the drift hazard its own comment warned about. Only the clock
+-- stays fixture-owned.
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDCore/42/media/lua/shared/RDShared.lua")
+RDShared.nowMs = function() return _G.now end
 local records = {}
 RDLog = { forensic = function(_, event, _, payload) records[#records + 1] = { event, payload } end }
 function require(name)

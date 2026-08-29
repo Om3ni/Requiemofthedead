@@ -20,7 +20,8 @@
 --     bool                        -> ON/OFF pill
 --     enum   numValues=, values={} -> pill, click cycles. Stores an INDEX.
 --     choice values={}, labels={} -> pill, click cycles. Stores the STRING.
---     int    min=, max=, step=    -> [-] [ number ] [+], plus mouse wheel
+--     int    min=, max=, step=    -> [-] [ number ] [+]; the box is typeable
+--                                    and the wheel steps it
 --     text                        -> a box; click opens DFEntry to type in
 --   optional on a text dial:
 --     suggest = function(query)   registry-backed type-ahead in that popout.
@@ -800,10 +801,54 @@ function DFForm:click(ax, ay)
             self.set(e.key, clamp(e, n - stepBy))
         elseif rc.plusX and ax >= rc.plusX and ax < rc.plusX + rc.stepW then
             self.set(e.key, clamp(e, n + stepBy))
+        elseif rc.boxX and ax >= rc.boxX and ax < rc.boxX + rc.boxW then
+            -- THE BOX IS NOW TYPEABLE. It used to be a deliberate readout, on
+            -- the reasoning that a value derived from where the pixel landed is
+            -- exactly the imprecision the stepper replaced. That reasoning is
+            -- about DRAGGING and still holds - typing is the opposite of it.
+            -- The stepper is for nudging, and it is the only way in: a dial
+            -- whose range runs to 36525 (the kit cooldown in days) is a
+            -- thousand clicks from where an admin wants it, and the wheel only
+            -- shortens that (owner, 2026-08-24).
+            --
+            -- Reuses the text kind's popout rather than growing a second entry
+            -- path, so validation, the rule line and the singleton rule are the
+            -- ones DFEntry already owns. The schema declares nothing new; every
+            -- int row in the suite gains this at once.
+            local lo, hi  = e.min or 0, e.max or 100
+            local loS     = string.format("%d", lo)
+            local hiS     = string.format("%d", hi)
+            -- `set` is captured, not reached through self: the popout outlives
+            -- this click and the host may rebuild the form before it commits.
+            local setter  = self.set
+            DFEntry.show{
+                title = e.label or e.key,
+                value = string.format("%d", n),
+                rule  = "Whole number, " .. loS .. " to " .. hiS .. ".",
+                validate = function(str)
+                    local v = tonumber(str)
+                    if not v or v ~= math.floor(v) then
+                        return false, "Whole numbers only."
+                    end
+                    if v < lo or v > hi then
+                        return false, loS .. " to " .. hiS .. "."
+                    end
+                    return true
+                end,
+                -- Room for the longest bound plus a sign. Not a validation
+                -- rule - validate() owns that - just a stop on typing digits
+                -- that could never be in range.
+                maxLen   = math.max(#loS, #hiS) + 1,
+                nearX    = getMouseX(),
+                nearY    = getMouseY(),
+                -- clamp() runs again even though validate() passed: the two
+                -- are reached by different routes and only this one is on the
+                -- path that writes.
+                onCommit = function(str)
+                    setter(e.key, clamp(e, tonumber(str) or lo))
+                end,
+            }
         end
-        -- A click on the number box itself does nothing on purpose. It is a
-        -- readout; making it jump to a value derived from where the pixel
-        -- landed is exactly the imprecision the stepper replaced.
     end
 end
 

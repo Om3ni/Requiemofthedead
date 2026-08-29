@@ -6,5 +6,10 @@
   "IGUI_OE_BookmarkEnable": "Mensaje de bienvenida",
   "IGUI_OE_ModName": "Odds and Ends",
   "IGUI_OE_BookmarkBlurb": "Una breve cita literaria de dominio publico al entrar. Desactivado por defecto; puro sabor.",
-  "IGUI_OE_BookmarkTip": "Muestra una breve cita de un libro al entrar al mundo. Tu eleccion se recuerda en este equipo."
+  "IGUI_OE_BookmarkTip": "Muestra una breve cita de un libro al entrar al mundo. Tu eleccion se recuerda en este equipo.",
+  "IGUI_OE_Workshop": "Workshop",
+  "IGUI_OE_WS_For": "Fabricando para",
+  "IGUI_OE_WS_ShowAll": "Mostrar todo",
+  "IGUI_OE_WS_All": "Todas las recetas de fabricacion manual - otros paneles pueden acotar esta lista, como pulsar una pieza en My Vehicles.",
+  "IGUI_OE_WS_Recipes": "recetas"
 }

@@ -73,7 +73,6 @@ local svRefundCount = 0
 
 local svTickCount      = 0
 local svSnapshotTimer  = 0
-local svSnapshotDirty  = false
 local svConfigRefreshTimer = 0
 local deathCleanupTimer    = 0
 local svReservationCleanupTimer = 0
@@ -106,17 +105,22 @@ local DEATH_CLEANUP_INTERVAL = 18000
 -- every walking special re-shipped its whole enriched row to every client on
 -- every snapshot pass, which is most of the steady-state delta volume.
 -- Safe because every consumer already tolerates staleness: the row was up to
--- 2s old anyway, findZombieByID searches +/-15 tiles, and the only
--- precision-sensitive reader (RQCore.ensureCastFromSnapshot placing a recovery
--- ring) is a fallback -- castStart carries exact coords on the primary path.
+-- 2s old anyway, and the only precision-sensitive reader
+-- (RQCore.ensureCastFromSnapshot placing a recovery ring) is a fallback --
+-- castStart carries exact coords on the primary path. This list used to
+-- include "findZombieByID searches +/-15 tiles"; that resolver is keyed on the
+-- onlineID as of 2026-08-25 and reads no coordinates at all, which removes a
+-- consumer rather than adding a constraint. What now reads these coordinates
+-- is RQReflect's miss gate (30 tiles) and the operator convert fallback,
+-- both of which are coarser than this bucket by a wide margin.
 -- Do not raise much past 5 or that ring drift becomes visible.
 local POS_BUCKET = 3
 
--- Inject the shared active-zombie table into the modules that need it
+-- Inject the shared active-zombie table. RQSvShared is the only consumer:
+-- the per-type copies (Juggernaut/Boss/Scavenger) had been write-only since
+-- the 2026-08-24 aura removal and were cut 2026-08-25 - type questions all go
+-- through RQSvShared.typeOf now.
 RQSvShared.setActiveZombies(svActiveZombies)
-RQSvJuggernaut.setActiveZombies(svActiveZombies)
-RQSvBoss.setActiveZombies(svActiveZombies)
-RQSvScavenger.setActiveZombies(svActiveZombies)
 
 -- ========================
 -- Helpers kept in orchestrator
@@ -145,10 +149,13 @@ end
 -- losing the identity. Single entry point for conversion, reload recovery,
 -- and the per-tick refresh -- Phase 2 adoption should reuse it too.
 local function svDormantTrack(zombie, zType)
+    local md = zombie:getModData()
     local outfitID = zombie:getPersistentOutfitID()
     local pid = svPids[zombie]
     if pid and RQSvDormant.touch(pid, zombie:getX(), zombie:getY(), zombie:getZ(),
-                                 zombie:getHealth(), outfitID) then
+                                 zombie:getHealth(), outfitID,
+                                 md["RQBaseHP"], md["RQJuggMaxHP"],
+                                 md["RQGluttonBaseHealth"]) then
         return
     end
     if not pid then
@@ -156,7 +163,9 @@ local function svDormantTrack(zombie, zType)
         svPids[zombie] = pid
     end
     RQSvDormant.record(pid, zType, zombie:getX(), zombie:getY(), zombie:getZ(),
-                       outfitID, zombie:getHealth())
+                       outfitID, zombie:getHealth(),
+                       md["RQBaseHP"], md["RQJuggMaxHP"],
+                       md["RQGluttonBaseHealth"])
 end
 
 local function svMarkZombie(zombie, zType)
@@ -176,7 +185,6 @@ local function svMarkZombie(zombie, zType)
         z        = math.floor(zombie:getZ()),
         zType    = zType,
     })
-    svSnapshotDirty = true
 end
 
 -- marks summoned zombies so the conversion scan skips them (avoids converting our own spawns)
@@ -553,13 +561,58 @@ local function svCheckZombie(zombie)
         return
     end
 
-    -- Phase 1 dormant probe (LOG-ONLY): would a freshly realized zombie here
-    -- have adopted a dormant record? Emits drift + outfit-match data to
-    -- calibrate ADOPT_RADIUS before Phase 2 turns adoption on. Must stay
-    -- side-effect free -- the zombie falls through to the normal roll path.
-    if not md["RQConverted"] and not RQSvDormant.isEmpty() then
-        RQSvDormant.probeMatch(zombie:getX(), zombie:getY(), zombie:getZ(),
-                               zombie:getPersistentOutfitID())
+    -- Zone-risk sprinters ride the same scan visit. Placed after the husk
+    -- guard (a dragged corpse must never sprint) and before every early
+    -- return below, because the steady state for most zombies is the
+    -- `RQRolled -> return` exit and a committed sprinter still needs its
+    -- self-heal pass on every visit. The check gates itself: it acts only
+    -- once the special lottery has settled as a loss, so it cannot race a
+    -- conversion happening further down this same function.
+    RQSvShared.svCheckZoneSprinter(zombie, md)
+
+    -- Dormant re-adoption. ZombiePopulationManager preserves the COMPLETE
+    -- persistentOutfitID across virtualization (removeChunkFromWorld :350-388;
+    -- VirtualZombieManager.createRealZombieAlways :197-230), so identity is an
+    -- exact outfit-id match on the same floor and within the bounded drift
+    -- radius. RQSvDormant excludes records still bound to live objects and
+    -- consumes a match atomically before we mint the replacement record below.
+    if not md["RQConverted"] and RQSvDormant.hasDormant() then
+        local oldPid, rec, dSq = RQSvDormant.claimMatch(
+            zombie:getX(), zombie:getY(), zombie:getZ(),
+            zombie:getPersistentOutfitID())
+        if oldPid and rec then
+            md["RQRolled"]      = true
+            md["RQPendingType"] = nil
+            if rec.baseHP then md["RQBaseHP"] = rec.baseHP end
+
+            if rec.juggMaxHP then
+                md["RQJuggMaxHP"] = rec.juggMaxHP
+            elseif rec.zType == "Juggernaut" and rec.hp then
+                md["RQJuggMaxHP"] = rec.hp
+            end
+
+            if rec.gluttonBaseHealth then
+                md["RQGluttonBaseHealth"] = rec.gluttonBaseHealth
+            elseif (rec.zType == "Glutton" or rec.zType == "Scavenger") and rec.hp then
+                local mult = RQSvShared.HEALTH_MULTIPLIER[rec.zType] or 1
+                md["RQGluttonBaseHealth"] = rec.hp / mult
+            end
+
+            -- Put the restored HP on the object before svMarkZombie records its
+            -- replacement identity. Then deliver it only to the authority; the
+            -- owner is the sole client whose next zombie packet can overwrite
+            -- the server value (RQSvShared.svSetZombieHP :220-273).
+            if rec.hp then zombie:setHealth(rec.hp) end
+            svMarkZombie(zombie, rec.zType)
+            if rec.hp then RQSvShared.svSetZombieHP(zombie, rec.hp, true) end
+            if rec.zType == "Boss" then RQSvShared.applyBossSprinter(zombie) end
+
+            print(string.format(
+                "[RQDormant] ADOPT oldPid=%s newId=%s type=%s drift=%.1f outfitID=%s",
+                tostring(oldPid), tostring(zombie:getOnlineID()), rec.zType,
+                math.sqrt(dSq or 0), tostring(zombie:getPersistentOutfitID())))
+            return
+        end
     end
 
     -- Save/chunk reload recovery: zombie was already converted, just restore tracking
@@ -1134,14 +1187,14 @@ local function svOnTick()
     -- exactly as it was.
     --
     -- BEHAVIOUR PASS: the expensive work, none of which a player can time.
-    -- Position bookkeeping (svRememberZombie, svDormantTrack) and the aura
-    -- sweeps. This used to run at 60 Hz for no reason: svRememberZombie
+    -- Position bookkeeping (svRememberZombie, svDormantTrack). This used to
+    -- run at 60 Hz for no reason: svRememberZombie
     -- allocates a fresh row and svDormantTrack costs six engine calls, per
     -- special, per tick.
     --
     -- Staleness is bounded by BEHAVIOUR_INTERVAL and both consumers tolerate
     -- it with room to spare. The dormant registry re-binds a realizing special
-    -- within ADOPT_RADIUS = 8 tiles (RQSvDormant.lua:48, sized for "walkers
+    -- within ADOPT_RADIUS = 8 tiles (RQSvDormant.lua:50, sized for "walkers
     -- drift while virtual"), and svDeathCache's position is the origin of a
     -- 17x17 sweep. A quarter-second of drift is a fraction of a tile against
     -- either.
@@ -1249,9 +1302,6 @@ local function svOnTick()
         end
         svActiveZombies[zombie] = nil
     end
-    if cleanupCount > 0 then
-        svSnapshotDirty = true
-    end
 
     -- Conversion scan runs after behaviors so this-tick summons are
     -- already recorded before the next scan pass
@@ -1264,9 +1314,14 @@ local function svOnTick()
         -- Steady-state sync is a DELTA broadcast (RQ:zombieDelta): only the rows that
         -- changed since the last snapshot ride the wire, not the full table. This is
         -- the fix for RQZombieState's oversized full-table broadcasts; svBuildSnapshot
-        -- returns the delta (or nil when nothing client-visible changed). Same-tick
-        -- events (conversion/cleanup) set svSnapshotDirty -> they surface as a real
-        -- diff on this pass, so the delta already carries them; just clear the flag.
+        -- returns the delta (or nil when nothing client-visible changed).
+        --
+        -- There is deliberately NO dirty flag. One stood here until 2026-08-27,
+        -- set by the summon and cleanup paths and never once read: the delta is
+        -- computed by comparison, so a same-tick conversion or cleanup surfaces
+        -- as a real diff whether or not anything announced it. A flag can only
+        -- disagree with that comparison, and the direction it disagrees in is
+        -- silent zombie desync. Do not reintroduce one.
         local delta = svBuildSnapshot()
         if delta then
             -- ---------------------------------------------------------------
@@ -1303,11 +1358,10 @@ local function svOnTick()
             -- fault eating this broadcast; ordering answers that outright and
             -- keeps answering it if the observer changes. broadcast does not
             -- touch the payload - it forwards to sendServerCommand
-            -- (RQSvShared.lua:299-301) - so the delta it reads is identical.
+            -- (RQSvShared.lua:457-459) - so the delta it reads is identical.
             RQSvShared.broadcast("zombieDelta", delta)
             RQWireHeadroom.observe(delta)
         end
-        svSnapshotDirty = false
     end
 end
 
@@ -1399,61 +1453,28 @@ else
 end
 
 -- ========================
--- Game start: reset all state
+-- Game start: there is no reset block here any more, and there must not be.
 -- ========================
-
-Events.OnGameStart.Add(function()
-    svActiveZombies   = {}
-    -- svPids resets with it; the RQDormant GMD table deliberately does NOT --
-    -- surviving restarts is the whole feature. Live specials re-mint pids via
-    -- the svCheckZombie recovery branch.
-    svPids            = {}
-    svRefundSeen      = nil
-    svRefundCount     = 0
-    svDeathCache      = {}
-    svProcessedDeaths = {}
-    svTickCount       = 0
-    deathCleanupTimer = 0
-    svReservationCleanupTimer = 0
-    svConfigRefreshTimer = 0
-    svSnapshotTimer   = 0
-    svSnapshotDirty   = false
-    svPassState       = {}
-    RQBloodhound.reset()
-    RQMcCoy.reset()
-    -- Must clear alongside svPending below: a queued trailing transmit lives in
-    -- that queue, so wiping the queue without clearing the flag would leave
-    -- svBaselineQueued true forever and block every future coalesced transmit.
-    svLastBaselineTransmit = 0
-    svBaselineQueued       = false
-
-    -- Reset shared module state
-    RQSvShared.svPending        = {}
-    RQSvShared.svPendingSummons = {}
-    RQSvShared.clearSvConfig()
-
-    -- Reinject fresh table into shared modules
-    RQSvShared.setActiveZombies(svActiveZombies)
-    RQSvJuggernaut.setActiveZombies(svActiveZombies)
-    RQSvBoss.setActiveZombies(svActiveZombies)
-    RQSvScavenger.setActiveZombies(svActiveZombies)
-
-    -- Reset per-type module state
-    RQSvEating.svPendingEaterArrivals = {}
-    RQSvEating.svCorpseCast           = {}
-    RQSvGlutton.state                 = {}
-    RQSvScavenger.state               = {}
-    -- State tables were replaced above, so re-inject the fresh refs into eating engine
-    RQSvEating.setGluttonState(RQSvGlutton.state)
-    RQSvEating.setScavengerState(RQSvScavenger.state)
-    RQSvScreamer.state                = {}
-    RQSvBoss.state                    = {}
-    RQSvEMP.state                     = {}
-
-    if not ModData.exists("RQZombieState") then
-        ModData.create("RQZombieState")
-    end
-end)
+-- A ~50-line Events.OnGameStart handler sat here re-zeroing every state table
+-- in the subsystem. It NEVER RAN: OnGameStart fires from
+-- IngameState.java:844, the in-game state machine a dedicated server never
+-- enters, while this file only activates under isServer(). Proven on Mosaic
+-- 2026-08-24 - a boot where a file-scope injection threw stayed broken all
+-- session, because the block everyone believed was the healer could not fire.
+-- This file even documented the same gotcha for a different hook forty lines
+-- down while trusting it here.
+--
+-- It was DELETED rather than moved to OnServerStarted (GameServer.java:1443,
+-- the hook that genuinely fires at server boot, which DFPlayerRoles and
+-- DFInventory_Server already use), because it had nothing left to do there:
+-- a dedicated server builds a fresh Lua VM per boot, and every member the
+-- block touched is initialized at file scope - the RQServer locals at
+-- :44-82 and :1330-1331, the setActiveZombies injection at :124,
+-- RQSvShared's tables at its :71-72/:102, each per-type module's state in
+-- its own file, and the eating-engine injections at RQSvGlutton.lua:140 /
+-- RQSvScavenger's own file scope. A reset that re-does what file scope just
+-- did is not a healer, it is a comment shaped like code. The ModData half
+-- lives in OnInitGlobalModData below, which fires earlier anyway.
 
 -- Create the table at the earliest ModData hook too. OnGameStart is unreliable
 -- server-side on a B42 dedicated server (same class of gotcha as the null
