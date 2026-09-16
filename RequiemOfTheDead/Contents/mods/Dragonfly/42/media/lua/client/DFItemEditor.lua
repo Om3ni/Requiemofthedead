@@ -177,7 +177,14 @@ function Editor:addFieldRow(x, y, field)
     local inputX = x + LABEL_W + 4
 
     if field.kind == "bool" then
-        local tick = ISTickBox:new(inputX, y + 2, 16, 16, "", self,
+        -- Declared BEFORE the constructor, not in the same statement: a Lua
+        -- local is not in scope until after its own declaration, so a callback
+        -- inside `local tick = ISTickBox:new(..., function() tick... end)`
+        -- closes over the GLOBAL tick - nil - and toggling any writable bool
+        -- field called nil:isSelected(1). The engine's own compiler emitted
+        -- GETGLOBAL for it; found by the Ouroboros mod scan, 2026-08-29.
+        local tick
+        tick = ISTickBox:new(inputX, y + 2, 16, 16, "", self,
             function() self.dirty[label] = tick:isSelected(1) end)
         tick:initialise(); tick:instantiate()
         tick:addOption("")
