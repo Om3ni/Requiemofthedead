@@ -62,6 +62,7 @@
 #   python "tools\Deploy Tools\deploy-workshop.py" --dest D:\elsewhere\RequiemOfTheDead
 
 import argparse
+import datetime
 import os
 import re
 import shutil
@@ -391,7 +392,26 @@ def read_manifest(dest):
             "description": "\n".join(desc)}
 
 
-def build_vdf(manifest, contentfolder, changenote):
+def item_content_root(dest):
+    """The folder that becomes the ROOT of the published Workshop item.
+
+    IT IS `Contents`, NOT THE STAGED FOLDER. A staged item is workshop.txt +
+    preview.png + Contents\\mods\\<id>, and the first two are metadata the
+    uploader CONSUMES - only Contents is shipped, so a subscriber ends up with
+    mods\\<id> at the item root. Verified against two published items on this
+    machine: 3772176444 and 3773858287 both hold `mods` and nothing else.
+
+    Pushing the staged folder instead publishes Contents\\mods\\<id>, one level
+    too deep, and every id lands in nobody's search path:
+    ZomboidFileSystem.loadModAndRequired then reports `required mod "X" not
+    found` for all fourteen and the server boots modless. That shipped once,
+    2026-08-29 - the server had downloaded the item and could not see a single
+    mod in it.
+    """
+    return os.path.join(dest, "Contents")
+
+
+def build_vdf(manifest, dest, changenote):
     """The workshop_build_item document, as steamcmd's KeyValues reads it.
 
     steamcmd parses this with escape sequences OFF: a backslash is literal and
@@ -400,7 +420,8 @@ def build_vdf(manifest, contentfolder, changenote):
     ships. So quotes anywhere in the values are refused outright rather than
     silently corrupting the document - reword the manifest instead.
     """
-    preview = os.path.join(contentfolder, "preview.png")
+    contentfolder = item_content_root(dest)
+    preview = os.path.join(dest, "preview.png")
     fields = [
         ("appid", APP_ID),
         ("publishedfileid", manifest["id"]),
@@ -481,6 +502,69 @@ def credentials_cached(steamcmd, user):
     return ('"%s"' % user).lower() in accounts.lower()
 
 
+def steam_client_root():
+    """Where the DESKTOP Steam client lives, or None. Not steamcmd's folder."""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as k:
+            path = winreg.QueryValueEx(k, "SteamPath")[0]
+            if path and os.path.isdir(path):
+                return path
+    except (ImportError, OSError):
+        pass
+    for candidate in (r"C:\Program Files (x86)\Steam", r"D:\Steam"):
+        if os.path.isdir(candidate):
+            return candidate
+    return None
+
+
+def log_stamp(line):
+    """The leading [YYYY-MM-DD HH:MM:SS] of a Steam log line, or None."""
+    m = re.match(r"\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\]", line)
+    if not m:
+        return None
+    try:
+        return datetime.datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
+def session_replaced_since(since, root=None):
+    """Was the desktop Steam client signed out after `since`?
+
+    THE PUSH COSTS YOU YOUR STEAM SESSION. SteamCMD and the Steam client
+    share ONE session per account: logging in here replaces the desktop one,
+    which Valve has acknowledged for years and does not intend to separate -
+    their advice is a second account, which cannot work for us because a
+    Workshop item is only updatable by the account that owns it.
+
+    What makes it vicious is the silence. Steam logs
+    RecvMsgClientLoggedOff('Session Replaced') and then
+    "not auto reconnecting", so the client sits there LOOKING signed in while
+    its session is dead - and a Steam-brokered game connection simply hangs
+    at "Getting Server Info" forever, with nothing in the game's own logs.
+    Cost an evening on 2026-08-28 before the owner spotted the connection.
+
+    True / False / None when the client's log cannot be read.
+    """
+    root = root or steam_client_root()
+    if not root:
+        return None
+    path = os.path.join(root, "logs", "connection_log.txt")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    for line in reversed(lines[-400:]):
+        if "Session Replaced" not in line:
+            continue
+        stamp = log_stamp(line)
+        if stamp is None or stamp >= since:
+            return True
+    return False
+
+
 def steamcmd_last_error(steamcmd):
     """steamcmd's own last complaint, for a failure the user could not see."""
     path = os.path.join(os.path.dirname(os.path.abspath(steamcmd)),
@@ -526,6 +610,19 @@ def push_workshop(dest, args):
     manifest = read_manifest(dest)
     label = f"item {manifest['id']} \"{manifest['title']}\" ({manifest['visibility']})"
 
+    # The shape the SERVER will see, checked before Steam is told anything.
+    # An item whose root is not `mods` is one no engine can read - see
+    # item_content_root for the boot that proved it.
+    mods_root = os.path.join(item_content_root(dest), "mods")
+    if not os.path.isdir(mods_root):
+        sys.exit(f"ABORT: {mods_root} is missing - the published item would carry "
+                 "no mods folder at its root and every mod id would be invisible")
+    staged_ids = sorted(e.name for e in os.scandir(mods_root) if e.is_dir())
+    if not staged_ids:
+        sys.exit(f"ABORT: {mods_root} holds no mod folders")
+
+    print(f"item root {mods_root} ({len(staged_ids)} mod ids)")
+
     if args.dry_run:
         print(f"would push {label} via steamcmd")
         return
@@ -548,6 +645,10 @@ def push_workshop(dest, args):
         if not sys.stdin.isatty():
             print(f"PUSH SKIPPED: no terminal to confirm {label} (pass --yes to push unattended)")
             return
+        print("NOTE      this signs the Steam CLIENT out on this machine -")
+        print("          one session per account, and Steam does not put it")
+        print("          back. Sign in again afterwards or the game hangs at")
+        print("          \"Getting Server Info\" with no error.")
         answer = input(f"push {label} as {user}? [y/N] ").strip().lower()
         if answer not in ("y", "yes"):
             print("PUSH SKIPPED: not confirmed")
@@ -570,6 +671,9 @@ def push_workshop(dest, args):
     vdf.write(build_vdf(manifest, dest, args.changenote))
     vdf.close()
     print(f"pushing   {label} as {user}")
+    # Stamped BEFORE steamcmd runs, so the log scan below can tell this push's
+    # sign-out from one that happened earlier today.
+    started = datetime.datetime.now().replace(microsecond=0)
     # stdio inherited: with the session cached this run needs no input, and its
     # progress belongs in the window the deploy is already printing to.
     r = subprocess.run([steamcmd, "+login", user, "+workshop_build_item",
@@ -582,6 +686,16 @@ def push_workshop(dest, args):
     os.unlink(vdf.name)
     print(f"pushed    {label}")
     print("          (the dev server picks it up on its next workshop check)")
+
+    # Say it out loud rather than let the game fail silently later.
+    if session_replaced_since(started):
+        print()
+        print("STEAM     your Steam client session was REPLACED by this push.")
+        print("          It looks signed in and is not - Steam logs")
+        print("          'not auto reconnecting'. The game will hang at")
+        print("          \"Getting Server Info\" until you fix it:")
+        print("          exit Steam completely (tray > Exit) and start it")
+        print("          again, THEN launch the game.")
 
 
 def hold_console(run):

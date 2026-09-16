@@ -129,8 +129,20 @@ try:
         '"publishedfileid" "' + testing.TEST_ITEM_ID + '"' in vdf)
     # unlisted is 3 - a wrong number here would silently PUBLISH the test item.
     checks["vdf keeps the item unlisted"] = '"visibility" "3"' in vdf
-    checks["vdf points at the staged tree"] = '"contentfolder" "' + staged + '"' in vdf
     checks["vdf carries the multi-line description"] = '"description" "one\ntwo"' in vdf
+
+    # THE ITEM ROOT. Contents is what ships; the staged folder is not. Pushing
+    # the staged folder publishes Contents\mods\<id>, one level too deep, and
+    # the server reports `required mod "X" not found` for every id (2026-08-29).
+    # Verified against published items 3772176444 / 3773858287, whose roots
+    # hold `mods` and nothing else.
+    checks["vdf ships Contents as the item root"] = (
+        '"contentfolder" "' + os.path.join(staged, "Contents") + '"' in vdf)
+    checks["vdf does not ship the staging folder"] = (
+        '"contentfolder" "' + staged + '"' not in vdf)
+    # The preview is metadata beside Contents, not inside it.
+    checks["vdf takes the preview from the staging folder"] = (
+        '"previewfile" "' + os.path.join(staged, "preview.png") + '"' in vdf)
 finally:
     import shutil as _sh2
     _sh2.rmtree(push_tmp, ignore_errors=True)

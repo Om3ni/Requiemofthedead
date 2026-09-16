@@ -177,6 +177,46 @@ with tempfile.TemporaryDirectory(prefix="rftd-steam-") as _tmp:
     _pc(deploy.credentials_cached(_steamcmd, "Ghost") is False,
         "a name outside the Accounts block counted as a cached login")
 
+    # -----------------------------------------------------------------------
+    # THE SESSION-REPLACED SCAN.
+    #
+    # A push signs the desktop Steam client out (one session per account,
+    # Valve's long-standing behaviour) and Steam does NOT reconnect - the
+    # client looks signed in while the game hangs at "Getting Server Info"
+    # with nothing in its own logs. The push says so afterwards, which is only
+    # useful if this scan can tell THIS push's sign-out from an older one.
+    # -----------------------------------------------------------------------
+    import datetime as _dt
+    _steam = os.path.join(_tmp, "SteamClient")
+    os.makedirs(os.path.join(_steam, "logs"))
+    _conn = os.path.join(_steam, "logs", "connection_log.txt")
+    _push = _dt.datetime(2026, 8, 28, 21, 0, 0)
+
+    _pc(deploy.log_stamp("[2026-08-28 21:01:48] x") == _dt.datetime(2026, 8, 28, 21, 1, 48),
+        "a Steam log timestamp did not parse")
+    _pc(deploy.log_stamp("no stamp here") is None,
+        "a line without a timestamp parsed as one")
+
+    open(_conn, "w").write(
+        "[2026-08-28 20:03:54] CClientJobGetClientUpdateHosts: cached\n")
+    _pc(deploy.session_replaced_since(_push, _steam) is False,
+        "a quiet log reported a sign-out")
+
+    # An OLDER sign-out is not ours - warning on it would train the owner to
+    # ignore the one that matters.
+    open(_conn, "a").write(
+        "[2026-08-28 19:30:00] RecvMsgClientLoggedOff('Session Replaced')\n")
+    _pc(deploy.session_replaced_since(_push, _steam) is False,
+        "a sign-out from before the push was blamed on it")
+
+    open(_conn, "a").write(
+        "[2026-08-28 21:01:48] [Logged On, 4, 7] RecvMsgClientLoggedOff('Session Replaced')\n")
+    _pc(deploy.session_replaced_since(_push, _steam) is True,
+        "this push's sign-out was not detected")
+
+    _pc(deploy.session_replaced_since(_push, os.path.join(_tmp, "nope")) is None,
+        "a missing Steam client log did not read as unknown")
+
 if failures:
     for failure in failures:
         print("FAIL deploy-workshop: " + failure)
