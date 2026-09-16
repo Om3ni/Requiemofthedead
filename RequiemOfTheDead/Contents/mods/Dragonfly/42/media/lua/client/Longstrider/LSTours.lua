@@ -165,9 +165,14 @@ function LSTours.serialize()
     p[#p + 1] = string.format("  selectedId=%s,\n", tostring(LSTours.selectedId or "nil"))
     p[#p + 1] = "  tours={\n"
     for _, t in ipairs(LSTours.list) do
+        -- RDLuaLiteral.quote, NOT %q: the game VM's %q does not escape
+        -- backslashes (StringLib.java:406-409), so a tour name holding one
+        -- round-trips wrong - and a name ENDING in one wrote a file
+        -- RDLuaLiteral.parse refuses whole, losing every tour on next load.
+        -- The module that reads this file back owns its write grammar too.
         p[#p + 1] = string.format(
-            "    {id=%d, name=%q, color={%g,%g,%g}, region={%d,%d,%d,%d}},\n",
-            t.id, t.name, t.color[1], t.color[2], t.color[3],
+            "    {id=%d, name=%s, color={%g,%g,%g}, region={%d,%d,%d,%d}},\n",
+            t.id, RDLuaLiteral.quote(t.name), t.color[1], t.color[2], t.color[3],
             t.region[1], t.region[2], t.region[3], t.region[4])
     end
     p[#p + 1] = "  },\n}\n"

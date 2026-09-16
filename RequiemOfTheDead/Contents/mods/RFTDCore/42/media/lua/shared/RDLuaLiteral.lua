@@ -155,6 +155,46 @@ function RDLuaLiteral.parse(text)
     return v
 end
 
+-- ---------------------------------------------------------------------------
+-- quote - the write half of the grammar above. The module owns the grammar
+-- for reading, so it owns it for writing: a caller that serializes with
+-- anything else is trusting a second implementation to agree with this one.
+--
+-- EXISTS BECAUSE KAHLUA'S %q IS BROKEN. string.format("%q", s) on the game's
+-- VM does not escape backslashes - StringLib.java:406-409 appends a single
+-- backslash where every sibling case emits a two-character escape - so a value
+-- containing one serializes to a literal that reads back wrong (the backslash
+-- swallowed), and a TRAILING backslash, or backslash-then-quote, yields a
+-- literal that does not parse at all: the whole file is lost, not one
+-- character. Real 5.1's %q is correct, which is why the 5.1 gate lane never
+-- saw it; found when the fixtures first ran on the real VM (2026-08-30).
+--
+-- Pre-escaping backslashes and then calling %q was rejected: that is correct
+-- only while %q stays broken, and double-escapes the moment the engine fixes
+-- it. This does not touch %q at all.
+--
+-- The escape set is the exact intersection of parseString above and real
+-- Lua 5.1, so the emitted literal reads back identically on both VMs and in a
+-- hand editor. Everything outside the set passes through verbatim -
+-- parseString accepts raw bytes inside quotes, including newlines, but the
+-- five below are escaped anyway so a hand-opened file stays one-record-per-
+-- line and unambiguous.
+-- ---------------------------------------------------------------------------
+local QUOTE_ESCAPE = {
+    ["\\"] = "\\\\",
+    ["\""] = "\\\"",
+    ["\n"] = "\\n",
+    ["\r"] = "\\r",
+    ["\t"] = "\\t",
+}
+
+-- A Lua string literal for `value`, double-quoted; parse() reads it back
+-- byte-identical. Non-strings are tostring'd - this quotes VALUES, and a
+-- number formatted as data belongs to the caller's format string.
+function RDLuaLiteral.quote(value)
+    return '"' .. tostring(value):gsub("[\\\"\n\r\t]", QUOTE_ESCAPE) .. '"'
+end
+
 return RDLuaLiteral
 
 -- ---------------------------------------------------------------------------

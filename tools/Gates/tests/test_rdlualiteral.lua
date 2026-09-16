@@ -80,25 +80,45 @@ eq("depth cap holds", bad, nil)
 isTrue("depth cap names itself", tostring(perr):find("nesting"), perr)
 
 -- ---------------------------------------------------------------------------
--- The %q round trip - the escape contract LSTours.serialize leans on.
+-- The quote() round trip - the escape contract LSTours.serialize leans on.
 --
--- Real 5.1's %q emits \" for a quote, \\ for a backslash, and a BACKSLASH
--- FOLLOWED BY A REAL NEWLINE for a newline. parseString's fall-through case
--- ("any other escaped character stands for itself") is what makes that last
--- form come back as a newline; this is the test that keeps it true.
+-- quote() replaced %q here on 2026-08-30, and the reason is the test itself:
+-- the game VM's %q does not escape backslashes (StringLib.java:406-409), so
+-- the old %q round trip FAILED there - a mid-string backslash was swallowed,
+-- and a trailing one produced a literal parse() refuses whole. quote() is the
+-- module's own write half; this pins that its output reads back byte-
+-- identical on BOTH VMs. Do not reintroduce %q into anything parse() reads.
 -- ---------------------------------------------------------------------------
 
 local nasty = 'The "Deep" \\ End\nSecond line'
-local literal = string.format("return { name = %q, n = %d }", nasty, 7)
+local literal = "return { name = " .. RDLuaLiteral.quote(nasty) .. ", n = 7 }"
 t = RDLuaLiteral.parse(literal)
-isTrue("%q round trip parses", t ~= nil, literal)
-eq("%q quotes and backslash survive", t and t.name, nasty)
-eq("%q neighbour field intact", t and t.n, 7)
+isTrue("quote() round trip parses", t ~= nil, literal)
+eq("quote() quotes and backslash survive", t and t.name, nasty)
+eq("quote() neighbour field intact", t and t.n, 7)
 
--- The exact record shape LSTours.serialize emits, verbatim format strings.
+-- The two shapes that LOST WHOLE FILES under %q on the game VM: a trailing
+-- backslash, and backslash-then-quote. Each must round-trip, not merely parse.
+for i, edge in ipairs({ 'ends in backslash \\', 'pair \\" inside', '\\',
+                        '', 'tabs\tand\rreturns' }) do
+    local et = RDLuaLiteral.parse("return { v = " .. RDLuaLiteral.quote(edge) .. " }")
+    isTrue("quote() edge case " .. i .. " parses", et ~= nil, edge)
+    eq("quote() edge case " .. i .. " survives", et and et.v, edge)
+end
+
+-- parseString's fall-through ("any other escaped character stands for
+-- itself") is what lets a file written by REAL 5.1's %q - which emits a
+-- backslash followed by a REAL newline for a newline - read back correctly.
+-- quote() never emits that form, but hand tooling on a real 5.1 install
+-- might; the literal is built by hand so this pin holds on both VMs.
+t = RDLuaLiteral.parse('return { s = "a\\' .. '\n' .. 'b" }')
+eq("backslash-newline fall-through reads as a newline", t and t.s, "a\nb")
+
+-- The exact record shape LSTours.serialize emits: verbatim format string,
+-- name quoted the way serialize now quotes it.
 local tour = string.format(
-    "    {id=%d, name=%q, color={%g,%g,%g}, region={%d,%d,%d,%d}},\n",
-    3, 'Quote " in name', 0.95, 0.55, 0.10, 100, 200, 300, 400)
+    "    {id=%d, name=%s, color={%g,%g,%g}, region={%d,%d,%d,%d}},\n",
+    3, RDLuaLiteral.quote('Quote " in name'), 0.95, 0.55, 0.10, 100, 200, 300, 400)
 t = RDLuaLiteral.parse("return {\n  tours={\n" .. tour .. "  },\n}")
 isTrue("tour record shape parses", t ~= nil and t.tours ~= nil, tour)
 eq("tour name with quote",  t.tours[1].name, 'Quote " in name')
