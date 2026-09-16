@@ -109,3 +109,8 @@ PZ_Natives_Decompiled_*/
 # test_lmimport.lua and test_lmpersist.lua parse this file directly and
 # os.exit(2) without it. It is test data, not documentation.
 !docs/dirge-phunzones.md
+
+# --- Pinned engine jar + the data harnesses read: reference only, never commit ---
+# Steam updates the install in place; tools/ harnesses link against this copy so a
+# game patch cannot silently change what they test. See JAR-PROVENANCE.txt.
+PZ_Jar_*/
