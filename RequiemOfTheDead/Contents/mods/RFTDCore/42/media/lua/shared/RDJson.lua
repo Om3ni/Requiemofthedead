@@ -96,6 +96,40 @@ end
 RDJson.MAX_DEPTH = 12
 RDJson.MAX_NODES = 20000
 
+-- table.sort is NOT safe here. On the game's VM it is the engine's own Lua
+-- quicksort with a fixed leftmost pivot (stdlib.lua:43-82), and only its
+-- second recursion is a tail call - so input that arrives ordered recurses
+-- O(n) deep, and a reverse-ordered list of ~1000 elements overflows the Java
+-- stack (measured on the pinned 42.20.4 VM, 2026-08-30; real 5.1 sorts in C
+-- and never shows it). The widest real producer above is ~1,500 nodes, so
+-- this is inside the envelope of LEGITIMATE data on an unlucky pairs() order,
+-- not just a malicious payload. Bottom-up merge instead: no recursion, no
+-- adversarial order, and stable - equal keys cannot reorder between runs,
+-- which the deterministic-output contract below depends on.
+local function mergeSorted(list, less)
+    local n, width = #list, 1
+    local src, dst = list, {}
+    while width < n do
+        local lo = 1
+        while lo <= n do
+            local mid = math.min(lo + width - 1, n)
+            local hi  = math.min(lo + width + width - 1, n)
+            local i, j, k = lo, mid + 1, lo
+            while i <= mid and j <= hi do
+                if less(src[j], src[i]) then dst[k] = src[j]; j = j + 1
+                else dst[k] = src[i]; i = i + 1 end
+                k = k + 1
+            end
+            while i <= mid do dst[k] = src[i]; i = i + 1; k = k + 1 end
+            while j <= hi  do dst[k] = src[j]; j = j + 1; k = k + 1 end
+            lo = hi + 1
+        end
+        src, dst = dst, src
+        width = width + width
+    end
+    return src
+end
+
 -- `seen` is PATH-scoped (cleared on the way back up), not global to the walk:
 -- the same table appearing twice as siblings is a DAG, not a cycle, and must
 -- encode both times. RDJson.EMPTY_ARR is a shared sentinel that hits this case
@@ -124,9 +158,14 @@ local function enc(v, depth, seen, budget)
         for i, item in ipairs(v) do a[i] = enc(item, depth - 1, seen, budget) end
         out = "[" .. table.concat(a, ",") .. "]"
     else
+        -- Every key is collected BEFORE the budget truncates, deliberately:
+        -- the sorted order decides which entries survive truncation, so a
+        -- pre-sort bound would make the surviving subset follow pairs() hash
+        -- order - nondeterministic output, which share codes and config diffs
+        -- cannot have. mergeSorted (above) is why the full sort is safe.
         local keys = {}
         for k in pairs(v) do keys[#keys + 1] = k end
-        table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+        keys = mergeSorted(keys, function(a, b) return tostring(a) < tostring(b) end)
         local a = {}
         for _, k in ipairs(keys) do
             a[#a + 1] = '"' .. escape(k) .. '":' .. enc(v[k], depth - 1, seen, budget)
