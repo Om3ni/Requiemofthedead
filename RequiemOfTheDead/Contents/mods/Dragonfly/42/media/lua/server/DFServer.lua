@@ -150,23 +150,32 @@ Events.OnClientCommand.Add(onClientCommand)
 -- extension sends a parallel auditOnly event so the audit line still
 -- broadcasts to every admin's Console tab. Server doesn't perform the
 -- action - vanilla already did - just records and broadcasts.
+-- Named local, not a function literal in the table: nameless (table-
+-- constructor) functions have thrown errors replaced by "Method name is null"
+-- at the engine's throw-time stack builder - full citation in
+-- MMTraitRepair.lua beside its handler. The dispatcher below pcalls every
+-- handler and reports tostring(err), so a nameless handler at this exact
+-- boundary was the difference between logging the fault and logging the
+-- reporter's own crash.
+--
+-- Staff-gate: auditOnly's only job is to broadcast a log line to every
+-- client, so an ungated handler is an amplification + log-poisoning vector
+-- (1 inbound -> N outbound, with attacker-controlled text). The legitimate
+-- senders are admins mirroring a vanilla chat-command action (kick / ban /
+-- teleport / mute), who by definition already hold the matching capability.
+-- Require *some* admin capability; reject everyone else before the broadcast.
+local function handleAuditOnly(player, args)
+    if not DFCore.hasAnyCapability(player) then
+        return { ok = false, reason = "not permitted" }
+    end
+    local action = tostring(args.action or "?")
+    local target = args.target and (" target=" .. tostring(args.target)) or ""
+    DFCore.audit(action, player, target)
+    return { ok = true }
+end
 DFServer.registerHandler{
     action = "auditOnly",
-    -- Staff-gate: auditOnly's only job is to broadcast a log line to every
-    -- client, so an ungated handler is an amplification + log-poisoning vector
-    -- (1 inbound -> N outbound, with attacker-controlled text). The legitimate
-    -- senders are admins mirroring a vanilla chat-command action (kick / ban /
-    -- teleport / mute), who by definition already hold the matching capability.
-    -- Require *some* admin capability; reject everyone else before the broadcast.
-    run = function(player, args)
-        if not DFCore.hasAnyCapability(player) then
-            return { ok = false, reason = "not permitted" }
-        end
-        local action = tostring(args.action or "?")
-        local target = args.target and (" target=" .. tostring(args.target)) or ""
-        DFCore.audit(action, player, target)
-        return { ok = true }
-    end,
+    run = handleAuditOnly,
 }
 
 -- Prune rate-limit state when a player leaves so the per-username tables don't

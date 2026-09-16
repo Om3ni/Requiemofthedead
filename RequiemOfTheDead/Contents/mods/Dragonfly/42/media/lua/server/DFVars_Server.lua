@@ -301,49 +301,59 @@ Events.OnServerStarted.Add(function()
     -- `run` returns (true, message) or (nil, reason). Both halves are used -
     -- the message reaches the admin's feedback line and the reason reaches the
     -- audit log - so neither verb has to build a reply table of its own.
+    -- Every handler here is a named local, not a function literal in the
+    -- registration table: nameless (table-constructor) functions have thrown
+    -- errors replaced by "Method name is null" at the engine's throw-time
+    -- stack builder - full citation in MMTraitRepair.lua beside its handler.
+    -- The two factory wrappers matter most: every per-player and world-counter
+    -- verb shares those prototypes, so one nameless literal there blinded the
+    -- whole verb family at once.
     local function playerVerb(action, run)
+        local function runPlayerVerb(player, args)
+            args = args or {}
+            local user = args.user
+            if not DFVars_Server.validUser(user) then
+                return { ok = false, reason = "bad username" }
+            end
+            local ok, detail = run(player, args, user)
+            DFCore.audit(action, player,
+                string.format("target=%s var=%s%s", user, tostring(args.name),
+                    ok and "" or (" REFUSED: " .. tostring(detail))))
+            -- Pushed whether the verb succeeded or not: a refused action
+            -- leaves the panel showing whatever it believed before, and the
+            -- one thing an admin needs after a refusal is the truth.
+            pushPlayer(player, user)
+            if not ok then return { ok = false, reason = tostring(detail) } end
+            return { ok = true, message = detail }
+        end
         DFServer.registerHandler{
             action     = action,
             capability = CAP_PLAYER,
-            run = function(player, args)
-                args = args or {}
-                local user = args.user
-                if not DFVars_Server.validUser(user) then
-                    return { ok = false, reason = "bad username" }
-                end
-                local ok, detail = run(player, args, user)
-                DFCore.audit(action, player,
-                    string.format("target=%s var=%s%s", user, tostring(args.name),
-                        ok and "" or (" REFUSED: " .. tostring(detail))))
-                -- Pushed whether the verb succeeded or not: a refused action
-                -- leaves the panel showing whatever it believed before, and the
-                -- one thing an admin needs after a refusal is the truth.
-                pushPlayer(player, user)
-                if not ok then return { ok = false, reason = tostring(detail) } end
-                return { ok = true, message = detail }
-            end,
+            run = runPlayerVerb,
         }
     end
 
+    local function handleVarsList(player)
+        pushSummary(player)
+        return { ok = true }
+    end
     DFServer.registerHandler{
         action     = "varsList",
         capability = "any",
-        run = function(player)
-            pushSummary(player)
-            return { ok = true }
-        end,
+        run = handleVarsList,
     }
 
+    local function handleVarHolders(player, args)
+        args = args or {}
+        local payload, why = DFVars_Server.holdersOf(args.name)
+        if not payload then return { ok = false, reason = tostring(why) } end
+        sendServerCommand(player, DFCore.MODULE, "AdminVarHolders", payload)
+        return { ok = true }
+    end
     DFServer.registerHandler{
         action     = "varHolders",
         capability = "any",
-        run = function(player, args)
-            args = args or {}
-            local payload, why = DFVars_Server.holdersOf(args.name)
-            if not payload then return { ok = false, reason = tostring(why) } end
-            sendServerCommand(player, DFCore.MODULE, "AdminVarHolders", payload)
-            return { ok = true }
-        end,
+        run = handleVarHolders,
     }
 
     -- THE WORLD COUNTER VERBS. Separate commands rather than a scope branch
@@ -357,32 +367,33 @@ Events.OnServerStarted.Add(function()
     -- sample count is not automatically trusted to declare the server has
     -- finished a quest forty times.
     local function worldVerb(action, run)
+        local function runWorldVerb(player, args)
+            args = args or {}
+            local def = RDVars.definition(args.name)
+            if not RDVarDefs.isWorld(def) then
+                return { ok = false,
+                         reason = "'" .. tostring(args.name)
+                             .. "' is not a world counter" }
+            end
+            local ok, detail = run(player, args, def)
+            DFCore.audit(action, player, string.format("var=%s%s",
+                tostring(args.name),
+                ok and (" -> " .. tostring(detail)) or (" REFUSED: " .. tostring(detail))))
+            -- The holder payload is what the editor draws, value included,
+            -- so re-reading it is how the window learns what it just did -
+            -- including after a refusal, where the one thing an admin needs
+            -- is the value that is actually stored.
+            local payload = DFVars_Server.holdersOf(def.name)
+            if payload then
+                sendServerCommand(player, DFCore.MODULE, "AdminVarHolders", payload)
+            end
+            if not ok then return { ok = false, reason = tostring(detail) } end
+            return { ok = true, message = detail }
+        end
         DFServer.registerHandler{
             action     = action,
             capability = CAP_SCHEMA,
-            run = function(player, args)
-                args = args or {}
-                local def = RDVars.definition(args.name)
-                if not RDVarDefs.isWorld(def) then
-                    return { ok = false,
-                             reason = "'" .. tostring(args.name)
-                                 .. "' is not a world counter" }
-                end
-                local ok, detail = run(player, args, def)
-                DFCore.audit(action, player, string.format("var=%s%s",
-                    tostring(args.name),
-                    ok and (" -> " .. tostring(detail)) or (" REFUSED: " .. tostring(detail))))
-                -- The holder payload is what the editor draws, value included,
-                -- so re-reading it is how the window learns what it just did -
-                -- including after a refusal, where the one thing an admin needs
-                -- is the value that is actually stored.
-                local payload = DFVars_Server.holdersOf(def.name)
-                if payload then
-                    sendServerCommand(player, DFCore.MODULE, "AdminVarHolders", payload)
-                end
-                if not ok then return { ok = false, reason = tostring(detail) } end
-                return { ok = true, message = detail }
-            end,
+            run = runWorldVerb,
         }
     end
 
@@ -403,60 +414,63 @@ Events.OnServerStarted.Add(function()
         return true, "Cleared " .. def.name .. " - back to never set."
     end)
 
+    local function handleVarsOfPlayer(player, args)
+        args = args or {}
+        if not DFVars_Server.validUser(args.user) then
+            return { ok = false, reason = "bad username" }
+        end
+        pushPlayer(player, args.user)
+        return { ok = true }
+    end
     DFServer.registerHandler{
         action     = "varsOfPlayer",
         capability = "any",
-        run = function(player, args)
-            args = args or {}
-            if not DFVars_Server.validUser(args.user) then
-                return { ok = false, reason = "bad username" }
-            end
-            pushPlayer(player, args.user)
-            return { ok = true }
-        end,
+        run = handleVarsOfPlayer,
     }
 
+    local function handleVarDefine(player, args)
+        args = args or {}
+        -- args.def goes STRAIGHT to RDVarDefs.validate, which refuses an
+        -- unknown field, a bad kind, a counter with no resetOnDeath and
+        -- a revoker outside the closed set. Re-checking any of that here
+        -- would be a second copy of a rule that already has one home.
+        local def, why = RDVars.define(args.def, player:getUsername())
+        if not def then
+            DFCore.audit("varDefine", player, "REFUSED: " .. tostring(why))
+            return { ok = false, reason = tostring(why) }
+        end
+        DFCore.audit("varDefine", player, "var=" .. def.name .. " kind=" .. def.kind)
+        RDNet.sendStaff(DFCore.MODULE, "AdminVarsStale", {})
+        return { ok = true, message = "Defined " .. def.name .. "." }
+    end
     DFServer.registerHandler{
         action     = "varDefine",
         capability = CAP_SCHEMA,
-        run = function(player, args)
-            args = args or {}
-            -- args.def goes STRAIGHT to RDVarDefs.validate, which refuses an
-            -- unknown field, a bad kind, a counter with no resetOnDeath and
-            -- a revoker outside the closed set. Re-checking any of that here
-            -- would be a second copy of a rule that already has one home.
-            local def, why = RDVars.define(args.def, player:getUsername())
-            if not def then
-                DFCore.audit("varDefine", player, "REFUSED: " .. tostring(why))
-                return { ok = false, reason = tostring(why) }
-            end
-            DFCore.audit("varDefine", player, "var=" .. def.name .. " kind=" .. def.kind)
-            RDNet.sendStaff(DFCore.MODULE, "AdminVarsStale", {})
-            return { ok = true, message = "Defined " .. def.name .. "." }
-        end,
+        run = handleVarDefine,
     }
 
+    local function handleVarUndefine(player, args)
+        args = args or {}
+        -- The purge is the point, not a side effect - RDVars' own comment
+        -- explains why leaving orphaned state behind is worse - so the
+        -- count comes back and goes in the audit line. An admin deleting a
+        -- var should see how many people it was taken from.
+        local ok, touched = RDVars.undefine(args.name)
+        if not ok then
+            DFCore.audit("varUndefine", player, "REFUSED: " .. tostring(touched))
+            return { ok = false, reason = tostring(touched) }
+        end
+        DFCore.audit("varUndefine", player, string.format(
+            "var=%s purged=%d", tostring(args.name), touched or 0))
+        RDNet.sendStaff(DFCore.MODULE, "AdminVarsStale", {})
+        return { ok = true, message = string.format(
+            "Removed %s, and cleared it from %d player(s).",
+            tostring(args.name), touched or 0) }
+    end
     DFServer.registerHandler{
         action     = "varUndefine",
         capability = CAP_SCHEMA,
-        run = function(player, args)
-            args = args or {}
-            -- The purge is the point, not a side effect - RDVars' own comment
-            -- explains why leaving orphaned state behind is worse - so the
-            -- count comes back and goes in the audit line. An admin deleting a
-            -- var should see how many people it was taken from.
-            local ok, touched = RDVars.undefine(args.name)
-            if not ok then
-                DFCore.audit("varUndefine", player, "REFUSED: " .. tostring(touched))
-                return { ok = false, reason = tostring(touched) }
-            end
-            DFCore.audit("varUndefine", player, string.format(
-                "var=%s purged=%d", tostring(args.name), touched or 0))
-            RDNet.sendStaff(DFCore.MODULE, "AdminVarsStale", {})
-            return { ok = true, message = string.format(
-                "Removed %s, and cleared it from %d player(s).",
-                tostring(args.name), touched or 0) }
-        end,
+        run = handleVarUndefine,
     }
 
     playerVerb("varGrant", function(player, args, user)

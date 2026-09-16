@@ -347,17 +347,25 @@ Events.OnServerStarted.Add(function()
         print("[Dragonfly] MMTraitRepair: DFServer missing, repair handler not registered")
         return
     end
+    -- Named local, not a function literal in the table: a function compiled
+    -- inside a table constructor has a nil prototype name, and when anything
+    -- throws under it the engine's throw-time stack builder NPEs on that nil
+    -- and REPLACES the error with "Method name is null" (LuaClosure.java:70-71
+    -- via KahluaThread.java:866) - so RDNet's handler-error report at the
+    -- trust boundary logged the reporter's crash instead of the fault.
+    --
+    -- args.apply must be literally true to mutate. Anything else - absent,
+    -- nil, "true", 1 - is a dry run, because an accidental character edit is
+    -- much worse than an accidental report.
+    local function handleMemoirTraitRepair(player, args)
+        args = args or {}
+        local targets = args.usernames or args.username
+        return MMTraitRepair.run(player, targets, args.apply == true)
+    end
     DFServer.registerHandler{
         action     = "memoirTraitRepair",
         capability = Capability.CanModifyPlayerStatsInThePlayerStatsUI,
-        -- args.apply must be literally true to mutate. Anything else - absent,
-        -- nil, "true", 1 - is a dry run, because an accidental character edit is
-        -- much worse than an accidental report.
-        run = function(player, args)
-            args = args or {}
-            local targets = args.usernames or args.username
-            return MMTraitRepair.run(player, targets, args.apply == true)
-        end,
+        run = handleMemoirTraitRepair,
     }
     print("[Dragonfly] MMTraitRepair handler registered")
 end)

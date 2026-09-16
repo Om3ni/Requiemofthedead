@@ -133,33 +133,38 @@ end
 
 Events.OnServerStarted.Add(function()
 
-    RDNet.adopt(TOKEN, {
-        -- A refused caller gets the same envelope a failed one does, so the
-        -- panel has a single reply shape to render. RDNet does not answer rate
-        -- refusals at all - replying to a flood re-amplifies it - which is why
-        -- a client must not treat silence as success.
-        onReject = function(player, command, reason)
-            refuse(player, command, "refused: " .. tostring(reason))
-        end,
-    })
+    -- Handlers here are named locals, not function literals in the register
+    -- calls: nameless (table-constructor and unnamed-argument) functions have
+    -- thrown errors replaced by "Method name is null" at the engine's
+    -- throw-time stack builder - full citation in MMTraitRepair.lua beside
+    -- its handler.
+    --
+    -- A refused caller gets the same envelope a failed one does, so the
+    -- panel has a single reply shape to render. RDNet does not answer rate
+    -- refusals at all - replying to a flood re-amplifies it - which is why
+    -- a client must not treat silence as success.
+    local function rejectNotice(player, command, reason)
+        refuse(player, command, "refused: " .. tostring(reason))
+    end
+    RDNet.adopt(TOKEN, { onReject = rejectNotice })
 
     -- ---- staff reads ------------------------------------------------------
 
     -- The whole catalogue, for the authoring tab. "any" is the honest gate:
     -- reading what kits exist is not the same authority as writing one, and no
     -- single named capability means "is this person staff".
-    RDNet.register(TOKEN, "kitList", { capability = "any", rate = 4 },
-        function(player)
-            local out = {}
-            for _, def in ipairs(DMKits.definitions()) do
-                out[#out + 1] = def
-            end
-            -- Definitions ride WHOLE to this surface - weights included - so
-            -- the authoring tab projects its own view without a second round
-            -- trip. Only the claim panel gets a filtered projection, and that
-            -- filtering happens server-side where a client cannot undo it.
-            reply(player, "KitList", { kits = out, totals = DMKits.claimTotals() })
-        end)
+    local function handleKitList(player)
+        local out = {}
+        for _, def in ipairs(DMKits.definitions()) do
+            out[#out + 1] = def
+        end
+        -- Definitions ride WHOLE to this surface - weights included - so
+        -- the authoring tab projects its own view without a second round
+        -- trip. Only the claim panel gets a filtered projection, and that
+        -- filtering happens server-side where a client cannot undo it.
+        reply(player, "KitList", { kits = out, totals = DMKits.claimTotals() })
+    end
+    RDNet.register(TOKEN, "kitList", { capability = "any", rate = 4 }, handleKitList)
 
     -- CLEAR ONE PLAYER'S CLAIM. The lost-packet fix: a claim is recorded
     -- before the grants run, so a delivery that dies leaves a player charged
@@ -173,56 +178,56 @@ Events.OnServerStarted.Add(function()
     -- SandboxOptions, matching the other verb that edits the claim record: it
     -- hands somebody a second go at a one-time reward, which is authoring
     -- authority rather than the item-handling authority kitGrantTo needs.
-    RDNet.register(TOKEN, "kitForgetOne",
-        { capability = Capability.SandboxOptions, rate = 4 },
-        function(player, args)
-            local id, why = wireId(args)
-            if not id then return refuse(player, "kitForgetOne", why) end
-            local who = args and args.user
-            if type(who) ~= "string" or who == "" then
-                return refuse(player, "kitForgetOne",
-                    "name the player whose claim should be cleared")
-            end
-            -- NOT named `ok`: that is the reply helper at the top of this
-            -- file, and shadowing it here would make every success below a
-            -- call on a boolean.
-            local done, had = DMKits.forgetClaim(who, id)
-            if not done then return refuse(player, "kitForgetOne", tostring(had)) end
-            -- Subject is `who`, the player whose claim was cleared. It is a
-            -- string because they need not be online for an admin to fix a
-            -- lost delivery - which is the whole reason this command exists.
-            audit("KIT_CLAIM_CLEARED", who,
-                  { kit = id, by = RDShared.username(player),
-                    had = had and true or false })
-            -- "Nothing to clear" is reported as what it is. Calling it a
-            -- success hides a mistyped name behind a reassuring message.
-            if not had then
-                return ok(player, "kitForgetOne",
-                           who .. " had no claim on '" .. id .. "' to clear.",
-                           { id = id, cleared = 0 })
-            end
+    local function handleKitForgetOne(player, args)
+        local id, why = wireId(args)
+        if not id then return refuse(player, "kitForgetOne", why) end
+        local who = args and args.user
+        if type(who) ~= "string" or who == "" then
+            return refuse(player, "kitForgetOne",
+                "name the player whose claim should be cleared")
+        end
+        -- NOT named `ok`: that is the reply helper at the top of this
+        -- file, and shadowing it here would make every success below a
+        -- call on a boolean.
+        local done, had = DMKits.forgetClaim(who, id)
+        if not done then return refuse(player, "kitForgetOne", tostring(had)) end
+        -- Subject is `who`, the player whose claim was cleared. It is a
+        -- string because they need not be online for an admin to fix a
+        -- lost delivery - which is the whole reason this command exists.
+        audit("KIT_CLAIM_CLEARED", who,
+              { kit = id, by = RDShared.username(player),
+                had = had and true or false })
+        -- "Nothing to clear" is reported as what it is. Calling it a
+        -- success hides a mistyped name behind a reassuring message.
+        if not had then
             return ok(player, "kitForgetOne",
-                       "Cleared " .. who .. "'s claim on '" .. id .. "'.",
-                       { id = id, cleared = 1 })
-        end)
+                       who .. " had no claim on '" .. id .. "' to clear.",
+                       { id = id, cleared = 0 })
+        end
+        return ok(player, "kitForgetOne",
+                   "Cleared " .. who .. "'s claim on '" .. id .. "'.",
+                   { id = id, cleared = 1 })
+    end
+    RDNet.register(TOKEN, "kitForgetOne",
+        { capability = Capability.SandboxOptions, rate = 4 }, handleKitForgetOne)
 
     -- WHO TOOK WHAT, WHEN. Staff-read, like the rest of this group: it names
     -- players and what they were handed, which is not a player-facing fact.
     -- The window is bounded by the store (DMKits.LOG_MAX); `limit` only
     -- narrows it further, and a caller asking for more gets the cap.
-    RDNet.register(TOKEN, "kitLog", { capability = "any", rate = 4 },
-        function(player, args)
-            local n = tonumber(args and args.limit)
-            reply(player, "KitLog", { rows = DMKits.log(n) })
-        end)
+    local function handleKitLog(player, args)
+        local n = tonumber(args and args.limit)
+        reply(player, "KitLog", { rows = DMKits.log(n) })
+    end
+    RDNet.register(TOKEN, "kitLog", { capability = "any", rate = 4 }, handleKitLog)
 
-    RDNet.register(TOKEN, "kitClaimants", { capability = "any", rate = 4 },
-        function(player, args)
-            local id, why = wireId(args)
-            if not id then return refuse(player, "kitClaimants", why) end
-            local rows = DMKits.claimants(id)
-            reply(player, "KitClaimants", { id = id, rows = rows or {} })
-        end)
+    local function handleKitClaimants(player, args)
+        local id, why = wireId(args)
+        if not id then return refuse(player, "kitClaimants", why) end
+        local rows = DMKits.claimants(id)
+        reply(player, "KitClaimants", { id = id, rows = rows or {} })
+    end
+    RDNet.register(TOKEN, "kitClaimants", { capability = "any", rate = 4 }, handleKitClaimants)
 
     -- ---- authoring --------------------------------------------------------
     --
@@ -233,8 +238,7 @@ Events.OnServerStarted.Add(function()
     -- tier instead of a fixed capability is filed in TODO.md and applies here
     -- too.)
 
-    RDNet.register(TOKEN, "kitDefine", { capability = Capability.SandboxOptions,
-        rate = 4 }, function(player, args)
+    local function handleKitDefine(player, args)
         local raw = args and args.kit
         if type(raw) ~= "table" then
             return refuse(player, "kitDefine", "no kit definition was sent")
@@ -248,10 +252,11 @@ Events.OnServerStarted.Add(function()
             rev = def.rev })
         ok(player, "kitDefine", "Saved '" .. def.label .. "'.", { id = def.id })
         RDNet.sendStaff(TOKEN, "KitsStale", {})
-    end)
+    end
+    RDNet.register(TOKEN, "kitDefine", { capability = Capability.SandboxOptions,
+        rate = 4 }, handleKitDefine)
 
-    RDNet.register(TOKEN, "kitDelete", { capability = Capability.SandboxOptions,
-        rate = 4 }, function(player, args)
+    local function handleKitDelete(player, args)
         local id, why = wireId(args)
         if not id then return refuse(player, "kitDelete", why) end
         local done, reason = DMKits.undefine(id)
@@ -263,14 +268,15 @@ Events.OnServerStarted.Add(function()
         ok(player, "kitDelete", "Deleted '" .. id .. "'. Claims are kept; use Re-open to "
             .. "clear them.", { id = id })
         RDNet.sendStaff(TOKEN, "KitsStale", {})
-    end)
+    end
+    RDNet.register(TOKEN, "kitDelete", { capability = Capability.SandboxOptions,
+        rate = 4 }, handleKitDelete)
 
     -- Re-opening a kit is the most destructive verb here and the only one whose
     -- effect is invisible afterwards: everyone who already took a one-time
     -- reward can take it again and nothing on screen says so. Hence its own
     -- command rather than a flag on delete, and a count in the answer.
-    RDNet.register(TOKEN, "kitForget", { capability = Capability.SandboxOptions,
-        rate = 2 }, function(player, args)
+    local function handleKitForget(player, args)
         local id, why = wireId(args)
         if not id then return refuse(player, "kitForget", why) end
         local cleared, reason = DMKits.forgetClaims(id)
@@ -283,7 +289,9 @@ Events.OnServerStarted.Add(function()
             "Re-opened '" .. id .. "' for " .. cleared .. " player(s).",
             { id = id, cleared = cleared })
         RDNet.sendStaff(TOKEN, "KitsStale", {})
-    end)
+    end
+    RDNet.register(TOKEN, "kitForget", { capability = Capability.SandboxOptions,
+        rate = 2 }, handleKitForget)
 
     -- ---- an admin hands a kit over ----------------------------------------
     --
@@ -297,8 +305,7 @@ Events.OnServerStarted.Add(function()
     -- the authority the requirements were standing in for. `once` is still
     -- honoured, because re-granting a one-time reward is almost always a
     -- mis-click and the DM can Re-open deliberately if it is not.
-    RDNet.register(TOKEN, "kitGrantTo", { capability = Capability.AddItem,
-        rate = 4 }, function(player, args)
+    local function handleKitGrantTo(player, args)
         local id, why = wireId(args)
         if not id then return refuse(player, "kitGrantTo", why) end
         local username, userWhy = wireUser(args)
@@ -327,7 +334,9 @@ Events.OnServerStarted.Add(function()
         end
 
         DMKits_Server.deliver(target, def, RDShared.username(player), player)
-    end)
+    end
+    RDNet.register(TOKEN, "kitGrantTo", { capability = Capability.AddItem,
+        rate = 4 }, handleKitGrantTo)
 
     -- ---- the player's own two verbs ---------------------------------------
     --
@@ -338,88 +347,88 @@ Events.OnServerStarted.Add(function()
     -- The authority is not in the gate, it is in what the handler will read
     -- from the payload - an id, and nothing else.
 
-    RDNet.register(TOKEN, "kitMine", { public = true, rate = 2 },
-        function(player)
-            local user = RDShared.username(player)
-            if not user then return end
-            local out = {}
-            for _, def in ipairs(DMKits.definitions()) do
-                -- A COOLING KIT STAYS ON THE LIST. Everything else about
-                -- entitlement is a gate the player may not know exists, and
-                -- silence is the rule for those. A cooldown is different: they
-                -- have already earned this and are only waiting, so a kit that
-                -- vanished after being claimed and reappeared hours later with
-                -- no explanation would read as a bug (owner, 2026-08-24).
-                -- `allowed`, not `ok`: that name belongs to the reply helper
-                -- at the top of this file, and a local shadowing it here would
-                -- turn the first success reply somebody adds to this handler
-                -- into a call on a boolean.
-                local allowed = DMKits.entitlement(user, def.id)
-                local left = DMKits.cooldownLeft(user, def.id) or 0
-                if allowed or left > 0 then
-                    -- Only what they may claim, and only what they need to
-                    -- decide: no requirement list, because sending one is a
-                    -- readout of every gate on every kit they have not earned.
-                    out[#out + 1] = {
-                        id = def.id, kind = def.kind, label = def.label,
-                        note = def.note,
-                        -- The policy in words, built server-side so the two
-                        -- surfaces cannot phrase the same wait differently.
-                        claimText = DMKitDefs.claimText(def),
-                        taken = DMKits.claimCount(user, def.id),
-                        -- Milliseconds, and a DURATION rather than a deadline:
-                        -- the client's wall clock is not this machine's, so it
-                        -- anchors the countdown to its own on receipt. Same
-                        -- reasoning as the vars mirror.
-                        readyInMs = (left > 0) and left or nil,
-                        -- WITHOUT ODDS, and the false is the whole rule
-                        -- (owner, 2026-08-23). A player sees every outcome a
-                        -- kit can produce; how the table is weighted is the
-                        -- DM's dial and stays on the admin surface. Filtered
-                        -- HERE, not on the client, so it is not a display
-                        -- choice a client can decline to make.
-                        contents = DMKitDefs.contents(def, false),
-                    }
-                end
+    local function handleKitMine(player)
+        local user = RDShared.username(player)
+        if not user then return end
+        local out = {}
+        for _, def in ipairs(DMKits.definitions()) do
+            -- A COOLING KIT STAYS ON THE LIST. Everything else about
+            -- entitlement is a gate the player may not know exists, and
+            -- silence is the rule for those. A cooldown is different: they
+            -- have already earned this and are only waiting, so a kit that
+            -- vanished after being claimed and reappeared hours later with
+            -- no explanation would read as a bug (owner, 2026-08-24).
+            -- `allowed`, not `ok`: that name belongs to the reply helper
+            -- at the top of this file, and a local shadowing it here would
+            -- turn the first success reply somebody adds to this handler
+            -- into a call on a boolean.
+            local allowed = DMKits.entitlement(user, def.id)
+            local left = DMKits.cooldownLeft(user, def.id) or 0
+            if allowed or left > 0 then
+                -- Only what they may claim, and only what they need to
+                -- decide: no requirement list, because sending one is a
+                -- readout of every gate on every kit they have not earned.
+                out[#out + 1] = {
+                    id = def.id, kind = def.kind, label = def.label,
+                    note = def.note,
+                    -- The policy in words, built server-side so the two
+                    -- surfaces cannot phrase the same wait differently.
+                    claimText = DMKitDefs.claimText(def),
+                    taken = DMKits.claimCount(user, def.id),
+                    -- Milliseconds, and a DURATION rather than a deadline:
+                    -- the client's wall clock is not this machine's, so it
+                    -- anchors the countdown to its own on receipt. Same
+                    -- reasoning as the vars mirror.
+                    readyInMs = (left > 0) and left or nil,
+                    -- WITHOUT ODDS, and the false is the whole rule
+                    -- (owner, 2026-08-23). A player sees every outcome a
+                    -- kit can produce; how the table is weighted is the
+                    -- DM's dial and stays on the admin surface. Filtered
+                    -- HERE, not on the client, so it is not a display
+                    -- choice a client can decline to make.
+                    contents = DMKitDefs.contents(def, false),
+                }
             end
-            reply(player, "KitMine", { kits = out })
-        end)
+        end
+        reply(player, "KitMine", { kits = out })
+    end
+    RDNet.register(TOKEN, "kitMine", { public = true, rate = 2 }, handleKitMine)
 
     -- THE one submission a player makes. It carries an id. Everything else -
     -- may they have it, have they had it, what does it contain, what did it
     -- roll - is decided here, from the catalogue, every time.
-    RDNet.register(TOKEN, "kitClaim", { public = true, rate = 1 },
-        function(player, args)
-            local user = RDShared.username(player)
-            if not user then return end
+    local function handleKitClaim(player, args)
+        local user = RDShared.username(player)
+        if not user then return end
 
-            local id, why = wireId(args)
-            if not id then return refuse(player, "kitClaim", why) end
+        local id, why = wireId(args)
+        if not id then return refuse(player, "kitClaim", why) end
 
-            local def = DMKits.definition(id)
-            -- An unknown id and an unearned kit get the SAME answer. Telling
-            -- the difference apart tells a player which ids exist, which is the
-            -- catalogue leaking one guess at a time.
-            local allowed, detail, cooling = DMKits.entitlement(user, id)
-            if not def or not allowed then
-                audit("KIT_CLAIM_REFUSED", player,
-                    { kit = id, reason = detail or "no such kit" })
-                -- A COOLDOWN IS THE ONE REFUSAL WORTH EXPLAINING. The flat
-                -- answer above exists so a player cannot map the catalogue by
-                -- guessing ids - but a cooling kit is already ON their list,
-                -- so the wait is not a fact they could learn any other way,
-                -- and hiding it makes a working feature look broken.
-                if cooling and cooling > 0 then
-                    return refuse(player, "kitClaim",
-                        "Not ready yet - about " .. math.ceil(cooling / 60000)
-                        .. " more minute(s).", { id = id, readyInMs = cooling })
-                end
+        local def = DMKits.definition(id)
+        -- An unknown id and an unearned kit get the SAME answer. Telling
+        -- the difference apart tells a player which ids exist, which is the
+        -- catalogue leaking one guess at a time.
+        local allowed, detail, cooling = DMKits.entitlement(user, id)
+        if not def or not allowed then
+            audit("KIT_CLAIM_REFUSED", player,
+                { kit = id, reason = detail or "no such kit" })
+            -- A COOLDOWN IS THE ONE REFUSAL WORTH EXPLAINING. The flat
+            -- answer above exists so a player cannot map the catalogue by
+            -- guessing ids - but a cooling kit is already ON their list,
+            -- so the wait is not a fact they could learn any other way,
+            -- and hiding it makes a working feature look broken.
+            if cooling and cooling > 0 then
                 return refuse(player, "kitClaim",
-                    "That kit is not available to you.")
+                    "Not ready yet - about " .. math.ceil(cooling / 60000)
+                    .. " more minute(s).", { id = id, readyInMs = cooling })
             end
+            return refuse(player, "kitClaim",
+                "That kit is not available to you.")
+        end
 
-            DMKits_Server.deliver(player, def, nil, player)
-        end)
+        DMKits_Server.deliver(player, def, nil, player)
+    end
+    RDNet.register(TOKEN, "kitClaim", { public = true, rate = 1 }, handleKitClaim)
 
     print("[RFTDDungeonMaster] kits: 9 commands registered on " .. TOKEN)
 end)

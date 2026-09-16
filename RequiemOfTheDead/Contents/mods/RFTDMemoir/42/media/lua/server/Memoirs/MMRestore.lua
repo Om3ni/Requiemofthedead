@@ -387,23 +387,29 @@ Events.OnServerStarted.Add(function()
         print("[Dragonfly] MMRestore: DFServer missing, restore handler not registered")
         return
     end
+    -- Named local, not a function literal in the table: nameless (table-
+    -- constructor) functions have thrown errors replaced by "Method name is
+    -- null" at the engine's throw-time stack builder - full citation in
+    -- MMTraitRepair.lua beside its handler.
+    --
+    -- Both shapes accepted. args.usernames is the selection (what the panel
+    -- sends now); args.username is the pre-bulk single-target form, kept
+    -- because a client on an older Dragonfly pointed at this server would
+    -- otherwise silently restore nobody. ONE capability check covers the
+    -- whole batch - it is the same permission for every target.
+    -- args.xpPercent is the Players tab dial. It is clamped server-side in
+    -- restoreFraction, never trusted as sent, and absent means 100.
+    local function handleMemoirRestore(player, args)
+        args = args or {}
+        if type(args.usernames) == "table" then
+            return MMRestore.runMany(player, args.usernames, args.xpPercent)
+        end
+        return MMRestore.run(player, args.username, args.xpPercent)
+    end
     DFServer.registerHandler{
         action     = "memoirRestore",
         capability = Capability.CanModifyPlayerStatsInThePlayerStatsUI,
-        -- Both shapes accepted. args.usernames is the selection (what the panel
-        -- sends now); args.username is the pre-bulk single-target form, kept
-        -- because a client on an older Dragonfly pointed at this server would
-        -- otherwise silently restore nobody. ONE capability check covers the
-        -- whole batch - it is the same permission for every target.
-        -- args.xpPercent is the Players tab dial. It is clamped server-side in
-        -- restoreFraction, never trusted as sent, and absent means 100.
-        run = function(player, args)
-            args = args or {}
-            if type(args.usernames) == "table" then
-                return MMRestore.runMany(player, args.usernames, args.xpPercent)
-            end
-            return MMRestore.run(player, args.username, args.xpPercent)
-        end,
+        run = handleMemoirRestore,
     }
     print("[Dragonfly] MMRestore handler registered")
 end)

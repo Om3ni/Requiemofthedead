@@ -253,283 +253,293 @@ Events.OnServerStarted.Add(function()
         return
     end
 
+    -- Handlers are named locals, not function literals in the tables:
+    -- nameless (table-constructor) functions have thrown errors replaced by
+    -- "Method name is null" at the engine's throw-time stack builder - full
+    -- citation in MMTraitRepair.lua beside its handler.
+    local function handlePlayerInventorySnapshot(player, args)
+        -- The DEBUG enter/resolved prints that sat here were leftover
+        -- temporary instrumentation (S14): per-request console lines with
+        -- no bound. The one-line summary print at the end of this handler
+        -- is the bounded signal that stays, and a resolveTarget refusal
+        -- already reaches the requesting admin as the reply's reason.
+        local target, err = resolveTarget(args.username)
+        if not target then
+            return { ok = false, reason = err }
+        end
+
+        -- Resolve hand items up front so we can tag equipped weapons.
+        local primary   = target:getPrimaryHandItem()
+        local secondary = target:getSecondaryHandItem()
+
+        local rows = listAddressableItems(target)
+        local out = {}
+        local wornCount, hiddenCount = 0, 0
+        local nameFallbacks = 0
+        for i, entry in ipairs(rows) do
+            local it = entry.item
+
+            -- ZedDmg / Hidden pseudo-items exist only as equipped models and
+            -- are skipped by both the vanilla and CleanUI inventory panes. Skip
+            -- them HERE rather than in listAddressableItems: `slot` must stay
+            -- the index into the unfiltered walk, because resolveItem re-walks
+            -- that same function to map an edit back to an item, and DFBanBox's
+            -- login scrub shares it.
+            -- No per-item boundary: the row is TOTAL under the dispatch
+            -- lanes. isHidden - `return this.scriptItem.isHidden()` with
+            -- no null check, scriptItem null on a legacy item whose script
+            -- is gone (InventoryItem.java:3849-3851) - is an exposed
+            -- method, so that NPE arrives here as a swallowed nil, read as
+            -- not-hidden (MethodCaller.java:33-56). Every other engine
+            -- call in the row answers a faulted item the same way, and
+            -- every nil lands in a handled fallback: `ft or "?"`,
+            -- `count or 1`, RDItemKind's readString type-checks,
+            -- resolveLocation's type tests. A malformed item contributes a
+            -- visible "?" row instead of vanishing, which is what an
+            -- inspecting admin actually needs; a systematic Lua fault in
+            -- our own row code is DFServer's dispatcher boundary to report
+            -- - once, loudly, with an honest reply to the client. The
+            -- skip counter and circuit breaker that sat here belonged to
+            -- throws the lanes cannot deliver.
+            local hidden = it:isHidden() == true
+
+            if hidden then
+                hiddenCount = hiddenCount + 1
+            else
+                if entry.source == "worn" then wornCount = wornCount + 1 end
+                local ft      = it:getFullType()
+                local cond    = it:getCondition()
+                local condMax = it:getConditionMax()
+                local count   = it:getCount()
+                -- A name that cannot be produced is COSMETIC, with a
+                -- perfect fallback below (`name or ft or "?"`). The pcall
+                -- that guarded it never had a job - getName's format
+                -- exceptions are caught inside Translator except under
+                -- Core.IS_DEV (Translator.java:398-410), and any body
+                -- throw is swallowed to nil by MethodCaller regardless
+                -- (MethodCaller.java:33-56). Counting the nils keeps this
+                -- diagnostic LIVE; the old counter counted throws that
+                -- could not happen and had never moved.
+                local name = it:getName()
+                if not name then
+                    nameFallbacks = nameFallbacks + 1
+                end
+
+                local bucket, baseCat, weaponCapable = RDItemKind.classify(it)
+
+                out[#out + 1] = {
+                    slot     = i - 1,
+                    fullType = ft or "?",
+                    -- Location is its own column now, so the name is no longer
+                    -- prefixed with [Primary] / [in bag] decoration.
+                    name     = name or ft or "?",
+                    kind     = RDItemKind.typeLabel(it),
+                    bucket   = bucket,
+                    baseCat  = baseCat,
+                    weaponCapable = weaponCapable == true,
+                    location = resolveLocation(entry, primary, secondary),
+                    count    = count or 1,
+                    cond     = cond,
+                    condMax  = condMax,
+                }
+            end
+        end
+
+        -- nameFallback counts rows whose display name came back nil -
+        -- the "?" rows an admin will actually see when items are broken.
+        print(string.format(
+            "[Dragonfly] playerInventorySnapshot target=%s items=%d worn=%d hidden=%d nameFallback=%d primary=%s secondary=%s",
+            args.username or "?", #out, wornCount, hiddenCount, nameFallbacks,
+            primary   and tostring(primary:getFullType())   or "-",
+            secondary and tostring(secondary:getFullType()) or "-"))
+
+        -- PAGED SINCE 2026-08-09. A wire capture caught this at 12.9 KB in a
+        -- single message with no paging at all - the worst of the four family
+        -- streams that capture looked at, and the only one flagged UNSPLIT
+        -- rather than merely over budget.
+        --
+        -- Volume was never the problem: three sends in nine and a half hours,
+        -- 29.7 KB total. The problem is that the payload is a player's entire
+        -- inventory, so its size is set by how much that player is carrying,
+        -- and a single message that big stalls the tick while it serialises.
+        -- A hoarder inspected at a bad moment is a visible freeze for every
+        -- other player on the server.
+        --
+        -- RDChunk's managed path fits here where it did not fit Reclamation's
+        -- fleet scan: this is a complete snapshot of current state, so its
+        -- supersede-by-key behaviour is exactly right - re-requesting while an
+        -- older stream is still draining should discard the older one, which
+        -- is what the client's OPEN.target check was already approximating.
+        --
+        -- `username` rides EVERY chunk (the client routes on it); the item
+        -- total rides the last, where it is meaningful.
+        if RDChunk then
+            RDChunk.send(player, DFCore.MODULE, "PlayerInventory", out,
+                { total_items = #out },
+                { username = args.username })
+        else
+            sendServerCommand(player, DFCore.MODULE, "PlayerInventory",
+                { username = args.username, items = out })
+        end
+        return { ok = true }
+    end
     DFServer.registerHandler{
         action     = "playerInventorySnapshot",
         capability = Capability.InspectPlayerInventory,
-        run = function(player, args)
-            -- The DEBUG enter/resolved prints that sat here were leftover
-            -- temporary instrumentation (S14): per-request console lines with
-            -- no bound. The one-line summary print at the end of this handler
-            -- is the bounded signal that stays, and a resolveTarget refusal
-            -- already reaches the requesting admin as the reply's reason.
-            local target, err = resolveTarget(args.username)
-            if not target then
-                return { ok = false, reason = err }
-            end
-
-            -- Resolve hand items up front so we can tag equipped weapons.
-            local primary   = target:getPrimaryHandItem()
-            local secondary = target:getSecondaryHandItem()
-
-            local rows = listAddressableItems(target)
-            local out = {}
-            local wornCount, hiddenCount = 0, 0
-            local nameFallbacks = 0
-            for i, entry in ipairs(rows) do
-                local it = entry.item
-
-                -- ZedDmg / Hidden pseudo-items exist only as equipped models and
-                -- are skipped by both the vanilla and CleanUI inventory panes. Skip
-                -- them HERE rather than in listAddressableItems: `slot` must stay
-                -- the index into the unfiltered walk, because resolveItem re-walks
-                -- that same function to map an edit back to an item, and DFBanBox's
-                -- login scrub shares it.
-                -- No per-item boundary: the row is TOTAL under the dispatch
-                -- lanes. isHidden - `return this.scriptItem.isHidden()` with
-                -- no null check, scriptItem null on a legacy item whose script
-                -- is gone (InventoryItem.java:3849-3851) - is an exposed
-                -- method, so that NPE arrives here as a swallowed nil, read as
-                -- not-hidden (MethodCaller.java:33-56). Every other engine
-                -- call in the row answers a faulted item the same way, and
-                -- every nil lands in a handled fallback: `ft or "?"`,
-                -- `count or 1`, RDItemKind's readString type-checks,
-                -- resolveLocation's type tests. A malformed item contributes a
-                -- visible "?" row instead of vanishing, which is what an
-                -- inspecting admin actually needs; a systematic Lua fault in
-                -- our own row code is DFServer's dispatcher boundary to report
-                -- - once, loudly, with an honest reply to the client. The
-                -- skip counter and circuit breaker that sat here belonged to
-                -- throws the lanes cannot deliver.
-                local hidden = it:isHidden() == true
-
-                if hidden then
-                    hiddenCount = hiddenCount + 1
-                else
-                    if entry.source == "worn" then wornCount = wornCount + 1 end
-                    local ft      = it:getFullType()
-                    local cond    = it:getCondition()
-                    local condMax = it:getConditionMax()
-                    local count   = it:getCount()
-                    -- A name that cannot be produced is COSMETIC, with a
-                    -- perfect fallback below (`name or ft or "?"`). The pcall
-                    -- that guarded it never had a job - getName's format
-                    -- exceptions are caught inside Translator except under
-                    -- Core.IS_DEV (Translator.java:398-410), and any body
-                    -- throw is swallowed to nil by MethodCaller regardless
-                    -- (MethodCaller.java:33-56). Counting the nils keeps this
-                    -- diagnostic LIVE; the old counter counted throws that
-                    -- could not happen and had never moved.
-                    local name = it:getName()
-                    if not name then
-                        nameFallbacks = nameFallbacks + 1
-                    end
-
-                    local bucket, baseCat, weaponCapable = RDItemKind.classify(it)
-
-                    out[#out + 1] = {
-                        slot     = i - 1,
-                        fullType = ft or "?",
-                        -- Location is its own column now, so the name is no longer
-                        -- prefixed with [Primary] / [in bag] decoration.
-                        name     = name or ft or "?",
-                        kind     = RDItemKind.typeLabel(it),
-                        bucket   = bucket,
-                        baseCat  = baseCat,
-                        weaponCapable = weaponCapable == true,
-                        location = resolveLocation(entry, primary, secondary),
-                        count    = count or 1,
-                        cond     = cond,
-                        condMax  = condMax,
-                    }
-                end
-            end
-
-            -- nameFallback counts rows whose display name came back nil -
-            -- the "?" rows an admin will actually see when items are broken.
-            print(string.format(
-                "[Dragonfly] playerInventorySnapshot target=%s items=%d worn=%d hidden=%d nameFallback=%d primary=%s secondary=%s",
-                args.username or "?", #out, wornCount, hiddenCount, nameFallbacks,
-                primary   and tostring(primary:getFullType())   or "-",
-                secondary and tostring(secondary:getFullType()) or "-"))
-
-            -- PAGED SINCE 2026-08-09. A wire capture caught this at 12.9 KB in a
-            -- single message with no paging at all - the worst of the four family
-            -- streams that capture looked at, and the only one flagged UNSPLIT
-            -- rather than merely over budget.
-            --
-            -- Volume was never the problem: three sends in nine and a half hours,
-            -- 29.7 KB total. The problem is that the payload is a player's entire
-            -- inventory, so its size is set by how much that player is carrying,
-            -- and a single message that big stalls the tick while it serialises.
-            -- A hoarder inspected at a bad moment is a visible freeze for every
-            -- other player on the server.
-            --
-            -- RDChunk's managed path fits here where it did not fit Reclamation's
-            -- fleet scan: this is a complete snapshot of current state, so its
-            -- supersede-by-key behaviour is exactly right - re-requesting while an
-            -- older stream is still draining should discard the older one, which
-            -- is what the client's OPEN.target check was already approximating.
-            --
-            -- `username` rides EVERY chunk (the client routes on it); the item
-            -- total rides the last, where it is meaningful.
-            if RDChunk then
-                RDChunk.send(player, DFCore.MODULE, "PlayerInventory", out,
-                    { total_items = #out },
-                    { username = args.username })
-            else
-                sendServerCommand(player, DFCore.MODULE, "PlayerInventory",
-                    { username = args.username, items = out })
-            end
-            return { ok = true }
-        end,
+        run = handlePlayerInventorySnapshot,
     }
 
+    local function handlePlayerInventoryItemSnapshot(player, args)
+        local target, err = resolveTarget(args.username)
+        if not target then return { ok = false, reason = err } end
+        local item, ierr = resolveItem(target, args.slot, args.fullType)
+        if not item then return { ok = false, reason = ierr } end
+        local snap = DFItemProbes.serializeItem(item)
+        snap.username = args.username
+        snap.slot     = args.slot
+        snap.fullType = args.fullType
+        sendServerCommand(player, DFCore.MODULE, "PlayerInventoryItem", snap)
+        return { ok = true }
+    end
     DFServer.registerHandler{
         action     = "playerInventoryItemSnapshot",
         capability = Capability.InspectPlayerInventory,
-        run = function(player, args)
-            local target, err = resolveTarget(args.username)
-            if not target then return { ok = false, reason = err } end
-            local item, ierr = resolveItem(target, args.slot, args.fullType)
-            if not item then return { ok = false, reason = ierr } end
-            local snap = DFItemProbes.serializeItem(item)
-            snap.username = args.username
-            snap.slot     = args.slot
-            snap.fullType = args.fullType
-            sendServerCommand(player, DFCore.MODULE, "PlayerInventoryItem", snap)
-            return { ok = true }
-        end,
+        run = handlePlayerInventoryItemSnapshot,
     }
 
+    local function handlePlayerInventoryEdit(player, args)
+        local target, err = resolveTarget(args.username)
+        if not target then return { ok = false, reason = err } end
+        local item, ierr = resolveItem(target, args.slot, args.fullType)
+        if not item then return { ok = false, reason = ierr } end
+        local fields = args.fields or {}
+        local applied, failed = 0, {}
+        for label, value in pairs(fields) do
+            local ok, ferr = DFItemProbes.write(item, label, value)
+            if ok then applied = applied + 1
+            else failed[#failed + 1] = label .. ":" .. tostring(ferr) end
+        end
+        if applied > 0 then syncItem(item) end
+        -- Clothing blood / dirt / holes / patches live on the ItemVisual, which
+        -- sendItemStats does not carry. Editing Wetness or Holes without this
+        -- lands on the server and is never seen by the owning client.
+        if applied > 0 and RDClothing.isClothing(item) then RDClothing.sync(target) end
+        syncTarget(target)
+        DFCore.audit("playerInventoryEdit", player,
+            string.format("target=%s slot=%d ft=%s applied=%d",
+                args.username, args.slot or -1, args.fullType or "?", applied))
+        if #failed > 0 then
+            return { ok = false, reason = string.format(
+                "%d applied, %d failed: %s", applied, #failed,
+                table.concat(failed, "; ")) }
+        end
+        return { ok = true,
+            message = string.format("Applied %d field(s) to %s's %s.",
+                applied, args.username, args.fullType or "item") }
+    end
     DFServer.registerHandler{
         action     = "playerInventoryEdit",
         capability = Capability.EditItem,
-        run = function(player, args)
-            local target, err = resolveTarget(args.username)
-            if not target then return { ok = false, reason = err } end
-            local item, ierr = resolveItem(target, args.slot, args.fullType)
-            if not item then return { ok = false, reason = ierr } end
-            local fields = args.fields or {}
-            local applied, failed = 0, {}
-            for label, value in pairs(fields) do
-                local ok, ferr = DFItemProbes.write(item, label, value)
-                if ok then applied = applied + 1
-                else failed[#failed + 1] = label .. ":" .. tostring(ferr) end
-            end
-            if applied > 0 then syncItem(item) end
-            -- Clothing blood / dirt / holes / patches live on the ItemVisual, which
-            -- sendItemStats does not carry. Editing Wetness or Holes without this
-            -- lands on the server and is never seen by the owning client.
-            if applied > 0 and RDClothing.isClothing(item) then RDClothing.sync(target) end
-            syncTarget(target)
-            DFCore.audit("playerInventoryEdit", player,
-                string.format("target=%s slot=%d ft=%s applied=%d",
-                    args.username, args.slot or -1, args.fullType or "?", applied))
-            if #failed > 0 then
-                return { ok = false, reason = string.format(
-                    "%d applied, %d failed: %s", applied, #failed,
-                    table.concat(failed, "; ")) }
-            end
-            return { ok = true,
-                message = string.format("Applied %d field(s) to %s's %s.",
-                    applied, args.username, args.fullType or "item") }
-        end,
+        run = handlePlayerInventoryEdit,
     }
 
+    local function handlePlayerInventoryAction(player, args)
+        local target, err = resolveTarget(args.username)
+        if not target then return { ok = false, reason = err } end
+        local item, ierr = resolveItem(target, args.slot, args.fullType)
+        if not item then return { ok = false, reason = ierr } end
+        local ok, aerr = DFItemProbes.runAction(item, args.actionId)
+        if not ok then return { ok = false, reason = aerr } end
+        syncItem(item)
+        -- Same ItemVisual gap as playerInventoryEdit: the Repair action clears
+        -- blood and dirt, neither of which sendItemStats propagates.
+        if RDClothing.isClothing(item) then RDClothing.sync(target) end
+        syncTarget(target)
+        DFCore.audit("playerInventoryAction", player,
+            string.format("target=%s slot=%d ft=%s action=%s",
+                args.username, args.slot or -1, args.fullType or "?",
+                tostring(args.actionId)))
+        return { ok = true,
+            message = string.format("%s applied to %s's %s.",
+                args.actionId, args.username, args.fullType or "item") }
+    end
     DFServer.registerHandler{
         action     = "playerInventoryAction",
         capability = Capability.EditItem,
-        run = function(player, args)
-            local target, err = resolveTarget(args.username)
-            if not target then return { ok = false, reason = err } end
-            local item, ierr = resolveItem(target, args.slot, args.fullType)
-            if not item then return { ok = false, reason = ierr } end
-            local ok, aerr = DFItemProbes.runAction(item, args.actionId)
-            if not ok then return { ok = false, reason = aerr } end
-            syncItem(item)
-            -- Same ItemVisual gap as playerInventoryEdit: the Repair action clears
-            -- blood and dirt, neither of which sendItemStats propagates.
-            if RDClothing.isClothing(item) then RDClothing.sync(target) end
-            syncTarget(target)
-            DFCore.audit("playerInventoryAction", player,
-                string.format("target=%s slot=%d ft=%s action=%s",
-                    args.username, args.slot or -1, args.fullType or "?",
-                    tostring(args.actionId)))
-            return { ok = true,
-                message = string.format("%s applied to %s's %s.",
-                    args.actionId, args.username, args.fullType or "item") }
-        end,
+        run = handlePlayerInventoryAction,
     }
 
+    local function handlePlayerInventoryAdd(player, args)
+        local target, err = resolveTarget(args.username)
+        if not target then return { ok = false, reason = err } end
+        local ft = tostring(args.fullType or "")
+        -- Clamp the client-supplied count: each unit fires an AddItem +
+        -- sendAddItemToContainer packet, so an unbounded count is a one-tick
+        -- packet flood (and an easy way to lag the server). 100 is plenty for
+        -- any legitimate admin top-up.
+        local MAX_ADD = 100
+        local count = math.max(1, math.min(MAX_ADD, math.floor(tonumber(args.count) or 1)))
+        local inv = target:getInventory()
+        if not inv then return { ok = false, reason = "no inventory" } end
+        local added = 0
+        -- No guard. AddItem(String) cannot throw on the arbitrary client
+        -- string: an unfindable type logs and returns null
+        -- (ItemContainer.java:511-513), an obsolete script returns null
+        -- (:514-516), and a factory failure returns null (:517-520).
+        -- FindItem/getModule/getItemName are string and map operations that
+        -- tolerate any non-nil input, including "" (ScriptManager.java:
+        -- 1268-1274, 1280-1309). The nil check below IS the contract - a bad
+        -- type leaves `added` at 0, which the caller already reports as
+        -- "AddItem refused (bad type?)".
+        for _ = 1, count do
+            local newItem = inv:AddItem(ft)
+            if newItem then
+                added = added + 1
+                syncAdded(inv, newItem)
+            end
+        end
+        syncTarget(target)
+        DFCore.audit("playerInventoryAdd", player,
+            string.format("target=%s ft=%s count=%d added=%d",
+                args.username, ft, count, added))
+        if added == 0 then
+            return { ok = false, reason = "AddItem refused (bad type?): " .. ft }
+        end
+        return { ok = true,
+            message = string.format("Added %d x %s to %s.", added, ft, args.username) }
+    end
     DFServer.registerHandler{
         action     = "playerInventoryAdd",
         capability = Capability.AddItem,
-        run = function(player, args)
-            local target, err = resolveTarget(args.username)
-            if not target then return { ok = false, reason = err } end
-            local ft = tostring(args.fullType or "")
-            -- Clamp the client-supplied count: each unit fires an AddItem +
-            -- sendAddItemToContainer packet, so an unbounded count is a one-tick
-            -- packet flood (and an easy way to lag the server). 100 is plenty for
-            -- any legitimate admin top-up.
-            local MAX_ADD = 100
-            local count = math.max(1, math.min(MAX_ADD, math.floor(tonumber(args.count) or 1)))
-            local inv = target:getInventory()
-            if not inv then return { ok = false, reason = "no inventory" } end
-            local added = 0
-            -- No guard. AddItem(String) cannot throw on the arbitrary client
-            -- string: an unfindable type logs and returns null
-            -- (ItemContainer.java:511-513), an obsolete script returns null
-            -- (:514-516), and a factory failure returns null (:517-520).
-            -- FindItem/getModule/getItemName are string and map operations that
-            -- tolerate any non-nil input, including "" (ScriptManager.java:
-            -- 1268-1274, 1280-1309). The nil check below IS the contract - a bad
-            -- type leaves `added` at 0, which the caller already reports as
-            -- "AddItem refused (bad type?)".
-            for _ = 1, count do
-                local newItem = inv:AddItem(ft)
-                if newItem then
-                    added = added + 1
-                    syncAdded(inv, newItem)
-                end
-            end
-            syncTarget(target)
-            DFCore.audit("playerInventoryAdd", player,
-                string.format("target=%s ft=%s count=%d added=%d",
-                    args.username, ft, count, added))
-            if added == 0 then
-                return { ok = false, reason = "AddItem refused (bad type?): " .. ft }
-            end
-            return { ok = true,
-                message = string.format("Added %d x %s to %s.", added, ft, args.username) }
-        end,
+        run = handlePlayerInventoryAdd,
     }
 
+    local function handlePlayerInventoryRemove(player, args)
+        local target, err = resolveTarget(args.username)
+        if not target then return { ok = false, reason = err } end
+        local item, ierr = resolveItem(target, args.slot, args.fullType)
+        if not item then return { ok = false, reason = ierr } end
+        local inv = target:getInventory()
+        -- Capture the item's actual container before removal - if it was
+        -- in a sub-container (bag) we need to sync against that container,
+        -- not the player's main inventory.
+        local container = item:getContainer() or inv
+        -- ItemContainer.Remove:1940 is null/instanceof-guarded throughout;
+        -- inv itself can be nil for a worn-only resolve, hence the check.
+        if inv then inv:Remove(item) end
+        syncRemoved(container, item)
+        syncTarget(target)
+        DFCore.audit("playerInventoryRemove", player,
+            string.format("target=%s slot=%d ft=%s",
+                args.username, args.slot or -1, args.fullType or "?"))
+        return { ok = true,
+            message = string.format("Removed %s from %s.",
+                args.fullType or "item", args.username) }
+    end
     DFServer.registerHandler{
         action     = "playerInventoryRemove",
         capability = Capability.EditItem,
-        run = function(player, args)
-            local target, err = resolveTarget(args.username)
-            if not target then return { ok = false, reason = err } end
-            local item, ierr = resolveItem(target, args.slot, args.fullType)
-            if not item then return { ok = false, reason = ierr } end
-            local inv = target:getInventory()
-            -- Capture the item's actual container before removal - if it was
-            -- in a sub-container (bag) we need to sync against that container,
-            -- not the player's main inventory.
-            local container = item:getContainer() or inv
-            -- ItemContainer.Remove:1940 is null/instanceof-guarded throughout;
-            -- inv itself can be nil for a worn-only resolve, hence the check.
-            if inv then inv:Remove(item) end
-            syncRemoved(container, item)
-            syncTarget(target)
-            DFCore.audit("playerInventoryRemove", player,
-                string.format("target=%s slot=%d ft=%s",
-                    args.username, args.slot or -1, args.fullType or "?"))
-            return { ok = true,
-                message = string.format("Removed %s from %s.",
-                    args.fullType or "item", args.username) }
-        end,
+        run = handlePlayerInventoryRemove,
     }
 
     -- Bulk Repair: walk every addressable item (main + worn + one-level bag
@@ -541,105 +551,107 @@ Events.OnServerStarted.Add(function()
     -- getHolesNumber has no setter, and Clothing.patches is a private HashMap with
     -- no public remover. fullyRestore does condition, blood, dirt, holes AND
     -- patches in one call.
+    local function handlePlayerInventoryRepairAll(player, args)
+        local target, err = resolveTarget(args.username)
+        if not target then return { ok = false, reason = err } end
+
+        local repaired, clothing = 0, 0
+        local restoreFailed, firstRestoreErr = 0, nil
+        for _, entry in ipairs(listAddressableItems(target)) do
+            local it = entry.item
+            if it and RDClothing.isClothing(it) then
+                -- PRECONDITION, not a guard. fullyRestore derefs
+                -- getVisual() unchecked inside its loop (Clothing.java:
+                -- 996-1014, derefs at :1003/:1006/:1007/:1009), and
+                -- getVisual() returns null exactly when the backing
+                -- ClothingItem asset is absent or not READY
+                -- (InventoryItem.java:2070-2075). The pcall that sat here
+                -- was inert - fullyRestore is an exposed method, so on a
+                -- faulted garment the NPE was swallowed by MethodCaller
+                -- AFTER condition/dirt/blood had already been applied,
+                -- and the half-restored garment was counted repaired
+                -- (MethodCaller.java:33-56). Asking getVisual first is
+                -- deterministic, skips the garment whole, and makes this
+                -- failure count honest for the first time. The residual
+                -- async race - the asset flipping un-READY mid-call - is
+                -- rare and stays engine-logged.
+                if it:getVisual() then
+                    it:fullyRestore()
+                    repaired = repaired + 1
+                    clothing = clothing + 1
+                else
+                    restoreFailed = restoreFailed + 1
+                    firstRestoreErr = firstRestoreErr
+                        or "visual unavailable (asset absent or not READY)"
+                end
+            elseif it and type(it.getCondition) == "function" then
+                local ok = DFItemProbes.runAction(it, "Repair")
+                if ok then
+                    repaired = repaired + 1
+                    syncItem(it)
+                end
+            end
+        end
+
+        -- fullyRestore sends SyncClothing itself, but only via getOwner(),
+        -- which is nil for clothing sitting in a bag rather than worn. This is
+        -- the net that catches those, and it is also the fix for the older bug
+        -- where blood/dirt clearing never reached other clients at all:
+        -- sendItemStats covers item stat fields, not the ItemVisual the
+        -- blood/dirt/hole arrays live on. Once for the batch, not per item.
+        if clothing > 0 then RDClothing.sync(target) end
+
+        if restoreFailed > 0 then
+            print(string.format(
+                "[Dragonfly] playerInventoryRepairAll: %d garment(s) could not be "
+                .. "restored (first: %s)", restoreFailed, tostring(firstRestoreErr)))
+        end
+
+        syncTarget(target)
+        DFCore.audit("playerInventoryRepairAll", player,
+            string.format("target=%s repaired=%d clothing=%d failed=%d",
+                args.username, repaired, clothing, restoreFailed))
+        return { ok = true,
+            message = string.format("Repaired %d item(s) on %s.",
+                repaired, args.username) }
+    end
     DFServer.registerHandler{
         action     = "playerInventoryRepairAll",
         capability = Capability.EditItem,
-        run = function(player, args)
-            local target, err = resolveTarget(args.username)
-            if not target then return { ok = false, reason = err } end
-
-            local repaired, clothing = 0, 0
-            local restoreFailed, firstRestoreErr = 0, nil
-            for _, entry in ipairs(listAddressableItems(target)) do
-                local it = entry.item
-                if it and RDClothing.isClothing(it) then
-                    -- PRECONDITION, not a guard. fullyRestore derefs
-                    -- getVisual() unchecked inside its loop (Clothing.java:
-                    -- 996-1014, derefs at :1003/:1006/:1007/:1009), and
-                    -- getVisual() returns null exactly when the backing
-                    -- ClothingItem asset is absent or not READY
-                    -- (InventoryItem.java:2070-2075). The pcall that sat here
-                    -- was inert - fullyRestore is an exposed method, so on a
-                    -- faulted garment the NPE was swallowed by MethodCaller
-                    -- AFTER condition/dirt/blood had already been applied,
-                    -- and the half-restored garment was counted repaired
-                    -- (MethodCaller.java:33-56). Asking getVisual first is
-                    -- deterministic, skips the garment whole, and makes this
-                    -- failure count honest for the first time. The residual
-                    -- async race - the asset flipping un-READY mid-call - is
-                    -- rare and stays engine-logged.
-                    if it:getVisual() then
-                        it:fullyRestore()
-                        repaired = repaired + 1
-                        clothing = clothing + 1
-                    else
-                        restoreFailed = restoreFailed + 1
-                        firstRestoreErr = firstRestoreErr
-                            or "visual unavailable (asset absent or not READY)"
-                    end
-                elseif it and type(it.getCondition) == "function" then
-                    local ok = DFItemProbes.runAction(it, "Repair")
-                    if ok then
-                        repaired = repaired + 1
-                        syncItem(it)
-                    end
-                end
-            end
-
-            -- fullyRestore sends SyncClothing itself, but only via getOwner(),
-            -- which is nil for clothing sitting in a bag rather than worn. This is
-            -- the net that catches those, and it is also the fix for the older bug
-            -- where blood/dirt clearing never reached other clients at all:
-            -- sendItemStats covers item stat fields, not the ItemVisual the
-            -- blood/dirt/hole arrays live on. Once for the batch, not per item.
-            if clothing > 0 then RDClothing.sync(target) end
-
-            if restoreFailed > 0 then
-                print(string.format(
-                    "[Dragonfly] playerInventoryRepairAll: %d garment(s) could not be "
-                    .. "restored (first: %s)", restoreFailed, tostring(firstRestoreErr)))
-            end
-
-            syncTarget(target)
-            DFCore.audit("playerInventoryRepairAll", player,
-                string.format("target=%s repaired=%d clothing=%d failed=%d",
-                    args.username, repaired, clothing, restoreFailed))
-            return { ok = true,
-                message = string.format("Repaired %d item(s) on %s.",
-                    repaired, args.username) }
-        end,
+        run = handlePlayerInventoryRepairAll,
     }
 
+    local function handlePlayerInventoryDump(player, args)
+        local target, err = resolveTarget(args.username)
+        if not target then return { ok = false, reason = err } end
+        local inv = target:getInventory()
+        if not inv then return { ok = false, reason = "no inventory" } end
+        -- Snapshot item refs before clear() wipes them so we can fire a
+        -- remove-from-container packet per item afterwards. Otherwise the
+        -- owner's client still thinks they have all the loot.
+        local toRemove = {}
+        local items = inv:getItems()
+        if items then
+            for i = 0, items:size() - 1 do
+                toRemove[#toRemove + 1] = items:get(i)
+            end
+        end
+        local before = #toRemove
+        -- ItemContainer.clear:2527 is a list clear plus two flag sets.
+        inv:clear()
+        for _, it in ipairs(toRemove) do
+            syncRemoved(inv, it)
+        end
+        syncTarget(target)
+        DFCore.audit("playerInventoryDump", player,
+            string.format("target=%s cleared=%d", args.username, before))
+        return { ok = true,
+            message = string.format("Dumped %d items from %s.", before, args.username) }
+    end
     DFServer.registerHandler{
         action     = "playerInventoryDump",
         capability = Capability.EditItem,
-        run = function(player, args)
-            local target, err = resolveTarget(args.username)
-            if not target then return { ok = false, reason = err } end
-            local inv = target:getInventory()
-            if not inv then return { ok = false, reason = "no inventory" } end
-            -- Snapshot item refs before clear() wipes them so we can fire a
-            -- remove-from-container packet per item afterwards. Otherwise the
-            -- owner's client still thinks they have all the loot.
-            local toRemove = {}
-            local items = inv:getItems()
-            if items then
-                for i = 0, items:size() - 1 do
-                    toRemove[#toRemove + 1] = items:get(i)
-                end
-            end
-            local before = #toRemove
-            -- ItemContainer.clear:2527 is a list clear plus two flag sets.
-            inv:clear()
-            for _, it in ipairs(toRemove) do
-                syncRemoved(inv, it)
-            end
-            syncTarget(target)
-            DFCore.audit("playerInventoryDump", player,
-                string.format("target=%s cleared=%d", args.username, before))
-            return { ok = true,
-                message = string.format("Dumped %d items from %s.", before, args.username) }
-        end,
+        run = handlePlayerInventoryDump,
     }
 
     print("[Dragonfly] DFInventory_Server handlers registered")

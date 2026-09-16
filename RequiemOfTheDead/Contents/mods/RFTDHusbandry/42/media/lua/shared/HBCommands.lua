@@ -112,13 +112,19 @@ RDNet.adopt(TOKEN)
 -- OnClickedAnimalForContext hands the client every animal under the cursor and
 -- HBContextMenu sends one command per animal, so a right-click inside a full
 -- pen is legitimately several in a frame.
-RDNet.register(TOKEN, HBCmd.ADD_SEEN, { public = true, rate = 20 },
-    function(player, args)
-        local id = tonumber(args and args.id)
-        if not id then return end
-        local animal = getAnimal(id)
-        if animal then HBData.addSeen(animal) end
-    end)
+-- Handlers are named locals, not function literals in the register calls:
+-- nameless (table-constructor and unnamed-argument) functions have thrown
+-- errors replaced by "Method name is null" at the engine's throw-time stack
+-- builder - full citation in MMTraitRepair.lua beside its handler. RDNet's
+-- dispatch pcall (RDNet.lua:229) reports tostring(err), so these six were
+-- exactly the boundary that logged the reporter's crash instead of the fault.
+local function handleAddSeen(player, args)
+    local id = tonumber(args and args.id)
+    if not id then return end
+    local animal = getAnimal(id)
+    if animal then HBData.addSeen(animal) end
+end
+RDNet.register(TOKEN, HBCmd.ADD_SEEN, { public = true, rate = 20 }, handleAddSeen)
 
 -- Add hay bedding to a hutch. Open to any player: the diegetic path is a
 -- client timed action that consumes a HayTuft and then sends this; the server
@@ -131,29 +137,29 @@ RDNet.register(TOKEN, HBCmd.ADD_SEEN, { public = true, rate = 20 },
 -- action while the client toasted success would be worse than none. The real
 -- fix is to batch the way DEBUG_REFILL already batches OIDs; that changes the
 -- payload contract, so it is written down rather than done here (TODO.md).
-RDNet.register(TOKEN, HBCmd.ADD_BEDDING, { public = true, rate = 30 },
-    function(player, args)
-        if not (HBBedding and HBBedding.resolveHutchAt) then
-            print("[HB] ADD_BEDDING: HBBedding not loaded")
-            return
-        end
-        local x = tonumber(args and args.x)
-        local y = tonumber(args and args.y)
-        local z = tonumber(args and args.z) or 0
-        -- Ignore any client-supplied amount; the server decides the per-add
-        -- value so a client can't inflate it (addBedding still caps at MAX).
-        if not (x and y) then return end
-        local hutch = HBBedding.resolveHutchAt(x, y, z)
-        if not hutch then
-            print(string.format("[HB] ADD_BEDDING: no hutch at %s,%s,%s",
-                tostring(x), tostring(y), tostring(z)))
-            return
-        end
-        local added = HBBedding.perAdd()
-        local total = HBBedding.addBedding(hutch, added)
-        print(string.format("[HB] ADD_BEDDING: +%.0f at %d,%d,%d -> %.0f/%d",
-            added, x, y, z, total, HBBedding.MAX))
-    end)
+local function handleAddBedding(player, args)
+    if not (HBBedding and HBBedding.resolveHutchAt) then
+        print("[HB] ADD_BEDDING: HBBedding not loaded")
+        return
+    end
+    local x = tonumber(args and args.x)
+    local y = tonumber(args and args.y)
+    local z = tonumber(args and args.z) or 0
+    -- Ignore any client-supplied amount; the server decides the per-add
+    -- value so a client can't inflate it (addBedding still caps at MAX).
+    if not (x and y) then return end
+    local hutch = HBBedding.resolveHutchAt(x, y, z)
+    if not hutch then
+        print(string.format("[HB] ADD_BEDDING: no hutch at %s,%s,%s",
+            tostring(x), tostring(y), tostring(z)))
+        return
+    end
+    local added = HBBedding.perAdd()
+    local total = HBBedding.addBedding(hutch, added)
+    print(string.format("[HB] ADD_BEDDING: +%.0f at %d,%d,%d -> %.0f/%d",
+        added, x, y, z, total, HBBedding.MAX))
+end
+RDNet.register(TOKEN, HBCmd.ADD_BEDDING, { public = true, rate = 30 }, handleAddBedding)
 
 -- Client-asserted forensic report; open like ADD_BEDDING - the sender reports
 -- on itself. Bounds, the watchlist re-check and the MAX_ITEMS cap all live in
@@ -164,14 +170,14 @@ RDNet.register(TOKEN, HBCmd.ADD_BEDDING, { public = true, rate = 30 },
 -- dispatcher, which had no per-command limiter of its own; RDNet's bucket is
 -- already scoped to (token, command) with the same 4/sec, so keeping both
 -- would have been two limiters counting the same traffic.
-RDNet.register(TOKEN, HBCmd.PART_PLACED, { public = true, rate = 4 },
-    function(player, args)
-        if HBPartWatch and HBPartWatch.onClientReport then
-            HBPartWatch.onClientReport(player, args)
-        else
-            print("[HB] PART_PLACED: HBPartWatch not loaded")
-        end
-    end)
+local function handlePartPlaced(player, args)
+    if HBPartWatch and HBPartWatch.onClientReport then
+        HBPartWatch.onClientReport(player, args)
+    else
+        print("[HB] PART_PLACED: HBPartWatch not loaded")
+    end
+end
+RDNet.register(TOKEN, HBCmd.PART_PLACED, { public = true, rate = 4 }, handlePartPlaced)
 
 -- ---- staff ---------------------------------------------------------------
 
@@ -180,73 +186,73 @@ RDNet.register(TOKEN, HBCmd.PART_PLACED, { public = true, rate = 4 },
 -- only intake moved. HBSexCheck_Server is in server/ and this file is in
 -- shared/, so it loads AFTER us - but dispatch happens at runtime, long past
 -- load, so resolving it here is safe.
-RDNet.register(TOKEN, HBCmd.SEX_CHECK, { gate = "handler", rate = 4 },
-    function(player, args)
-        if not isAdminLike(player) then
-            print("[HBSexCheck] rejected (not admin)")
-            return
-        end
-        if HBSexCheck_Server and HBSexCheck_Server.handle then
-            HBSexCheck_Server.handle(player, args)
-        else
-            print("[HB] SEX_CHECK: HBSexCheck_Server not loaded")
-        end
-    end)
+local function handleSexCheck(player, args)
+    if not isAdminLike(player) then
+        print("[HBSexCheck] rejected (not admin)")
+        return
+    end
+    if HBSexCheck_Server and HBSexCheck_Server.handle then
+        HBSexCheck_Server.handle(player, args)
+    else
+        print("[HB] SEX_CHECK: HBSexCheck_Server not loaded")
+    end
+end
+RDNet.register(TOKEN, HBCmd.SEX_CHECK, { gate = "handler", rate = 4 }, handleSexCheck)
 
-RDNet.register(TOKEN, HBCmd.DEBUG_PROBE, { gate = "handler", rate = 4 },
-    function(player, args)
-        if not isAdminLike(player) then
-            print("[HB] DEBUG_PROBE rejected (not admin)")
-            return
-        end
-        local id = tonumber(args and args.id)
-        if not id then return end
-        if HBAPIProbe and HBAPIProbe.runOn then
-            HBAPIProbe.runOn(id, player)
-        else
-            print("[HB] DEBUG_PROBE: HBAPIProbe not loaded")
-        end
-    end)
+local function handleDebugProbe(player, args)
+    if not isAdminLike(player) then
+        print("[HB] DEBUG_PROBE rejected (not admin)")
+        return
+    end
+    local id = tonumber(args and args.id)
+    if not id then return end
+    if HBAPIProbe and HBAPIProbe.runOn then
+        HBAPIProbe.runOn(id, player)
+    else
+        print("[HB] DEBUG_PROBE: HBAPIProbe not loaded")
+    end
+end
+RDNet.register(TOKEN, HBCmd.DEBUG_PROBE, { gate = "handler", rate = 4 }, handleDebugProbe)
 
 -- One click, one batch write across every OID the panel selected - so the rate
 -- bounds clicks, not animals.
-RDNet.register(TOKEN, HBCmd.DEBUG_REFILL, { gate = "handler", rate = 2 },
-    function(player, args)
-        if not isAdminLike(player) then
-            RDNet.reply(player, TOKEN, HBCmd.DEBUG_PROBE_RESULT,
-                { line = "[set] rejected (not admin)" })
-            return
+local function handleDebugRefill(player, args)
+    if not isAdminLike(player) then
+        RDNet.reply(player, TOKEN, HBCmd.DEBUG_PROBE_RESULT,
+            { line = "[set] rejected (not admin)" })
+        return
+    end
+    -- Bidirectional stat write. value=0 → fully fed/watered (refill);
+    -- value≈0.9 → starving/parched (starve). Comma-separated OID batch.
+    -- updateLastTimeSinceUpdate() resets the elapsed-time clock on the
+    -- way down (refill) so chunk reload doesn't immediately re-drain;
+    -- harmless on the way up.
+    local oidStr = tostring(args and args.oids or "")
+    local target = tonumber(args and args.value) or 0
+    local count, missing = 0, 0
+    for s in string.gmatch(oidStr, "[^,]+") do
+        local oid = tonumber(s)
+        local animal = oid and getAnimal(oid)
+        if not animal then
+            missing = missing + 1
+        else
+            -- The current Build 42 stat object and CharacterStat enum are
+            -- established engine contracts; unexpected mutation faults must
+            -- surface instead of turning a manual admin action into a
+            -- misleading partial success.
+            animal:getStats():set(CharacterStat.HUNGER, target)
+            animal:getStats():set(CharacterStat.THIRST, target)
+            animal:updateLastTimeSinceUpdate()
+            count = count + 1
         end
-        -- Bidirectional stat write. value=0 → fully fed/watered (refill);
-        -- value≈0.9 → starving/parched (starve). Comma-separated OID batch.
-        -- updateLastTimeSinceUpdate() resets the elapsed-time clock on the
-        -- way down (refill) so chunk reload doesn't immediately re-drain;
-        -- harmless on the way up.
-        local oidStr = tostring(args and args.oids or "")
-        local target = tonumber(args and args.value) or 0
-        local count, missing = 0, 0
-        for s in string.gmatch(oidStr, "[^,]+") do
-            local oid = tonumber(s)
-            local animal = oid and getAnimal(oid)
-            if not animal then
-                missing = missing + 1
-            else
-                -- The current Build 42 stat object and CharacterStat enum are
-                -- established engine contracts; unexpected mutation faults must
-                -- surface instead of turning a manual admin action into a
-                -- misleading partial success.
-                animal:getStats():set(CharacterStat.HUNGER, target)
-                animal:getStats():set(CharacterStat.THIRST, target)
-                animal:updateLastTimeSinceUpdate()
-                count = count + 1
-            end
-        end
-        local label = (target <= 0.05) and "refill" or "starve"
-        local msg = string.format("[%s value=%.2f] applied=%d  missing=%d",
-            label, target, count, missing)
-        print("[HB] " .. msg)
-        RDNet.reply(player, TOKEN, HBCmd.DEBUG_PROBE_RESULT, { line = msg })
-    end)
+    end
+    local label = (target <= 0.05) and "refill" or "starve"
+    local msg = string.format("[%s value=%.2f] applied=%d  missing=%d",
+        label, target, count, missing)
+    print("[HB] " .. msg)
+    RDNet.reply(player, TOKEN, HBCmd.DEBUG_PROBE_RESULT, { line = msg })
+end
+RDNet.register(TOKEN, HBCmd.DEBUG_REFILL, { gate = "handler", rate = 2 }, handleDebugRefill)
 
 -- ---------------------------------------------------------------------------
 -- Copyright (C) 2026 Project_Omen. Part of Requiem of the Dead.

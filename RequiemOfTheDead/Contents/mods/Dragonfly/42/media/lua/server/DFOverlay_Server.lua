@@ -185,66 +185,76 @@ Events.OnServerStarted.Add(function()
     -- reading it, not the first time an admin opens a tab days later.
     ensure()
 
+    -- Handlers and the layoutSet gate are named locals, not function literals
+    -- in the tables: nameless (table-constructor) functions have thrown errors
+    -- replaced by "Method name is null" at the engine's throw-time stack
+    -- builder - full citation in MMTraitRepair.lua beside its handler. The
+    -- gate is included because it runs on the same dispatch stack: nameless
+    -- ANYWHERE on the stack at throw time destroys the message.
+    local function handleLayoutGet(player, args)
+        local key = tostring((args or {}).key or "")
+        if not DFOverlay.validKey(key) then
+            return { ok = false, reason = "bad page key" }
+        end
+        pushTo(player, key)
+        return { ok = true }
+    end
     DFServer.registerHandler{
         action     = "layoutGet",
         -- "any" = any capability at all: staff is the gate for a read. The
         -- dispatcher grew this shape 2026-08-25; the self-gate-and-self-audit
         -- that sat here compensated for what it could not then declare.
         capability = "any",
-        run = function(player, args)
-            local key = tostring((args or {}).key or "")
-            if not DFOverlay.validKey(key) then
-                return { ok = false, reason = "bad page key" }
-            end
-            pushTo(player, key)
-            return { ok = true }
-        end,
+        run = handleLayoutGet,
     }
 
+    -- A FUNCTION gate, because the answer depends on the payload: __server
+    -- needs ChangeAndReloadServerOptions, a sandbox page needs
+    -- SandboxOptions, and a role can hold either without the other. The
+    -- dispatcher took function gates 2026-08-25, so this - the one handler
+    -- whose gate genuinely could not be declared - now declares it, and
+    -- its refusals land in the audit log the same way everyone else's do.
+    -- A malformed key passes the gate and is refused by the domain check
+    -- in the handler, where the reply can say WHY (the gate only answers
+    -- yes/no).
+    local function gateLayoutSet(player, args)
+        local key = tostring((args or {}).key or "")
+        if not DFOverlay.validKey(key) then return true end
+        if RDAccess.roleHas(player, capabilityFor(key)) then return true end
+        return false, "missing " .. capabilityFor(key) .. " for " .. key
+    end
+    local function handleLayoutSet(player, args)
+        local key = tostring(args.key or "")
+        if not DFOverlay.validKey(key) then
+            return { ok = false, reason = "bad page key" }
+        end
+
+        local ok, kept, dropped, mirrored = DFOverlay_Server.set(
+            key, args.entries, player:getUsername())
+        if not ok then return { ok = false, reason = kept } end
+
+        -- Counted, not silently accepted. A payload three quarters of which was
+        -- refused leaves the client and the server holding different layouts,
+        -- and the broadcast below is what resolves that - but only if somebody
+        -- can see it happened.
+        DFCore.audit("layoutSet", player, string.format(
+            "page=%s entries=%d%s", key, kept,
+            dropped > 0 and (" dropped=" .. dropped) or ""))
+
+        RDNet.sendStaff(DFCore.MODULE, "AdminLayout", payloadFor(key))
+        local msg = kept == 0
+            and ("Layout cleared for " .. key)
+            or  (kept .. " entries saved for " .. key)
+        if not mirrored then
+            msg = msg .. " - NOT written to disk: the layout file is held. "
+                .. "Recover or discard it, or this is lost on a hard kill."
+        end
+        return { ok = true, message = msg }
+    end
     DFServer.registerHandler{
         action     = "layoutSet",
-        -- A FUNCTION gate, because the answer depends on the payload: __server
-        -- needs ChangeAndReloadServerOptions, a sandbox page needs
-        -- SandboxOptions, and a role can hold either without the other. The
-        -- dispatcher took function gates 2026-08-25, so this - the one handler
-        -- whose gate genuinely could not be declared - now declares it, and
-        -- its refusals land in the audit log the same way everyone else's do.
-        -- A malformed key passes the gate and is refused by the domain check
-        -- below, where the reply can say WHY (the gate only answers yes/no).
-        capability = function(player, args)
-            local key = tostring((args or {}).key or "")
-            if not DFOverlay.validKey(key) then return true end
-            if RDAccess.roleHas(player, capabilityFor(key)) then return true end
-            return false, "missing " .. capabilityFor(key) .. " for " .. key
-        end,
-        run = function(player, args)
-            local key = tostring(args.key or "")
-            if not DFOverlay.validKey(key) then
-                return { ok = false, reason = "bad page key" }
-            end
-
-            local ok, kept, dropped, mirrored = DFOverlay_Server.set(
-                key, args.entries, player:getUsername())
-            if not ok then return { ok = false, reason = kept } end
-
-            -- Counted, not silently accepted. A payload three quarters of which was
-            -- refused leaves the client and the server holding different layouts,
-            -- and the broadcast below is what resolves that - but only if somebody
-            -- can see it happened.
-            DFCore.audit("layoutSet", player, string.format(
-                "page=%s entries=%d%s", key, kept,
-                dropped > 0 and (" dropped=" .. dropped) or ""))
-
-            RDNet.sendStaff(DFCore.MODULE, "AdminLayout", payloadFor(key))
-            local msg = kept == 0
-                and ("Layout cleared for " .. key)
-                or  (kept .. " entries saved for " .. key)
-            if not mirrored then
-                msg = msg .. " - NOT written to disk: the layout file is held. "
-                    .. "Recover or discard it, or this is lost on a hard kill."
-            end
-            return { ok = true, message = msg }
-        end,
+        capability = gateLayoutSet,
+        run = handleLayoutSet,
     }
 
     -- The way out of a hold, in the panel rather than only in a server console.
@@ -256,6 +266,29 @@ Events.OnServerStarted.Add(function()
     -- wanted or it is not - and the person who can answer it is looking at this
     -- panel, not at the console. Both exits are explicit and neither is reachable
     -- by accident.
+    local function handleLayoutRecover(player, args)
+        local s = ensure()
+        if not s:report().heldDefs then
+            return { ok = false, reason = "nothing is held" }
+        end
+        local ok, why
+        if args.take then ok, why = s:import("defs") else ok, why = s:discard("defs") end
+        if not ok then return { ok = false, reason = tostring(why) } end
+        -- FLUSHED, not left to the sweep. Neither exit writes on its own -
+        -- discard() only releases the latch and marks the document pending
+        -- (RDConfigStore's own comment: "the next write will overwrite it")
+        -- - so a hard kill before the next save or sweep leaves the old file
+        -- untouched and the hold comes straight back on the next boot. The
+        -- admin was told it was dealt with, so it has to be dealt with.
+        s:flush()
+        DFCore.audit("layoutRecover", player, args.take and "imported" or "discarded")
+        -- Everyone's copy of whatever page they are on is now wrong. There is
+        -- no per-page broadcast that fixes that, so tell the panels to re-ask.
+        RDNet.sendStaff(DFCore.MODULE, "AdminLayoutStale", {})
+        return { ok = true, message = args.take
+            and "Saved layouts recovered."
+            or  "Saved layouts discarded." }
+    end
     DFServer.registerHandler{
         action = "layoutRecover",
         -- DECLARED, unlike its two neighbours, because this gate does not depend
@@ -265,29 +298,7 @@ Events.OnServerStarted.Add(function()
         -- refuse it, log the refusal as a refusal, and answer the caller - none
         -- of which a check inside the body gets.
         capability = "ChangeAndReloadServerOptions",
-        run = function(player, args)
-            local s = ensure()
-            if not s:report().heldDefs then
-                return { ok = false, reason = "nothing is held" }
-            end
-            local ok, why
-            if args.take then ok, why = s:import("defs") else ok, why = s:discard("defs") end
-            if not ok then return { ok = false, reason = tostring(why) } end
-            -- FLUSHED, not left to the sweep. Neither exit writes on its own -
-            -- discard() only releases the latch and marks the document pending
-            -- (RDConfigStore's own comment: "the next write will overwrite it")
-            -- - so a hard kill before the next save or sweep leaves the old file
-            -- untouched and the hold comes straight back on the next boot. The
-            -- admin was told it was dealt with, so it has to be dealt with.
-            s:flush()
-            DFCore.audit("layoutRecover", player, args.take and "imported" or "discarded")
-            -- Everyone's copy of whatever page they are on is now wrong. There is
-            -- no per-page broadcast that fixes that, so tell the panels to re-ask.
-            RDNet.sendStaff(DFCore.MODULE, "AdminLayoutStale", {})
-            return { ok = true, message = args.take
-                and "Saved layouts recovered."
-                or  "Saved layouts discarded." }
-        end,
+        run = handleLayoutRecover,
     }
 
     print("[Dragonfly] DFOverlay_Server handlers registered")

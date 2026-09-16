@@ -84,67 +84,75 @@ local function chunkOf(x, y)
     return math.floor(x / 10), math.floor(y / 10)
 end
 
+-- Handlers are named locals, not function literals in the tables: nameless
+-- (table-constructor) functions have thrown errors replaced by "Method name
+-- is null" at the engine's throw-time stack builder - full citation in
+-- MMTraitRepair.lua beside its handler. (The inner function(z) sweeps are
+-- positional call arguments, which the compiler does name.)
+local function handleRemoveChunkZombies(player, args)
+    local px, py = player:getX(), player:getY()
+    local cx, cy = chunkOf(px, py)
+    local found, removed = 0, 0
+    forEachLoadedZombie(function(z)
+        local sq = z:getSquare()
+        if not sq then return end
+        local zcx, zcy = chunkOf(sq:getX(), sq:getY())
+        if zcx == cx and zcy == cy then
+            found = found + 1
+            cull(z)
+            removed = removed + 1
+        end
+    end)
+    print(string.format("[Dragonfly] removeChunkZombies player=(%d,%d) chunk=(%d,%d) found=%d removed=%d",
+        math.floor(px), math.floor(py), cx, cy, found, removed))
+    DFCore.audit("removeChunkZombies", player,
+        string.format("chunk=(%d,%d) removed=%d", cx, cy, removed))
+    return { ok = true,
+        message = string.format("Removed %d zombies in chunk (%d,%d).", removed, cx, cy) }
+end
 DFServer.registerHandler{
     action     = "removeChunkZombies",
     capability = CAP,
-    run = function(player, args)
-        local px, py = player:getX(), player:getY()
-        local cx, cy = chunkOf(px, py)
-        local found, removed = 0, 0
-        forEachLoadedZombie(function(z)
-            local sq = z:getSquare()
-            if not sq then return end
-            local zcx, zcy = chunkOf(sq:getX(), sq:getY())
-            if zcx == cx and zcy == cy then
-                found = found + 1
-                cull(z)
-                removed = removed + 1
-            end
-        end)
-        print(string.format("[Dragonfly] removeChunkZombies player=(%d,%d) chunk=(%d,%d) found=%d removed=%d",
-            math.floor(px), math.floor(py), cx, cy, found, removed))
-        DFCore.audit("removeChunkZombies", player,
-            string.format("chunk=(%d,%d) removed=%d", cx, cy, removed))
-        return { ok = true,
-            message = string.format("Removed %d zombies in chunk (%d,%d).", removed, cx, cy) }
-    end,
+    run = handleRemoveChunkZombies,
 }
 
+local function handleRemoveRadiusZombies(player, args)
+    local radius = tonumber(args.radius) or 25
+    if radius < 1 then radius = 1 end
+    if radius > 500 then radius = 500 end
+    local px, py = player:getX(), player:getY()
+    local r2 = radius * radius
+    local removed = 0
+    forEachLoadedZombie(function(z)
+        local sq = z:getSquare()
+        if not sq then return end
+        local dx, dy = sq:getX() - px, sq:getY() - py
+        if dx * dx + dy * dy <= r2 then
+            cull(z)
+            removed = removed + 1
+        end
+    end)
+    DFCore.audit("removeRadiusZombies", player,
+        string.format("radius=%d removed=%d", radius, removed))
+    return { ok = true,
+        message = string.format("Removed %d zombies within %d tiles.", removed, radius) }
+end
 DFServer.registerHandler{
     action     = "removeRadiusZombies",
     capability = CAP,
-    run = function(player, args)
-        local radius = tonumber(args.radius) or 25
-        if radius < 1 then radius = 1 end
-        if radius > 500 then radius = 500 end
-        local px, py = player:getX(), player:getY()
-        local r2 = radius * radius
-        local removed = 0
-        forEachLoadedZombie(function(z)
-            local sq = z:getSquare()
-            if not sq then return end
-            local dx, dy = sq:getX() - px, sq:getY() - py
-            if dx * dx + dy * dy <= r2 then
-                cull(z)
-                removed = removed + 1
-            end
-        end)
-        DFCore.audit("removeRadiusZombies", player,
-            string.format("radius=%d removed=%d", radius, removed))
-        return { ok = true,
-            message = string.format("Removed %d zombies within %d tiles.", removed, radius) }
-    end,
+    run = handleRemoveRadiusZombies,
 }
 
+local function handleRemoveAllLoadedZombies(player, args)
+    local removed = 0
+    forEachLoadedZombie(function(z) cull(z); removed = removed + 1 end)
+    DFCore.audit("removeAllLoadedZombies", player, "removed=" .. removed)
+    return { ok = true, message = string.format("Removed %d loaded zombies.", removed) }
+end
 DFServer.registerHandler{
     action     = "removeAllLoadedZombies",
     capability = CAP,
-    run = function(player, args)
-        local removed = 0
-        forEachLoadedZombie(function(z) cull(z); removed = removed + 1 end)
-        DFCore.audit("removeAllLoadedZombies", player, "removed=" .. removed)
-        return { ok = true, message = string.format("Removed %d loaded zombies.", removed) }
-    end,
+    run = handleRemoveAllLoadedZombies,
 }
 
 -- ---------------------------------------------------------------------------
