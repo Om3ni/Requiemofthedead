@@ -90,8 +90,21 @@ local function makeWorld()
         getFreeEmitter = function(_, x, y, z)
             emitterCalls[#emitterCalls + 1] = { kind = "emitter", x = x, y = y, z = z }
             return {
+                -- Both halves of the real surface (BaseSoundEmitter.java:53, :67).
+                -- playSound is the NETWORKED one: on an MP client it relays a
+                -- PlayWorldSoundPacket that every other client replays at the
+                -- clip's own gain, outside the reach of setVolume. It is
+                -- recorded rather than omitted so a regression to it fails
+                -- loudly here instead of only on a populated server.
                 playSound = function(_, name)
-                    emitterCalls[#emitterCalls + 1] = { kind = "play", name = name }
+                    emitterCalls[#emitterCalls + 1] = { kind = "play-networked", name = name }
+                    return 99
+                end,
+                playSoundImpl = function(_, name, doWorldSound, parent)
+                    emitterCalls[#emitterCalls + 1] = {
+                        kind = "play", name = name,
+                        doWorldSound = doWorldSound, parent = parent,
+                    }
                     return 99
                 end,
                 setVolume = function(_, handle, volume)
@@ -126,6 +139,43 @@ check(emitterCalls[2].name == "RQScreamerScream" and emitterCalls[3].handle == 9
     "falloff sound plays the requested sound before setting volume")
 check(math.abs(emitterCalls[3].volume - 0.45) < 0.0001,
     "falloff sound applies distance and base gain")
+
+-- The multiplayer contract: the local, non-relaying overload, called with the
+-- 3-arg shape that binds unambiguously. playSound would broadcast a copy to
+-- every client in earshot at full gain and defeat ScreamerVolume outright.
+check(emitterCalls[2].doWorldSound == false and emitterCalls[2].parent == nil,
+    "falloff sound uses the 3-arg non-networked playSoundImpl")
+local relayed = false
+for i = 1, #emitterCalls do
+    if emitterCalls[i].kind == "play-networked" then relayed = true end
+end
+check(not relayed, "falloff sound never calls the relaying playSound")
+
+-- Volume knob at 0 is silent, and silent means no emitter at all - not an
+-- emitter playing at gain 0. Distance is unchanged from the case above.
+local mutedFrom = #emitterCalls
+RQCore.playFalloffSound("RQScreamerScream", 10, 20, 2, 0.0)
+check(#emitterCalls == mutedFrom, "falloff sound at gain 0 spawns no emitter")
+
+-- The knob reaches the sound: playScreamSound must read screamerVolume rather
+-- than play at a fixed gain. Distance is 0 here, so falloff is 1.0 and the
+-- applied volume IS the configured value.
+local realConfigGet = RQConfig.get
+RQConfig.get = function() return { screamerVolume = 0.25 } end
+activePlayer = { getX = function() return 10 end, getY = function() return 20 end }
+local screamFrom = #emitterCalls
+RQCore.playScreamSound(10, 20, 0)
+check(#emitterCalls == screamFrom + 3, "playScreamSound plays through the falloff path")
+check(emitterCalls[#emitterCalls].kind == "volume"
+    and math.abs(emitterCalls[#emitterCalls].volume - 0.25) < 0.0001,
+    "playScreamSound applies the configured screamerVolume as gain")
+
+RQConfig.get = function() return { screamerVolume = 0.0 } end
+local zeroFrom = #emitterCalls
+RQCore.playScreamSound(10, 20, 0)
+check(#emitterCalls == zeroFrom, "ScreamerVolume 0 plays no scream at point-blank range")
+RQConfig.get = realConfigGet
+activePlayer = { getX = function() return 10 end, getY = function() return 27 end }
 
 callbacks.serverCommand[1]("RFTDDirge", "castDone", {
     ringId = "emp_14_25",

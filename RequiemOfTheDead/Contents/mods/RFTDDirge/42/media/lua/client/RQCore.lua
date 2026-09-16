@@ -176,7 +176,30 @@ function RQCore.playFalloffSound(name, x, y, z, baseGain)
     local world = getWorld()
     if not world then return end
     local emitter = world:getFreeEmitter(x + 0.5, y + 0.5, z or 0)
-    local handle  = emitter:playSound(name)
+    -- playSoundImpl, NOT playSound, and that is the whole reason the volume
+    -- knob does anything on a server. On a client, playSound on a PARENTLESS
+    -- emitter fires GameClient.PlayWorldSound before it plays a thing locally
+    -- (FMODSoundEmitter.java:379-398 -> GameClient.java:2190-2197). The server
+    -- relays that packet to every client within max(70, clip.distanceMax)
+    -- tiles (PlayWorldSoundPacket.java:42-64), where it is replayed by
+    -- SoundManager.PlayWorldSoundImpl on a fresh emitter at the clip's own
+    -- gain (SoundManager.java:617-622) -- a copy no setVolume of ours can
+    -- reach. Every client already plays its own scaled copy off the server
+    -- broadcast, so each relay was pure duplication: N players in earshot
+    -- meant N overlapping screams apiece, and a player who set ScreamerVolume
+    -- to 0 still heard everyone else's at full volume. The Lua was never
+    -- wrong; it was only ever true in singleplayer, where GameClient.client
+    -- is false and no packet is sent.
+    --
+    -- Three arguments on purpose. Every playSoundImpl overload shares one
+    -- MultiLuaJavaInvoker, and both the type match and prepareCall reject on
+    -- arity (LuaJavaInvoker.java:247, :71-80), so the 3-arg form binds
+    -- unambiguously to (String, boolean, IsoObject), which delegates straight
+    -- to the non-networked body (:444-447 -> :484-491). The 2-arg spelling
+    -- vanilla uses at ISAddItemInRecipe.lua:44 is a coin flip against the
+    -- (String, IsoGridSquare) overload, which dereferences the square
+    -- (:430-436) and would hand back a silently swallowed nil.
+    local handle  = emitter:playSoundImpl(name, false, nil)
     emitter:setVolume(handle, vol)
 end
 
