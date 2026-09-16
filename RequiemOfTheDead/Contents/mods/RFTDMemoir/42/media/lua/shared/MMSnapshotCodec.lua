@@ -44,7 +44,10 @@
 -- gate (MMServer, md.MMRecalled) refuses a second read - without it, two books from
 -- the same dead life double-count everything they share, because the first read's
 -- restoration is indistinguishable from this life's earnings. Legacy no-life-id
--- books fall back to non-additive "max".
+-- books fall back to non-additive "max". The admin restore (MMRestore.chooseShape)
+-- dispatches on the same life id and takes "max" for an archive the current life
+-- wrote - it did not until 2026-09-05, and one such restore doubled every earned
+-- skill and the kill tally.
 
 require "MMSvShared"
 

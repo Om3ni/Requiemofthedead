@@ -9,9 +9,14 @@
 -- Design decisions (locked with the user):
 --   * 100% restore - fullRestore=true bypasses the MemoirXPRestore knob. The
 --     knob is a DEATH tax; a wipe is the server's fault, players are made whole.
---   * Once per life, same gate as memoir reads (modData.MMRecalled): the additive
---     overwrite model double-counts if applied twice to one life (the second
---     apply reads the first restore as "this life's earnings"). Death re-arms.
+--   * Two apply shapes, chosen by life id exactly as a memoir read chooses them
+--     (chooseShape below). The additive overwrite is once per life, same gate
+--     as reads (modData.MMRecalled): applied twice to one life it double-counts
+--     (the second apply reads the first restore as "this life's earnings").
+--     Death re-arms. The same-life top-up is non-additive and neither needs
+--     nor spends that gate. Until 2026-09-05 every restore ran the additive
+--     shape, and one run against an archive the current life had written
+--     doubled every earned skill and the kill tally.
 --   * Target must be online and alive: the apply needs the live player object,
 --     and the owning client must mirror-apply (no reliable Lua server->client XP
 --     push) - delivered over the EXISTING MMShared RESULT channel, so MMClient
@@ -159,31 +164,105 @@ end
 -- The restore
 -- ─────────────────────────────────────────────────────────────────────────
 
+-- Admin username for the audit envelope; "?" when the handler was reached
+-- without one (a console path, the test fixture).
+local function adminName(admin)
+    return (admin and admin.getUsername and admin:getUsername()) or "?"
+end
+
+-- Every refusal BEFORE the apply goes on the target's own forensic record as
+-- RESTORE_SKIPPED. Until 2026-09-05 these returned bare, so a refused restore
+-- left nothing under Memoirs/<player>/: Dragonfly's audit line is written
+-- before the handler runs and carries no outcome, and the reason string only
+-- reached the admin's screen. Observed live that day - a second restore on
+-- one player tripped the once-per-life gate and the memoir record showed no
+-- attempt at all. `who` is the IsoPlayer when the target is online, else the
+-- username string; MMAudit.log accepts both, and MMname(player) IS the
+-- username, so both land in the directory readLatest reads from.
+local function refuse(admin, who, why, reason, extra)
+    if MMAudit then
+        local data = { admin = adminName(admin), why = why }
+        for k, v in pairs(extra or {}) do data[k] = v end
+        MMAudit.log(who, "RESTORE_SKIPPED", data)
+    end
+    return { ok = false, reason = reason }
+end
+
+-- Which apply shape the archive gets - decided the way MMServer.onRead decides
+-- it for a book, because the restore feeds the SAME codec and inherits the
+-- same hazard. The additive "overwrite" (saved earnings + this life's
+-- earnings, MMSnapshotCodec header) is only sound when those are two
+-- different lives; run it against an archive the current life wrote and
+-- every earned point is counted twice. That is what happened on 2026-09-05,
+-- and the case is the DEFAULT here, not the edge: latest.json is rewritten by
+-- every WRITE (MMAudit), so once a player has written on their new life the
+-- archive is always their own.
+--
+--   same life     -> "max": non-additive top-up to the snapshot, identity kept
+--                    (it IS the current build). Idempotent, so it neither needs
+--                    the once-per-life gate nor spends it: a top-up of one's
+--                    own earnings double-counts nothing, and stamping
+--                    MMRecalled here would refuse the life's one legitimate
+--                    read of an older book later.
+--   other life    -> "overwrite", the memoir-read shape. A target with no
+--                    MMLifeId is this case: the id is stamped at a life's first
+--                    WRITE, so a fresh respawn - or a wiped players.db, the
+--                    disaster this tool exists for - has none.
+--   no lifeId in the archive (a pre-v4 write) -> provable neither way, so the
+--                    read path's legacy bridge is the rule here too:
+--                    identityMatches -> top-up, else overwrite.
+-- Returns xpMode, chosenIdentity (nil = keep) and a code for the record.
+local function chooseShape(target, snap, md)
+    local ident = { profession = snap.profession, traits = snap.traits }
+    if snap.lifeId then
+        if md and md.MMLifeId == snap.lifeId then return "max", nil, "samelife" end
+        return "overwrite", ident, "otherlife"
+    end
+    if MMSnapshotCodec.identityMatches(target, snap) then return "max", nil, "legacy-match" end
+    return "overwrite", ident, "legacy-mismatch"
+end
+
+-- What the admin reads back beside "Restored <name>". The additive shape is
+-- the plain word; the others say what was different about this one.
+local SHAPE_NOTE = {
+    samelife            = " (top-up: this life wrote the archive, nothing counted twice)",
+    ["legacy-match"]    = " (top-up: pre-v4 archive, identity matches)",
+    ["legacy-mismatch"] = " (pre-v4 archive, identity differs)",
+}
+
 -- Returns DFServer's handler contract: { ok = bool, message|reason = string }.
 function MMRestore.run(admin, targetUsername, xpPercent)
     targetUsername = tostring(targetUsername or "")
+    -- Unaudited by necessity: there is no player directory to record against.
+    -- Dragonfly's own audit already holds the admin and the command.
     if targetUsername == "" then return { ok = false, reason = "No target username." } end
     local xpFrac, xpPct = restoreFraction(xpPercent)
 
     local target = MMRoster.findOnline(targetUsername)
     if not target then
-        return { ok = false, reason = targetUsername .. " must be online to restore." }
+        return refuse(admin, targetUsername, "offline",
+            targetUsername .. " must be online to restore.")
     end
     if target:isDead() then
-        return { ok = false, reason = targetUsername .. " is dead - restore after they respawn." }
+        return refuse(admin, target, "dead",
+            targetUsername .. " is dead - restore after they respawn.")
     end
 
     local rec, archiveState, archiveDetail = readLatest(safeName(targetUsername), targetUsername)
     if archiveState == "missing" then
-        return { ok = false, reason = "No memoir archive found for " .. targetUsername .. "." }
+        return refuse(admin, target, "noarchive",
+            "No memoir archive found for " .. targetUsername .. ".")
     end
     if archiveState == "unreadable" then
         MMwarn("RESTORE archive unreadable for " .. targetUsername .. ": " .. tostring(archiveDetail))
-        return { ok = false, reason = "Archive for " .. targetUsername .. " is unreadable - check server console." }
+        return refuse(admin, target, "unreadable",
+            "Archive for " .. targetUsername .. " is unreadable - check server console.",
+            { detail = tostring(archiveDetail) })
     end
     if archiveState == "owner" then
-        return { ok = false, reason = "Archive belongs to '" .. tostring(archiveDetail)
-            .. "', not " .. targetUsername .. "." }
+        return refuse(admin, target, "owner",
+            "Archive belongs to '" .. tostring(archiveDetail) .. "', not " .. targetUsername .. ".",
+            { archiveOwner = tostring(archiveDetail) })
     end
 
     local snap = rec.snap
@@ -195,66 +274,80 @@ function MMRestore.run(admin, targetUsername, xpPercent)
         snap.recipes = set
     end
 
-    -- Same once-per-life gate as memoir reads - a second additive apply on one
-    -- life double-counts everything the first restore delivered. Death re-arms.
     local md = target:getModData()
-    if md and md.MMRecalled then
-        return { ok = false, reason = targetUsername
-            .. " already recalled/restored this life. Death re-arms the gate." }
+    local xpMode, chosen, lifeCheck = chooseShape(target, snap, md)
+    local additive = (xpMode == "overwrite")
+
+    -- Once-per-life gate, ADDITIVE shape only - a second additive apply on one
+    -- life double-counts everything the first delivered. Death re-arms. The
+    -- top-up is replay-safe and passes (see chooseShape).
+    if additive and md and md.MMRecalled then
+        return refuse(admin, target, "recalled", targetUsername
+            .. " already recalled/restored this life. Death re-arms the gate.")
     end
 
-    local chosen = { profession = snap.profession, traits = snap.traits }
     local preProgress = MMAudit and MMAudit.sampleProgression(target) or nil
     -- fullRestore, with the dial as an explicit fraction. xpFrac is 1.0 when no
     -- dial was sent, so this is byte-for-byte the old 100% behaviour by default.
-    local apply = MMSnapshotCodec.applyToCharacter(target, snap, chosen, "overwrite", true, xpFrac)
+    local apply = MMSnapshotCodec.applyToCharacter(target, snap, chosen, xpMode, true, xpFrac)
     if not apply.ok then
-        if apply.partial then
+        -- A partial ADDITIVE apply closes the gate: replaying it could duplicate
+        -- what already landed. A partial top-up is replay-safe ("max" never
+        -- adds), so the life keeps its recall.
+        if apply.partial and additive then
             if md then md.MMRecalled = true end
             if MMServer and MMServer.pushFields then MMServer.pushFields(target) end
         end
-        MMwarn("RESTORE apply FAILED for " .. targetUsername .. " (phase="
-            .. tostring(apply.phase) .. ", partial=" .. tostring(apply.partial)
+        MMwarn("RESTORE apply FAILED for " .. targetUsername .. " (xpMode=" .. xpMode
+            .. ", phase=" .. tostring(apply.phase) .. ", partial=" .. tostring(apply.partial)
             .. "): " .. tostring(apply.error))
         if MMAudit then
             local postProgress = MMAudit.sampleProgression(target)
             MMAudit.log(target, "RESTORE_FAIL", MMAudit.attachProgression({
-            admin = (admin and admin.getUsername and admin:getUsername()) or "?",
-            phase = apply.phase, partial = apply.partial, err = tostring(apply.error)
+                admin = adminName(admin), xpMode = xpMode, lifeCheck = lifeCheck,
+                phase = apply.phase, partial = apply.partial, err = tostring(apply.error)
             }, preProgress, postProgress))
         end
         if apply.partial then
             return { ok = false, reason = "Restore partially changed " .. targetUsername
-                .. ". Do not retry; have them relog and check the forensic record." }
+                .. (additive and ". Do not retry; have them relog" or ". Have them relog")
+                .. " and check the forensic record." }
         end
         return { ok = false, reason = "Restore preflight failed for " .. targetUsername
             .. "; nothing changed. Check server console." }
     end
 
-    if md then md.MMRecalled = true end
+    if additive and md then md.MMRecalled = true end
     if MMServer and MMServer.pushFields then MMServer.pushFields(target) end
 
     -- Mirror-apply on the target's client over the existing memoir RESULT
     -- channel - MMClient already knows how to apply applyData and refresh.
     -- xpFraction MUST travel with the mirror: the client recomputes the same
     -- targets from the same snapshot, and a mirror that defaulted to 100% while
-    -- the server applied 60% would desync the character until relog.
+    -- the server applied 60% would desync the character until relog. The shape
+    -- (xpMode + chosen) travels for the same reason: both sides must run the
+    -- same arithmetic on the same snapshot.
     sendServerCommand(target, MMShared.MODULE, MMShared.CMD.RESULT, {
         ok = true,
         say = "My life... it all comes back to me.",
-        applyData = { snap = snap, chosen = chosen, xpMode = "overwrite", fullRestore = true,
+        applyData = { snap = snap, chosen = chosen, xpMode = xpMode, fullRestore = true,
                       xpFraction = xpFrac },
     })
 
     if MMAudit then
         local postProgress = MMAudit.sampleProgression(target)
         MMAudit.log(target, "RESTORE_OK", MMAudit.attachProgression({
-            admin      = (admin and admin.getUsername and admin:getUsername()) or "?",
+            admin      = adminName(admin),
             -- The dial is recorded because a restore at anything but 100% is a
             -- deliberate policy act (a season migration allowance, say), and
             -- "why is my carpentry lower than my old character" is unanswerable
             -- a month later without it.
             xpPct      = xpPct,
+            -- Which shape ran and why. The postXP/snap diff alone cannot tell
+            -- a doubled additive apply from a legitimate one - the 2026-09-05
+            -- record read as a successful restore until the ratios were taken.
+            xpMode     = xpMode,
+            lifeCheck  = lifeCheck,
             archiveT   = rec.t,
             snap       = snap,
         }, preProgress, postProgress))
@@ -262,6 +355,7 @@ function MMRestore.run(admin, targetUsername, xpPercent)
     end
     local pctNote = (xpPct ~= 100) and (" at " .. xpPct .. "% of earned XP") or ""
     return { ok = true, message = "Restored " .. targetUsername .. pctNote
+        .. (SHAPE_NOTE[lifeCheck] or "")
         .. " from archive (snapshot t=" .. tostring(snap.writtenAt or rec.t or "?") .. ")." }
 end
 

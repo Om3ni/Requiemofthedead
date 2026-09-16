@@ -294,7 +294,7 @@ local PIPE_SKIP = { snap = true, postXP = true, lvlsBefore = true, lvlsAfter = t
 
 -- events: WRITE / WRITE_NOITEM / WRITE_OWNER / READ_OK / READ_NOITEM / READ_EMPTY /
 --         READ_OWNER / READ_FADED / READ_SAMELIFE / READ_RECALLED / READ_APPLYFAIL /
---         READ_RECHECK / RESTORE_OK / RESTORE_FAIL (MMRestore)
+--         READ_RECHECK / RESTORE_OK / RESTORE_FAIL / RESTORE_SKIPPED (MMRestore)
 -- player: the IsoPlayer, or a plain username string (for events logged when the
 --         player object is gone, e.g. an offline recheck)
 -- data:   plain table; values may be scalars or tables (snap, lvls maps, drift...).
