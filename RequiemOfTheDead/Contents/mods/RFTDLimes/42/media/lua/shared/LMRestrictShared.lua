@@ -30,6 +30,36 @@ function LMRestrictShared.denied(x, y, flag)
 end
 
 -- ---------------------------------------------------------------------------
+-- The same question asked of a RECTANGLE, for the flags whose subject is an
+-- area rather than a square. A safehouse claim is the only one today.
+--
+-- FIVE POINTS: four corners and the centre. Testing only the centre would let
+-- someone claim a building whose back half sits inside the boundary; testing
+-- only the corners would miss a zone drawn in the middle of a large one. Any
+-- overlap at all is a claim on protected ground.
+--
+-- Shared for the reason `denied` is, and more sharply: the client refuses a
+-- claim before it is sent and the server reverts one that arrives anyway.
+-- Those two halves answering differently is the worst outcome available - a
+-- player refused for a reason the server does not hold, or told nothing and
+-- then quietly stripped of the claim a minute later. One copy, one answer.
+-- ---------------------------------------------------------------------------
+
+function LMRestrictShared.rectDenied(x, y, w, h, flag)
+    if not x or not y or not w or not h then return false, nil end
+    local x2, y2 = x + w - 1, y + h - 1
+    local points = {
+        { x, y }, { x2, y }, { x, y2 }, { x2, y2 },
+        { x + math.floor(w / 2), y + math.floor(h / 2) },
+    }
+    for i = 1, #points do
+        local no, zone = LMRestrictShared.denied(points[i][1], points[i][2], flag)
+        if no then return true, zone end
+    end
+    return false, nil
+end
+
+-- ---------------------------------------------------------------------------
 -- The pass list (noplayersPass, 2026-08-27): "no players, except these".
 --
 -- A token matches the player's ROLE NAME (case-insensitive - "Moderator" and

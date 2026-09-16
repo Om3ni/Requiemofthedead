@@ -72,5 +72,33 @@ check(denied and zone == "Sealed", "a zone with no pass list admits nobody")
 denied = LMRestrictShared.deniedFor(warden, 10, 20, "nobuilding")
 check(denied, "action flags carry no exemption - passing the fence is not sledging rights")
 
+-- ---------------------------------------------------------------------------
+-- rectDenied - the area question. Both safehouse halves ask THIS, so the
+-- geometry is pinned once here rather than twice in the client and server
+-- fixtures. Sunstar occupies exactly (10,20) in this stub, which lets each
+-- case put it under one point and nowhere else.
+-- ---------------------------------------------------------------------------
+
+denied, zone = LMRestrictShared.rectDenied(10, 20, 5, 5, "nobuilding")
+check(denied and zone == "Sunstar", "a rect whose corner sits in the zone is denied, by name")
+
+-- Corners at (8,18) (12,18) (8,22) (12,22); centre at (10,20). Only the centre
+-- lands in the zone - a corners-only test would let this rect through, which
+-- is a building claimed around a protected middle.
+denied, zone = LMRestrictShared.rectDenied(8, 18, 5, 5, "nobuilding")
+check(denied and zone == "Sunstar", "a rect whose CENTRE sits in the zone is denied")
+
+denied, zone = LMRestrictShared.rectDenied(30, 30, 4, 4, "nobuilding")
+check(not denied and zone == nil, "a rect clear of every zone is an ordinary allow")
+
+denied = LMRestrictShared.rectDenied(nil, 20, 5, 5, "nobuilding")
+check(not denied, "an incomplete rect is not a denial")
+denied = LMRestrictShared.rectDenied(10, 20, 5, nil, "nobuilding")
+check(not denied, "a rect missing its height is not a denial")
+
+-- The flag still decides: the same rectangle, a flag Sunstar does not set.
+denied = LMRestrictShared.rectDenied(10, 20, 5, 5, "nosafehouse")
+check(not denied, "rectDenied answers for the flag it was asked about")
+
 print(string.format("LMRestrictShared: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

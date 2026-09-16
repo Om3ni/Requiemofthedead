@@ -34,6 +34,10 @@ LMRestrictCl = LMRestrictCl or {}
 -- Shared with LMRestrictSv - a restriction whose two halves can disagree is
 -- worse than none. See shared/LMRestrictShared.lua.
 local denied = LMRestrictShared.denied
+-- The area form, for the one flag whose subject is a rectangle. The server
+-- reverts a claim using this exact test; refusing one with a different test
+-- would be the disagreement the shared file exists to prevent.
+local rectDenied = LMRestrictShared.rectDenied
 
 -- No guard: getSpecificPlayer (LuaManager:3617) is `IsoPlayer.players[player]`,
 -- and index 0 is always in bounds of that four-slot static array.
@@ -67,13 +71,45 @@ function LMRestrictCl.explain(flag, zone)
     return msg
 end
 
+-- ---------------------------------------------------------------------------
+-- The reverted claim, dropped from THIS client's list.
+--
+-- The server has already removed it from its own; SafeHouse.removeSafeHouse
+-- notifies nobody (SafeHouse.java:297-303) and server Lua cannot reach the
+-- packet that would - see LMRestrictSv's note beside dropOnClients. So the
+-- server names the row and every client drops its own copy here, where
+-- GameClient.client IS true and the very same call also fires
+-- OnSafehousesChanged, refreshing the vanilla safehouse UI for free.
+--
+-- CACHE INVALIDATION, NOT AUTHORITY. The claim is already gone server-side;
+-- refusing to act on this message gains a cheating client nothing but a stale
+-- list of its own. A client that never had the row resolves nil and stops.
+-- ---------------------------------------------------------------------------
+
+local function safehouseGone(id)
+    id = tonumber(id)
+    if not id then return end
+    -- One number binds the (int onlineID) overload and nothing else: the
+    -- IsoGridSquare and String overloads reject a Double outright, the 4-arg
+    -- one fails on arity (LuaJavaInvoker.java:247, :272-290). The id is
+    -- derived from the rectangle's coordinates (SafeHouse.java:519), so the
+    -- server's id resolves against our own list.
+    local sh = SafeHouse.getSafeHouse(id)
+    if not sh then return end
+    SafeHouse.removeSafeHouse(sh)
+end
+
 Events.OnServerCommand.Add(function(module, command, args)
-    if module ~= "RFTDLimes" or command ~= "restricted" then return end
+    if module ~= "RFTDLimes" then return end
     if type(args) ~= "table" then return end
     -- No guard: OnServerCommand is shared with every other mod's handler, but
     -- Event.trigger already gives each listener its own protectedCallVoid and
     -- try/catch (Event.java:53-63), so a throw here cannot cost them their turn.
-    LMRestrictCl.explain(args.flag, args.zone)
+    if command == "restricted" then
+        LMRestrictCl.explain(args.flag, args.zone)
+    elseif command == "safehouseGone" then
+        safehouseGone(args.id)
+    end
 end)
 
 -- ---------------------------------------------------------------------------
@@ -119,6 +155,63 @@ local function wrapDestroy()
         return original(self)
     end
     wrapped.destroy = true
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- 2c. nosafehouse - C in front of the server's R
+--
+-- The claim has no pre-claim hook anywhere: SafehouseClaimPacket.processServer
+-- goes straight to SafeHouse.canBeSafehouse and adds the row, with no event and
+-- no veto point in between. The server's revert stays the authority and a
+-- modified client changes nothing about it. This is the honest half - refuse
+-- before the packet is sent, so a player who cannot claim here is told so
+-- instead of watching a claim appear and then vanish a game minute later.
+--
+-- WRAPPED ON THE GLOBAL, not on the context menu, for the reason nodestruction
+-- gives above: it refuses the claim however it was started, including from a
+-- keybind or another mod's menu. Vanilla's only caller is
+-- ISWorldObjectContextMenu.onTakeSafeHouse:517.
+--
+-- THE RECT IS THE BUILDING'S, NOT THE CLICKED SQUARE'S. addSafeHouse derives
+-- the claim from the building def and pads it by two on every side
+-- (SafeHouse.java:89-91), so testing the square under the cursor would refuse
+-- a different rectangle than the server later reverts - a player could be
+-- refused standing on protected ground for a building entirely outside the
+-- zone, or claim a building whose protected half they never clicked.
+-- ---------------------------------------------------------------------------
+
+local function claimRect(square)
+    -- Tested rather than assumed: the square is the caller's to choose, and
+    -- indexing an absent method is safe where calling one is not.
+    local building = square and square.getBuilding and square:getBuilding()
+    if not building then return nil end
+    -- getDef is a METHOD (IsoBuilding.java:119). The `def` field beside it
+    -- (:55) is a Java field and reading it from Lua answers nil - Kahlua
+    -- exposes methods only.
+    local def = building.getDef and building:getDef()
+    if not def then return nil end
+    return def:getX() - 2, def:getY() - 2, def:getW() + 4, def:getH() + 4
+end
+
+local function wrapClaim()
+    if wrapped.claim or type(sendSafehouseClaim) ~= "function" then return false end
+    local original = sendSafehouseClaim
+    sendSafehouseClaim = function(square, player, title)
+        local x, y, w, h = claimRect(square)
+        -- No building means no claim the engine would accept either
+        -- (SafehouseClaimPacket.isConsistent:65-68), and no rectangle for us
+        -- to test. Let it through to the refusal that already exists.
+        if x then
+            local no, zone = rectDenied(x, y, w, h, "nosafehouse")
+            if no then
+                LMRestrictCl.explain("nosafehouse", zone)
+                return
+            end
+        end
+        return original(square, player, title)
+    end
+    wrapped.claim = true
     return true
 end
 
@@ -185,6 +278,18 @@ end
 
 wrapDestroy()
 Events.OnGameStart.Add(function() wrapDestroy() end)
+
+-- wrapClaim is OnGameStart ONLY, and never at file scope, because it has to be
+-- the OUTER wrapper on sendSafehouseClaim. Core's DFSendWatch wraps the same
+-- global to ledger it, and defers that to OnGameStart (DFSendWatch.lua:258).
+-- Wrapping here at file scope would put us underneath it, and Core would then
+-- report every refused claim as one that was made - a forensic record of an
+-- event that never happened. Registered on the same event instead, we land
+-- outside: listeners run in registration order, registration follows the
+-- client's alphabetical walk, and DFSendWatch.lua sorts before LMRestrictCl.lua.
+--
+-- Nothing needs the gate before the game is up; there is no claim to refuse.
+Events.OnGameStart.Add(function() wrapClaim() end)
 
 -- OnPlayerUpdate is per player per tick, which is the cadence a bounce needs:
 -- checked once a second, a sprinting player is most of the way across a small

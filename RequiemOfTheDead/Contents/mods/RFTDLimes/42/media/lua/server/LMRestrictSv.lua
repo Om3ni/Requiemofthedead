@@ -262,27 +262,83 @@ local function onNewFire(fire)
     forensic("LM.RESTRICT", { flag = "nofire", zone = zone, what = "extinguish" })
 end
 
--- nosafehouse. No pre-claim hook exists - SafehouseClaimPacket goes straight to
--- SafeHouse.canBeSafehouse in Java - but OnSafehousesChanged fires server-side
--- after the fact and SafeHouse.removeSafeHouse is Lua-exposed, so a claim
--- landing inside a nosafehouse zone is undone immediately.
+-- nosafehouse. No pre-claim hook exists - SafehouseClaimPacket.processServer
+-- goes straight to SafeHouse.canBeSafehouse in Java (:72-83) - so this is a
+-- post-hoc revert: SafeHouse.removeSafeHouse is Lua-exposed, and a claim
+-- landing inside a nosafehouse zone is taken back.
 --
--- CHECKED BY CORNERS, not by centre. A safehouse is a rectangle and the zone is
--- a rectangle; a claim that overlaps the zone at all is a claim on protected
--- ground, and testing only the middle would let someone claim a building whose
--- back half sits inside the boundary.
+-- IT IS DRIVEN BY THE CLOCK, NOT BY THE EVENT. OnSafehousesChanged looked
+-- like the trigger and is not: BOTH of its trigger sites in SafeHouse.java
+-- are wrapped in `if (GameClient.client)` (:82-84 add, :301-303 remove), and
+-- the third (SafehouseSyncPacket:95) is inside processClient. GameClient.client
+-- is false on a dedicated server, so the event NEVER fires there and this
+-- whole veto silently did nothing on the only kind of server that matters -
+-- shipped that way until a claim went through on live ground, 2026-08-29.
+-- OnPlayerSetSafehouse is not an escape either: LuaEventManager registers it
+-- (:708) and no engine code ever triggers it.
+--
+-- So EveryOneMinute drives the sweep. It is triggered unconditionally in
+-- GameTime.update (GameTime.java:589), on the same path that syncs the server
+-- clock two lines later, so it runs on a dedicated server. The event
+-- registration stays for the client-hosted and single-player cases, where it
+-- does fire and makes the revert immediate.
+--
+-- CHECKED AS A RECTANGLE, not as a square, and the five-point test now lives
+-- in LMRestrictShared.rectDenied. It moved there when the client learned to
+-- refuse a claim before sending it: that half tests the rect a claim WOULD
+-- create and this one tests the rect a claim DID create, and the two must be
+-- the same test or a player gets refused on ground the server would have
+-- allowed, or vice versa.
 local function safehouseDenied(sh)
-    local x, y = sh:getX(), sh:getY()
-    local w, h = sh:getW(), sh:getH()
-    local corners = {
-        { x, y }, { x + w - 1, y }, { x, y + h - 1 }, { x + w - 1, y + h - 1 },
-        { x + math.floor(w / 2), y + math.floor(h / 2) },
-    }
-    for i = 1, #corners do
-        local no, zone = denied(corners[i][1], corners[i][2], "nosafehouse")
-        if no then return true, zone end
+    return LMRestrictShared.rectDenied(sh:getX(), sh:getY(), sh:getW(), sh:getH(),
+        "nosafehouse")
+end
+
+-- Tell every client to drop the row too.
+--
+-- SafeHouse.removeSafeHouse takes the claim out of the SERVER's list and
+-- notifies nobody: its only trigger is a LuaEventManager call behind
+-- `if (GameClient.client)`, false here (SafeHouse.java:297-303). Vanilla never
+-- removes server-side without a packet beside it - hitPoint pairs removal with
+-- sendToAll(SafehouseRelease) (:742-743) and the expiry sweep does the same
+-- (:801-802) - but that layer is unreachable from Lua: neither INetworkPacket
+-- nor PacketTypes has a setExposed entry, and every sendSafehouse* global is
+-- wrapped in `if (GameClient.client)` (LuaManager.java:4311-4372), so all of
+-- them are no-ops on a dedicated server.
+--
+-- Without this the reverted claim survives on every connected client: the
+-- owner still sees it, the admin panel still lists it, and client-side
+-- safehouse logic (Core's own destroy patch among it) still reads the ground
+-- as claimed - until a relog rebuilds the list from MetaDataPacket (:36-37).
+-- That is a desync, not a cosmetic one: the client refuses actions the server
+-- would allow.
+--
+-- The id is safe to send because it is DERIVED, not allocated: the constructor
+-- sets onlineId from the rectangle's coordinates (SafeHouse.java:519), so the
+-- same claim carries the same id on every machine and each client can resolve
+-- its own copy. Read it before the removal - the row is what names it.
+local function dropOnClients(onlineId)
+    if not onlineId then return end
+    RDNet.broadcast(TOKEN, "safehouseGone", { id = onlineId })
+end
+
+-- The owner as an online player object, or nil. getPlayerFromUsername is NOT
+-- the way: its body is GameClient.instance.getPlayerFromUsername
+-- (LuaManager.java:7370-7372) and GameClient.instance is null on a dedicated
+-- server, so it answers nil there for every name. getOnlinePlayers branches on
+-- GameServer.server and returns GameServer.getPlayers() (:3823-3832).
+local function tellOwner(owner, zoneName)
+    if not owner or owner == "" or owner == "null" then return end
+    local players = getOnlinePlayers()
+    if not players then return end
+    for i = 0, players:size() - 1 do
+        local p = players:get(i)
+        if p and p.getUsername and p:getUsername() == owner then
+            RDNet.reply(p, TOKEN, "restricted",
+                { flag = "nosafehouse", zone = zoneName, what = "claim" })
+            return
+        end
     end
-    return false, nil
 end
 
 local function onSafehousesChanged()
@@ -296,6 +352,9 @@ local function onSafehousesChanged()
             local no, zone = safehouseDenied(sh)
             if no then
                 local owner = sh:getOwner() or "?"
+                -- Read before the removal: this is the only handle the clients
+                -- have on the row, and it is a plain field return (:702-704).
+                local onlineId = sh:getOnlineID()
                 -- No guard - the old comment was wrong on both halves.
                 -- The debug line reads four plain fields (a null owner formats
                 -- as "null", never .equals - SafeHouse.java:297-303, :586-588)
@@ -311,6 +370,13 @@ local function onSafehousesChanged()
                     { flag = "nosafehouse", zone = zone, user = owner, what = "unclaim" }, owner)
                 print("[Limes] restrict: removed a safehouse claim by " .. tostring(owner)
                     .. " inside " .. tostring(zone))
+                -- Every client, then the owner: the first is cache
+                -- invalidation the engine will not do for us, the second is
+                -- the explanation. A claim that vanishes with no explanation
+                -- reads as the server eating your safehouse, so the owner
+                -- gets the same "restricted" reply every other veto uses.
+                dropOnClients(onlineId)
+                tellOwner(owner, zone)
             end
         end
     end
@@ -349,6 +415,14 @@ if Events and Events.OnNewFire then
 end
 if Events and Events.OnSafehousesChanged then
     Events.OnSafehousesChanged.Add(function() onSafehousesChanged() end)
+end
+-- The dedicated server's only trigger - see the block above nosafehouse for
+-- why the event alone left this veto dead there. One list walk per game
+-- minute over getSafehouseList, which holds one row per claim on the whole
+-- server: cheaper than the zone lookups it performs, and it runs whether or
+-- not anyone claimed, which is the point.
+if Events and Events.EveryOneMinute then
+    Events.EveryOneMinute.Add(function() onSafehousesChanged() end)
 end
 
 -- ---------------------------------------------------------------------------

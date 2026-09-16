@@ -450,8 +450,10 @@ local RESTRICTIONS = {
     { "noscrap",       "No scrapping",       "Blocks dismantling for materials.",
       "  The server refuses the dismantle itself, so this holds against any client." },
     { "nosafehouse",   "No safehouse claim", "The zone cannot be claimed as a safehouse.",
-      "  The claim is undone the moment it is made rather than being refused, so"
-      .. " the player sees it succeed and then vanish." },
+      "  The claim is refused before it is sent, so a player is told no rather"
+      .. " than watching one succeed. The engine offers no way to veto a claim"
+      .. " that arrives anyway, so the server also takes those back within a"
+      .. " game minute." },
     { "nofire",        "No fire",            "Suppresses ignition and fire spread.",
       "  Lighting a campfire is refused outright. Every other fire - spread,"
       .. " molotovs, cooking - is put out on the tick it appears, so a flame may"
