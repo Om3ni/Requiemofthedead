@@ -644,26 +644,34 @@ eq("a cycle still terminates and finds the value", v, 3)
 -- editor starts accepting names that vanish on restart.
 -- ---------------------------------------------------------------------------
 
-local f = io.open(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDLimes/42/media/lua/shared/LMIni.lua", "r")
-if not f then
-    print("FAIL could not read LMIni.lua to check the grammar copy")
-    fail = fail + 1
+-- The game's VM has no io, so the source-TEXT half of this check can only
+-- run on the real-5.1 lane; there is no other way to read a file as text.
+-- SKIP loudly rather than fail. The editor's own pattern constants are
+-- plain values and stay checked on both VMs below.
+if io == nil then
+    print("SKIP  LMIni grammar-copy text check - no io on this VM")
 else
-    local text = f:read("*a")
-    f:close()
-    -- Plain substring search (find's 4th argument), not a pattern match: what
-    -- is being compared here IS a pattern, and escaping one to look for the
-    -- other is how this check would end up passing for the wrong reason.
-    isTrue("LMIni still parses sections as [%w_%-%.]+",
-        text:find("%[([%w_%-%.]+)%]", 1, true) ~= nil,
-        "the section pattern changed - update LMEdit.NAME_PATTERN")
-    isTrue("LMIni still parses keys as [%w_]+",
-        text:find("([%w_]+)%s*=", 1, true) ~= nil,
-        "the key pattern changed - update LMEdit.KEY_PATTERN")
-    -- And the editor's copies say the same thing.
-    eq("LMEdit name pattern", LMEdit.NAME_PATTERN, "^[%w_%-%.]+$")
-    eq("LMEdit key pattern",  LMEdit.KEY_PATTERN,  "^[%w_]+$")
+    local f = io.open(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDLimes/42/media/lua/shared/LMIni.lua", "r")
+    if not f then
+        print("FAIL could not read LMIni.lua to check the grammar copy")
+        fail = fail + 1
+    else
+        local text = f:read("*a")
+        f:close()
+        -- Plain substring search (find's 4th argument), not a pattern match: what
+        -- is being compared here IS a pattern, and escaping one to look for the
+        -- other is how this check would end up passing for the wrong reason.
+        isTrue("LMIni still parses sections as [%w_%-%.]+",
+            text:find("%[([%w_%-%.]+)%]", 1, true) ~= nil,
+            "the section pattern changed - update LMEdit.NAME_PATTERN")
+        isTrue("LMIni still parses keys as [%w_]+",
+            text:find("([%w_]+)%s*=", 1, true) ~= nil,
+            "the key pattern changed - update LMEdit.KEY_PATTERN")
+    end
 end
+-- And the editor's copies say the same thing (plain constants; both VMs).
+eq("LMEdit name pattern", LMEdit.NAME_PATTERN, "^[%w_%-%.]+$")
+eq("LMEdit key pattern",  LMEdit.KEY_PATTERN,  "^[%w_]+$")
 
 -- ---------------------------------------------------------------------------
 -- 10. The store must survive a round trip through its own export

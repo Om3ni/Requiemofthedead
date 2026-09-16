@@ -139,12 +139,14 @@ add(empty, { type = "title", name = "Nothing Below" })
 
 -- ---------------------------------------------------------------------------
 
-local chunk, err = loadfile(SRC)
-if not chunk then
-    print("FAIL load: " .. tostring(err))
+-- loadfile does not exist on the game's VM (Kahlua registers neither load,
+-- loadstring nor loadfile); dofile is supplied by both lanes and does the
+-- same job here.
+local okLoad, loadErr = pcall(dofile, SRC)
+if not okLoad then
+    print("FAIL load: " .. tostring(loadErr))
     os.exit(1)
 end
-chunk()
 
 ok("registered a sheet", sheet ~= nil)
 eq("sheet id", sheet and sheet.id, "modoptions")

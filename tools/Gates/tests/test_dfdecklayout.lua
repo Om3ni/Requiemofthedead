@@ -97,8 +97,11 @@ writerMode = "ok"
 
 -- ---- load ---------------------------------------------------------------
 readerMode = "nil"
+-- next() does not exist on the game's VM (Kahlua registers no such global);
+-- emptiness is asked through pairs, which real 5.1 and the game both have.
+local function isEmpty(t) for _ in pairs(t) do return false end return true end
 local sizes = DFDeckLayout.load("missing.txt")
-check(type(sizes) == "table" and next(sizes) == nil, "absent file loads as empty defaults")
+check(type(sizes) == "table" and isEmpty(sizes), "absent file loads as empty defaults")
 
 readerMode = "ok"
 readerLines = { "zones w=800 h=600", "players w=1024 h=768", "w= h=", nil }

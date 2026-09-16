@@ -48,7 +48,10 @@ check(calls[2][4] == 255 and calls[2][5] == 90 and calls[2][6] == 90,
 check(calls[3][4] == 190 and calls[3][5] == 205 and calls[3][6] == 255,
     "thought uses the blue-white integer-color overload")
 
-PhunZones = { getLocation = function() error("foreign zone fault") end }
+-- Named local (full citation in test_hbpartwatch): this fake throws and the
+-- diagnostic text is asserted on.
+local function fakeGetLocation() error("foreign zone fault") end
+PhunZones = { getLocation = fakeGetLocation }
 local warnings = {}
 local realPrint = print
 print = function(message) warnings[#warnings + 1] = tostring(message) end

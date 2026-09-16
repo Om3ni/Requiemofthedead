@@ -368,7 +368,10 @@ eq("non-numeric target explains", err, "hole count must be a number")
 ok, err = C.setHoleCount({}, 0)
 eq("item with no visual is refused", ok, false)
 
-local brokenVisual = { getVisual = function() error("foreign visual fault") end }
+-- Named local (full citation in test_hbpartwatch): this fake throws and the
+-- error text is asserted on two lines down.
+local function fakeBrokenGetVisual() error("foreign visual fault") end
+local brokenVisual = { getVisual = fakeBrokenGetVisual }
 ok, err = C.setHoleCount(brokenVisual, 0)
 eq("throwing foreign visual is refused", ok, false)
 eq("throwing foreign visual identifies the lookup", err:find("foreign visual fault", 1, true) ~= nil, true)
@@ -431,14 +434,17 @@ eq("blood 50 succeeds",                ok, true)
 eq("blood 50 writes each covered part", it.blood[3], 127)
 eq("blood 50 writes the second part",   it.blood[7], 127)
 eq("blood 50 leaves other parts alone", it.blood[5], nil)
-eq("blood 50 leaves dirt alone",        next(it.dirt), nil)
+-- next() does not exist on the game's VM (Kahlua registers no such global);
+-- emptiness is asked through pairs, which real 5.1 and the game both have.
+local function isEmpty(t) for _ in pairs(t) do return false end return true end
+eq("blood 50 leaves dirt alone",        isEmpty(it.dirt), true)
 eq("blood scalar matches the quantized average", it.bloodScalar, Q50)
 
 it = garment({ 4 })
 ok = C.setVisualPercent(it, "dirt", 50)
 eq("dirt 50 succeeds",             ok, true)
 eq("dirt 50 writes the dirt array", it.dirt[4], 127)
-eq("dirt 50 leaves blood alone",    next(it.blood), nil)
+eq("dirt 50 leaves blood alone",    isEmpty(it.blood), true)
 eq("dirt scalar matches",           it.dirtScalar, Q50)
 
 -- Clamping, both ends, matching the engine's own 0..1 clamp.

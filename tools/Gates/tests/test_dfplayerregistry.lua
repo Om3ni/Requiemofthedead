@@ -70,12 +70,14 @@ DFPrefs = {
     set = function(k, v) prefStore[k] = v end,
 }
 
-local chunk, err = loadfile(SRC)
-if not chunk then
-    print("FAIL load: " .. tostring(err))
+-- loadfile does not exist on the game's VM (Kahlua registers neither load,
+-- loadstring nor loadfile); dofile is supplied by both lanes and does the
+-- same job here.
+local okLoad, loadErr = pcall(dofile, SRC)
+if not okLoad then
+    print("FAIL load: " .. tostring(loadErr))
     os.exit(1)
 end
-chunk()
 
 -- ---------------------------------------------------------------------------
 -- Refusals and aliases
@@ -86,7 +88,10 @@ ok("alias registerPlayerSettings", Dragonfly and Dragonfly.registerPlayerSetting
 
 DFPlayerRegistry.registerPlayerTab(nil)
 DFPlayerRegistry.registerPlayerTab({ label = "no id" })
-eq("tab without id refused", next(DFPlayerRegistry.tabs), nil)
+-- next() does not exist on the game's VM (Kahlua registers no such global);
+-- emptiness is asked through pairs, which real 5.1 and the game both have.
+local function isEmpty(t) for _ in pairs(t) do return false end return true end
+eq("tab without id refused", isEmpty(DFPlayerRegistry.tabs), true)
 
 DFPlayerRegistry.registerPlayerSettings({ id = "noget", title = "No Get" })
 eq("sheet without get refused", DFPlayerRegistry.sheets["noget"], nil)

@@ -29,7 +29,11 @@ check(loaded, "module loads: " .. tostring(loadErr))
 check(type(callbacks.gameStart) == "function", "registers its game-start installer")
 callbacks.gameStart()
 
-local action = { Type = "ISHandcraftAction", craftRecipe = { getName = function() error("foreign recipe fault") end } }
+-- Named local (full citation in test_hbpartwatch): this fake throws and the
+-- warning text is asserted on; a table-constructor literal is nameless and
+-- the engine replaces its message with "Method name is null".
+local function fakeRecipeGetName() error("foreign recipe fault") end
+local action = { Type = "ISHandcraftAction", craftRecipe = { getName = fakeRecipeGetName } }
 local realPrint, warnings = print, {}
 print = function(message) warnings[#warnings + 1] = tostring(message) end
 local first = ISBaseTimedAction.adjustMaxTime(action, 100)

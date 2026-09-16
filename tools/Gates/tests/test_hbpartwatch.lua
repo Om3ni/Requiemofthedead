@@ -99,11 +99,20 @@ end
 local corpseMode = "ok"   -- "ok" | "throw"
 local originalRuns = { corpse = 0, place = 0, hang = 0, remove = 0 }
 
-ISDropAnimalCorpseAndThen = { complete = function(self)
+-- Named local, not a table-constructor literal: a function compiled inside a
+-- table constructor is NAMELESS, and the engine's throw-time stack builder
+-- NPEs on the nil name and REPLACES the thrown message with "Method name is
+-- null" (LuaClosure.java:70-71, reached from KahluaThread.java:866). This
+-- fake throws and the message is asserted on, so it must carry a name.
+-- (The real method is named too: function ISDropAnimalCorpseAndThen:complete(),
+-- ISDropAnimalCorpseAndThen.lua:54 - the literal modeled a shape vanilla
+-- does not use.)
+local function fakeCorpseComplete(self)
     originalRuns.corpse = originalRuns.corpse + 1
     if corpseMode == "throw" then error("boom-corpse") end
     return true
-end }
+end
+ISDropAnimalCorpseAndThen = { complete = fakeCorpseComplete }
 ISDropWorldItemAction = { complete = function(self)
     originalRuns.place = originalRuns.place + 1
     return true

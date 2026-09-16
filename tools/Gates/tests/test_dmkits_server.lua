@@ -233,7 +233,10 @@ DMKits_Server = nil
 local ok, err = pcall(dofile, DM .. "/server/DMKits_Server.lua")
 check(ok, "module loads: " .. tostring(err))
 check(started ~= nil, "registration was not deferred to OnServerStarted")
-check(next(handlers) == nil, "a handler registered at file scope")
+-- next() does not exist on the game's VM (Kahlua registers no such global);
+-- emptiness is asked through pairs, which real 5.1 and the game both have.
+local function isEmpty(t) for _ in pairs(t) do return false end return true end
+check(isEmpty(handlers), "a handler registered at file scope")
 started()
 
 -- ---- every gate is DECLARED ----------------------------------------------

@@ -26,7 +26,9 @@
 --   lua5.1.exe tools/tests/test_mmaudit.lua <repo-root>
 
 local ROOT  = arg[1] or "."
-local PZMOD = os.getenv("PZMOD_ROOT") or (ROOT .. "/../PZMod")
+-- os.getenv does not exist on the game's VM (Kahlua's os carries only
+-- date/difftime/time); without it the default path stands.
+local PZMOD = (os.getenv and os.getenv("PZMOD_ROOT")) or (ROOT .. "/../PZMod")
 
 local TARGETS = {
     -- enforceExt: is this tree expected to run on 42.20? Only the bundle is.
@@ -274,16 +276,27 @@ end
 
 local ran = 0
 for _, t in ipairs(TARGETS) do
-    local fh = io.open(t.path, "r")
-    if not fh then
+    -- The game's VM has no io, so there the LOAD is the existence probe: a
+    -- missing optional target is SKIPped with the load error printed, and a
+    -- required one is fatal either way. Real 5.1 keeps the exact probe.
+    local present = true
+    if io ~= nil then
+        local fh = io.open(t.path, "r")
+        if fh then fh:close() else present = false end
+    end
+    if not present then
         if t.required then
             print("FATAL: could not find " .. t.path); os.exit(2)
         end
         print("SKIP  " .. t.label .. " - not present at " .. t.path)
     else
-        fh:close()
         MMAudit = nil
         local okLoad, err = pcall(dofile, t.path)
+        if not okLoad and io == nil and not t.required then
+            print("SKIP  " .. t.label .. " - could not load: " .. tostring(err))
+            okLoad = nil -- consumed: reported as absent, not fatal
+        end
+        if okLoad ~= nil then
         if not okLoad then
             print("FATAL: could not load " .. t.path)
             print("  " .. tostring(err)); os.exit(2)
@@ -294,6 +307,7 @@ for _, t in ipairs(TARGETS) do
         else
             suite = t.label; ran = ran + 1
             runSuite(MMAudit, t.events, t.latest, t.enforceExt)
+        end
         end
     end
 end

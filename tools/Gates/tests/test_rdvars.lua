@@ -595,7 +595,10 @@ check(doc.flags.anomaly == nil,
 check(doc.flags.forever == 0, "the expiry of one flag disturbed another")
 
 local blank = RDVars.mirrorOf("NeverSeen")
-check(blank ~= nil and next(blank.flags) == nil and next(blank.numbers) == nil,
+-- next() does not exist on the game's VM (Kahlua registers no such global);
+-- emptiness is asked through pairs, which real 5.1 and the game both have.
+local function isEmpty(t) for _ in pairs(t) do return false end return true end
+check(blank ~= nil and isEmpty(blank.flags) and isEmpty(blank.numbers),
     "an untouched player did not get an empty document")
 check(RDVars.mirrorOf(nil) == nil, "a nil subject did not refuse")
 

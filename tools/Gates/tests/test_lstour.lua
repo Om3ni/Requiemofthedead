@@ -85,7 +85,10 @@ end
 local started = runTour()
 check(started == true, "a tour starts")
 check(LSTour.state.running == true, "and is marked running")
-check(next(tickHandlers) ~= nil, "with a live OnTick handler")
+-- next() does not exist on the game's VM (Kahlua registers no such global);
+-- emptiness is asked through pairs, which real 5.1 and the game both have.
+local function isEmpty(t) for _ in pairs(t) do return false end return true end
+check(not isEmpty(tickHandlers), "with a live OnTick handler")
 check(flags.god and flags.invis and flags.ghost, "and the admin protected")
 check(#audits == 1, "the start audit runs bare and is recorded")
 
@@ -111,7 +114,7 @@ local function finishUnder(mode)
 end
 
 local _, cleanDelta = finishUnder("none")
-check(LSTour.state.running == false and next(tickHandlers) == nil,
+check(LSTour.state.running == false and isEmpty(tickHandlers),
       "a clean finish tears down")
 check(not flags.god and not flags.invis and not flags.ghost,
       "and restores the admin's protection flags")
@@ -124,7 +127,7 @@ check(teleports[#teleports].protected == true,
 finishUnder("teleport")
 check(LSTour.state.running == false,
       "a THROWING teleport still leaves the tour not running")
-check(next(tickHandlers) == nil,
+check(isEmpty(tickHandlers),
       "and the OnTick handler is still removed - the whole point of the reorder")
 check(LSTour.state.phase == "idle", "and the phase is idle, ready for a clean restart")
 check(flags.god and flags.invis and flags.ghost,
@@ -133,7 +136,7 @@ check(flags.god and flags.invis and flags.ghost,
       .. "surfacing after teardown, not a case to absorb")
 
 local _, auditDelta = finishUnder("audit")
-check(LSTour.state.running == false and next(tickHandlers) == nil,
+check(LSTour.state.running == false and isEmpty(tickHandlers),
       "a THROWING audit cannot strand the tour either")
 check(auditDelta == 1, "and the teleport-back still happened, because it runs before the audit")
 

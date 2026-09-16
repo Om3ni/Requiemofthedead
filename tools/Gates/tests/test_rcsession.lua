@@ -16,9 +16,9 @@ local function eq(name, got, want)
     if got == want then pass = pass + 1
     else
         fail = fail + 1
-        print("FAIL  " .. name)
-        print("  got:  " .. tostring(got))
-        print("  want: " .. tostring(want))
+        realPrint("FAIL  " .. name)
+        realPrint("  got:  " .. tostring(got))
+        realPrint("  want: " .. tostring(want))
     end
 end
 
@@ -46,6 +46,14 @@ RCShared = {
     need = function(_, value) return value ~= nil end,
     dbg = function() end,
 }
+-- Named local, not a table-constructor literal: nameless functions have
+-- their thrown message replaced by "Method name is null" (the engine bug
+-- cited in full in test_hbpartwatch), and this one throws a message the
+-- diagnostic assertions read.
+local function fakeSyncFromVehicle(vehicle)
+    if vehicle.bad then error("simulated vehicle fault") end
+    reconciled[#reconciled + 1] = vehicle.name
+end
 RCRegistry = {
     heartbeat = function() end,
     stampSeen = function() end,
@@ -53,10 +61,7 @@ RCRegistry = {
     pruneOrphans = function() end,
     prunePendingRelease = function() end,
     prunePresence = function() end,
-    syncFromVehicle = function(vehicle)
-        if vehicle.bad then error("simulated vehicle fault") end
-        reconciled[#reconciled + 1] = vehicle.name
-    end,
+    syncFromVehicle = fakeSyncFromVehicle,
 }
 RCJanitor = {
     beginSweep = function() end,

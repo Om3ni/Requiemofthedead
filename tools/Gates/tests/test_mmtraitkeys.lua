@@ -171,8 +171,13 @@ end
 local warned = {}
 local realPrint = print
 print = function(...) warned[#warned + 1] = table.concat({ ... }, " ") end
-assert(loadfile(SRC .. "/shared/MMSvShared.lua"))()
-assert(loadfile(SRC .. "/shared/MMSnapshotCodec.lua"))()
+-- loadfile does not exist on the game's VM (Kahlua registers neither load,
+-- loadstring nor loadfile); dofile is supplied by both lanes and does the
+-- same job here.
+local okA, errA = pcall(dofile, SRC .. "/shared/MMSvShared.lua")
+assert(okA, errA)
+local okB, errB = pcall(dofile, SRC .. "/shared/MMSnapshotCodec.lua")
+assert(okB, errB)
 
 local function warnedMatching(pat)
     for _, w in ipairs(warned) do if w:find(pat) then return w end end

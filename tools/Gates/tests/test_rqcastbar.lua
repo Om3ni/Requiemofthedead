@@ -63,7 +63,11 @@ check(type(RDWorldOverlay) == "table", "RDWorldOverlay did not load")
 local realPrint = print
 local warnings = {}
 print = function(message) warnings[#warnings + 1] = tostring(message) end
-local cancelled = RQCastBar.create({ duration = 1000, color = {}, onCancel = function() error("cancel fault") end })
+-- Named locals (full citation in test_hbpartwatch): these callbacks throw
+-- and the warning text is asserted on; table-constructor literals are
+-- nameless and lose the message to the engine's stack-builder NPE.
+local function throwingCancel() error("cancel fault") end
+local cancelled = RQCastBar.create({ duration = 1000, color = {}, onCancel = throwingCancel })
 RQCastBar.cancel(cancelled)
 print = realPrint
 check(not RQCastBar.isActive(cancelled), "failed cancellation callback cannot strand its bar")
@@ -71,7 +75,8 @@ check(#warnings == 1 and warnings[1]:find("cancel callback failed", 1, true)
     and warnings[1]:find("cancel fault", 1, true), "failed cancellation is reported once")
 
 local completed = 0
-local bad = RQCastBar.create({ startTime = 0, duration = 1, color = {}, onComplete = function() error("complete fault") end })
+local function throwingComplete() error("complete fault") end
+local bad = RQCastBar.create({ startTime = 0, duration = 1, color = {}, onComplete = throwingComplete })
 local good = RQCastBar.create({ startTime = 0, duration = 1, color = {}, onComplete = function() completed = completed + 1 end })
 warnings = {}
 print = function(message) warnings[#warnings + 1] = tostring(message) end

@@ -99,8 +99,11 @@ local player = {
 }
 
 realRequire("os")
-local chunk = assert(loadfile(SRC))
-chunk()
+-- loadfile does not exist on the game's VM (Kahlua registers neither load,
+-- loadstring nor loadfile); dofile is supplied by both lanes and does the
+-- same job here.
+local okLoad, loadErr = pcall(dofile, SRC)
+assert(okLoad, loadErr)
 local LJS = Lumberjack.Sweep
 
 local function named(item) return item and item.name or nil end
