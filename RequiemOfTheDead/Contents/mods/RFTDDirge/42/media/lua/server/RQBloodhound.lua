@@ -344,7 +344,7 @@ end
 -- sprinter stuck at speed.
 -- NO OnGameStart HOOK, AND THAT IS DELIBERATE. `reset()` below is a TEST
 -- affordance, not a lifecycle hook, and wiring it to OnGameStart the way the
--- client-side RQFlinch/RQPoise/RQRing modules do would be a bug, not a fix:
+-- client-side RQRing module does would be a bug, not a fix:
 -- this file is dedicated-server-only (the isServer gate above) and
 -- **OnGameStart does not fire on a dedicated server** (IngameState.java:844).
 -- That exact mistake already cost one Mosaic session - RQServer's OnGameStart
