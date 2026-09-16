@@ -59,9 +59,11 @@ local PULL_JITTER_MS  = 30000   -- de-phases clients so they never pull in uniso
 -- falls back to. Anything holding a live zombie should ask the zombie.
 RQReconcile.lastKnownPos = RQReconcile.lastKnownPos or {}
 
--- Scavenger client-side rage state for the highlight gradient. Populated from rows
--- (server includes enraged/currentHP/peakHP/baseHealth).
--- RQScavenger.getHighlightColor(onlineID) reads from this table.
+-- Scavenger client-side rage state. Populated from rows (server includes
+-- enraged/currentHP/peakHP/baseHealth). Two readers: RQScavenger gates its ring
+-- and outline pass on `enraged`, and RQHealthBar reads currentHP/peakHP for the
+-- bar. The highlight gradient that used to consume these was retired
+-- 2026-09-03 - the HP fields stayed because the health bar still needs them.
 RQReconcile.scavClientState = RQReconcile.scavClientState or {}
 
 -- Apply one server row to local client state: register the zombie, cache its

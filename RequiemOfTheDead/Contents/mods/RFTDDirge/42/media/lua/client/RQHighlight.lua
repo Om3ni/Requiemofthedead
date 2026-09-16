@@ -48,8 +48,6 @@ local function paintSpecial(onlineID, zType, playerNum)
     -- rebuilds bossBuffPainted before this loop runs.
     if RQBoss and RQBoss.bossBuffPainted and RQBoss.bossBuffPainted[zombie] then
         col = RQConfig.COLORS.Boss
-    elseif zType == "Scavenger" and RQScavenger and RQScavenger.getHighlightColor then
-        col = RQScavenger.getHighlightColor(onlineID)
     elseif zType == "EMP" then
         -- Match the EMP inner knockdown ring (orange) so the body glow and that
         -- ring read as one colour - and so EMPs are no longer confused with

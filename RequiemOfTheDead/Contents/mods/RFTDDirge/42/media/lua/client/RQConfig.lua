@@ -15,7 +15,7 @@ RQConfig.COLORS = {
     EMP        = { r = 0.2, g = 0.95, b = 0.7,  a = 0.4 },  -- Electric teal (cast/detonation telegraph ring)
     EMPInner   = { r = 1.0, g = 0.4,  b = 0.0,  a = 0.6 },  -- Orange: EMP body highlight + inner knockdown ring share this (distinct from Juggernaut blue)
     Glutton    = { r = 0.1, g = 1.0,  b = 0.2,  a = 0.3 },  -- Green
-    Scavenger  = { r = 0.1, g = 1.0,  b = 0.2,  a = 0.3 },  -- Green (passive); shifts to red->blue rage gradient via RQScavenger.getHighlightColor on rage
+    Scavenger  = { r = 0.1, g = 1.0,  b = 0.2,  a = 0.3 },  -- Green, passive AND enraged: matches Glutton so the pair reads as one threat (rage gradient retired 2026-09-03, it ended on Juggernaut blue - see RQScavenger header)
     Boss       = { r = 1.0, g = 0.84, b = 0.0,  a = 0.4 },  -- Gold
 }
 
