@@ -1,0 +1,30 @@
+/*
+    THE EMP'S HIDE. Biped plus glowing core, the same two-item shape as every
+    Dirge livery; see RQ_Juggernaut.txt for the shape and for why no defence
+    is declared in this slice.
+*/
+module RFTDDirge
+{
+    item RQ_EMPBiped
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = EMP Hide,
+        ClothingItem = BZ_EMPBiped,
+        BodyLocation = base:BodyCostume,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_EMPCore
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = EMP Core,
+        ClothingItem = BZ_EMPCore,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+}

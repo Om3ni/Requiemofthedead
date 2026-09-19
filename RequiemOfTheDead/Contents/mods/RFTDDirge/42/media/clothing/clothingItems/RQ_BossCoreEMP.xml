@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Boss's core for the EMP body: the BZ_EMPCore mesh, which is
+    shaped to that biped's chest hole, lit GOLD. The colour is nothing but
+    the texture - every core is an 8x8 solid PNG multiplied through the
+    shared inner-glow shader - so a gold Boss costs one texture and no mesh.
+    Gold is the Boss's tell, whichever body it wears.
+-->
+<clothingItem>
+    <m_GUID>886da814-0e46-424d-b2ee-5b2a17b19b82</m_GUID>
+    <m_MaleModel>Skinned\Clothes\BZ_EMPCore</m_MaleModel>
+    <m_FemaleModel>Skinned\Clothes\BZ_EMPCore</m_FemaleModel>
+    <m_Static>false</m_Static>
+    <m_AllowRandomHue>false</m_AllowRandomHue>
+    <m_AllowRandomTint>false</m_AllowRandomTint>
+    <m_Shader>BZ_BulwarkInnerGlow</m_Shader>
+    <textureChoices>Clothes\ZombieSkins\RQ_BossCore</textureChoices>
+</clothingItem>

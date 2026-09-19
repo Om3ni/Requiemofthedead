@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Glutton's twin of BZ_DevourerBiped: same model, same texture, same
+    masks, different GUID. It exists so the Scavenger can be armoured without
+    arming the Glutton - clothing defence is a property of the ITEM, and until
+    now both creatures wore one.
+
+    Nothing here duplicates an asset. Both items point at the same FBX and the
+    same PNG on disk; only the registration is twinned.
+-->
+<clothingItem>
+    <m_GUID>80923bc5-ee6a-440d-854a-472c34fb28ec</m_GUID>
+    <m_MaleModel>Skinned\Clothes\BZ_DevourerBiped</m_MaleModel>
+    <m_FemaleModel>Skinned\Clothes\BZ_DevourerBiped</m_FemaleModel>
+    <m_Static>false</m_Static>
+    <m_AllowRandomHue>false</m_AllowRandomHue>
+    <m_AllowRandomTint>false</m_AllowRandomTint>
+    <m_HatCategory>Group01</m_HatCategory>
+    <m_Masks>0</m_Masks>
+    <m_Masks>1</m_Masks>
+    <m_Masks>2</m_Masks>
+    <m_Masks>3</m_Masks>
+    <m_Masks>4</m_Masks>
+    <m_Masks>5</m_Masks>
+    <m_Masks>6</m_Masks>
+    <m_Masks>7</m_Masks>
+    <m_Masks>8</m_Masks>
+    <m_Masks>9</m_Masks>
+    <m_Masks>10</m_Masks>
+    <m_Masks>11</m_Masks>
+    <m_Masks>12</m_Masks>
+    <m_Masks>13</m_Masks>
+    <m_Masks>14</m_Masks>
+    <m_Masks>15</m_Masks>
+    <textureChoices>Clothes\ZombieSkins\BZ_DevourerBiped</textureChoices>
+</clothingItem>

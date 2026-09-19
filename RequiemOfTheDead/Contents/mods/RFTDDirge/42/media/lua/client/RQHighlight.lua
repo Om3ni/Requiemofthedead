@@ -16,13 +16,47 @@
 -- real and CLAUDE.md sect. 4 is about not discovering that the hard way. Dirge
 -- hard-requires Core, so it always resolves.
 require "RDZombieFocus"
+-- The Boss pass publishes the two sets the decision below reads, and its
+-- render listener must be REGISTERED before this file's: Event.java:53-56
+-- fires callbacks in registration order, so requiring RQBoss here is what
+-- makes both sets describe the current frame rather than the previous one.
+require "RQBoss"
 
 RQHighlight = RQHighlight or {}
+
+-- Which config switch owns each type's outline. Every type is off by
+-- default since 2026-09-17: the livery's glowing core is the tell, and an
+-- outline on top of it is an operator's choice (per-type sandbox toggles,
+-- owner decision 2026-09-17).
+local SWITCH = {
+    Boss       = "showBossHighlight",
+    EMP        = "showEMPHighlight",
+    Glutton    = "showGluttonHighlight",
+    Juggernaut = "showJuggernautHighlight",
+    Scavenger  = "showScavengerHighlight",
+    Screamer   = "showScreamerHighlight",
+}
+
+-- The colour a special's own outline should be this frame, or nil for no
+-- outline. Pure, so the rule is testable without a renderer:
+--   * a zombie a Boss aura is painting wears Boss colour whatever it is -
+--     that is ESCORT paint, and escort paint is not gated;
+--   * a Boss with an escort wears its own colour even with its switch off;
+--   * otherwise the type's switch decides, and the type's colour applies
+--     (EMP uses the inner-ring orange so body and ring read as one colour).
+function RQHighlight.colourFor(zType, cfg, colours, bossPainted, escorted)
+    if bossPainted then return colours.Boss end
+    if zType == "Boss" and escorted then return colours.Boss end
+    local switch = SWITCH[zType]
+    if not switch or not cfg[switch] then return nil end
+    if zType == "EMP" then return colours.EMPInner end
+    return colours[zType]
+end
 
 -- One special, one frame. Split out of the loop so the focus check can bail
 -- with a plain `return` - Lua 5.1 has no `continue`, and the alternative was
 -- burying the whole body one level deeper inside an `if`.
-local function paintSpecial(onlineID, zType, playerNum)
+local function paintSpecial(onlineID, zType, playerNum, cfg)
     -- YIELD TO A PANEL FOCUS. An admin surface that has claimed this zombie is
     -- painting it white so the operator can confirm the row and the body are the
     -- same thing, and the engine holds exactly one outline colour per player
@@ -42,19 +76,10 @@ local function paintSpecial(onlineID, zType, playerNum)
     local zombie = RQCore.findZombieByID(onlineID)
     if not zombie then return end
 
-    local col
-    -- Boss aura override: if this zombie is currently being painted by a Boss
-    -- buff aura, force boss color regardless of its own type. Boss render tick
-    -- rebuilds bossBuffPainted before this loop runs.
-    if RQBoss and RQBoss.bossBuffPainted and RQBoss.bossBuffPainted[zombie] then
-        col = RQConfig.COLORS.Boss
-    elseif zType == "EMP" then
-        -- Match the EMP inner knockdown ring (orange) so the body glow and that
-        -- ring read as one colour - and so EMPs are no longer confused with
-        -- Juggernauts (blue).
-        col = RQConfig.COLORS.EMPInner
-    end
-    col = col or RQConfig.COLORS[zType]
+    -- RQBoss's render tick rebuilds both sets before this loop runs: this
+    -- file requires RQBoss, so its listener registered first (Event.java:53-56).
+    local col = RQHighlight.colourFor(zType, cfg, RQConfig.COLORS,
+        RQBoss.bossBuffPainted[zombie], RQBoss.escorted[onlineID])
     if col then
         zombie:setOutlineHighlight(playerNum, true)
         zombie:setOutlineHighlightCol(playerNum, col.r, col.g, col.b, col.a)
@@ -65,9 +90,10 @@ local function onRenderTick()
     local player = getPlayer()
     if not player then return end
     local playerNum = player:getPlayerNum()
+    local cfg = RQConfig.get()
 
     for onlineID, zType in pairs(RQRegistry.activeZombies) do
-        paintSpecial(onlineID, zType, playerNum)
+        paintSpecial(onlineID, zType, playerNum, cfg)
     end
 end
 

@@ -71,6 +71,61 @@ option RFTDDirge.ConvertAccess
     translation = RQ_ConvertAccess,
 }
 
+/* ====================== Bulwark ====================== */
+/* The durability that Juggernauts, Bosses and enraged Scavengers share. The
+   armour itself is on their clothing items (media/scripts/RQ_*.txt) and has no
+   dial; these are the two lanes that do.
+
+   POISE - a hit becomes EITHER a named reaction OR a stagger, never both
+   (CombatManager.java:2410-2417), and the name comes from the attacker's own
+   swing. A shove names nothing, so it staggers. RQPoise names it for specials
+   only, and thirteen animation nodes play every gunfire reaction at twenty
+   times speed while a special carries RQPoised, so a fast weapon cannot hold
+   one still. Shipping animation nodes changes the network animation checksum
+   (AdvancedAnimator.load():752-760); the bundle keeps every client on the
+   server's files, and this switch only decides whether specials are marked.
+
+   SUPPRESS - the player's weapon keeps only SuppressPercent of its damage
+   within SuppressRadius tiles of a protector, twice that for firearms. It
+   changes the weapon, so ordinary zombies hit from inside the band take less
+   too. 100 or a radius of 0 turns it off. */
+
+option RFTDDirge.BulwarkHeader
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_BulwarkHeader,
+}
+
+option RFTDDirge.Poise
+{
+    type = boolean,
+    default = true,
+    page = RFTDDirge,
+    translation = RQ_Poise,
+}
+
+option RFTDDirge.SuppressPercent
+{
+    type = integer,
+    min = 0,
+    max = 100,
+    default = 40,
+    page = RFTDDirge,
+    translation = RQ_SuppressPercent,
+}
+
+option RFTDDirge.SuppressRadius
+{
+    type = integer,
+    min = 0,
+    max = 30,
+    default = 3,
+    page = RFTDDirge,
+    translation = RQ_SuppressRadius,
+}
+
 /* ====================== Visuals ====================== */
 
 option RFTDDirge.VisualsHeader
@@ -128,9 +183,17 @@ option RFTDDirge.BossSkillCooldown
 option RFTDDirge.ShowBossRing
 {
     type = boolean,
-    default = true,
+    default = false,
     page = RFTDDirge,
     translation = RQ_ShowBossRing,
+}
+
+option RFTDDirge.ShowBossHighlight
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowBossHighlight,
 }
 
 /* ====================== EMP ====================== */
@@ -255,6 +318,14 @@ option RFTDDirge.ShowEMPRing
     translation = RQ_ShowEMPRing,
 }
 
+option RFTDDirge.ShowEMPHighlight
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowEMPHighlight,
+}
+
 /* ====================== Glutton ====================== */
 
 option RFTDDirge.GluttonHeader
@@ -328,6 +399,14 @@ option RFTDDirge.ShowGluttonRing
     translation = RQ_ShowGluttonRing,
 }
 
+option RFTDDirge.ShowGluttonHighlight
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowGluttonHighlight,
+}
+
 /* ====================== Juggernaut ====================== */
 
 option RFTDDirge.JuggernautHeader
@@ -393,6 +472,14 @@ option RFTDDirge.ShowJuggernautRing
     translation = RQ_ShowJuggernautRing,
 }
 
+option RFTDDirge.ShowJuggernautHighlight
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowJuggernautHighlight,
+}
+
 /* ====================== Scavenger ====================== */
 
 option RFTDDirge.ScavengerHeader
@@ -437,6 +524,14 @@ option RFTDDirge.ShowScavengerRing
     default = false,
     page = RFTDDirge,
     translation = RQ_ShowScavengerRing,
+}
+
+option RFTDDirge.ShowScavengerHighlight
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowScavengerHighlight,
 }
 
 /* ====================== Screamer ====================== */
@@ -576,4 +671,12 @@ option RFTDDirge.ShowScreamerRing
     default = false,
     page = RFTDDirge,
     translation = RQ_ShowScreamerRing,
+}
+
+option RFTDDirge.ShowScreamerHighlight
+{
+    type = boolean,
+    default = false,
+    page = RFTDDirge,
+    translation = RQ_ShowScreamerHighlight,
 }

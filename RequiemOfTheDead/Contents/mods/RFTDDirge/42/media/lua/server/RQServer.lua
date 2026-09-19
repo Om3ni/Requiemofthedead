@@ -18,6 +18,7 @@ require "RDNet"         -- so is RDNet.register
 require "RQDirgeLog"
 require "RQSvShared"
 require "RQSvDormant"
+require "RQSvLivery"   -- dresses a convert BEFORE svMarkZombie records its outfit id
 require "RQSvEating"
 require "RQSvGlutton"
 require "RQSvScavenger"
@@ -26,7 +27,6 @@ require "RQSvJuggernaut"
 require "RQSvBoss"
 require "RQMcCoy"       -- reactive healing for all six special types
 require "RQBloodhound"  -- ranged-attacker pursuit; updated on the behaviour pass below
-require "RQBulwark"     -- hit mitigation policy; RQSvHit dispatches it last
 require "RQSvHit"       -- the single OnHitZombie intake; must load after the type modules it dispatches to
 require "RQSvEMP"
 require "RQSvLoot"
@@ -308,6 +308,11 @@ local function svTryConvert(zombie, cfg, zType, skipSpacing)
         return false
     end
     zombie:getModData()["RQPendingType"] = nil
+    -- Livery FIRST. svMarkZombie mints the dormant identity record from
+    -- the persistent outfit id (svDormantTrack), and virtualization keeps
+    -- that id, so the record has to see the outfit the zombie will wear.
+    -- A type with no livery (Boss) is left as it was.
+    RQSvLivery.svDressForType(zombie, zType)
     svMarkZombie(zombie, zType)
     RQSvShared.svApplyTypeHealth(zombie, cfg, zType)
     if zType == "Juggernaut" then
@@ -1199,9 +1204,10 @@ local function svOnTick()
     -- 17x17 sweep. A quarter-second of drift is a fraction of a tile against
     -- either.
     --
-    -- The Juggernaut aura this pass used to carry is gone entirely - RQBulwark
-    -- answers the same question when a hit lands - so the second cadence that
-    -- used to live here went with it.
+    -- The Juggernaut aura this pass used to carry is gone entirely (2026-08-24;
+    -- its hit-time successor RQBulwark was retired 2026-09-17, durability is
+    -- armour on the livery items now), so the second cadence that used to
+    -- live here went with it.
     local doBehaviour = RQSvShared.due(svPassState, "behaviour", BEHAVIOUR_INTERVAL, now)
 
     -- Iterate alive special zombies and dispatch to type modules

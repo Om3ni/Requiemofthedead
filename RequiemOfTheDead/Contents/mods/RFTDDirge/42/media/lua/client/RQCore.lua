@@ -11,20 +11,32 @@ require "RQDirgeLog"
 require "RQConfig"
 require "RQZombieCache"
 require "RQRegistry"
+require "RQAura"      -- the aura walk RQBoss, RQJuggernaut and RQMuster share
+require "RQLivery"    -- outfit-name validation for zombieLivery
+require "RQTailor"    -- the local re-dress it hands off to
+require "RQMuster"    -- the forced spot escortMuster hands off to
 require "RQCastBar"
 require "RQRing"
+-- RQBoss BEFORE RQHighlight, deliberately. Both register OnRenderTick
+-- listeners here, in this order, and Event.java:53-56 dispatches in
+-- registration order - so the Boss aura pass rebuilds its painted and escorted sets
+-- before the highlight pass reads them for the SAME frame. Until
+-- 2026-09-17 the order was reversed and RQHighlight read the previous
+-- frame's sets while its comment said otherwise.
+require "RQBoss"
 require "RQHighlight"
 require "RQMoodle"
 require "RQScreamer"
 require "RQJuggernaut"
 require "RQEMP"
 require "RQGlutton"
-require "RQBoss"
 require "RQScavenger"
 require "RQReconcile"
 require "RQAdmin"
 require "RQHealthBar"
 require "RQReflect"
+require "RQPoise"     -- names the shove reaction; asserts RQPoised for the fast gunfire nodes
+require "RQDread"     -- the weapon band, registered into RQSuppress
 
 
 local function onZombieDead(zombie)
@@ -327,6 +339,33 @@ local function onServerCommand(module, command, args)
         local turnDelta = tonumber(args.turnDelta)
         if turnDelta then zombie:setTurnDelta(turnDelta) end
         zombie:resetModelNextFrame()
+
+    elseif command == "zombieLivery" then
+        -- Targeted, like applyZombieMovement: the server sends this only to
+        -- players within relevance of a zombie it just dressed, because the
+        -- persistent outfit id on the wire dresses a zombie at CREATION only
+        -- (NetworkZombieSimulator.java:182) and never re-dresses one a client
+        -- already holds (:258-269). A client that has no such zombie has
+        -- nothing to do - it will create it from the new id when it arrives.
+        local onlineID = tonumber(args.onlineID)
+        local outfit   = args.outfit
+        if not onlineID or onlineID == -1 or not RQLivery.wears(outfit) then return end
+        local zombie = findZombieByID(onlineID)
+        if not zombie or zombie:isDead() then return end
+        RQTailor.redress(zombie, outfit)
+
+    elseif command == "escortMuster" then
+        -- Targeted, like zombieLivery: the server sends this to players
+        -- within relevance of a Juggernaut or Boss a player just hit. Each
+        -- recipient commands the escorts IT simulates (RQMuster); a client
+        -- that does not hold the special has no escort of it to command.
+        local onlineID   = tonumber(args.onlineID)
+        local attackerID = tonumber(args.attackerID)
+        local radius     = tonumber(args.radius)
+        if not onlineID or onlineID == -1 or not attackerID or not radius or radius <= 0 then return end
+        local zombie = findZombieByID(onlineID)
+        if not zombie or zombie:isDead() then return end
+        RQMuster.muster(zombie, attackerID, radius)
 
     elseif command == "castStart" then
         local col    = { r = args.rR or 1, g = args.rG or 1, b = args.rB or 1, a = args.rA or 1 }

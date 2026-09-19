@@ -1,8 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQBoss - client visuals for the apex zombie
 -- Server (RQSvBoss) owns the skill rotation. The passive buff aura it used to
--- own is RQBulwark's now - resolved per hit against the zombie struck, rather
--- than granted once to everything standing nearby.
+-- own is gone: first to a hit-time soak (2026-08-24), then retired with it on
+-- 2026-09-17, when durability moved onto the livery items' armour. What is
+-- left of the aura is the escort PAINT below, which is presentation.
 -- Client owns: persistent boss-color ring on each Boss, plus a per-frame paint
 -- pass that colors every zombie inside the boss aura in Boss color (regular
 -- AND special). The painted-zombie set is published as RQBoss.bossBuffPainted
@@ -11,6 +12,8 @@
 --
 -- Cast bars and EMP/Scream telegraphs still come through castStart/castDone
 -- broadcasts dispatched in RQCore - this file only handles the always-on visuals.
+
+require "RQAura"
 
 RQBoss = RQBoss or {}
 
@@ -23,6 +26,13 @@ RQBoss = RQBoss or {}
 -- garbage immediately and no row can outlive one frame.
 RQBoss.bossBuffPainted = {}
 
+-- onlineID -> true for every Boss whose aura painted at least one zombie
+-- this frame: a Boss WITH AN ESCORT. RQHighlight outlines an escorted Boss
+-- even when ShowBossHighlight is off (owner rule, 2026-09-17: a Boss loses
+-- its outline and gets it back only while it has an escort). Rebuilt every
+-- render tick like the painted set, and bounded the same way.
+RQBoss.escorted = {}
+
 -- The player-in-aura flag this file used to publish is gone (2026-08-25), and
 -- so is the note that described it. It existed for one consumer: RQJuggernaut
 -- OR'd it with its own range check to drive a shared weapon-debuff
@@ -34,6 +44,23 @@ RQBoss.bossBuffPainted = {}
 -- to crash here with "attempted index: COLORS of non-table: null".
 local BOSS_RING_COLOR
 
+-- The per-zombie policy for RQAura.eachEscort, file-scope so a render tick
+-- allocates no closure. Unlike the Juggernaut's, specials count too - the
+-- boss colour overrides their type colour - and the sets are recorded here:
+-- painted (read by RQJuggernaut and RQHighlight for the overlap) and
+-- escorted (read by RQHighlight to outline an escorted Boss).
+local paintPlayerNum = 0
+local paintPainted   = {}
+local paintEscorted  = {}
+local paintBossID    = 0
+local function paintEscort(obj)
+    obj:setOutlineHighlight(paintPlayerNum, true)
+    obj:setOutlineHighlightCol(paintPlayerNum,
+        BOSS_RING_COLOR.r, BOSS_RING_COLOR.g, BOSS_RING_COLOR.b, BOSS_RING_COLOR.a)
+    paintPainted[obj] = true
+    paintEscorted[paintBossID] = true
+end
+
 -- Per-frame paint pass for the boss aura. For each Boss, draw a ring and
 -- paint nearby zombies in Boss color. The shared bossBuffPainted table is
 -- rebuilt every frame so a zombie wandering out of the aura naturally falls
@@ -43,16 +70,17 @@ Events.OnRenderTick.Add(function()
     if not player then return end
     BOSS_RING_COLOR = BOSS_RING_COLOR or (RQConfig and RQConfig.COLORS and RQConfig.COLORS.Boss)
     if not BOSS_RING_COLOR then return end
-    local playerNum = player:getPlayerNum()
     local cfg       = RQConfig.get()
     local cell      = getCell()
     local radius    = cfg.juggernautBuffRadius
-    local rSq       = radius * radius
+    paintPlayerNum  = player:getPlayerNum()
 
     -- rebuild the painted set fresh each frame - this replacement, not any
     -- weak-key behaviour, is what bounds the table (Kahlua has no weak tables)
-    local painted = {}
-    RQBoss.bossBuffPainted = painted
+    paintPainted  = {}
+    paintEscorted = {}
+    RQBoss.bossBuffPainted = paintPainted
+    RQBoss.escorted        = paintEscorted
 
     for onlineID, zType in pairs(RQRegistry.activeZombies) do
         if zType == "Boss" then
@@ -67,35 +95,13 @@ Events.OnRenderTick.Add(function()
                     -- Same removal as RQJuggernaut's: the player-distance test
                     -- here fed the aura flag RQSuppress read, and has fed
                     -- nothing since 2026-08-24. Per Boss, per render tick.
-                    -- Removed 2026-08-25; rSq stays for the paint pass below.
+                    -- Removed 2026-08-25.
 
-                    -- paint every zombie inside this boss's aura. unlike Juggernaut,
-                    -- specials count too - the boss color overrides their type color.
+                    -- paint every zombie inside this boss's aura. The walk is
+                    -- RQAura's; paintEscort above is the policy.
                     if cell then
-                        for dx = -radius, radius do
-                            for dy = -radius, radius do
-                                if dx*dx + dy*dy <= rSq then
-                                    local sq = cell:getGridSquare(bx + dx, by + dy, bz)
-                                    if sq then
-                                        local movs = sq:getMovingObjects()
-                                        if movs then
-                                            for i = 0, movs:size() - 1 do
-                                                local obj = movs:get(i)
-                                                if obj and instanceof(obj, "IsoZombie")
-                                                   and not obj:isDead()
-                                                   and obj ~= boss
-                                                then
-                                                    obj:setOutlineHighlight(playerNum, true)
-                                                    obj:setOutlineHighlightCol(playerNum,
-                                                        BOSS_RING_COLOR.r, BOSS_RING_COLOR.g, BOSS_RING_COLOR.b, BOSS_RING_COLOR.a)
-                                                    painted[obj] = true
-                                                end
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
+                        paintBossID = onlineID
+                        RQAura.eachEscort(cell, boss, radius, paintEscort)
                     end
                 end
             end
@@ -115,6 +121,7 @@ end
 
 Events.OnGameStart.Add(function()
     RQBoss.bossBuffPainted = {}
+    RQBoss.escorted = {}
 end)
 
 -- ---------------------------------------------------------------------------

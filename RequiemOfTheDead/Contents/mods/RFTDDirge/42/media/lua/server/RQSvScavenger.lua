@@ -1,9 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQSvScavenger - server tick for the sleeper threat
 -- Looks like a Glutton at first - green, eats corpses, gets fatter. Hit it
--- once and it hulks out with peakHP*5, and while it rages RQBulwark counts it
--- as a protector of nearby SPECIALS only (not regular zombies, story reason) -
--- decided per hit, never granted by a sweep. HP decays linearly back
+-- once and it hulks out with peakHP*5 and turns its core crimson. While it
+-- rages it projects RQDread's weapon band and paints nearby SPECIALS (story
+-- reason: scavs share with their own kind). HP decays linearly back
 -- to base over 10 minutes but it stays hostile forever. Eats while raging,
 -- and rage-eating actively heals toward the frozen peakHP (never above).
 --
@@ -21,6 +21,7 @@ if not isServer() then return end
 -- session. Full mechanics of that failure: RQSvGlutton.lua's matching note.
 require "RQSvEating"
 require "RDZombieId"
+require "RQSvLivery"   -- the crimson core on the rage flip
 
 RQSvScavenger = RQSvScavenger or {}
 
@@ -80,20 +81,19 @@ end
 -- target gets the +N% exactly once per scav", a table deleted in the same slice
 -- that deleted the function. Kept only as a note of what the rule USED to be:
 -- the rage aura painted specials only, never regular zombies, and yielded to
--- Boss and Juggernaut claims. RQBulwark's per-hit lookup is where that
--- precedence lives now. An enraged Scavenger still protects the
--- specials around it; RQBulwark decides that when a hit lands rather than
--- pre-granting health that outlived the rage that earned it.
+-- Boss and Juggernaut claims. The per-hit soak that inherited that rule was
+-- retired 2026-09-17; what an enraged Scavenger projects now is RQDread's
+-- weapon band on the client, and the escort paint is presentation only.
 --
 -- The two functions below were COLLATERAL of that deletion for part of
 -- 2026-08-24: the removal script's pattern swallowed its neighbours, the file
 -- stayed syntax-clean, and every fixture stubbed this module - so the loss was
 -- invisible until a fixture loaded the real file and asked for the surface
--- RQSvHit, RQBulwark and RQBloodhound dispatch to. Restored verbatim from the
+-- RQSvHit and RQBloodhound dispatch to. Restored verbatim from the
 -- pre-deletion tree.
 
--- Is this Scavenger currently raging? Asked by RQBulwark, which protects an
--- enraged Scavenger and deliberately does not protect a passive one.
+-- Is this Scavenger currently raging? Asked by RQBloodhound, which pursues
+-- for an enraged Scavenger and deliberately not for a passive one.
 --
 -- Live state first, the persisted flag second - the same shape as
 -- RQSvShared.typeOf and for the same reason. A Scavenger that has not been
@@ -134,6 +134,10 @@ function RQSvScavenger.onPlayerHit(zombie)
     state.peakHP        = rageHP   -- FROZEN. No further bumps.
     zombie:getModData()["RQScavHostile"] = true
     zombie:transmitModData()
+    -- Emerald core to crimson: the visible half of the flip. Once, here,
+    -- because this is the one place rage is decided and the debounce above
+    -- already guarantees a single pass.
+    RQSvLivery.svEnrage(zombie)
 
     -- Cancel any in-flight eating before flipping. Co-eating: drop ourselves
     -- from the shared cast so the survivors get the correct share count

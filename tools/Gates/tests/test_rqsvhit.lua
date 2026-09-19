@@ -1,11 +1,16 @@
--- RQSvHit fixture - one intake, one listener, a named reason for every refusal.
+-- RQSvHit fixture - one intake, named refusals, and a dispatch order that is
+-- a contract.
 --
--- This is the file that has to stay honest as Slices 2-4 land on it. Three more
--- combat responsibilities are going to be dispatched from here, and the whole
--- reason the intake exists is that their ORDER is a contract rather than an
--- accident of engine registration order. What is pinned below is the shape of
--- that contract: exactly one listener, validation that names why it turned a
--- hit away, and a context whose fields downstream modules can rely on.
+-- WHY THE ORDER IS ASSERTED AS ONE SEQUENCE. Rage runs before healing and
+-- pursuit because both read the Scavenger's state; per-stage call counts could
+-- all be right while the order between them was wrong, so every stage writes to
+-- one log and the log is compared whole.
+--
+-- The 2026-09-17 retirement of the server-side soak (RQBulwark) took the old
+-- fourth stage and the debug probe with it, and put ordinary zombies back on
+-- the refusal list: nothing downstream has a use for a hit on a zombie that is
+-- not a special. The same day the escort muster (RQSvMuster) took the fourth
+-- slot: a notification, so it runs after every stage that changes state.
 
 local ROOT = arg[1] or "."
 local SOURCE = ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/server/RQSvHit.lua"
@@ -32,11 +37,8 @@ Events = { OnHitZombie = { Add = function(fn) listeners[#listeners + 1] = fn end
 -- The module hard-requires its siblings. The fixture answers with the surface
 -- it actually touches, and errors on anything unexpected, so a new dependency
 -- appearing in production shows up here rather than at runtime.
-local rageCalls = {}
--- ONE log, written by every stage. Order is the contract this file exists to
--- protect, so it is asserted against a single sequence rather than per-stage
--- call counts that could both be right while the order between them is wrong.
 local order = {}
+local rageCalls = {}
 RQSvScavenger = {
     onPlayerHit = function(z)
         rageCalls[#rageCalls + 1] = z
@@ -57,18 +59,17 @@ RQBloodhound = {
         order[#order + 1] = "bloodhound"
     end,
 }
-local bulwarkCalls = {}
-RQBulwark = {
-    resolve = function(ctx)
-        bulwarkCalls[#bulwarkCalls + 1] = ctx
-        order[#order + 1] = "bulwark"
+local musterCalls = {}
+RQSvMuster = {
+    onAttacked = function(ctx)
+        musterCalls[#musterCalls + 1] = ctx
+        order[#order + 1] = "muster"
     end,
 }
 RQDirgeLog = { write = function() end }
-local debugMode = false
 local activeZombies = {}
 RQSvShared = {
-    getSvConfig = function() return { debugMode = debugMode } end,
+    getSvConfig = function() return {} end,
     -- The real resolver's contract: registry first, the zombie's own RQType
     -- second. RQSvHit deliberately owns no copy of the registry.
     typeOf = function(z)
@@ -81,7 +82,7 @@ RQCommon = { MODULE = "RFTDDirge" }
 function require(name)
     local known = {
         RQCommon = true, RQDirgeLog = true, RQSvShared = true, RQSvScavenger = true,
-        RQBulwark = true, RQBloodhound = true, RQMcCoy = true,
+        RQBloodhound = true, RQMcCoy = true, RQSvMuster = true,
     }
     if known[name] then return end
     error("unexpected fixture require: " .. tostring(name))
@@ -90,25 +91,20 @@ end
 RQSvHit = nil
 local ok, err = pcall(dofile, SOURCE)
 check(ok, "module loads: " .. tostring(err))
-
--- ---------------------------------------------------------------------------
--- One listener
--- ---------------------------------------------------------------------------
 check(#listeners == 1, "the module registers exactly one OnHitZombie listener")
 check(RQSvHit.setActiveZombies == nil,
-    "the intake keeps no registry of its own - it asks RQSvShared.typeOf")
+    "no registry injection - type questions go through RQSvShared.typeOf")
+check(RQSvHit.probe == nil, "the soak probe is gone with the soak")
 
 local function makeZombie(opts)
     opts = opts or {}
     local md = opts.modData or {}
     return {
         className = "IsoZombie",
-        getOnlineID    = function() return opts.id or 42 end,
-        getModData     = function() return md end,
-        isDead         = function() return opts.dead == true end,
-        getHealth      = function() return opts.hp or 4.0 end,
-        getOwnerPlayer = function() return opts.owner end,
-        isRemoteZombie = function() return opts.remote == true end,
+        getOnlineID = function() return opts.id or 42 end,
+        getModData  = function() return md end,
+        isDead      = function() return opts.dead == true end,
+        getHealth   = function() return opts.hp or 4.0 end,
     }
 end
 
@@ -148,26 +144,17 @@ activeZombies[corpse] = "Juggernaut"
 fire(corpse, player, nil, nil)
 check(refusedCount("already-dead") == 1, "a dead zombie is refused by name")
 
-check(RQSvHit.stats.dispatched == 0, "no refused hit reached dispatch")
-check(RQSvHit.stats.seen == 4, "every call is counted as seen, refused or not")
-
--- ---------------------------------------------------------------------------
--- An ordinary zombie is NOT a refusal
--- ---------------------------------------------------------------------------
--- It was, until aura protection moved to hit time. An ordinary zombie standing
--- inside a living special's radius borrows that protection, so it has to reach
--- Bulwark - but nothing else. It does not enrage, it does not heal, and it does
--- not hunt: it borrows the escort's protection, not its constitution.
+-- An ordinary zombie is a refusal again. It reached dispatch only so the soak
+-- could ask whether an aura covered it; the soak is gone and so is the reason.
 local ordinary = makeZombie{ id = 7 }
-order, rageCalls, mccoyCalls, bloodhoundCalls, bulwarkCalls = {}, {}, {}, {}, {}
+order, rageCalls, mccoyCalls, bloodhoundCalls = {}, {}, {}, {}
 fire(ordinary, player, nil, meleeWeapon())
-check(refusedCount("not-special") == 0, "an ordinary zombie is no longer refused")
-check(#bulwarkCalls == 1, "an ordinary zombie reaches Bulwark, for the aura")
-check(#mccoyCalls == 0, "an ordinary zombie does not reach McCoy")
-check(#bloodhoundCalls == 0, "an ordinary zombie does not reach Bloodhound")
-check(#rageCalls == 0, "an ordinary zombie does not reach rage")
-check(bulwarkCalls[1].zType == nil,
-    "and its context carries a nil type rather than a placeholder")
+check(refusedCount("not-special") == 1, "an ordinary zombie is refused by name")
+check(#mccoyCalls == 0 and #bloodhoundCalls == 0 and #rageCalls == 0 and #musterCalls == 0,
+    "and reaches no module at all")
+
+check(RQSvHit.stats.dispatched == 0, "no refused hit reached dispatch")
+check(RQSvHit.stats.seen == 5, "every call is counted as seen, refused or not")
 
 -- ---------------------------------------------------------------------------
 -- The registry is consulted before modData
@@ -180,42 +167,54 @@ mccoyCalls = {}
 fire(reloaded, player, nil, meleeWeapon())
 check(#mccoyCalls == 1,
     "a special known only by modData is treated as a special, not as ordinary")
+check(mccoyCalls[1].zType == "Boss", "and its context carries the modData type")
+
+-- ---------------------------------------------------------------------------
+-- The order, as one sequence
+-- ---------------------------------------------------------------------------
+local scav = makeZombie{ id = 3 }
+activeZombies[scav] = "Scavenger"
+order = {}
+fire(scav, player, nil, rangedWeapon())
+check(table.concat(order, ",") == "rage,mccoy,bloodhound,muster",
+    "a Scavenger hit runs rage, then healing, then pursuit, then the muster: " .. table.concat(order, ","))
+
+order = {}
+fire(jugg, player, nil, rangedWeapon())
+check(table.concat(order, ",") == "mccoy,bloodhound,muster",
+    "a Juggernaut hit skips rage and keeps the rest in order: " .. table.concat(order, ","))
 
 -- ---------------------------------------------------------------------------
 -- Ranged classification
 -- ---------------------------------------------------------------------------
--- isRanged(), not isAimedFirearm() - a decided policy, wider than the shipped
--- RQSuppress band, so a crossbow counts.
-local scav = makeZombie{ id = 3 }
-activeZombies[scav] = "Scavenger"
-
-rageCalls = {}
+-- isRanged(), not isAimedFirearm() - a decided policy, wider than RQDread's
+-- firearm band, so a crossbow counts.
+bloodhoundCalls = {}
 fire(scav, player, nil, rangedWeapon())
-check(#rageCalls == 1, "a ranged hit on a Scavenger reaches rage")
+check(bloodhoundCalls[1].isRanged == true, "a ranged weapon is classified ranged")
 
-rageCalls = {}
+bloodhoundCalls = {}
 fire(scav, player, nil, meleeWeapon())
-check(#rageCalls == 1, "a melee hit on a Scavenger reaches rage")
+check(bloodhoundCalls[1].isRanged == false, "a melee weapon is classified melee")
 
 -- Bare hands and shoves arrive with no weapon at all; that must not throw and
 -- must not read as ranged.
-rageCalls = {}
+rageCalls, bloodhoundCalls = {}, {}
 local threw = not pcall(fire, scav, player, nil, nil)
 check(not threw, "an unarmed hit does not throw")
-check(#rageCalls == 1, "an unarmed hit still reaches rage")
+check(#rageCalls == 1 and bloodhoundCalls[1].isRanged == false,
+    "an unarmed hit still reaches rage and reads as melee")
 
 -- A non-HandWeapon item has no isRanged method. Presence test, not a pcall.
-rageCalls = {}
+rageCalls, bloodhoundCalls = {}, {}
 threw = not pcall(fire, scav, player, nil, notAWeapon())
 check(not threw, "an item with no isRanged method does not throw")
-check(#rageCalls == 1, "an item with no isRanged method still dispatches")
+check(#rageCalls == 1 and bloodhoundCalls[1].isRanged == false,
+    "an item with no isRanged method still dispatches, as melee")
 
 -- ---------------------------------------------------------------------------
 -- Dispatch is type-gated
 -- ---------------------------------------------------------------------------
--- The listener this replaced tested the type before calling rage. Relying
--- instead on onPlayerHit finding no state row for a Juggernaut would work by
--- accident; the intake knows the type, so the intake states it.
 rageCalls = {}
 fire(jugg, player, nil, meleeWeapon())
 check(#rageCalls == 0, "a Juggernaut hit does not reach Scavenger rage")
@@ -226,95 +225,11 @@ rageCalls = {}
 fire(boss, player, nil, rangedWeapon())
 check(#rageCalls == 0, "a Boss hit does not reach Scavenger rage")
 
--- ---------------------------------------------------------------------------
--- The probe is debug-gated and bounded
--- ---------------------------------------------------------------------------
-local before = RQSvHit.probe.logged
-fire(scav, player, nil, meleeWeapon())
-check(RQSvHit.probe.logged == before, "the probe is silent while DebugMode is off")
-
-debugMode = true
-RQSvHit.probe.ownerServer, RQSvHit.probe.ownerClient = 0, 0
-fire(scav, player, nil, meleeWeapon())
-check(RQSvHit.probe.logged == before + 1, "the probe records once DebugMode is on")
-check(RQSvHit.probe.ownerServer == 1,
-    "a zombie with no owner is counted as server-authoritative")
-
--- The Slice 1 question in one counter: who owns the target. A nil owner means
--- this server is authoritative (IsoZombie.java:454-456).
-local owned = makeZombie{ id = 8, owner = { className = "IsoPlayer" }, remote = true }
-activeZombies[owned] = "Juggernaut"
-fire(owned, player, nil, rangedWeapon())
-check(RQSvHit.probe.ownerClient == 1, "a client-owned zombie is counted separately")
-check(RQSvHit.probe.remoteFlag >= 1, "isRemoteZombie is recorded alongside ownership")
-
--- Bounded: the log stops, the counters do not. An unbounded per-hit line in a
--- release artifact is exactly what the working rules forbid.
-RQSvHit.probe.logged = 200          -- PROBE_LOG_MAX
-local suppressedBefore = RQSvHit.probe.suppressed
-local rangedBefore = RQSvHit.probe.ranged
-fire(scav, player, nil, rangedWeapon())
-check(RQSvHit.probe.logged == 200, "the probe log stops at its cap")
-check(RQSvHit.probe.suppressed == suppressedBefore + 1, "suppressed lines are counted")
-check(RQSvHit.probe.ranged == rangedBefore + 1, "counters keep running past the log cap")
-
-debugMode = false
-
--- ---------------------------------------------------------------------------
--- ORDER IS THE CONTRACT
--- ---------------------------------------------------------------------------
--- Bulwark resolves LAST. A soaked hit is still an attack: it must still enrage a
--- Scavenger, and once Slices 3 and 4 land it must still arm healing and still
--- mark a shooter. Mitigation running first would make a well-armoured target
--- progressively harder to provoke, which is backwards.
-order, rageCalls, bulwarkCalls, bloodhoundCalls = {}, {}, {}, {}
-fire(scav, player, nil, rangedWeapon())
-check(#order == 4, "all four stages ran for a ranged Scavenger hit")
-check(order[1] == "rage", "rage runs first")
-check(order[2] == "mccoy", "McCoy arms before mitigation is decided")
-check(order[3] == "bloodhound", "Bloodhound acquires before mitigation is decided")
-check(order[4] == "bulwark", "Bulwark resolves last")
-
--- A type with no rage stage still reaches the others - ordering must not be
--- accidentally chained through the stage before it.
-order, bulwarkCalls, bloodhoundCalls = {}, {}, {}
-fire(jugg, player, nil, meleeWeapon())
-check(order[1] == "mccoy" and order[2] == "bloodhound" and order[3] == "bulwark"
-      and #order == 3,
-    "a Juggernaut reaches the other three stages without passing through rage")
-
--- A SOAKED HIT STILL ARMS HEALING AND STILL MARKS A SHOOTER. This is the whole
--- reason Bulwark is last: it cannot suppress the stages above it, because it
--- has not run yet when they do.
-order, mccoyCalls, bloodhoundCalls = {}, {}, {}
-fire(boss, player, nil, rangedWeapon())
-check(#mccoyCalls == 1, "McCoy is armed regardless of what Bulwark will decide")
-check(#bloodhoundCalls == 1, "Bloodhound is offered the hit regardless of the soak")
-
--- EVERY hit reaches Bloodhound, which decides for itself whether it is ranged.
--- Filtering here would put the same policy in two places.
-order, bloodhoundCalls = {}, {}
-fire(jugg, player, nil, meleeWeapon())
-check(#bloodhoundCalls == 1, "a melee hit still reaches Bloodhound to be refused there")
-
--- ---------------------------------------------------------------------------
--- The context Bulwark is handed
--- ---------------------------------------------------------------------------
-bulwarkCalls = {}
-fire(jugg, player, nil, rangedWeapon())
-local ctx = bulwarkCalls[1]
-check(ctx ~= nil, "Bulwark receives a context")
-check(ctx.zombie == jugg, "context carries the struck zombie")
-check(ctx.attacker == player, "context carries the attacker")
-check(ctx.zType == "Juggernaut", "context carries the resolved type")
-check(ctx.isRanged == true, "context carries the ranged verdict")
-check(ctx.isPlayerAttack == true, "context asserts this is a player attack")
-check(ctx.now == clock, "context carries one timestamp read, not a fresh clock per stage")
-
-bulwarkCalls = {}
-fire(jugg, player, nil, nil)
-check(bulwarkCalls[1].isRanged == false, "an unarmed hit is not ranged")
-check(bulwarkCalls[1].weapon == nil, "an unarmed hit carries no weapon")
+-- The context every module reads, carried whole.
+local ctx = bloodhoundCalls[#bloodhoundCalls]
+check(ctx.zombie == boss and ctx.attacker == player and ctx.isPlayerAttack == true
+    and ctx.now == clock, "the context carries zombie, attacker, the player flag and the clock")
+check(musterCalls[#musterCalls] == ctx, "and the muster reads the very same context, not a copy")
 
 print(string.format("RQSvHit: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

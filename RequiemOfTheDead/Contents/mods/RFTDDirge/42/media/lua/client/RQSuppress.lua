@@ -3,14 +3,16 @@
 --
 -- Owns EVERY write to a weapon's damage fields.
 --
--- DIRGE NO LONGER USES THIS FILE. Read that first, because the history below
--- is about a feature that is gone. Slice 6 of the Bulwark rework (2026-08-24)
+-- DIRGE IS A CONSUMER AGAIN, since 2026-09-17: RQDread registers one term here,
+-- the weapon band a Juggernaut, Boss or enraged Scavenger projects. The history
+-- below is still worth reading. Slice 6 of the Bulwark rework (2026-08-24)
 -- removed Dirge's four terms - the three per-type aura sources and the ranged
--- engagement band - and RQBulwark now mitigates on the SERVER, against the
--- zombie that was actually struck. What survives here is the registry and its
--- composition model, kept for RFTDLimes, which is a real external consumer
--- (LMSuppress.lua:67). The removal note further down states why both answers
--- could not coexist.
+-- engagement band - in favour of RQBulwark, a server-side soak against the
+-- zombie struck; that soak was retired on 2026-09-17 because it protected only
+-- the server's copy of a zombie the attacking client owns (RQSvHit's header).
+-- The registry and its composition model were kept throughout for RFTDLimes,
+-- a real external consumer (LMSuppress.lua:67), which is why there was a place
+-- for the term to come back to.
 --
 -- HOW IT GOT THIS SHAPE. It grew out of RQJuggernaut's applyAura/releaseAura
 -- pair, which had two structural holes once suppression stopped being a single
@@ -32,9 +34,9 @@
 --      shotguns fired at full damage. Players were dropping Juggernauts in
 --      seconds on the live box. This file's answer was a weapon-class-aware
 --      source that extended the band to cfg.rangedProtectRadius; that answer
---      was removed with the rest of Dirge's terms. The hole stays closed
---      because RQBulwark soaks on the server no matter where the shooter is
---      standing, so there is no band left to step outside of.
+--      was removed with the rest of Dirge's terms. RQDread's term closes it
+--      again with a firearm band of twice the melee radius, and the armour on
+--      the livery items holds at any range.
 --
 -- COMPOSITION MODEL (locked in design review, live for RFTDLimes):
 --   * Sources register into TERM GROUPS. Within a group the deepest (minimum)
@@ -200,8 +202,9 @@ end
 -- No built-in sources
 -- ---------------------------------------------------------------------------
 -- Dirge's four terms - the three per-type aura sources and the ranged
--- engagement band - were removed on 2026-08-24. RQBulwark decides tank
--- mitigation now, on the server, against the zombie that was actually struck.
+-- engagement band - were removed on 2026-08-24 in favour of a server-side
+-- soak, itself retired 2026-09-17. Dirge's one current term lives in RQDread
+-- and registers through the public surface like any other consumer.
 --
 -- WHY BOTH COULD NOT STAY. They are two answers to one question, and they
 -- compound: a Juggernaut would have soaked the hit AND the hit would have been

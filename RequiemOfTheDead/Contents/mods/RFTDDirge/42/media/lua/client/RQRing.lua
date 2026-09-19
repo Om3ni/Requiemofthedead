@@ -34,7 +34,12 @@ RQRing.TILE_SCALE = 1.5
 --   "emp_*"        -> showEMPRing       (default on - every emp_* ring is the
 --                                        death-detonation telegraph, a lethal
 --                                        AoE warning; EMP has no other rings)
---   "boss_*"       -> showBossRing      (default on - apex tier, skill telegraph)
+--   "boss_emp_*"   -> showEMPRing       (the Boss's EMPulse IS an EMP blast; it
+--                                        sat under the Boss switch until
+--                                        2026-09-17 because the prefix test
+--                                        below matched "boss_" first)
+--   "boss_*"       -> showBossRing      (default off since 2026-09-17: the aura
+--                                        ring and the Scream telegraph)
 --   "scav_*"       -> showScavengerRing (default off)
 --   "jugg_*"       -> showJuggernautRing(default off)
 --   "screamer_*"   -> showScreamerRing  (default off)
@@ -44,6 +49,8 @@ local function isRingBlockedByGate(ringId)
     if not ringId then return false end
     local cfg = RQConfig.get()
     if ringId:sub(1, 4) == "emp_"      then return not cfg.showEMPRing        end
+    -- Longer prefix first: "boss_emp_" also starts with "boss_".
+    if ringId:sub(1, 9) == "boss_emp_" then return not cfg.showEMPRing        end
     if ringId:sub(1, 5) == "boss_"     then return not cfg.showBossRing       end
     if ringId:sub(1, 5) == "scav_"     then return not cfg.showScavengerRing  end
     if ringId:sub(1, 5) == "jugg_"     then return not cfg.showJuggernautRing end

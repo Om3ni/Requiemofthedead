@@ -11,5 +11,7 @@
     "IGUI_LR_Danger_Quips": "Over-head thoughts",
     "IGUI_LR_Danger_Shake": "Shake the warning icons",
     "IGUI_LR_Danger_OverheadY": "Over-head height",
-    "IGUI_LR_Danger_Hint": "Warnings move over your head as they turn life-threatening."
+    "IGUI_LR_Danger_Hint": "Warnings move over your head as they turn life-threatening.",
+
+    "IGUI_LR_ReplaceBandage": "Replace Bandage"
 }

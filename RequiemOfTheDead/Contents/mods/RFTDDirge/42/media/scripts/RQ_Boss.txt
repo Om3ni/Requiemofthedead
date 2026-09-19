@@ -1,0 +1,132 @@
+/*
+    THE BOSS WEARS ONE OF THE OTHER FOUR BODIES, LIT GOLD.
+
+    A Boss has no mesh of its own. At conversion the server draws one of
+    four liveries at random - RQ_BossJuggernaut, RQ_BossDevourer,
+    RQ_BossScreamer, RQ_BossEMP - each a TWIN of that type's biped under
+    the Boss's own item, paired with that body's core mesh in gold. Gold is
+    the Boss's tell whichever body it borrowed; the pick and the randomness
+    live in RQLivery / RQSvLivery, not here.
+
+    Twins rather than the types' own items for the reason the Glutton has
+    one: clothing defence is a property of the ITEM, so the Boss's numbers
+    are its own, and arming a Juggernaut does not arm the Boss wearing a
+    Juggernaut's body by accident.
+
+    THE BOSS IS AS TOUGH AS A JUGGERNAUT (owner rule, 2026-09-17): every one
+    of its four bodies carries the Juggernaut's capped profile, 28.33 x3 =
+    just under 85 percent against melee and gunfire at the default
+    ZombiesArmorFactor. The engine chain, the BloodLocation gate and the
+    sums-across-items rule are cited in RQ_Juggernaut.txt and apply to each
+    of the four bipeds below unchanged. The cores stay cosmetic.
+*/
+module RFTDDirge
+{
+    item RQ_BossBipedJuggernaut
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Boss Hide,
+        ClothingItem = RQ_BossBipedJuggernaut,
+        BodyLocation = base:BodyCostume,
+        BloodLocation = ShirtLongSleeves;Trousers;Shoes;Hands;Head;Neck,
+        ScratchDefense = 28.33,
+        BiteDefense = 28.33,
+        BulletDefense = 28.33,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_BossCoreJuggernaut
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Boss Core,
+        ClothingItem = RQ_BossCoreJuggernaut,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_BossBipedDevourer
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Boss Hide,
+        ClothingItem = RQ_BossBipedDevourer,
+        BodyLocation = base:BodyCostume,
+        BloodLocation = ShirtLongSleeves;Trousers;Shoes;Hands;Head;Neck,
+        ScratchDefense = 28.33,
+        BiteDefense = 28.33,
+        BulletDefense = 28.33,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_BossCoreDevourer
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Boss Core,
+        ClothingItem = RQ_BossCoreDevourer,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_BossBipedScreamer
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Boss Hide,
+        ClothingItem = RQ_BossBipedScreamer,
+        BodyLocation = base:BodyCostume,
+        BloodLocation = ShirtLongSleeves;Trousers;Shoes;Hands;Head;Neck,
+        ScratchDefense = 28.33,
+        BiteDefense = 28.33,
+        BulletDefense = 28.33,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_BossCoreScreamer
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Boss Core,
+        ClothingItem = RQ_BossCoreScreamer,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_BossBipedEMP
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Boss Hide,
+        ClothingItem = RQ_BossBipedEMP,
+        BodyLocation = base:BodyCostume,
+        BloodLocation = ShirtLongSleeves;Trousers;Shoes;Hands;Head;Neck,
+        ScratchDefense = 28.33,
+        BiteDefense = 28.33,
+        BulletDefense = 28.33,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_BossCoreEMP
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Boss Core,
+        ClothingItem = RQ_BossCoreEMP,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+}

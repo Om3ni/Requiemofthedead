@@ -41,7 +41,8 @@ local enumNames = {
     "SCREAMER_INTERVAL", "SCREAMER_CAST", "SCREAMER_RANGE", "SCREAMER_SOUND",
     "SCREAMER_SPAWN_MIN", "SCREAMER_SPAWN_MAX", "SCREAMER_THRESHOLD", "JUGG_RADIUS",
     -- JUGG_BUFF went with JuggernautBuffPercent on 2026-08-25; JUGG_RADIUS
-    -- stays, because JuggernautBuffRadius is still live (RQBulwark.lua:162).
+    -- stays, because JuggernautBuffRadius is still live: the client escort
+    -- paint reads it (RQJuggernaut.lua, RQBoss.lua, RQScavenger.lua).
     "EMP_RANGE", "EMP_CAST", "EMP_RADIUS", "EMP_DRAIN", "GLUTTON_RADIUS",
     "GLUTTON_MULT", "BOSS_COOLDOWN", "CAST_4",
 }
@@ -473,6 +474,67 @@ check(effCalls == 0 and md.RQSprintRolled == nil,
     "a disabled Dirge rolls nothing and burns nothing")
 SandboxVars.RFTDDirge.Enabled = nil
 RQSvShared.clearSvConfig()
+
+-- ---------------------------------------------------------------------------
+-- svApplyTypeHealth: the base-health floor reaches the Boss (2026-09-17)
+-- ---------------------------------------------------------------------------
+-- A weak zombie converts with base * multiplier; a Juggernaut lifts base to the
+-- floor first, and the Boss now does too. The Glutton does not - its ceiling is
+-- meant to come from what it eats. The floor in this fixture's RQCommon stub is
+-- 100, deliberately absurd, so a floored result is unmistakable from an
+-- unfloored one even after the network clamp.
+local function weakling()
+    local md = {}
+    return {
+        health = 0.5,
+        getHealth = function(s) return s.health end,
+        setHealth = function(s, v) s.health = v end,
+        getModData = function() return md end,
+        getOnlineID = function() return 43 end,
+        getX = function() return 1 end, getY = function() return 1 end, getZ = function() return 0 end,
+        getOwnerPlayer = function() return nil end,
+    }
+end
+local cfgFloor = RQSvShared.getSvConfig()
+local jz, bz, gz = weakling(), weakling(), weakling()
+RQSvShared.svApplyTypeHealth(jz, cfgFloor, "Juggernaut")
+RQSvShared.svApplyTypeHealth(bz, cfgFloor, "Boss")
+RQSvShared.svApplyTypeHealth(gz, cfgFloor, "Glutton")
+check(jz.health == bz.health, "a weak Boss converts with exactly a weak Juggernaut's health: "
+    .. tostring(bz.health) .. " vs " .. tostring(jz.health))
+check(bz.health > 0.5 * RQCommon.HEALTH_MULTIPLIER.Boss,
+    "the Boss was lifted to the floor before the multiplier, not left at base x10")
+check(gz.health == 0.5 * RQCommon.HEALTH_MULTIPLIER.Glutton,
+    "a Glutton keeps base x multiplier with no floor: " .. tostring(gz.health))
+
+-- ---------------------------------------------------------------------------
+-- sendNear: the targeted send around a zombie (promoted from RQSvLivery
+-- 2026-09-17 when RQSvMuster became its second consumer)
+-- ---------------------------------------------------------------------------
+local function playerAt(x, y)
+    return { getX = function() return x end, getY = function() return y end }
+end
+local near, edge, far = playerAt(0, 0), playerAt(96, -96), playerAt(97, 0)
+local online = { near, edge, far }
+function getOnlinePlayers()
+    return {
+        size = function() return #online end,
+        get = function(_, i) return online[i + 1] end,
+    }
+end
+local origin = { getX = function() return 0 end, getY = function() return 0 end }
+commands = {}
+check(RQSvShared.RELEVANCE_WINDOW == 96, "the relevance window is 96 tiles, wider than the simulation band")
+check(RQSvShared.sendNear(origin, "probe", { k = 1 }) == 2,
+    "sendNear reports the two players inside the axis-aligned window, inclusive at the edge")
+check(#commands == 2 and commands[1].target == near and commands[2].target == edge,
+    "and sent to exactly those two, not the one a tile past it")
+check(commands[1].module == "RFTDDirge" and commands[1].command == "probe" and commands[1].payload.k == 1,
+    "on the Dirge token, with the command and payload as given")
+online = {}
+commands = {}
+check(RQSvShared.sendNear(origin, "probe", {}) == 0 and #commands == 0,
+    "with nobody online there is nobody to tell")
 
 print(string.format("RQSvShared: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

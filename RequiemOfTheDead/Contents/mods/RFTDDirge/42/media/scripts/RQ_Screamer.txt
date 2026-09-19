@@ -1,0 +1,30 @@
+/*
+    THE SCREAMER'S HIDE. Biped plus glowing core, the same two-item shape as
+    every Dirge livery; see RQ_Juggernaut.txt for the shape and for why no
+    defence is declared in this slice.
+*/
+module RFTDDirge
+{
+    item RQ_ScreamerBiped
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Screamer Hide,
+        ClothingItem = BZ_ScreamerBiped,
+        BodyLocation = base:BodyCostume,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_ScreamerCore
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Screamer Core,
+        ClothingItem = BZ_ScreamerCore,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+}

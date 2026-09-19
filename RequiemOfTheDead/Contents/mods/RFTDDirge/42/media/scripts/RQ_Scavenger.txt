@@ -1,0 +1,63 @@
+/*
+    THE SCAVENGER'S TWO SKINS. It converts into RQ_Scavenger - the Devourer
+    biped with an emerald core, visually identical to the Glutton, which is
+    the whole point of a sleeper - and the first player hit re-dresses it in
+    RQ_ScavengerEnraged, the same biped with the crimson core. The biped item
+    is shared by both outfits; only the core changes, so the flip is one
+    persistent-outfit write on the server and one targeted repaint.
+
+    THE GLUTTON WEARS ITS OWN TWIN of this biped (RQ_GluttonBiped, same model
+    and texture under a separate item and GUID) because clothing defence is
+    a property of the item: arming the Scavenger must not arm the Glutton.
+
+    THE SCAVENGER'S ARMOUR, at the default ZombiesArmorFactor of 2.0:
+      melee  = (0.5*23.33 + 23.33) * 2.0 = 69.99
+      ranged = (1.5 * 26.67)       * 2.0 = 80.01
+    Deliberately SHORT of the Juggernaut's 85/85. The Scavenger is dangerous
+    for what it does to the zombies around it, not for how long it stands,
+    and collapsing the two would erase the ladder the lab measured (E12:
+    Glutton one hit, Scavenger three, Juggernaut five). Both numbers sit
+    under the cap so a host's own dials still move them. The engine chain,
+    the BloodLocation gate and the sums-across-items rule are cited in
+    RQ_Juggernaut.txt and apply here unchanged.
+*/
+module RFTDDirge
+{
+    item RQ_ScavengerBiped
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Scavenger Hide,
+        ClothingItem = BZ_DevourerBiped,
+        BodyLocation = base:BodyCostume,
+        BloodLocation = ShirtLongSleeves;Trousers;Shoes;Hands;Head;Neck,
+        ScratchDefense = 23.33,
+        BiteDefense = 23.33,
+        BulletDefense = 26.67,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_ScavengerCoreGreen
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Scavenger Core,
+        ClothingItem = BZ_DevourerCoreGreen,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_ScavengerCoreCrimson
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Enraged Scavenger Core,
+        ClothingItem = BZ_DevourerCoreCrimson,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+}

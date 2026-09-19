@@ -1,0 +1,37 @@
+/*
+    THE GLUTTON'S HIDE - a twin of the Scavenger's. Same model, same texture,
+    same emerald core, separate items under their own GUIDs, so that the two
+    creatures look identical (a Scavenger is a Glutton until it is not) while
+    their clothing stays independently tunable. Nothing on disk is
+    duplicated; both point at the Devourer meshes.
+
+    The Glutton is the control: it carries no defence now and is the one
+    special that should keep carrying none when the durability slice arms
+    the others. If a Glutton ever takes five hits, something is wearing the
+    wrong outfit.
+*/
+module RFTDDirge
+{
+    item RQ_GluttonBiped
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Glutton Hide,
+        ClothingItem = BZ_GluttonBiped,
+        BodyLocation = base:BodyCostume,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_GluttonCore
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Glutton Core,
+        ClothingItem = BZ_GluttonCoreGreen,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+}

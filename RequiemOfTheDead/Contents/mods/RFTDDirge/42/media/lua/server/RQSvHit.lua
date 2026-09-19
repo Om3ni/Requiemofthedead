@@ -6,8 +6,8 @@
 -- struck goes through here in a fixed order, rather than each module adding its
 -- own OnHitZombie handler and inheriting whatever order the engine happens to
 -- register them in. Before this file there was exactly one such listener
--- (Scavenger rage); the point is that there is still exactly one after three
--- more responsibilities land on it.
+-- (Scavenger rage); the point is that there is still exactly one after the
+-- others landed on it.
 --
 -- WHERE THIS RUNS, and why the answer is not obvious. On a dedicated server a
 -- client's attack does not stay on the client: the hit crosses the wire and the
@@ -16,14 +16,22 @@
 -- being bRemote (WeaponHit.java:72). IsoZombie.Hit fires OnHitZombie at
 -- IsoZombie.java:1107, BEFORE delegating to the base character pipeline at
 -- :1109, so this listener sees the hit while the damage is still undecided.
--- That pre-damage position is what makes target-side mitigation possible at all.
 --
--- WHAT THE SERVER DOES NOT DO is recompute the damage. IsoGameCharacter.java:5723
+-- WHAT THE SERVER DOES NOT DO is decide the damage. IsoGameCharacter.java:5723
 -- reads `bRemote ? damageSplit : processHitDamage(...)` - on the remote path the
--- attacker's own number is taken verbatim. Worth stating plainly because it is
--- the reason the shipped mitigation model is client-trusted: RQSuppress nerfs
--- the client's weapon fields so the client sends a smaller number. Anything
--- decided in THIS file is decided server-side instead.
+-- attacker's own number is taken verbatim, and the attacking client owns the
+-- zombie's health besides. That is why Dirge's durability levers all land on
+-- the ATTACKING CLIENT: clothing defence on the livery items (read from the
+-- item during attack resolution, before Hit is ever called), the weapon term
+-- RQDread registers with RQSuppress, and RQPoise's reaction naming. The
+-- server-side soak that used to be dispatched LAST from this file - RQBulwark,
+-- setAvoidDamage on the server's copy - protected only the server's copy of a
+-- zombie the server did not own; it was retired 2026-09-17 on the Bulwark
+-- lab's reading of exactly this path, and the debug probe that existed to ask
+-- whether it held went with it. Nothing decided here mitigates; this file
+-- notifies - and since 2026-09-17 one of the things it notifies is the
+-- escort: a struck Juggernaut or Boss musters the ordinary zombies in its
+-- aura onto the attacker (RQSvMuster, applied by each owning client).
 --
 -- ORDER IS THE CONTRACT. See dispatch() below.
 -- =============================================
@@ -36,23 +44,23 @@ require "RQSvShared"
 require "RQSvScavenger"
 require "RQMcCoy"
 require "RQBloodhound"
-require "RQBulwark"
+require "RQSvMuster"
 
 RQSvHit = RQSvHit or {}
 
 -- No setActiveZombies here on purpose. RQSvShared already holds the injected
--- registry and now exposes RQSvShared.typeOf as the one place that answers
--- "what kind of special is this" - registry first, the zombie's own RQType
--- second. A fifth copy of the injector was the first thing check-helpers
--- rejected about this file, and it was right to: the resolution rule belongs in
--- one place, not once per module that needs to ask.
+-- registry and exposes RQSvShared.typeOf as the one place that answers "what
+-- kind of special is this" - registry first, the zombie's own RQType second.
+-- A fifth copy of the injector was the first thing check-helpers rejected
+-- about this file, and it was right to: the resolution rule belongs in one
+-- place, not once per module that needs to ask.
 
 -- ---------------------------------------------------------------------------
 -- Counters
 -- ---------------------------------------------------------------------------
 -- Always on, because they are integer increments and answering "did the intake
 -- ever run, and what did it turn away" must not require a server restart with a
--- debug flag. The expensive probe below is a separate decision.
+-- debug flag.
 RQSvHit.stats = {
     seen       = 0,   -- OnHitZombie fired at all
     dispatched = 0,   -- survived validation and reached the modules
@@ -65,88 +73,23 @@ local function refuse(reason)
 end
 
 -- ---------------------------------------------------------------------------
--- The probe (Slice 1 deliverable, debug-gated)
--- ---------------------------------------------------------------------------
--- This exists to answer ONE question that no amount of decompile reading
--- settles: for a zombie owned by a remote client, does a server-side
--- setAvoidDamage actually hold, or does the owning client's next sync overwrite
--- the outcome? RQSvShared's health path already documents that pure server-side
--- setHealth gets clobbered by NetworkZombiePacker.applyZombie on the next
--- inbound sync, so the same question has to be asked of avoidance rather than
--- assumed. The counters below split every qualifying hit by who owns the target.
---
--- REMOVAL: this is instrumentation, not behaviour. It stays behind DebugMode
--- and Slice 8 decides whether it is retired or kept as a standing diagnostic.
--- It must never become load-bearing for a gameplay decision.
-local PROBE_LOG_MAX = 200
-RQSvHit.probe = {
-    logged      = 0,
-    suppressed  = 0,
-    ownerServer = 0,  -- getOwnerPlayer() nil: this server is authoritative
-    ownerClient = 0,  -- a remote client owns the zombie
-    remoteFlag  = 0,  -- isRemoteZombie() true
-    ranged      = 0,
-    melee       = 0,
-    unarmed     = 0,
-    byType      = {},
-}
-
-local function probe(ctx)
-    local p = RQSvHit.probe
-    -- getOwnerPlayer is nullable BY DESIGN: no owner means this server already
-    -- owns the zombie (IsoZombie.java:454-456, via NetworkZombieComponent).
-    local owner = ctx.zombie:getOwnerPlayer()
-    if owner then p.ownerClient = p.ownerClient + 1
-    else p.ownerServer = p.ownerServer + 1 end
-    if ctx.zombie:isRemoteZombie() then p.remoteFlag = p.remoteFlag + 1 end
-
-    if not ctx.weapon then p.unarmed = p.unarmed + 1
-    elseif ctx.isRanged then p.ranged = p.ranged + 1
-    else p.melee = p.melee + 1 end
-
-    p.byType[ctx.zType] = (p.byType[ctx.zType] or 0) + 1
-
-    if p.logged >= PROBE_LOG_MAX then
-        p.suppressed = p.suppressed + 1
-        return
-    end
-    p.logged = p.logged + 1
-    -- Owner is recorded as a CATEGORY, never a username. Who owns a zombie is
-    -- an engine bookkeeping detail; naming the player would put an identity in
-    -- a stream that has no operational need for one.
-    RQDirgeLog.write("Hit", "[PROBE] type=" .. tostring(ctx.zType)
-        .. " owner=" .. (owner and "client" or "server")
-        .. " remote=" .. tostring(ctx.zombie:isRemoteZombie())
-        .. " weapon=" .. (ctx.weapon and (ctx.isRanged and "ranged" or "melee") or "unarmed")
-        -- Health BEFORE the pipeline runs. Lethality is deliberately not
-        -- reported: this listener fires ahead of the damage calculation, so
-        -- whether the hit kills is not knowable here, and guessing from
-        -- damageSplit would be wrong for exactly the bRemote reason in the
-        -- header. hpBefore is what is actually observable at this point.
-        .. " hpBefore=" .. string.format("%.2f", ctx.zombie:getHealth())
-        .. (p.logged == PROBE_LOG_MAX and "  (probe log cap reached)" or ""))
-end
-
--- ---------------------------------------------------------------------------
 -- Dispatch
 -- ---------------------------------------------------------------------------
 -- THE ORDER IS DELIBERATE AND IS THE WHOLE REASON THIS FILE EXISTS.
 --
 --   1. Scavenger rage      - a passive Scavenger becomes hostile
---   2. RQMcCoy.onAttacked  - arm/refresh the healing window      (Slice 4)
---   3. RQBloodhound        - acquire a ranged attacker           (Slice 3)
---   4. RQBulwark.resolve   - decide whether the hit penetrates   (Slice 2)
+--   2. RQMcCoy.onAttacked  - arm/refresh the healing window
+--   3. RQBloodhound        - acquire a ranged attacker
+--   4. RQSvMuster          - a struck Juggernaut or Boss musters its escort
 --
--- Bulwark goes LAST so that a successful soak cannot suppress the three
--- decisions above it. A soaked hit is still an attack: it still enrages, still
--- arms healing, still makes a shooter the quarry. Putting mitigation first
--- would make a well-armoured target progressively harder to provoke, which is
--- the opposite of the intent.
---
--- Slices 2-4 add their line at the marked position. There is deliberately no
--- registration framework and no nil-guarded call to a module that does not
--- exist yet - a slot that silently does nothing is indistinguishable from a
--- slot that is broken.
+-- Rage first, because everything after it reads the Scavenger's state:
+-- Bloodhound pursues an ENRAGED Scavenger and a hit that both enrages and is
+-- pursued must be read in that order, not the reverse. Muster last: it
+-- mutates nothing on the server and only tells clients, so every stage that
+-- changes state has done so before the notification goes out. There is deliberately
+-- no registration framework and no nil-guarded call to a module that does not
+-- exist - a slot that silently does nothing is indistinguishable from a slot
+-- that is broken.
 local function dispatch(ctx)
     -- Type-gated HERE rather than inside onPlayerHit. The listener this
     -- replaced tested `zType ~= "Scavenger"` before calling; dropping that test
@@ -156,18 +99,9 @@ local function dispatch(ctx)
     if ctx.zType == "Scavenger" then
         RQSvScavenger.onPlayerHit(ctx.zombie)
     end
-
-    -- Healing and pursuit are for SPECIALS. An ordinary zombie under an aura
-    -- borrows the escort's protection, not its constitution: it does not heal
-    -- and it does not hunt.
-    if ctx.zType then
-        RQMcCoy.onAttacked(ctx)
-        RQBloodhound.onAttacked(ctx)
-    end
-
-    -- LAST. Everything above has already run, so a successful soak cannot stop
-    -- a Scavenger enraging, a healing window arming, or a shooter being marked.
-    RQBulwark.resolve(ctx)
+    RQMcCoy.onAttacked(ctx)
+    RQBloodhound.onAttacked(ctx)
+    RQSvMuster.onAttacked(ctx)
 end
 
 -- ---------------------------------------------------------------------------
@@ -182,15 +116,17 @@ function RQSvHit.onHitZombie(zombie, wielder, bodyPart, weapon)
     if not zombie then return refuse("no-zombie") end
     if not wielder then return refuse("no-wielder") end
     -- Zombie-on-zombie and environmental damage both reach Hit(). Only a player
-    -- attack is a provocation any of these four responsibilities cares about.
+    -- attack is a provocation any of these responsibilities cares about.
     if not instanceof(wielder, "IsoPlayer") then return refuse("not-player") end
     if zombie:isDead() then return refuse("already-dead") end
 
-    -- zType may be NIL, and that is not a refusal any more. An ordinary zombie
-    -- standing inside a living special's aura is protected by it, so it has to
-    -- reach Bulwark. Everything else downstream is special-only and says so at
-    -- its own call site rather than being filtered out here.
+    -- Specials only. An ordinary zombie used to reach this far so that the
+    -- soak could ask whether a special's aura covered it; with the soak
+    -- retired nothing downstream has a use for an ordinary hit, and it is
+    -- refused by name again rather than dispatched to three modules that
+    -- would each decline it.
     local zType = RQSvShared.typeOf(zombie)
+    if not zType then return refuse("not-special") end
 
     -- isRanged is a plain field return (HandWeapon.java:824-826), but `weapon`
     -- is whatever the player swung: nil for fists, and an InventoryItem that is
@@ -198,7 +134,7 @@ function RQSvHit.onHitZombie(zombie, wielder, bodyPart, weapon)
     -- nil rather than throwing, so the presence test IS the guard and no pcall
     -- is warranted. isRanged() rather than isAimedFirearm() is a decided policy
     -- (owner, 2026-08-24): crossbows and modded ranged weapons count, which is
-    -- wider than the shipped RQSuppress band.
+    -- wider than RQDread's firearm band on the client.
     local isRanged = (weapon ~= nil and weapon.isRanged ~= nil and weapon:isRanged()) or false
 
     local ctx = {
@@ -213,7 +149,6 @@ function RQSvHit.onHitZombie(zombie, wielder, bodyPart, weapon)
     }
 
     RQSvHit.stats.dispatched = RQSvHit.stats.dispatched + 1
-    if RQSvShared.getSvConfig().debugMode then probe(ctx) end
     dispatch(ctx)
 end
 

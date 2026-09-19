@@ -82,6 +82,33 @@
 --                                       because the whole point is a toggle
 --                                       the player controls, not a server-wide
 --                                       dial.
+--   Bellman        (AnimSets/player/     corpses drag half again as fast. NOT
+--                   draggingBody-*)      Lua and NOT a dial: four vanilla
+--                                       drag-walk anim nodes copied with their
+--                                       speed scale pinned to 1.20 in place of
+--                                       the engine's WalkSpeedGrapple variable
+--                                       (0.8 for a corpse). Dragging is a walk
+--                                       paced by its animation, so ASScale's
+--                                       maxTime lever cannot reach it; a Lua
+--                                       sweep that rewrote the variable was
+--                                       built and dropped 2026-09-18 in favour
+--                                       of this, the shape Drag Bodies Faster
+--                                       uses: no authored surface to verify,
+--                                       every client loads the same file. The
+--                                       price is the second exception to the
+--                                       kill-switch rule above - an AnimSets
+--                                       override has no switch, so the module
+--                                       is off only when its four files are
+--                                       gone. Named for the plague-cart
+--                                       bellmen.
+--   RandMcNally    (RandMcNally/)       vanilla's Map All Known sandbox option
+--                                       working again on multiplayer clients,
+--                                       where 42.20.3's new map-data download
+--                                       erases it. Client-only, and the third
+--                                       exception to the kill-switch rule: the
+--                                       vanilla option IS its switch - off, the
+--                                       module does nothing, and a second dial
+--                                       could only disagree with it.
 --
 -- OEPrefs.lua is mod-wide infrastructure (not a module of its own - no
 -- subfolder, prefix, or kill switch): a flat key=value client-prefs file for

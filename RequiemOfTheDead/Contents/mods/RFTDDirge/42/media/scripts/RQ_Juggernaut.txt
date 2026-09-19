@@ -1,0 +1,80 @@
+/*
+    THE JUGGERNAUT'S HIDE. Two hidden clothing items make the RQ_Juggernaut
+    outfit: the biped, a full-body costume that masks every vanilla body part
+    (the sixteen m_Masks in its clothing item XML), and the core, a second
+    mesh in the zeddmg slot drawn through the inner-glow shader so the hole
+    in the chest reads as a lit interior. The glow is the tell - the
+    Juggernaut carries no outline colour any more.
+
+    THE JUGGERNAUT'S ARMOUR LIVES HERE, NOT IN LUA. Verified against the
+    42.20.4 decompile in the Bulwark lab (2026-09-04): the engine applies
+    clothing defence on the ATTACKING CLIENT, before Hit is ever called:
+      CombatManager.calculateHitLocationDamage (:3301)
+        -> calculateTotalDefense (:3245-3257)
+        -> IsoGameCharacter.getBodyPartClothingDefense (:12099)
+        -> Clothing.getDefForPart (:907)
+    That client owns the zombie's health and its number is the one the
+    server accepts (IsoGameCharacter.java:5723), so armour is the one
+    durability lever nothing argues with. The server-side soak that used to
+    stand in for it was retired the day this was armed (2026-09-17).
+
+    The math, exactly:
+      totalDefense = def(part, bite=false, bullet) * 0.5 + def(part, bite=true, bullet)
+      totalDefense *= ZombieLore.ZombiesArmorFactor   (SandboxOptions.java:1928, default 2.0)
+      capped at    ZombieLore.ZombiesMaxDefense       (SandboxOptions.java:1929, default 85)
+      damage = damageSplit * |1 - totalDefense/100|   (applyTotalDefense, :3296)
+    getDefForPart returns ScratchDefense normally, BiteDefense when bite,
+    BulletDefense when bullet - and the bullet test is LAST, so melee and
+    gunfire are separately tunable:
+      melee  = (0.5*Scratch + Bite) * factor
+      ranged = (1.5 * Bullet)       * factor
+
+    28.33 x3 is the cap at the default factor: (0.5*28.33 + 28.33) * 2 =
+    84.99 melee, 1.5*28.33*2 = 84.99 ranged. Just UNDER 85 on purpose: at the
+    cap the numbers stop responding to a host's ZombiesArmorFactor; a hair
+    below it they still scale with whatever the server set. The lab measured
+    the lane at these values (FINDINGS E12): armoured, one hit became five.
+
+    BLOODLOCATION IS THE GATE, AND IT IS NOT OPTIONAL. An item whose script
+    declares no BloodLocation has a null bloodClothingType and
+    getBodyPartClothingDefense SKIPS IT ENTIRELY (IsoGameCharacter.java:12105)
+    - no covered parts, no defence, whatever the numbers say. The list covers
+    the whole body, since this is a full-body costume.
+
+    IT DEGRADES HONESTLY: a hole in a covered part drops that part's defence
+    to zero (Clothing.java:908, and again at IsoGameCharacter.java:12111).
+    Shoot the armour off and it stops working.
+
+    ONLY THE BIPED CARRIES ARMOUR. Defence SUMS across worn items
+    (IsoGameCharacter.java:12113, `result +=`), so a value on the core would
+    silently double the total. The core stays cosmetic.
+*/
+module RFTDDirge
+{
+    item RQ_JuggernautBiped
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Juggernaut Hide,
+        ClothingItem = BZ_BulwarkBiped,
+        BodyLocation = base:BodyCostume,
+        BloodLocation = ShirtLongSleeves;Trousers;Shoes;Hands;Head;Neck,
+        ScratchDefense = 28.33,
+        BiteDefense = 28.33,
+        BulletDefense = 28.33,
+        ChanceToFall = 0,
+        WorldRender = false,
+        hidden = true,
+    }
+
+    item RQ_JuggernautCore
+    {
+        DisplayCategory = Clothing,
+        ItemType = base:clothing,
+        DisplayName = Juggernaut Core,
+        ClothingItem = BZ_BulwarkInnerGlow,
+        BodyLocation = base:zeddmg,
+        WorldRender = false,
+        hidden = true,
+    }
+}

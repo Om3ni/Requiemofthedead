@@ -5,8 +5,9 @@
 -- alive behavior tick" and "jugg has one job here: apply a HP buff to nearby
 -- non-special zombies", twenty lines above the paragraph explaining that both
 -- of those jobs left in the 2026-08-24 slice. The buff aura became a hit-time
--- lookup in RQBulwark; the self-regen became RQMcCoy, which does it for every
--- special type.
+-- lookup in RQBulwark, retired in turn on 2026-09-17 (durability is armour
+-- on the livery items now); the self-regen became RQMcCoy, which does it for
+-- every special type.
 if not isServer() then return end
 
 RQSvJuggernaut = RQSvJuggernaut or {}
@@ -16,10 +17,11 @@ RQSvJuggernaut = RQSvJuggernaut or {}
 -- latch was the whole problem. The grant outlived its source, so killing the
 -- Juggernaut left its escort permanently tough; walking out of the radius did
 -- nothing; and it cost one owner-directed HP command per zombie per sweep.
--- RQBulwark now answers the same question when a hit actually lands.
+-- Its hit-time successor was retired on 2026-09-17 for the reason in
+-- RQSvHit's header.
 
 -- NO ALIVE BEHAVIOUR TICK, deliberately. Both of this type's jobs left in the
--- same slice: the buff aura became a hit-time lookup in RQBulwark, and the
+-- same slice: the buff aura became a hit-time lookup (since retired), and the
 -- self-regen became RQMcCoy. RQServer no longer dispatches Juggernauts on the
 -- behaviour pass at all, the same way it has never dispatched EMP zombies.
 --

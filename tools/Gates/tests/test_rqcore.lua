@@ -66,6 +66,16 @@ RQBoss = { onDead = function() end }
 RQScavenger = { onDead = function() end }
 RQReconcile = {}
 RQAdmin = {}
+-- The livery seam. RQLivery is the real declaration (the prefix test is
+-- what the handler validates with); RQTailor and the cache are stubs.
+HairOutfitDefinitions = {}
+dofile(ROOT .. "/RequiemOfTheDead/Contents/mods/RFTDDirge/42/media/lua/shared/RQLivery.lua")
+local redressed = {}
+RQTailor = { redress = function(z, outfit) redressed[#redressed + 1] = { zombie = z, outfit = outfit } end }
+local mustered = {}
+RQMuster = { muster = function(z, attackerID, radius) mustered[#mustered + 1] = { zombie = z, attackerID = attackerID, radius = radius } end }
+local cached = {}
+RQZombieCache = { get = function(id) return cached[id] end }
 RQHealthBar = {}
 RQReflect = {}
 
@@ -199,6 +209,60 @@ callbacks.serverCommand[1]("RFTDDirge", "empDebuff", {
 })
 check(#empCalls == 4 and empCalls[3].kind == "knockback" and empCalls[4].kind == "sensory",
     "EMP debuff remains client presentation only; no inventory mutation surface is required")
+
+-- ---------------------------------------------------------------------------
+-- zombieLivery: targeted re-dress of a zombie this client already holds
+-- ---------------------------------------------------------------------------
+local held = { isDead = function() return false end }
+cached[77] = held
+callbacks.serverCommand[1]("RFTDDirge", "zombieLivery", { onlineID = 77, outfit = "RQ_Juggernaut" })
+check(#redressed == 1 and redressed[1].zombie == held and redressed[1].outfit == "RQ_Juggernaut",
+    "zombieLivery hands the held zombie and the outfit name to RQTailor")
+
+callbacks.serverCommand[1]("RFTDDirge", "zombieLivery", { onlineID = 78, outfit = "RQ_Juggernaut" })
+check(#redressed == 1, "a zombie this client does not hold is nothing to do - creation dresses it")
+
+callbacks.serverCommand[1]("RFTDDirge", "zombieLivery", { onlineID = 77, outfit = "Police" })
+check(#redressed == 1, "an outfit outside the livery prefix is refused - wire data is untrusted")
+
+callbacks.serverCommand[1]("RFTDDirge", "zombieLivery", { onlineID = "77", outfit = "RQ_ScavengerEnraged" })
+check(#redressed == 2 and redressed[2].outfit == "RQ_ScavengerEnraged",
+    "a string id is normalized like every other id-carrying command")
+
+cached[77] = { isDead = function() return true end }
+callbacks.serverCommand[1]("RFTDDirge", "zombieLivery", { onlineID = 77, outfit = "RQ_Juggernaut" })
+check(#redressed == 2, "a dead zombie is not re-dressed")
+
+callbacks.serverCommand[1]("OtherMod", "zombieLivery", { onlineID = 77, outfit = "RQ_Juggernaut" })
+check(#redressed == 2, "a foreign wire token is ignored")
+
+-- ---------------------------------------------------------------------------
+-- escortMuster: the forced spot on the escorts this client owns
+-- ---------------------------------------------------------------------------
+local struck = { isDead = function() return false end }
+cached[80] = struck
+callbacks.serverCommand[1]("RFTDDirge", "escortMuster", { onlineID = 80, attackerID = 5, radius = 8 })
+check(#mustered == 1 and mustered[1].zombie == struck and mustered[1].attackerID == 5 and mustered[1].radius == 8,
+    "escortMuster hands the held special, the attacker's id and the radius to RQMuster")
+
+callbacks.serverCommand[1]("RFTDDirge", "escortMuster", { onlineID = 81, attackerID = 5, radius = 8 })
+check(#mustered == 1, "a special this client does not hold has no escort here to command")
+
+callbacks.serverCommand[1]("RFTDDirge", "escortMuster", { onlineID = 80, radius = 8 })
+callbacks.serverCommand[1]("RFTDDirge", "escortMuster", { onlineID = 80, attackerID = 5 })
+callbacks.serverCommand[1]("RFTDDirge", "escortMuster", { onlineID = 80, attackerID = 5, radius = 0 })
+check(#mustered == 1, "a missing attacker, a missing radius and a zero radius are each refused")
+
+callbacks.serverCommand[1]("RFTDDirge", "escortMuster", { onlineID = "80", attackerID = "5", radius = "8" })
+check(#mustered == 2 and mustered[2].attackerID == 5 and mustered[2].radius == 8,
+    "string ids and radius are normalized like every other id-carrying command")
+
+cached[80] = { isDead = function() return true end }
+callbacks.serverCommand[1]("RFTDDirge", "escortMuster", { onlineID = 80, attackerID = 5, radius = 8 })
+check(#mustered == 2, "a dead special musters nobody")
+
+callbacks.serverCommand[1]("OtherMod", "escortMuster", { onlineID = 80, attackerID = 5, radius = 8 })
+check(#mustered == 2, "a foreign wire token is ignored")
 
 print(string.format("RQCore: %d passed, %d failed", passed, failed))
 if failed > 0 then os.exit(1) end

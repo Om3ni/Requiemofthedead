@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bellman (Requiem of the Dead: Odds and Ends). Vanilla 42.20.3 copy of this
+     node with ONE change: m_SpeedScale was the variable WalkSpeedGrapple, which
+     PlayerDraggingCorpse.enter() sets to 0.8 for a corpse (1.2 for a skeleton,
+     PlayerDraggingCorpse.java:93). 1.20 is that corpse pace, half again as fast.
+     Fixed on purpose: no dial, no Lua, no per-client sweep - every client loads
+     this file so every copy of a hauler animates and moves at the same pace.
+     Skeletons lose their 1.2 vs 0.8 distinction and drag at vanilla pace. To
+     retune, change the number in all four draggingBody-*/*Walk.xml files. -->
+<animNode>
+	<m_Name>GrappleBwdDragLegsOnBackWalk</m_Name>
+	<m_Priority>4</m_Priority>
+	<m_AnimName>Bob_WalkBwdDrag_PersonLegs</m_AnimName>
+	<m_MatchingGrappledAnimNode>GrappledBwdDraggedLegsWalk</m_MatchingGrappledAnimNode>
+	<m_GrappleOffsetForward>-0.3</m_GrappleOffsetForward>
+	<m_GrappleOffsetYaw>180</m_GrappleOffsetYaw>
+	<m_BlendTime>0.20</m_BlendTime>
+	<m_SpeedScale>1.20</m_SpeedScale>
+	<m_maxTorsoTwist>0.00</m_maxTorsoTwist>
+	<m_SyncTrackingEnabled>false</m_SyncTrackingEnabled>
+	<m_Conditions x_name="bIsGrappling">
+		<m_Name>bIsGrappling</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Conditions x_name="bDoContinueGrapple">
+		<m_Name>bDoContinueGrapple</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Conditions x_name="sharedGrappleType">
+		<m_Name>sharedGrappleType</m_Name>
+		<m_Type>STRING</m_Type>
+		<m_Value>BwdDragLegs</m_Value>
+	</m_Conditions>
+	<m_Conditions x_name="$GrappledTarget.bOnFloor">
+		<m_Name>$GrappledTarget.bOnFloor</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>false</m_Value>
+	</m_Conditions>
+	<m_Conditions x_name="isMoving">
+		<m_Name>isMoving</m_Name>
+		<m_Type>BOOL</m_Type>
+		<m_Value>true</m_Value>
+	</m_Conditions>
+	<m_Events x_name="FlagWhileAlive(isAnimatingBackwards)">
+		<m_EventName>FlagWhileAlive</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>isAnimatingBackwards</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="FlagWhileAlive(bMoving)">
+		<m_EventName>FlagWhileAlive</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>bMoving</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="44cfa4cd-5b51-43ef-a870-277a550b9e5e">
+		<m_EventName>Footstep</m_EventName>
+		<m_TimePc>0.2</m_TimePc>
+		<m_ParameterValue>walk</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="e65120bc-3066-4ce8-a72a-531ef544a725">
+		<m_EventName>Footstep</m_EventName>
+		<m_TimePc>0.65</m_TimePc>
+		<m_ParameterValue>walk</m_ParameterValue>
+	</m_Events>
+	<m_Events x_name="d5796b16-6c23-49d3-9339-b96176c9e49b">
+		<m_EventName>PlayerVoiceSound</m_EventName>
+		<m_Time>Start</m_Time>
+		<m_ParameterValue>CorpseDragging</m_ParameterValue>
+	</m_Events>
+	<m_Transitions>
+		<m_Target>GrappleBwdDragIdle</m_Target>
+		<m_blendInTime>0.1</m_blendInTime>
+	</m_Transitions>
+	<m_SubStateBoneWeights>
+		<boneName>Bip01_Spine1</boneName>
+	</m_SubStateBoneWeights>
+	<m_SubStateBoneWeights>
+		<boneName>Bip01_Neck</boneName>
+	</m_SubStateBoneWeights>
+	<m_SubStateBoneWeights>
+		<boneName>Bip01_BackPack</boneName>
+	</m_SubStateBoneWeights>
+	<m_SubStateBoneWeights>
+		<boneName>Bip01_Prop1</boneName>
+	</m_SubStateBoneWeights>
+	<m_SubStateBoneWeights>
+		<boneName>Bip01_Prop2</boneName>
+	</m_SubStateBoneWeights>
+	<m_SubStateBoneWeights>
+		<boneName>Bip01_Spine</boneName>
+		<weight>0.40</weight>
+		<includeDescendants>false</includeDescendants>
+	</m_SubStateBoneWeights>
+	<m_SubStateBoneWeights>
+		<boneName>Bip01</boneName>
+		<weight>0.20</weight>
+	</m_SubStateBoneWeights>
+</animNode>

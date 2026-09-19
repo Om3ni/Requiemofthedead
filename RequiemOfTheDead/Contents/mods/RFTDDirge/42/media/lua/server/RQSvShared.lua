@@ -45,7 +45,7 @@ local SCREAMER_SPAWN_RADIUS = 8
 -- SKILLS only - RQBloodhound has no range limit of its own and never did; it
 -- acquires on any ranged hit at any distance.
 local BOSS_TRIGGER_RANGE    = 25
-local BOSS_SKILLS           = { "Scream", "EMPulse" }  -- coin-flip pool. The Boss's protective aura is not a skill; RQBulwark reads it at hit time.
+local BOSS_SKILLS           = { "Scream", "EMPulse" }  -- coin-flip pool. The Boss's aura is presentation (RQBoss), not a skill.
 local BOSS_SKILL_LABELS     = {
     Scream   = "Screaming...",
     EMPulse  = "EMP Charging...",
@@ -223,9 +223,9 @@ local MAX_NETWORK_HP = 30.0
 -- to N clients spends N-1 packets on writes that are immediately clobbered.
 -- That was affordable once at conversion; it was NOT affordable from the buff
 -- auras, which called this once per zombie in radius every 2s. Those auras are
--- gone (RQBulwark answers per hit instead), which is why that cost argument
--- reads in the past tense now - the remaining callers are conversion and
--- McCoy's per-injured-special cadence.
+-- gone (and the per-hit soak that replaced them, 2026-09-17), which is why
+-- that cost argument reads in the past tense now - the remaining callers are
+-- conversion and McCoy's per-injured-special cadence.
 --
 -- Returns true when the value reached an authority (the owning client, or the
 -- server itself when it owns the zombie), false when we could not place it. A
@@ -280,7 +280,11 @@ local function svApplyTypeHealth(zombie, cfg, zType, sourceHealth)
     if not mult or mult <= 1 then return end
 
     local baseHealth = sourceHealth or zombie:getHealth()
-    if zType == "Juggernaut" then
+    -- The Boss shares the floor since 2026-09-17: it is meant to be at least
+    -- as tough as a Juggernaut, and without this a Boss promoted from a
+    -- zombie on Fragile toughness (base ~0.5, IsoZombie.java:3648-3650)
+    -- converted with half a Juggernaut's health.
+    if zType == "Juggernaut" or zType == "Boss" then
         baseHealth = math.max(baseHealth, JUGGERNAUT_MIN_BASE_HEALTH)
     end
     -- RQBaseHP: the PRE-conversion health, stamped here because this is the one
@@ -523,6 +527,37 @@ local function sendToPlayer(player, cmd, args)
     sendServerCommand(player, RQCommon.MODULE, cmd, args)
 end
 
+-- Axis-aligned window, in tiles, around a zombie inside which a player is
+-- told about something that just happened to it. Wider than the zombie
+-- simulation band on purpose: a client that has the zombie loaded but
+-- stands past the band would otherwise miss the event and keep a stale
+-- copy until the zombie left and came back.
+local RELEVANCE_WINDOW = 96
+
+-- Send one command to every online player within RELEVANCE_WINDOW of the
+-- zombie. Returns how many were told. Targeted, not a broadcast: one tiny
+-- packet per recipient per event. Promoted here 2026-09-17 when it gained a
+-- second consumer - RQSvLivery's repaint on a dress, RQSvMuster's rally on a
+-- hit.
+local function sendNear(zombie, cmd, args)
+    local zx, zy = zombie:getX(), zombie:getY()
+    local players = getOnlinePlayers()   -- ArrayList (LuaManager.java:3823-3824)
+    local sent = 0
+    if players then
+        for index = 0, players:size() - 1 do
+            local player = players:get(index)
+            if player
+               and math.abs(player:getX() - zx) <= RELEVANCE_WINDOW
+               and math.abs(player:getY() - zy) <= RELEVANCE_WINDOW
+            then
+                sendToPlayer(player, cmd, args)
+                sent = sent + 1
+            end
+        end
+    end
+    return sent
+end
+
 -- ---------------------------------------------------------------------------
 -- Cadence gate
 -- ---------------------------------------------------------------------------
@@ -727,12 +762,12 @@ end
 --
 -- Returns the number of entries visited, so a caller can distinguish "no
 -- specials alive" from "Dirge is not tracking anything".
--- A truthy return from `fn` STOPS the walk. Added for RQBulwark's aura lookup,
--- which asks "is anything protecting this target" and has no use for a second
--- answer - without a break it was walking the whole registry to discard every
--- source after the first match. Existing callers return nothing and are
--- unaffected. Returns how many entries were visited, which is the number worth
--- watching when the registry grows.
+-- A truthy return from `fn` STOPS the walk. Added for a nearest-protector
+-- lookup that had no use for a second answer (that caller is gone since
+-- 2026-09-17; the early exit stays because it costs nothing and the next
+-- "is there any" question will want it). Existing callers return nothing and
+-- are unaffected. Returns how many entries were visited, which is the number
+-- worth watching when the registry grows.
 function RQSvShared.eachActiveZombie(fn)
     if not _activeZombies or type(fn) ~= "function" then return 0 end
     local n = 0
@@ -1097,6 +1132,8 @@ end
 
 RQSvShared.broadcast                    = broadcast
 RQSvShared.sendToPlayer                 = sendToPlayer
+RQSvShared.sendNear                     = sendNear
+RQSvShared.RELEVANCE_WINDOW             = RELEVANCE_WINDOW
 RQSvShared.due                          = due
 RQSvShared.scheduleAction               = scheduleAction
 RQSvShared.isPlayerVisible              = isPlayerVisible

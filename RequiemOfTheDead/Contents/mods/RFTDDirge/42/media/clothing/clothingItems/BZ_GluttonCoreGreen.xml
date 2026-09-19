@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Glutton's twin of BZ_DevourerCoreGreen. Same model, same 8x8 emerald
+    texture, same shared shader - only the GUID differs, so that the Glutton's
+    outfit is made of items nobody else wears.
+
+    The core deliberately carries no defence and never should: clothing defence
+    SUMS across worn items (IsoGameCharacter.java:12113), so a value here would
+    stack invisibly on top of the biped's.
+-->
+<clothingItem>
+    <m_GUID>44122734-1c69-4f83-adda-055d283fcfe7</m_GUID>
+    <m_MaleModel>Skinned\Clothes\BZ_DevourerCoreGreen</m_MaleModel>
+    <m_FemaleModel>Skinned\Clothes\BZ_DevourerCoreGreen</m_FemaleModel>
+    <m_Static>false</m_Static>
+    <m_AllowRandomHue>false</m_AllowRandomHue>
+    <m_AllowRandomTint>false</m_AllowRandomTint>
+    <m_Shader>BZ_BulwarkInnerGlow</m_Shader>
+    <textureChoices>Clothes\ZombieSkins\BZ_DevourerCoreGreen</textureChoices>
+</clothingItem>

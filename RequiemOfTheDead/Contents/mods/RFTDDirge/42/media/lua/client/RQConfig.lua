@@ -122,6 +122,9 @@ function RQConfig.get()
         -- both with server-side mitigation against the zombie actually struck,
         -- slice 6 removed Dirge's terms from RQSuppress, and this pass removed
         -- the sandbox options, their translation strings and these reads.
+        -- RQBulwark itself was retired 2026-09-17 (a server-side soak on a
+        -- client-owned zombie protects only the server's copy); the weapon
+        -- term came back as RQDread, under the suppress* reads below.
         --
         -- ONE THING WORTH KEEPING, because it outlives the fields: the `or 0`
         -- fallback was deliberately NOT the shipped default (40). It was a
@@ -154,6 +157,15 @@ function RQConfig.get()
         bossCastTime           = ev(E_CAST_4, sv and sv.BossCastTime, 3) * 1000,
         bossSkillCooldown      = ev(E_BOSS_COOLDOWN, sv and sv.BossSkillCooldown, 3) * 1000,
 
+        -- Bulwark durability lanes (2026-09-17). Poise defaults ON. The two
+        -- suppress values are NIL, not defaulted, when the sandbox table cannot
+        -- be read: RQDread treats nil as "suppress nothing" - a player's weapon
+        -- is never nerfed on a config we could not read. Same asymmetry the
+        -- removed rangedProtectRadius carried; see the note above it.
+        poise                  = not (sv and sv.Poise == false),
+        suppressPercent        = sv and tonumber(sv.SuppressPercent) or nil,
+        suppressRadius         = sv and tonumber(sv.SuppressRadius) or nil,
+
         -- Admin / visual options
         showHealthBars         = (sv and sv.ShowHealthBars == true),
         showCastBarText        = (sv and sv.ShowCastBarText == true),    -- default off; EMP labels always shown regardless
@@ -165,12 +177,26 @@ function RQConfig.get()
         -- the death-detonation warning (EMP has no other rings), which is a
         -- lethal-AoE telegraph players shouldn't lose to an opt-in default.
         -- Everything else defaults false.
-        showBossRing           = (sv == nil) and true or (sv.ShowBossRing       ~= false),
+        -- Boss defaulted ON until 2026-09-17; it draws the aura ring and the
+        -- Scream telegraph, neither an EMP blast, so it joined the off list.
+        -- The Boss's EMPulse ring moved under showEMPRing (RQRing's gate).
+        showBossRing           = (sv and sv.ShowBossRing       == true),
         showEMPRing            = (sv == nil) and true or (sv.ShowEMPRing        ~= false),
         showGluttonRing        = (sv and sv.ShowGluttonRing    == true),
         showJuggernautRing     = (sv and sv.ShowJuggernautRing == true),
         showScavengerRing      = (sv and sv.ShowScavengerRing  == true),
         showScreamerRing       = (sv and sv.ShowScreamerRing   == true),
+
+        -- Per-type OUTLINE visibility (2026-09-17). All default off: the
+        -- livery's glowing core is the tell now. Escort paint - the colour
+        -- an aura puts on the zombies around a Juggernaut, Boss or enraged
+        -- Scavenger - is not gated here and never was; see RQHighlight.
+        showBossHighlight       = (sv and sv.ShowBossHighlight       == true),
+        showEMPHighlight        = (sv and sv.ShowEMPHighlight        == true),
+        showGluttonHighlight    = (sv and sv.ShowGluttonHighlight    == true),
+        showJuggernautHighlight = (sv and sv.ShowJuggernautHighlight == true),
+        showScavengerHighlight  = (sv and sv.ShowScavengerHighlight  == true),
+        showScreamerHighlight   = (sv and sv.ShowScreamerHighlight   == true),
 
         -- Screamer screen effect strengths (0-1 scale; sandbox exposes as 0-100 integer)
         screamerBlurStrength   = math.max(0, math.min(100, tonumber(sv and sv.ScreamerBlurStrength) or 100)) / 100.0,

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<clothingItem>
+    <m_GUID>f62b700c-9c59-4268-92d9-4f7cda4dc7df</m_GUID>
+    <m_MaleModel>Skinned\Clothes\BZ_ScreamerCore</m_MaleModel>
+    <m_FemaleModel>Skinned\Clothes\BZ_ScreamerCore</m_FemaleModel>
+    <m_Static>false</m_Static>
+    <m_AllowRandomHue>false</m_AllowRandomHue>
+    <m_AllowRandomTint>false</m_AllowRandomTint>
+    <m_Shader>BZ_BulwarkInnerGlow</m_Shader>
+    <textureChoices>Clothes\ZombieSkins\BZ_ScreamerCore</textureChoices>
+</clothingItem>

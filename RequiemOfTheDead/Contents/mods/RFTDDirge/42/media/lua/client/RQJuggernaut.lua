@@ -3,9 +3,10 @@
 -- Client keeps: ring follow and the proximity-based buff highlight. Nothing in
 -- this file touches items, and nothing in it decides damage.
 --
--- The weapon debuff that used to live here moved to RQSuppress, and then out of
--- Dirge altogether on 2026-08-24 - RQBulwark decides mitigation server-side now,
--- against the zombie that was struck rather than against the player's weapon.
+-- The weapon debuff that used to live here moved to RQSuppress, then out of
+-- Dirge on 2026-08-24 in favour of a server-side soak (RQBulwark), and that
+-- soak was retired 2026-09-17: durability is armour on the livery items now,
+-- plus RQDread's weapon term registered back into RQSuppress.
 --
 -- REPAIRED 2026-08-25. Three separate removal passes each left damage in this
 -- header, and the result described a file that does not exist:
@@ -17,11 +18,13 @@
 --   * "Local player in range of any Juggernaut's aura this frame. Read by" -
 --     a dangling remnant, contradicted by the correct note two lines below it.
 
+require "RQAura"
+
 RQJuggernaut = RQJuggernaut or {}
 
--- The playerInAura flag this file used to publish is gone: RQSuppress's aura
--- term was Dirge's weapon debuff, and RQBulwark replaced it. What remains here
--- is presentation - the ground ring and the outline highlight.
+-- The playerInAura flag this file used to publish is gone: RQDread computes
+-- its own distance to the nearest protector. What remains here is
+-- presentation - the ground ring and the escort outline.
 
 -- Ring color for the jugg's ground marker. Full alpha so it reads
 -- clearly against the outline highlight (which uses a=0.3).
@@ -29,14 +32,28 @@ RQJuggernaut = RQJuggernaut or {}
 local JUGG_RING_COLOR = RQConfig.COLORS.Juggernaut
 local BUFF_COLOR      = JUGG_RING_COLOR
 
+-- The per-zombie policy for RQAura.eachEscort, file-scope so a render tick
+-- allocates no closure. Its inputs are set per frame just before the walk.
+local paintPlayerNum  = 0
+local paintBossPainted = {}
+local function paintEscort(obj)
+    -- Yields to RQBoss.bossBuffPainted - if a boss is also nearby, the boss
+    -- colour wins on the overlap - and never paints a special.
+    if not paintBossPainted[obj] and not RQRegistry.isSpecial(obj:getOnlineID()) then
+        obj:setOutlineHighlight(paintPlayerNum, true)
+        obj:setOutlineHighlightCol(paintPlayerNum,
+            BUFF_COLOR.r, BUFF_COLOR.g, BUFF_COLOR.b, BUFF_COLOR.a)
+    end
+end
+
 Events.OnRenderTick.Add(function()
     local player = getPlayer()
     if not player then return end
-    local playerNum = player:getPlayerNum()
     local cfg = RQConfig.get()
     local cell = getCell()
     local radius = cfg.juggernautBuffRadius
-    local rSq    = radius * radius
+    paintPlayerNum   = player:getPlayerNum()
+    paintBossPainted = RQBoss and RQBoss.bossBuffPainted or {}
 
     for onlineID, zType in pairs(RQRegistry.activeZombies) do
         if zType == "Juggernaut" then
@@ -53,41 +70,12 @@ Events.OnRenderTick.Add(function()
                     -- 2026-08-24, so it was two subtractions, two multiplies and
                     -- a compare per Juggernaut per RENDER TICK, feeding a local
                     -- that was written and never examined. Removed 2026-08-25.
-                    -- rSq stays: the buff highlight below still uses it.
 
                     -- Proximity-based buff highlight: any normal zombie within
                     -- buffRadius of this jugg is considered buffed (cosmetic only).
-                    -- Yields to RQBoss.bossBuffPainted - if a boss is also nearby,
-                    -- the boss color wins on the overlap.
+                    -- The walk is RQAura's; paintEscort above is the policy.
                     if cell then
-                        local bossPainted = RQBoss and RQBoss.bossBuffPainted or {}
-                        for dx = -radius, radius do
-                            for dy = -radius, radius do
-                                if dx*dx + dy*dy <= rSq then
-                                    local sq = cell:getGridSquare(jx + dx, jy + dy, jz)
-                                    if sq then
-                                        local movs = sq:getMovingObjects()
-                                        if movs then
-                                            for i = 0, movs:size() - 1 do
-                                                local obj = movs:get(i)
-                                                if obj and instanceof(obj, "IsoZombie")
-                                                   and not obj:isDead()
-                                                   and obj ~= jugg
-                                                   and not bossPainted[obj]
-                                                then
-                                                    local ooid = obj:getOnlineID()
-                                                    if not RQRegistry.isSpecial(ooid) then
-                                                        obj:setOutlineHighlight(playerNum, true)
-                                                        obj:setOutlineHighlightCol(playerNum,
-                                                            BUFF_COLOR.r, BUFF_COLOR.g, BUFF_COLOR.b, BUFF_COLOR.a)
-                                                    end
-                                                end
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
+                        RQAura.eachEscort(cell, jugg, radius, paintEscort)
                     end
                 end
             end

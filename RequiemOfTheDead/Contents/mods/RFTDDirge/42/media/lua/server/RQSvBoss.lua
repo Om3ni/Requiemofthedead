@@ -1,8 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- RQSvBoss - the apex zombie
 -- Three things going at once:
---   1) A protective aura over everything nearby, ordinary and special alike -
---      but it is not applied here. RQBulwark reads it when a hit lands.
+--   1) The escort it gathers - the zombies inside its aura are painted in
+--      its colour on every client (RQBoss). The protective soak that aura
+--      once carried was retired 2026-09-17; the Boss's own durability is the
+--      armour on its livery items.
 --   2) Coin-flip skill rotation between Scream and EMPulse, 40s cooldown.
 --      Each skill uses a cast bar so the client can warn the player before it fires.
 --   3) Sprinter movement, set up at spawn via RQSvShared.applyBossSprinter.
@@ -11,7 +13,8 @@ if not isServer() then return end
 RQSvBoss = RQSvBoss or {}
 RQSvBoss.state = {}   -- bossID -> { lastSkillTime, castDue, currentSkill, skillX/Y/Z, baseHealth }
 -- The `buffed` weak table is GONE (2026-08-24) along with the aura sweep it
--- guarded - see RQBulwark's header. Protection is decided at hit time now.
+-- guarded, and the hit-time soak that replaced the sweep is gone too
+-- (2026-09-17).
 
 local BOSS_SKILL_COOLDOWN = 40000   -- (ms) hardcoded 40s between Scream/EMPulse casts. Overrides cfg.bossSkillCooldown.
 
@@ -28,9 +31,8 @@ local BOSS_SKILL_COOLDOWN = 40000   -- (ms) hardcoded 40s between Scream/EMPulse
 -- the very first tick would fire before anyone has seen it arrive, and the cast
 -- bar exists to be reacted to. The 40s cadence still governs everything after.
 local BOSS_FIRST_SKILL_DELAY = 5000
--- BOSS_BUFF_INTERVAL and BOSS_BUFF_MULTIPLIER went with the aura sweep. The
--- Boss's protective reach is no longer a periodic grant with a strength
--- multiplier; it is a rate RQBulwark reads when a hit lands.
+-- BOSS_BUFF_INTERVAL and BOSS_BUFF_MULTIPLIER went with the aura sweep, and
+-- the per-hit rate that replaced them went with the soak on 2026-09-17.
 
 -- main tick, called each alive behavior pass for boss zombies
 function RQSvBoss.tick(zombie)

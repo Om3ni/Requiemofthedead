@@ -73,11 +73,17 @@ RQSvEating = {
     svGluttonFindCorpse  = function() return nil end,
 }
 
+-- The livery seam: the rage flip re-dresses the Scavenger crimson through
+-- RQSvLivery, and this fixture only needs to see that it was asked once.
+local enrages = {}
+RQSvLivery = { svEnrage = function(z) enrages[#enrages + 1] = z; return true end }
+
 local demanded = {}
 local realRequire = require
 function require(name)
     demanded[name] = true
     if name == "RDZombieId" then dofile(ZID) return end
+    if name == "RQSvLivery" then return end
     if name ~= "RQSvEating" then
         error("unexpected fixture require: " .. tostring(name))
     end
@@ -91,11 +97,13 @@ check(demanded["RQSvEating"] == true,
     "the file declares its RQSvEating dependency - load order is not a contract")
 check(demanded["RDZombieId"] == true,
     "the file declares its RDZombieId dependency - the id rule is Core's, not folklore")
+check(demanded["RQSvLivery"] == true,
+    "the file declares its RQSvLivery dependency - the crimson core is not folklore either")
 check(injectedState ~= nil and injectedState == RQSvScavenger.state,
     "the eating engine received this module's state table at load")
 
 -- The surfaces the rest of the suite dispatches to must exist after a bare
--- load - RQSvHit calls onPlayerHit, RQBulwark and RQBloodhound call isEnraged,
+-- load - RQSvHit calls onPlayerHit, RQBloodhound calls isEnraged,
 -- RQServer calls tick.
 check(type(RQSvScavenger.onPlayerHit) == "function", "onPlayerHit exists")
 check(type(RQSvScavenger.isEnraged) == "function", "isEnraged exists")
@@ -154,6 +162,7 @@ check(scav.modData["RQScavHostile"] == true, "the flag persists on the zombie")
 check(RQSvScavenger.isEnraged(scav) == true, "isEnraged answers from live state")
 check(lastBroadcast("scavRageScream") ~= nil, "the rage scream reaches clients")
 check(sounds == 1, "and the world hears it once")
+check(#enrages == 1 and enrages[1] == scav, "and the livery goes crimson, once, on this zombie")
 
 -- The flip cancels any in-flight eating so the survivors get the right share.
 local sawClear, sawRemove = false, false
@@ -166,8 +175,8 @@ check(sawClear and sawRemove, "raging cancels eating and leaves the shared cast"
 -- Duplicate hits are debounced - rage is a one-way flip, not a stack.
 local hpBefore, soundsBefore = #hpWrites, sounds
 RQSvScavenger.onPlayerHit(scav)
-check(#hpWrites == hpBefore and sounds == soundsBefore,
-    "a second hit on a raging scav does nothing")
+check(#hpWrites == hpBefore and sounds == soundsBefore and #enrages == 1,
+    "a second hit on a raging scav does nothing - no HP write, no scream, no re-dress")
 
 -- A hit on a scav that has never ticked has no state row and must not throw.
 local unticked = makeScav(501)

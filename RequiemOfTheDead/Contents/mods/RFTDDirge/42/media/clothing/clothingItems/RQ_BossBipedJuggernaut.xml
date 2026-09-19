@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The Boss's twin of BZ_BulwarkBiped: same model, same texture, same masks,
+    its own GUID. A Boss borrows one of the four special bodies at random
+    (RQLivery.BOSS_OUTFITS); the twin exists so that the Boss's clothing -
+    and, when the durability slice arms it, the Boss's armour - is its own
+    rather than whichever body it happened to draw. Nothing on disk is
+    duplicated; this points at the Juggernaut meshes.
+-->
+<clothingItem>
+    <m_GUID>9eaf9ebd-e85d-4c35-8b7a-1681401af196</m_GUID>
+    <m_MaleModel>Skinned\Clothes\BZ_BulwarkBiped</m_MaleModel>
+    <m_FemaleModel>Skinned\Clothes\BZ_BulwarkBiped</m_FemaleModel>
+    <m_Static>false</m_Static>
+    <m_AllowRandomHue>false</m_AllowRandomHue>
+    <m_AllowRandomTint>false</m_AllowRandomTint>
+    <m_HatCategory>Group01</m_HatCategory>
+    <m_Masks>0</m_Masks>
+    <m_Masks>1</m_Masks>
+    <m_Masks>2</m_Masks>
+    <m_Masks>3</m_Masks>
+    <m_Masks>4</m_Masks>
+    <m_Masks>5</m_Masks>
+    <m_Masks>6</m_Masks>
+    <m_Masks>7</m_Masks>
+    <m_Masks>8</m_Masks>
+    <m_Masks>9</m_Masks>
+    <m_Masks>10</m_Masks>
+    <m_Masks>11</m_Masks>
+    <m_Masks>12</m_Masks>
+    <m_Masks>13</m_Masks>
+    <m_Masks>14</m_Masks>
+    <m_Masks>15</m_Masks>
+    <textureChoices>Clothes\ZombieSkins\BZ_BulwarkBiped</textureChoices>
+</clothingItem>
